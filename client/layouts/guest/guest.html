@@ -1,0 +1,67 @@
+<template name="guest">
+    <div class="container">
+        <div class="row">
+            <div class="col-md-4 text-center">
+                <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo" alt="logo">
+            </div>
+            <div class="col-md-8">
+                <div class="text-center d-grid gap-4">
+                    <div class="single-box p-5">
+                        <div class="col-md-12">
+                            <div class="upload-single cover-img">
+                                <div class="head-area mb-2 text-start text-center">
+                                    <h3>Welcome To Civil Citizens!</h3>
+                                </div>
+                                <div class="profile-picture position-relative text-start">
+                                    <iframe width="560" height="315" src="https://www.youtube.com/embed/8wOtMBkJQMg?si=1XvVn_LTFUVmdU0z" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="single-box p-3 p-sm-5">
+                        <div class="col-md-12">
+                            <div class="upload-single cover-img">
+                                <div class="head-area mb-2 text-start text-center">
+                                    <h4>Create Your Free Account</h4>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-12 mt-4">
+                                <div class="btn-area text-center">
+                                    <button class="cmn-btn" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
+                                    <button class="cmn-btn" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @media (max-width: 767px) {
+            #guestLogo {
+                width: calc(100% - 300px);
+                height: auto;
+            }
+            .main-content {
+                padding-top: 0 !important;
+            }
+        }
+    </style>
+
+    <script>
+        // Hide <header>
+        $('header').hide();
+
+        // mobileFooterMenu
+        $('#mobileFooterMenu').hide();
+
+        // hide sidebars
+        $('#desktopLeftSidebar').hide();
+        $('#desktopRightSidebar').hide();
+
+    </script>
+</template>

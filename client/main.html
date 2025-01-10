@@ -1,0 +1,42 @@
+<template name="CivilApp">
+
+  {{> head}}
+
+      <!-- start preloader -->
+      <div class="preloader align-items-center justify-content-center">
+        <span class="loader"></span>
+    </div>
+    <!-- end preloader -->
+
+    <!-- Scroll To Top Start-->
+    <button class="scrollToTop d-none d-lg-block"><i class="mat-icon fas fa-angle-double-up"></i></button>
+    <!-- Scroll To Top End -->
+
+
+  <body style="display: none;">
+
+    {{> header}}
+
+    {{> mobileMenu}}
+
+    <!-- Main Content start -->
+    <main class="main-content">
+      <div class="container sidebar-toggler">
+          <div class="row justify-content-center">
+              {{> desktopLeftSidebar}}
+              {{> Template.dynamic template=main}}
+              {{> desktopRightSidebar}}
+          </div>
+      </div>
+    </main>
+    <!-- Main Content end -->
+
+
+
+  {{> footer}}
+
+  {{> modals}}
+
+  </body>
+
+</template>
