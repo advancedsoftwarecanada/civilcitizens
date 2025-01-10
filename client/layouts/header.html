@@ -8,7 +8,7 @@
                 <a href="/" class="navbar-brand">
                     <img src="/theme/assets/images/logo.png" class="logo" alt="logo">
                 </a>
-                {{#if isUser}}
+                {{#if isLoggedIn}}
                     <button class="button search-active d-block d-md-none">
                         <i class="d-center material-symbols-outlined fs-xxl mat-icon"> search </i>
                     </button>
@@ -22,7 +22,7 @@
                 <ul class="navbar-nav feed flex-row gap-xl-20 gap-lg-10 gap-sm-7 gap-1 py-4 py-lg-0 m-lg-auto ms-auto ms-aut align-self-center">
                 </ul>
                 <div class="right-area position-relative d-flex gap-3 gap-xxl-6 align-items-center">
-                    {{#if isUser}}
+                    {{#if isLoggedIn}}
                         <div class="single-item d-none d-lg-block profile-area position-relative">
                             <div class="profile-pic d-flex align-items-center">
                                 <span class="avatar cmn-head active-status">
@@ -45,9 +45,9 @@
                                 </div>
                                 <ul>
                                     <li>
-                                        <a href="#" class="mdtxt">
+                                        <a href="/logout" class="mdtxt">
                                             <i class="material-symbols-outlined mat-icon"> power_settings_new </i>
-                                            Sign Out
+                                            Log Out
                                         </a>
                                     </li>
                                 </ul>

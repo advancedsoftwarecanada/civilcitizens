@@ -36,8 +36,8 @@ Template.CivilApp.onRendered(function () {
 /*
  * Check if the user is the owner of the post
  */
-Template.registerHelper("isUser", function () {
-    if(Meteor.userId() === this.userId){
+Template.registerHelper("isLoggedIn", function () {
+    if(Meteor.userId() !== null) {
         return true;
     }
     return false;

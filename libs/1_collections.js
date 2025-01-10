@@ -1,0 +1,1 @@
+UserMeta = new Mongo.Collection('UserMeta');
