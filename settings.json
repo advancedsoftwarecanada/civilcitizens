@@ -1,0 +1,8 @@
+{
+    "public": {
+      "ROOT_URL": "https://civilcitizens.ca"
+    },
+    "MONGO_URL": "mongodb://meteor:PEGASUS2025STRONACH92ANDYNORMOREAPPAPPAPPAPPAPP@your-production-ip:27017/meteor",
+    "MONGO_OPLOG_URL": "mongodb://meteor:PEGASUS2025STRONACH92ANDYNORMOREAPPAPPAPPAPPAPP@your-production-ip:27017/local",
+    "PORT": 3000
+}

@@ -1,0 +1,6 @@
+{
+    "public": {
+      "ROOT_URL": "http://appdev.civilcitizens.ca"
+    },
+    "PORT": 3000
+}
