@@ -5,7 +5,6 @@ Template.modalRegister.events({
         // disable #registerModal form with jquery
         $('#registerModal form').addClass('disabled');
 
-
         const firstName = event.target.registerFirstName.value.trim();
         const lastName = event.target.registerLastName.value.trim();
         const handle = event.target.registerHandle.value.trim().toLowerCase();

@@ -1,0 +1,85 @@
+<template name="profile">
+
+    <div class="col-lg-6">
+
+            <div class="single-box p-5">
+                <div class="col-md-12">
+                    <div class="upload-single cover-img">
+                        <div class="head-area mb-2 text-start">
+                            <h6>Cover Image</h6>
+                        </div>
+                        <div class="profile-picture position-relative text-start">
+                            <img class="preview-image w-100" src="/theme/assets//images/profile-edit-cover.png" alt="Preview Image">
+                            <div class="file-upload p-4 bottom-0 end-0">
+                                <label class="file text-start mt-2">
+                                    <input type="file">
+                                    <span class="cmn-btn d-center gap-1">
+                                        <i class="material-symbols-outlined mat-icon fs-2"> edit_note </i>
+                                        Change Cover Photo
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-6">
+                <div class="single-box p-3">
+
+                    <div class="upload-single">
+                        <div class="profile-picture text-start">
+                            <img class="preview-image w-100" src="/theme/assets/images/avatar-1.png" alt="Preview Image">
+                        </div>
+                        <div class="file-upload">
+                            <label class="file text-center mt-4">
+                                <input type="file">
+                                <span class="cmn-btn d-center gap-1">
+                                    <i class="material-symbols-outlined mat-icon fs-2"> edit_note </i>
+                                    Change Profile Photo
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <form class="text-center d-grid gap-4">
+                <div class="single-box p-3 p-sm-5">
+                    <div class="col-sm-12">
+                        <div class="single-input text-start">
+                            <label for="username">Username</label>
+                            <div class="input-area second">
+                                <input type="text" id="username" value="{{myUserMeta.username}}" placeholder="Type username">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="single-input text-start">
+                                <label for="name_first">First Name</label>
+                                <div class="input-area second">
+                                    <input type="text" id="name_first" value="{{myUserMeta.name_first}}" placeholder="Type first name" >
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="single-input text-start">
+                                <label for="name_last">Last Name</label>
+                                <div class="input-area second">
+                                    <input type="text" id="name_last" value="{{myUserMeta.name_last}}" placeholder="Type last name" >
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-sm-12 mt-4">
+                            <div class="btn-area text-end">
+                                <button class="cmn-btn" type="submit">Save Changes</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+
+    </div>
+
+</template>

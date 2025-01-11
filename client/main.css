@@ -5,3 +5,10 @@ form.disabled {
     filter: grayscale(50%); /* Adds a visual indicator by desaturating */
     transition: opacity 0.3s ease, filter 0.3s ease; /* Smooth transition for better UX */
 }
+
+.avatar-size {
+    width: 70px;
+    height: 70px;
+    border-radius: 15px;
+    object-fit: cover;
+}

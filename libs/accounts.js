@@ -2,6 +2,34 @@ console.log("Loaded: accounts.js");
 
 if (Meteor.isServer) {
 
+    Meteor.publish('accounts.myUserMeta', function() {
+
+        if (!this.userId) {
+            return this.ready();
+        }
+
+        // Use an async function to handle async calls
+        return (async () => {
+            try {
+                const user = await Meteor.users.findOneAsync(this.userId);
+                if (!user || !user.profile || !user.profile.username) {
+                    return this.ready();
+                }
+
+                const userMeta = await UserMeta.findOneAsync({ owner_userid: this.userId });
+                if (!userMeta) {
+                    return this.ready();
+                }
+
+                return UserMeta.find({ owner_userid: this.userId });
+
+            } catch (error) {
+                console.error("Error publishing userMeta:", error);
+                return this.ready();
+            }
+        })();
+    });
+
     Meteor.methods({
         'accounts.isHandleTaken': async function (username) {
             try {
@@ -27,6 +55,39 @@ if (Meteor.isServer) {
                 throw new Meteor.Error('internal-server-error', 'An error occurred while checking the email.');
             }
         },
+        'accounts.updateUserProfile': async function ({ name_first, name_last, username }) {
+            if (!this.userId) {
+                throw new Meteor.Error('not-authorized');
+            }
+
+            try {
+                const existingUserMeta = await UserMeta.findOneAsync({ username: username.toLowerCase() });
+                if (existingUserMeta && existingUserMeta.owner_userid !== this.userId) {
+                    throw new Meteor.Error('username-taken', 'That username is already taken.');
+                }
+
+                await Meteor.users.updateAsync(this.userId, {
+                    $set: {
+                        'profile.name_first': name_first.toLowerCase(),
+                        'profile.name_last': name_last.toLowerCase(),
+                        'profile.username': username.toLowerCase(),
+                    }
+                });
+
+                await UserMeta.updateAsync({ owner_userid: this.userId }, {
+                    $set: {
+                        name_first: name_first.toLowerCase(),
+                        name_last: name_last.toLowerCase(),
+                        username: username.toLowerCase(),
+                    }
+                });
+
+                return { status: 'success', message: 'Profile updated successfully.' };
+            } catch (error) {
+                console.error('Error updating profile:', error);
+                throw new Meteor.Error('internal-server-error', 'An error occurred while updating the profile.');
+            }
+        }
     });
 
     /*
@@ -58,12 +119,21 @@ if (Meteor.isServer) {
             };
 
             if (user.services.password) {
+
+                // User Defaults
+                const random_1_4 = Math.floor(Math.random() * 4) + 1;
+                const random_avatar = "avatar-" + random_1_4 + ".png";
+                const avatar_url = "/theme/images/" + random_avatar;
+
                 // Insert user metadata
                 const userMetaId = await UserMeta.insertAsync({
                     owner_userid: user._id,
                     username: user.profile.username,
                     email: email,
                     createdTimestamp: new Date().getTime(),
+
+                    avatar_url: avatar_url,
+
                 });
 
                 // Update user metadata (if required)

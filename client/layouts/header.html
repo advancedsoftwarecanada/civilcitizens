@@ -26,22 +26,19 @@
                         <div class="single-item d-none d-lg-block profile-area position-relative">
                             <div class="profile-pic d-flex align-items-center">
                                 <span class="avatar cmn-head active-status">
-                                    <img class="avatar-img max-un" src="/theme/assets/images/avatar-1.png" alt="avatar">
+                                    <img class="avatar-img avatar-size" src="{{myUserMeta.avatar_url}}" alt="avatar">
                                 </span>
                             </div>
                             <div class="main-area p-5 profile-content">
                                 <div class="head-area">
                                     <div class="d-flex gap-3 align-items-center">
-                                        <div class="avatar-item">
-                                            <img class="avatar-img max-un" src="/theme/assets/images/avatar-1.png" alt="avatar">
-                                        </div>
                                         <div class="text-area">
-                                            <h6 class="m-0 mb-1">Lori Ferguson</h6>
+                                            <h6 class="m-0 mb-1">{{myUserMeta.name_first}} {{myUserMeta.name_last}}</h6>
                                         </div>
                                     </div>
                                 </div>
                                 <div class="view-profile my-2">
-                                    <a href="profile-post.html" class="mdtxt w-100 text-center py-2">View profile</a>
+                                    <a href="/profile" class="mdtxt w-100 text-center py-2">View profile</a>
                                 </div>
                                 <ul>
                                     <li>
@@ -51,15 +48,6 @@
                                         </a>
                                     </li>
                                 </ul>
-                                <div class="switch-wrapper mt-4 d-flex gap-1 align-items-center">
-                                    <i class="mat-icon material-symbols-outlined sun icon"> light_mode </i>
-                                    <label class="switch">
-                                        <input type="checkbox" class="checkbox">
-                                        <span class="slider"></span>
-                                    </label>
-                                    <i class="mat-icon material-symbols-outlined moon icon"> dark_mode </i>
-                                    <span class="mdtxt ms-2">Dark mode</span>
-                                </div>
                             </div>
                         </div>
                     {{/if}}

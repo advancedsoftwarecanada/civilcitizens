@@ -3,11 +3,11 @@ FlowRouter.route('/logout', {
     name: "logout",
     action() {
         if (Meteor.userId()) {
-            BlazeLayout.render('CivilApp', {
+            BlazeLayout.render('CivilApp_3', {
                 main: 'logout',
             });
         } else {
-            BlazeLayout.render('CivilApp', {
+            BlazeLayout.render('CivilApp_3', {
                 main: 'logout',
             });
         }

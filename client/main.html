@@ -1,4 +1,44 @@
-<template name="CivilApp">
+<template name="CivilApp_3">
+
+      <!-- start preloader -->
+      <div class="preloader align-items-center justify-content-center">
+        <span class="loader"></span>
+      </div>
+      <!-- end preloader -->
+
+      <!-- Scroll To Top Start-->
+        <button class="scrollToTop d-none d-lg-block"><i class="mat-icon fas fa-angle-double-up"></i></button>
+      <!-- Scroll To Top End -->
+
+
+    <body style="display: none; height:100vh;">
+
+      {{> header}}
+
+      {{> mobileMenu}}
+
+      <!-- Main Content start -->
+      <main class="main-content">
+        <div class="container sidebar-toggler">
+            <div class="row justify-content-center">
+                {{> desktopLeftSidebar}}
+                {{> Template.dynamic template=main}}
+                {{> desktopRightSidebar}}
+            </div>
+        </div>
+      </main>
+      <!-- Main Content end -->
+
+    {{> footer}}
+
+    {{> modalLoader}}
+
+  </body>
+
+</template>
+
+
+<template name="CivilApp_0">
 
     <!-- start preloader -->
     <div class="preloader align-items-center justify-content-center">
@@ -11,7 +51,7 @@
     <!-- Scroll To Top End -->
 
 
-  <body style="display: none;">
+  <body style="display: none; height:100vh;">
 
     {{> header}}
 
@@ -21,9 +61,7 @@
     <main class="main-content">
       <div class="container sidebar-toggler">
           <div class="row justify-content-center">
-              {{> desktopLeftSidebar}}
               {{> Template.dynamic template=main}}
-              {{> desktopRightSidebar}}
           </div>
       </div>
     </main>
@@ -33,6 +71,6 @@
 
   {{> modalLoader}}
 
-  </body>
+</body>
 
 </template>
