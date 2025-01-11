@@ -1,0 +1,7 @@
+form.disabled {
+    opacity: 0.5; /* Reduces visibility for disabled state */
+    pointer-events: none; /* Prevents interaction */
+    cursor: not-allowed; /* Shows the not-allowed cursor */
+    filter: grayscale(50%); /* Adds a visual indicator by desaturating */
+    transition: opacity 0.3s ease, filter 0.3s ease; /* Smooth transition for better UX */
+}
