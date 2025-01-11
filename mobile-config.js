@@ -27,3 +27,6 @@ App.launchScreens({
 App.accessRule('https://civilcitizens.ca/*');
 App.accessRule('https://*.civilcitizens.ca/*');
 App.accessRule('http://localhost/*'); // Local testing
+
+// Allow YouTube embeds
+App.accessRule('https://*.youtube.com/*', { type: 'navigation' });

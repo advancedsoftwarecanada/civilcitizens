@@ -12,7 +12,7 @@ es5-shim@4.8.1           # ECMAScript 5 compatibility for older browsers
 ecmascript@0.16.9         # Enable ECMAScript2015+ syntax in app code
 typescript@5.4.3          # Enable TypeScript syntax in .ts and .tsx modules
 shell-server@0.6.0    # Server-side component of the `meteor shell` command
-hot-module-replacement@0.5.4  # Update client in development without reloading the page -- HAS SOME SORT OF WEB SOCKET ERROR forget it.
+hot-module-replacement  # Update client in development without reloading the page -- HAS SOME SORT OF WEB SOCKET ERROR forget it.
 react-meteor-data  # React higher-order component for reactively tracking Meteor data
 
 # ###################################

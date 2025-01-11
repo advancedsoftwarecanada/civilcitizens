@@ -152,4 +152,14 @@ if (Meteor.isServer) {
         }
     });
 
+    // Accounts on login attempt (server side console log)
+    Accounts.onLogin(function (loginInfo) {
+        console.log('User logged in:', loginInfo.user);
+    });
+    // on ATTEMPT
+    Accounts.onLoginFailure(function (loginInfo) {
+        console.log('User login attempt failed:', loginInfo);
+    });
+
+
 }
