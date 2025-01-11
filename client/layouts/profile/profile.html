@@ -1,7 +1,8 @@
 <template name="profile">
 
-    <div class="col-lg-6">
+    <div class="col">
 
+            <!-- Banner... do later?
             <div class="single-box p-5">
                 <div class="col-md-12">
                     <div class="upload-single cover-img">
@@ -23,13 +24,14 @@
                     </div>
                 </div>
             </div>
+            -->
 
             <div class="col-6">
                 <div class="single-box p-3">
 
                     <div class="upload-single">
                         <div class="profile-picture text-start">
-                            <img class="preview-image w-100" src="/theme/assets/images/avatar-1.png" alt="Preview Image">
+                            <img class="preview-image w-100" src="{{myUserMeta.avatar_url}}" alt="Preview Image">
                         </div>
                         <div class="file-upload">
                             <label class="file text-center mt-4">
