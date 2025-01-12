@@ -70,7 +70,7 @@ Template.registerHelper("myUserMeta", function () {
             name_first: userMeta.name_first?.toLowerCase() || '',
             name_last: userMeta.name_last?.toLowerCase() || '',
             username: userMeta.username?.toLowerCase() || '',
-            avatar_url: userMeta.avatar_url || '/path/to/default/avatar.jpg',
+            avatar_url: userMeta.avatar_url || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
         };
     }
     return null;
