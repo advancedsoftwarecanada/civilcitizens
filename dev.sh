@@ -67,7 +67,7 @@ case $1 in
   buildserver)
     echo "Building server bundle for production..."
     clean_build_directory "../bundle_new"
-    meteor build ../bundle_new --directory --server=https://civilcitizens.ca
+    meteor build ../bundle_new --directory --server=https://civilcitizens.ca --settings settings.json
     echo "Server bundle built at ../bundle_new"
     ;;
 
