@@ -7,8 +7,11 @@
   },
   "dependencies": {
     "@babel/runtime": "^7.23.5",
+    "fs-extra": "^11.2.0",
+    "gm": "^1.25.0",
     "jquery": "^3.7.1",
     "meteor-node-stubs": "^1.2.7",
+    "mime": "^4.0.6",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

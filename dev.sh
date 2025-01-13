@@ -13,6 +13,16 @@ if [[ $# -eq 0 || $1 == "help" ]]; then
   exit 0
 fi
 
+# Function to delete and recreate a build directory
+clean_build_directory() {
+  local build_dir=$1
+  echo "Cleaning build directory: $build_dir"
+  if [ -d "$build_dir" ]; then
+    rm -rf "$build_dir"
+  fi
+  mkdir -p "$build_dir"
+}
+
 # Define commands
 case $1 in
   start)
@@ -22,11 +32,13 @@ case $1 in
 
   buildios)
     echo "Building iOS app for development..."
+    clean_build_directory "../civil-build-ios-NEW/dev"
     meteor build ../civil-build-ios-NEW/dev --server=http://192.168.2.53 --mobile-settings settings-localhost.json
     echo "Development iOS app built at ../civil-build-ios-NEW/dev"
 
     echo "Building iOS app for production..."
-    meteor build ../civil-build-ios-NEW/prod --server=http://192.168.2.53 --mobile-settings settings.json
+    clean_build_directory "../civil-build-ios-NEW/prod"
+    meteor build ../civil-build-ios-NEW/prod --server=https://civilcitizens.ca --mobile-settings settings.json
     echo "Production iOS app built at ../civil-build-ios-NEW/prod"
 
     echo "Both development and production iOS apps have been built. You can find them in:"
@@ -37,10 +49,12 @@ case $1 in
 
   buildandroid)
     echo "Building Android app for development..."
+    clean_build_directory "../civil-build-android-NEW/dev"
     meteor build ../civil-build-android-NEW/dev --server=http://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
     echo "Development Android app built at ../civil-build-android-NEW/dev"
 
     echo "Building Android app for production..."
+    clean_build_directory "../civil-build-android-NEW/prod"
     meteor build ../civil-build-android-NEW/prod --server=https://civilcitizens.ca --mobile-settings settings.json
     echo "Production Android app built at ../civil-build-android-NEW/prod"
 
@@ -52,6 +66,7 @@ case $1 in
 
   buildserver)
     echo "Building server bundle for production..."
+    clean_build_directory "../bundle_new"
     meteor build ../bundle_new --directory --server=https://civilcitizens.ca
     echo "Server bundle built at ../bundle_new"
     ;;

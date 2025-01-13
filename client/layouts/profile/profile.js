@@ -7,8 +7,15 @@ FlowRouter.route('/profile', {
     }
 });
 
+// Rendered
+Template.profile.rendered = function() {
+
+
+};
+
 
 Template.profile.events({
+
     'submit form'(event) {
         event.preventDefault();
 

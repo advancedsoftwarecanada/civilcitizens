@@ -162,17 +162,7 @@ $(function ($) {
       $parentElm.find(".qtyValue").val(value);
     });
 
-    // Show input File Image
-    $('.upload-single input').change(function() {
-      $(".upload-single").removeClass('uploadImg');
-      $(this).parents('.upload-single').addClass('uploadImg');
-      var file = this.files[0];
-      var reader = new FileReader();
-      reader.onload = function(e) {
-        $('.upload-single.uploadImg .preview-image').attr('src', e.target.result);
-      };
-      reader.readAsDataURL(file);
-    });
+
 
     // Always Scroll to bottom
     $('.main-chat-box').scrollTop( $(document).height() );

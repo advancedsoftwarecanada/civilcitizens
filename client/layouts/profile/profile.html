@@ -1,6 +1,6 @@
 <template name="profile">
 
-    <div class="col">
+    <div class="col-lg-6">
 
             <!-- Banner... do later?
             <div class="single-box p-5">
@@ -26,61 +26,67 @@
             </div>
             -->
 
-            <div class="col-6">
-                <div class="single-box p-3">
+            <div class="row">
 
-                    <div class="upload-single">
-                        <div class="profile-picture text-start">
-                            <img class="preview-image w-100" src="{{myUserMeta.avatar_url}}" alt="Preview Image">
-                        </div>
-                        <div class="file-upload">
-                            <label class="file text-center mt-4">
-                                <input type="file">
-                                <span class="cmn-btn d-center gap-1">
-                                    <i class="material-symbols-outlined mat-icon fs-2"> edit_note </i>
-                                    Change Profile Photo
-                                </span>
-                            </label>
+                <div class="col-12 col-md-4">
+                    <div class="single-box p-3">
+
+                        <div class="upload-single">
+                            <div class="profile-picture text-start">
+                                <img class="preview-image w-100 preview-avatar" src="{{myUserMeta.avatar_url}}" alt="Preview Image">
+                            </div>
+                            <div class="file-upload">
+                                <label class="file text-center mt-4">
+                                    <input type="file" class="fileUploader" data-upload-type="avatar" data-upload-preview-class="preview-avatar" accept=".jpg, .jpeg, .png">
+                                    <span class="btn btn-primary d-center gap-1">
+                                        Change Profile Photo
+                                    </span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <form class="text-center d-grid gap-4">
-                <div class="single-box p-3 p-sm-5">
-                    <div class="col-sm-12">
-                        <div class="single-input text-start">
-                            <label for="username">Username</label>
-                            <div class="input-area second">
-                                <input type="text" id="username" value="{{myUserMeta.username}}" placeholder="Type username">
+            <div class="row">
+                <div class="col">
+                    <form class="text-center d-grid gap-4">
+                        <div class="single-box p-3 p-sm-5">
+                            <div class="col-sm-12">
+                                <div class="single-input text-start">
+                                    <label for="username">Username</label>
+                                    <div class="input-area second">
+                                        <input type="text" id="username" value="{{myUserMeta.username}}" placeholder="Type username">
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-sm-6">
-                            <div class="single-input text-start">
-                                <label for="name_first">First Name</label>
-                                <div class="input-area second">
-                                    <input type="text" id="name_first" value="{{myUserMeta.name_first}}" placeholder="Type first name" >
+                            <div class="row">
+                                <div class="col-sm-6">
+                                    <div class="single-input text-start">
+                                        <label for="name_first">First Name</label>
+                                        <div class="input-area second">
+                                            <input type="text" id="name_first" value="{{myUserMeta.name_first}}" placeholder="Type first name" >
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-sm-6">
+                                    <div class="single-input text-start">
+                                        <label for="name_last">Last Name</label>
+                                        <div class="input-area second">
+                                            <input type="text" id="name_last" value="{{myUserMeta.name_last}}" placeholder="Type last name" >
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-sm-12 mt-4">
+                                    <div class="btn-area text-end">
+                                        <button class="cmn-btn" type="submit">Save Changes</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="col-sm-6">
-                            <div class="single-input text-start">
-                                <label for="name_last">Last Name</label>
-                                <div class="input-area second">
-                                    <input type="text" id="name_last" value="{{myUserMeta.name_last}}" placeholder="Type last name" >
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-sm-12 mt-4">
-                            <div class="btn-area text-end">
-                                <button class="cmn-btn" type="submit">Save Changes</button>
-                            </div>
-                        </div>
-                    </div>
+                    </form>
                 </div>
-            </form>
+            </div>
 
     </div>
 

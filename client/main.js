@@ -37,15 +37,133 @@ FlowRouter.route('/', {
 });
 
 /*
+ * CivilApp_0 layout rendered
+*/
+Template.CivilApp_0.onRendered(function () {
+    renderEverywhere();
+});
+
+/*
  * CivilApp_3 layout rendered
 */
 Template.CivilApp_3.onRendered(function () {
+    renderEverywhere();
+});
+
+function renderEverywhere(){
+
     // Detect if <body> has a modal applied and remove it
     // This is a bug when coding, with hot module replace
     $('body').removeClass('modal-open modal-with-transition');
     // remove any <div class="modal-backdrop fade show"></div>
     $('.modal-backdrop').remove();
-});
+
+
+    // FILE UPLOADER
+	$(document).on('change', '.fileUploader', function (event) {    // image upload
+
+
+        // fetch this data-upload-type
+        const uploadType = $(this).data('upload-type');
+        const previewClass = $(this).data('upload-preview-class');
+        console.log("UPLOADING: ", uploadType);
+
+		// Access the file input using event.target
+		const fileInput = event.target;
+		const file = fileInput.files[0];
+
+        // Extract the base name without the extension and the extension itself
+		const baseName = file.name.replace(/\.\w+$/, '');
+		const extension = file.name.split('.').pop();
+
+        // Handle Preview
+        if (file) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                console.log("THE PREVIEW CLASS", previewClass);
+
+                $("."+previewClass).attr('src', e.target.result);
+            };
+            reader.readAsDataURL(file);
+        }
+
+		if (file) {
+
+            console.log("STARTING UPLOAD");
+
+			const upload = Files.insert({
+				file: file,
+				//streams: 'dynamic', // this seems to not be needed and breaks on mac
+				chunkSize: 'dynamic',
+				meta: {
+					processing: true,
+					type: uploadType,
+					timeCreated: Date.now(),
+					timeAgo: new Date().toISOString(),
+				},
+			}, false);
+
+			upload.on('progress', function () {
+				// $(".uploaderPercent").css('width', this.progress.curValue + "%");
+			});
+
+			upload.on('start', function () {
+				// console.log("Start Upload");
+				// toastr["success"]("", "Uploading");
+			});
+
+            upload.on('end', function (error, clientFile) {
+                if (error) {
+                    toastr.error('Error uploading file.');
+                } else {
+
+                    console.log("UPLOAD END");
+                    console.log(clientFile);
+
+                    // Store the file ID for future requests
+                    const fileId = clientFile._id; // Ensure `_id` is present in `clientFile`
+                    console.log('Uploaded file ID:', fileId);
+
+                    // Fetch the enriched file metadata from the server
+                    Meteor.call('files.fetchMeta', fileId, (err, result) => {
+                        if (err) {
+                            console.error('Error fetching file metadata:', err);
+                            toastr.error('Error retrieving file details.');
+                        } else {
+                            console.log('Fetched file metadata:', result);
+
+                            // Extract the file's URL
+                            const { url } = result.data;
+
+                            // Update the avatar URL if this is an avatar upload
+                            // Removed from client side
+                            // if (clientFile.meta.type === 'avatar') {
+                            //     Meteor.call('files.updateAvatarUrl', url, (updateErr, updateResult) => {
+                            //         if (updateErr) {
+                            //             console.error('Error updating avatar URL:', updateErr);
+                            //             toastr.error('Error updating avatar URL.');
+                            //         } else {
+                            //             console.log('Avatar URL updated successfully:', updateResult);
+                            //             toastr.success('Avatar updated successfully!');
+
+                            //             // Update the UI
+                            //             $('.preview-avatar').attr('src', url);
+                            //         }
+                            //     });
+                            // }
+                        }
+                    });
+                }
+            });
+
+
+
+			upload.start();
+		}
+
+	});
+
+}
 
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-= //

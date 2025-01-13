@@ -1,6 +1,31 @@
 {
     "public": {
-      "ROOT_URL": "http://192.168.2.53"
+      "ROOT_URL": "http://192.168.2.53",
+      "useWebsockets": true,
+      "domain": "https://appdev.civilcitizens.ca/",
+      "cdnPath": "http://cdndev.civilcitizens.ca/",
+      "filesPath": "/Users/andrewnormore/cdndev.civilcitizens.ca",
+      "environment": "development",
+      "twilio_public": "AC0ab4f3b35e0487479833a1774dc4c3e5",
+      "stripe_public": "pk_test_51Oe4RXBhPmBUylir1McKsm6U2ic3iU2doQ0T8jBQUOfpoMcf51nVXeowOLDv9RlFa6g5R6FdP8zsOysEPz08W9Cp00taLvgk8A",
+      "stripe_product_id": "prod_QnQdrPZlNrMEb5",
+      "stripe_professional": "price_1PvpmCBhPmBUylirkmTozMFn",
+      "stripe_agency": "price_1Pvpn1BhPmBUylirrFmx7H4e",
+      "stripe_white_label": "price_1PvpnNBhPmBUylirQF14TmuP",
+      "stripe_email_address": "price_1PvpnlBhPmBUylirTXDeMY1z",
+      "stripe_sms_number": "price_1Pvpo2BhPmBUylirWxjdeJWw",
+      "stripe_useage_email": "price_1PvppxBhPmBUylirfszvoecn",
+      "stripe_useage_sms": "price_1PvpqGBhPmBUylirpnvTnyHZ",
+      "stripe_addon_domain": "price_1PvsEEBhPmBUylircoJ2Q2P8",
+      "jobber_andy_internal_stop": false
+    },
+    "private": {
+      "webdisk_pem_file": "-----BEGIN RSA PRIVATE KEY-----\n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\n-----END RSA PRIVATE KEY-----",
+      "stripe_private": "sk_test_51Oe4RXBhPmBUylirWyi6rZWAlv6avqCUjx1A1ePJXAiD2gXGW2UXMIqIvBSoEBHiK4jtslOlebYJCXhSHY6n0QaH00U7bWsJ7e",
+      "twilio_private": "84e98abbef8cb007f64507a43715179c",
+      "mailgun_api_key": "0f2b03b4eca413366f0977f62c191763-2b755df8-5df5bce1",
+      "openAiEndpoint": "https://scalarosai.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2023-03-15-preview",
+      "openaiApiKey": "AscEa4FK8q1GFjEsB8AWFiGlgFXczpIdhEbs5rBN8UADws5yWgL9JQQJ99AJACYeBjFXJ3w3AAABACOGJvNp"
     },
     "PORT": 3000
 }
