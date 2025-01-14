@@ -36,7 +36,7 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
       return;
     }
 
-    // console.log(posts);
+    console.log(posts);
 
     // Array of ads
     const ads = [

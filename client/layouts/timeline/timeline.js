@@ -2,7 +2,7 @@ Template.timeline.onCreated(function () {
   this.posts = new ReactiveVar([]);
 
   this.autorun(() => {
-    HTTP.get('/api/timeline?type=my_timeline', (error, response) => {
+    HTTP.get(Meteor.settings.public.ROOT_URL+'/api/timeline?type=my_timeline', (error, response) => {
       if (error) {
         console.error('Error fetching timeline posts:', error);
       } else {

@@ -1,9 +1,10 @@
 {
     "public": {
-      "ROOT_URL": "http://192.168.2.53",
+      "PORT": 3000,
+      "ROOT_URL": "https://appdev.civilcitizens.ca",
       "useWebsockets": true,
       "domain": "https://appdev.civilcitizens.ca/",
-      "cdnPath": "http://cdndev.civilcitizens.ca/",
+      "cdnPath": "https://cdndev.civilcitizens.ca/",
       "filesPath": "/Users/andrewnormore/cdndev.civilcitizens.ca",
       "environment": "development",
       "twilio_public": "AC0ab4f3b35e0487479833a1774dc4c3e5",
@@ -27,5 +28,7 @@
       "openAiEndpoint": "https://scalarosai.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2023-03-15-preview",
       "openaiApiKey": "AscEa4FK8q1GFjEsB8AWFiGlgFXczpIdhEbs5rBN8UADws5yWgL9JQQJ99AJACYeBjFXJ3w3AAABACOGJvNp"
     },
-    "PORT": 3000
+    "PORT": 3000,
+    "ROOT_URL": "https://appdev.civilcitizens.ca",
+    "useWebsockets": true
 }

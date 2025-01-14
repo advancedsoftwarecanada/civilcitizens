@@ -6,7 +6,8 @@ if [[ $# -eq 0 || $1 == "help" ]]; then
   echo ""
   echo "Commands:"
   echo "  help              Show this help message."
-  echo "  start             Start the Meteor app locally (web browser only, no mobile app)."
+  echo "  startdev          Start the app for development (web and mobile hot code push)."
+  echo "  startprod         Start the app for production."
   echo "  buildios          Build both dev and prod iOS apps with appropriate settings."
   echo "  buildandroid      Build both dev and prod Android apps with appropriate settings."
   echo "  buildserver       Build the server bundle for production."
@@ -36,21 +37,27 @@ kill_port_3000() {
 
 # Define commands
 case $1 in
-  start)
+
+  startdev)
     kill_port_3000
-    echo "Starting Meteor on localhost:3000 (web browser only, no mobile app)..."
-    meteor --settings settings-localhost.json
+    ROOT_URL=https://appdev.civilcitizens.ca
+    PORT=3000
+    echo "Starting Meteor for development with ROOT_URL=$ROOT_URL..."
+    ROOT_URL=$ROOT_URL PORT=$PORT meteor --settings settings-localhost.json --port $PORT
     ;;
 
   buildios)
+
     echo "Building iOS app for development..."
     clean_build_directory "../civil-build-ios-NEW/dev"
-    meteor build ../civil-build-ios-NEW/dev --server=http://192.168.2.53 --mobile-settings settings-localhost.json
+    ROOT_URL=https://appdev.civilcitizens.ca meteor build ../civil-build-ios-NEW/dev --server https://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
     echo "Development iOS app built at ../civil-build-ios-NEW/dev"
+
+    ROOT_URL=https://civilcitizens.ca
 
     echo "Building iOS app for production..."
     clean_build_directory "../civil-build-ios-NEW/prod"
-    meteor build ../civil-build-ios-NEW/prod --server=https://civilcitizens.ca --mobile-settings settings.json
+    meteor build ../civil-build-ios-NEW/prod --server https://civilcitizens.ca --mobile-settings settings.json
     echo "Production iOS app built at ../civil-build-ios-NEW/prod"
 
     echo "Both development and production iOS apps have been built. You can find them in:"
@@ -62,7 +69,7 @@ case $1 in
   buildandroid)
     echo "Building Android app for development..."
     clean_build_directory "../civil-build-android-NEW/dev"
-    meteor build ../civil-build-android-NEW/dev --server=http://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
+    meteor build ../civil-build-android-NEW/dev --server=https://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
     echo "Development Android app built at ../civil-build-android-NEW/dev"
 
     echo "Building Android app for production..."
@@ -79,7 +86,7 @@ case $1 in
   buildserver)
     echo "Building server bundle for production..."
     clean_build_directory "../bundle_new"
-    meteor build ../bundle_new --directory --server=https://civilcitizens.ca --mobile-settings settings.json
+    meteor build ../bundle_new --directory --server=https://civilcitizens.ca --mobile-settings settings.json --server-only
     echo "Server bundle built at ../bundle_new"
     ;;
 
