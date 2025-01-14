@@ -1,0 +1,204 @@
+<template name="submit">
+
+    <div class="submit-container">
+
+      <!-- Dropdown for Posting Location -->
+      <div class="form-group">
+        <label for="postChamber" class="dropdown-label">Where to post this?</label>
+        <select id="postChamber" class="dropdown-select">
+          <option value="self_post">Self Post (@{{myUserMeta.username}})</option>
+          <option value="bay_of_quintie">Bay of Quintie</option>
+          <option value="kingston">Kingston</option>
+          <option value="peterborough">Peterborough</option>
+          <option value="aurora">Aurora</option>
+        </select>
+      </div>
+
+      <!-- Post Title -->
+      <div class="form-group">
+        <input type="text" id="postTitle" class="mt-2 post-title-input" placeholder="Title*">
+      </div>
+
+      <!-- Tabs for Different Post Types
+      <div class="post-tabs">
+        <button class="tab-button active">Text</button>
+        <button class="tab-button">Images & Video</button>
+        <button class="tab-button">Link</button>
+        <button class="tab-button">Poll</button>
+      </div>
+       -->
+
+      <!-- Summernote Editor -->
+      <div id="summernote" class="editor mt-3"></div>
+      <script>
+        $(document).ready(function () {
+          const initializeSummernote = setInterval(() => {
+            console.log("SUMMERNOTE CHECKING");
+            if (typeof $.fn.summernote !== 'undefined') {
+              clearInterval(initializeSummernote);
+              $('#summernote').summernote({
+                placeholder: 'Write something!',
+                tabsize: 2,
+                height: 300,
+                toolbar: [
+                  ['style', ['style']],
+                  ['font', ['bold', 'italic', 'underline', 'clear']],
+                  ['para', ['ul', 'ol', 'paragraph']],
+                  ['table', ['table']],
+                  ['insert', ['link']],
+                  ['view', ['undo', 'redo']]
+                ]
+              });
+              console.log('Summernote initialized successfully!');
+            }
+          }, 10);
+        });
+      </script>
+
+      <!-- Post Image Uploader -->
+      <div class="upload-area mt-4">
+        <label for="postImage" class="upload-label">
+          <input type="file" id="postImage" class="fileUploader" accept=".jpg, .jpeg, .png">
+          <div class="upload-box">
+            <span class="upload-text">Click or drag and drop to upload an image</span>
+          </div>
+        </label>
+      </div>
+
+      <!-- Save & Post Buttons -->
+      <div class="button-area">
+        <button class="cmn-btn post-btn" id="savePost">Post</button>
+      </div>
+
+    </div>
+
+    <style>
+      /* Main Container */
+      .submit-container {
+        background-color: #fff;
+        color: #333;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 20px;
+        max-width: 700px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+      }
+
+      /* Dropdown Styling */
+      .dropdown-label {
+        display: block;
+        font-size: 14px;
+        font-weight: bold;
+        margin-bottom: 8px;
+      }
+
+      .dropdown-select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+
+      /* Post Title Styling */
+      .post-title-input {
+        width: 100%;
+        padding: 10px;
+        font-size: 16px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        margin-bottom: 20px;
+        background:white;
+      }
+
+      /* Tabs */
+      .post-tabs {
+        display: flex;
+        border-bottom: 2px solid #eee;
+        margin-bottom: 20px;
+      }
+
+      .tab-button {
+        flex: 1;
+        padding: 10px;
+        text-align: center;
+        border: none;
+        background: none;
+        font-size: 14px;
+        cursor: pointer;
+        color: #333;
+        border-bottom: 2px solid transparent;
+      }
+
+      .tab-button.active {
+        border-bottom: 2px solid #007bff;
+        color: #007bff;
+      }
+
+      .tab-button:hover {
+        color: #0056b3;
+      }
+
+      /* Summernote Editor */
+      .editor {
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 8px;
+        min-height: 200px;
+        margin-bottom: 20px;
+      }
+
+      /* Upload Area */
+      .upload-area {
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+        background: #f9f9f9;
+        margin-bottom: 20px;
+      }
+
+      .upload-area:hover {
+        background: #f1f1f1;
+      }
+
+      .upload-box {
+        font-size: 14px;
+        color: #666;
+      }
+
+      /* Buttons */
+      .button-area {
+        text-align: right;
+      }
+
+      .cmn-btn {
+        padding: 10px 20px;
+        font-size: 14px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-left: 10px;
+      }
+
+      .draft-btn {
+        background-color: #f1f1f1;
+        color: #666;
+      }
+
+      .draft-btn:hover {
+        background-color: #e0e0e0;
+      }
+
+      .post-btn {
+        background-color: #007bff;
+        color: #fff;
+      }
+
+      .post-btn:hover {
+        background-color: #0056b3;
+      }
+    </style>
+
+  </template>

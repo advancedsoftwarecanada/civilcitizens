@@ -1,0 +1,113 @@
+<template name="post">
+  <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z">
+    <h1>POST</h1>
+    {{#with post}}
+      <div class="post-item d-flex flex-column gap-5 gap-md-7" id="news-feed">
+        <div class="post-single-box p-3 p-sm-5">
+          <div class="top-area pb-5">
+            <div class="profile-area d-center justify-content-between">
+              <div class="avatar-item d-flex gap-3 align-items-center">
+                <div class="avatar position-relative">
+                  <img class="avatar-img avatar-size" src="{{author.avatar_url}}" alt="avatar">
+                </div>
+                <div class="info-area">
+                  <h6 class="m-0" style="text-transform: lowercase;">
+                    @{{author.username}}
+                  </h6>
+                  <span class="mdtxt status">Bay of Quinte</span>
+                  {{#if isAd this}}
+                    <span class="mdtxt status">Sponsored Advertisement</span>
+                  {{/if}}
+                </div>
+              </div>
+              {{#unless isAd this}}
+                <div class="btn-group cus-dropdown">
+                  <button type="button" class="dropdown-btn" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="material-symbols-outlined fs-xxl m-0">more_horiz</i>
+                  </button>
+                  <ul class="dropdown-menu p-4 pt-2">
+                    <li>
+                      <a class="droplist d-flex align-items-center gap-2" href="#">
+                        <i class="material-symbols-outlined mat-icon">bookmark_add</i>
+                        <span>Saved Post</span>
+                      </a>
+                    </li>
+                    <li>
+                      <a class="droplist d-flex align-items-center gap-2" href="#">
+                        <i class="material-symbols-outlined mat-icon">person_remove</i>
+                        <span>Unfollow</span>
+                      </a>
+                    </li>
+                    <li>
+                      <a class="droplist d-flex align-items-center gap-2" href="#">
+                        <i class="material-symbols-outlined mat-icon">hide_source</i>
+                        <span>Hide Post</span>
+                      </a>
+                    </li>
+                    <li>
+                      <a class="droplist d-flex align-items-center gap-2" href="#">
+                        <i class="material-symbols-outlined mat-icon">lock</i>
+                        <span>Block</span>
+                      </a>
+                    </li>
+                    <li>
+                      <a class="droplist d-flex align-items-center gap-2" href="#">
+                        <i class="material-symbols-outlined mat-icon">flag</i>
+                        <span>Report Post</span>
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+              {{/unless}}
+            </div>
+            <div class="py-4 post-content">
+              <h2 class="mdtxt">{{title}}</h2>
+              <p class="description">{{{body}}}</p>
+            </div>
+            {{#if image}}
+              <div class="post-img">
+                <img src="{{image}}" class="w-100" alt="image">
+              </div>
+            {{/if}}
+            {{#if isAd this}}
+              <p style="font-size: 0.8em; text-align: center;">30% Of this ad was donated to charity</p>
+            {{else}}
+              <button class="read-more-btn" style="display: none;">Read More</button>
+            {{/if}}
+          </div>
+          {{#unless isAd this}}
+            <div class="like-comment-share py-5 flex-wrap">
+              <!-- Upvote/Downvote Section -->
+              <div class="vote-section d-flex align-items-center gap-2">
+                <button class="upvote-btn">
+                  <i class="material-symbols-outlined mat-icon">thumb_up</i>
+                </button>
+                <span class="score">212</span>
+                <button class="downvote-btn">
+                  <i class="material-symbols-outlined mat-icon">thumb_down</i>
+                </button>
+              </div>
+              <!-- Action Buttons -->
+              <div class="action-buttons d-flex align-items-center gap-3">
+                <a href="/post/{{seo_url}}">
+                  <button class="comment-btn">
+                    <i class="material-symbols-outlined mat-icon">chat</i>
+                    212 Comments
+                  </button>
+                </a>
+                <button class="bookmark-btn">
+                  <i class="material-symbols-outlined mat-icon">bookmark</i>
+                  8 Bookmarks
+                </button>
+                <button class="share-btn">
+                  <i class="material-symbols-outlined mat-icon">share</i>
+                  13 Shares
+                </button>
+              </div>
+            </div>
+          {{/unless}}
+        </div>
+      </div>
+    {{/with}}
+  </div>
+</template>

@@ -52,6 +52,11 @@ Template.CivilApp_3.onRendered(function () {
 
 function renderEverywhere(){
 
+    // #templateMain scroll to top
+    $('html, body').animate({
+        scrollTop: 0
+    }, 0);
+
     // Detect if <body> has a modal applied and remove it
     // This is a bug when coding, with hot module replace
     $('body').removeClass('modal-open modal-with-transition');
@@ -192,4 +197,8 @@ Template.registerHelper("myUserMeta", function () {
         };
     }
     return null;
+});
+
+Template.registerHelper("cdn", function () {
+    return Meteor.settings.public.cdnPath;
 });

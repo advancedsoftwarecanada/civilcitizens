@@ -1,0 +1,87 @@
+.post-content {
+  max-height: 33vh;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.read-more-btn {
+  background: none;
+  border: none;
+  color: blue;
+  text-align: left;
+  padding: 0;
+  margin-top: 10px;
+}
+
+.post-content {
+  max-height: 33vh;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.read-more-btn {
+  background: none;
+  border: none;
+  color: blue;
+  text-align: left;
+  padding: 0;
+  margin-top: 10px;
+}
+
+
+
+
+
+
+
+
+.like-comment-share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 15px; /* Spacing between buttons */
+  justify-content: flex-start; /* Align buttons to the left */
+}
+
+.like-comment-share button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #333;
+  background-color: #f8f9fa;
+  border: 1px solid #e0e0e0;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.like-comment-share button:hover {
+  background-color: #e8f0fe;
+  color: #007bff;
+}
+
+.like-comment-share button i {
+  font-size: 18px;
+}
+
+/* Styles for upvote and downvote buttons */
+.like-comment-share .upvote-btn,
+.like-comment-share .downvote-btn {
+  padding: 14px 20px; /* Increase padding */
+  font-size: 16px; /* Slightly larger font */
+  background-color: #f0f8ff; /* Light blue background */
+}
+
+.like-comment-share .upvote-btn:hover,
+.like-comment-share .downvote-btn:hover {
+  background-color: #d6eaff; /* Darker blue on hover */
+  color: #0056b3; /* Dark blue text */
+}
+
+.like-comment-share .score {
+  font-size: 14px;
+  font-weight: bold;
+  color: #555;
+}

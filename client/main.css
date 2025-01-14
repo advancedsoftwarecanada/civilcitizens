@@ -1,3 +1,7 @@
+body{
+  background-color: #dedede;
+}
+
 form.disabled {
     opacity: 0.5; /* Reduces visibility for disabled state */
     pointer-events: none; /* Prevents interaction */
@@ -11,4 +15,83 @@ form.disabled {
     height: 70px;
     border-radius: 15px;
     object-fit: cover;
+}
+.main-content .post-item .post-single-box .avatar::before, .header-menu .single-item.profile-area::before, .main-content .profile-sidebar .profile-pic .avatar::before{
+  display:none !important;
+}
+
+.note-toolbar {
+    width:100% !important;
+}
+
+/* General Table Styling */
+.note-editor table {
+    width: 100%; /* Full width within the editor */
+    border-collapse: collapse; /* Merge adjacent borders */
+    margin-top: 10px;
+    margin-bottom: 10px;
+  }
+
+  .note-editor table th,
+  .note-editor table td {
+    border: 1px solid #ccc; /* Light gray border */
+    padding: 8px; /* Spacing inside cells */
+    text-align: left; /* Align text to the left */
+  }
+
+  .note-editor table th {
+    background-color: #f4f4f4; /* Slightly different background for headers */
+    font-weight: bold;
+  }
+
+  .note-editor table tr:nth-child(even) {
+    background-color: #fafafa; /* Subtle row striping */
+  }
+
+  .note-editor table tr:hover {
+    background-color: #f1f1f1; /* Highlight on hover */
+  }
+
+  /* Ensure editor area maintains styling consistency */
+  .note-editor {
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    color: #333;
+  }
+
+
+
+h1 {
+  font-size: 2.5rem !important;
+  line-height: 3rem !important;
+}
+h2 {
+  font-size: 2rem !important;
+  line-height: 2.5rem !important;
+}
+h3 {
+  font-size: 1.75rem !important;
+  line-height: 2.25rem !important;
+}
+h4 {
+  font-size: 1.5rem !important;
+  line-height: 2rem !important;
+}
+h5 {
+  font-size: 1.25rem !important;
+  line-height: 1.75rem !important;
+}
+h6 {
+  font-size: 1rem !important;
+  line-height: 1.5rem !important;
+}
+
+/* Tables, always show outlines at 0.5px */
+table {
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+
+.hover-pointer, a {
+    cursor: pointer !important;
 }

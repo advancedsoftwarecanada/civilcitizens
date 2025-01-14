@@ -23,9 +23,21 @@ clean_build_directory() {
   mkdir -p "$build_dir"
 }
 
+# Function to check and kill process using port 3000
+kill_port_3000() {
+  local pid=$(lsof -t -i:3000)
+  if [ -n "$pid" ]; then
+    echo "Port 3000 is in use by PID $pid. Terminating process..."
+    kill -9 $pid
+  else
+    echo "Port 3000 is not in use."
+  fi
+}
+
 # Define commands
 case $1 in
   start)
+    kill_port_3000
     echo "Starting Meteor on localhost:3000 (web browser only, no mobile app)..."
     meteor --settings settings-localhost.json
     ;;
