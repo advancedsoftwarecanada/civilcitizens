@@ -40,46 +40,56 @@ case $1 in
 
   startdev)
     kill_port_3000
-    ROOT_URL=https://appdev.civilcitizens.ca
-    PORT=3000
+    export ROOT_URL=https://appdev.civilcitizens.ca
+    export  PORT=3000
+    export METEOR_ENV=development
     echo "Starting Meteor for development with ROOT_URL=$ROOT_URL..."
-    ROOT_URL=$ROOT_URL PORT=$PORT meteor --settings settings-localhost.json --port $PORT
+    meteor --settings settings-localhost.json --port $PORT
     ;;
 
   buildios)
+    AUTOUPDATE_VERSION=$(date +%s)
 
-    echo "Building iOS app for development..."
-    clean_build_directory "../civil-build-ios-NEW/dev"
-    ROOT_URL=https://appdev.civilcitizens.ca meteor build ../civil-build-ios-NEW/dev --server https://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
-    echo "Development iOS app built at ../civil-build-ios-NEW/dev"
+    echo "-------------------------------"
+    export ROOT_URL=https://appdev.civilcitizens.ca
+    export METEOR_ENV=development
+    echo "Building iOS App: $METEOR_ENV with AUTOUPDATE_VERSION=$AUTOUPDATE_VERSION"
+    echo "ROOT_URL=$ROOT_URL"
+    clean_build_directory "../civil-build-ios/dev"
+    meteor build ../civil-build-ios/dev --server https://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
+    echo "DONE! iOS Dev App Built."
 
-    ROOT_URL=https://civilcitizens.ca
 
-    echo "Building iOS app for production..."
-    clean_build_directory "../civil-build-ios-NEW/prod"
-    meteor build ../civil-build-ios-NEW/prod --server https://civilcitizens.ca --mobile-settings settings.json
-    echo "Production iOS app built at ../civil-build-ios-NEW/prod"
+    echo "-------------------------------"
+    export ROOT_URL=https://civilcitizens.ca
+    export METEOR_ENV=production
+    echo "Building iOS App: $METEOR_ENV with AUTOUPDATE_VERSION=$AUTOUPDATE_VERSION"
+    echo "ROOT_URL=$ROOT_URL"
+    clean_build_directory "../civil-build-ios/prod"
+    meteor build ../civil-build-ios/prod --server https://civilcitizens.ca --mobile-settings settings.json
+    echo "DONE! iOS Prod App Built."
 
+    echo "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+"
     echo "Both development and production iOS apps have been built. You can find them in:"
-    echo "  Development: ../civil-build-ios-NEW/dev"
-    echo "  Production: ../civil-build-ios-NEW/prod"
+    echo "  Development: ../civil-build-ios/dev"
+    echo "  Production: ../civil-build-ios/prod"
     echo "Open the respective Xcode projects to test or deploy."
     ;;
 
   buildandroid)
     echo "Building Android app for development..."
-    clean_build_directory "../civil-build-android-NEW/dev"
-    meteor build ../civil-build-android-NEW/dev --server=https://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
-    echo "Development Android app built at ../civil-build-android-NEW/dev"
+    clean_build_directory "../civil-build-android/dev"
+    meteor build ../civil-build-android/dev --server=https://appdev.civilcitizens.ca --mobile-settings settings-localhost.json
+    echo "Development Android app built at ../civil-build-android/dev"
 
     echo "Building Android app for production..."
-    clean_build_directory "../civil-build-android-NEW/prod"
-    meteor build ../civil-build-android-NEW/prod --server=https://civilcitizens.ca --mobile-settings settings.json
-    echo "Production Android app built at ../civil-build-android-NEW/prod"
+    clean_build_directory "../civil-build-android/prod"
+    meteor build ../civil-build-android/prod --server=https://civilcitizens.ca --mobile-settings settings.json
+    echo "Production Android app built at ../civil-build-android/prod"
 
     echo "Both development and production Android apps have been built. You can find them in:"
-    echo "  Development: ../civil-build-android-NEW/dev"
-    echo "  Production: ../civil-build-android-NEW/prod"
+    echo "  Development: ../civil-build-android/dev"
+    echo "  Production: ../civil-build-android/prod"
     echo "Open the respective projects in Android Studio to test or deploy."
     ;;
 

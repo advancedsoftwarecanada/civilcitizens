@@ -22,7 +22,7 @@ Template.post.onCreated(function () {
 
   this.autorun(() => {
     const seoUrl = FlowRouter.getParam('seo_url');
-    HTTP.get(`/api/post?seo_url=${seoUrl}`, (error, response) => {
+    HTTP.get(Meteor.settings.public.ROOT_URL+`/api/post?seo_url=${seoUrl}`, (error, response) => {
       if (error) {
         console.error('Error fetching post:', error);
       } else {

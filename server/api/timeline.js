@@ -36,7 +36,7 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
       return;
     }
 
-    console.log(posts);
+    // console.log(posts);
 
     // Array of ads
     const ads = [
@@ -70,7 +70,7 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
           name_last: null,
         },
         ad: true,
-        url: "https://guhaway.com",
+        url: "https://www.guhahway.com/",
       },
       {
         _id: 'elby-bikes',
@@ -141,8 +141,11 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
     // Select one random ad
     const randomAd = ads[Math.floor(Math.random() * ads.length)];
 
-    // Insert the random ad into the posts array as the second post
-    posts.splice(1, 0, randomAd);
+    // Generate a random position between 1, 2, and 3
+    const randomPosition = Math.floor(Math.random() * 3) + 1;
+
+    // Insert the random ad into the posts array at the random position
+    posts.splice(randomPosition, 0, randomAd);
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(posts));

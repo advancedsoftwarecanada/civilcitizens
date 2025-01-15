@@ -81,7 +81,13 @@
               </a>
               {{#if image}}
                 <div class="post-img">
-                  <img src="{{image}}" class="w-100" alt="image">
+                  {{#if isAd this}}
+                    <a href="{{url}}" onclick="window.open('{{url}}'); return false;">
+                      <img src="{{image}}" class="w-100" alt="image">
+                    </a>
+                  {{else}}
+                    <img src="{{image}}" class="w-100" alt="image">
+                  {{/if}}
                 </div>
               {{/if}}
               {{#if isAd this}}
