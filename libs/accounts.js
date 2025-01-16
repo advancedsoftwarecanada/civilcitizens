@@ -12,16 +12,16 @@ if (Meteor.isServer) {
         return (async () => {
             try {
                 const user = await Meteor.users.findOneAsync(this.userId);
-                if (!user || !user.profile || !user.profile.username) {
+                if (!user || !user.profile || !user.profile.userName) {
                     return this.ready();
                 }
 
-                const userMeta = await UserMeta.findOneAsync({ owner_userid: this.userId });
+                const userMeta = await UserMeta.findOneAsync({ ownerUserId: this.userId });
                 if (!userMeta) {
                     return this.ready();
                 }
 
-                return UserMeta.find({ owner_userid: this.userId });
+                return UserMeta.find({ ownerUserId: this.userId });
 
             } catch (error) {
                 console.error("Error publishing userMeta:", error);
@@ -31,16 +31,16 @@ if (Meteor.isServer) {
     });
 
     Meteor.methods({
-        'accounts.isHandleTaken': async function (username) {
+        'accounts.isHandleTaken': async function (userName) {
             try {
-                const userMeta = await UserMeta.findOneAsync({ username: username });
+                const userMeta = await UserMeta.findOneAsync({ userName: userName });
                 if (userMeta) {
                     return { status: 'error', message: 'That handle is taken.' };
                 }
                 return { status: 'success', message: 'Handle is available.' };
             } catch (error) {
                 console.error('Error in accounts.isHandleTaken:', error);
-                throw new Meteor.Error('internal-server-error', 'An error occurred while checking the username.');
+                throw new Meteor.Error('internal-server-error', 'An error occurred while checking the userName.');
             }
         },
         'accounts.isEmailRegistered': async function (email) {
@@ -55,30 +55,30 @@ if (Meteor.isServer) {
                 throw new Meteor.Error('internal-server-error', 'An error occurred while checking the email.');
             }
         },
-        'accounts.updateUserProfile': async function ({ name_first, name_last, username }) {
+        'accounts.updateUserProfile': async function ({ firstName, lastName, userName }) {
             if (!this.userId) {
                 throw new Meteor.Error('not-authorized');
             }
 
             try {
-                const existingUserMeta = await UserMeta.findOneAsync({ username: username.toLowerCase() });
-                if (existingUserMeta && existingUserMeta.owner_userid !== this.userId) {
-                    throw new Meteor.Error('username-taken', 'That username is already taken.');
+                const existingUserMeta = await UserMeta.findOneAsync({ userName: userName });
+                if (existingUserMeta && existingUserMeta.ownerUserId !== this.userId) {
+                    throw new Meteor.Error('userName-taken', 'That userName is already taken.');
                 }
 
                 await Meteor.users.updateAsync(this.userId, {
                     $set: {
-                        'profile.name_first': name_first.toLowerCase(),
-                        'profile.name_last': name_last.toLowerCase(),
-                        'profile.username': username.toLowerCase(),
+                        'profile.firstName': firstName.toLowerCase(),
+                        'profile.lastName': lastName.toLowerCase(),
+                        'profile.userName': userName,
                     }
                 });
 
-                await UserMeta.updateAsync({ owner_userid: this.userId }, {
+                await UserMeta.updateAsync({ ownerUserId: this.userId }, {
                     $set: {
-                        name_first: name_first.toLowerCase(),
-                        name_last: name_last.toLowerCase(),
-                        username: username.toLowerCase(),
+                        firstName: firstName.toLowerCase(),
+                        lastName: lastName.toLowerCase(),
+                        userName: userName,
                     }
                 });
 
@@ -113,9 +113,9 @@ if (Meteor.isServer) {
             // Normalize profile fields
             user.profile = {
                 ...options.profile,
-                name_first: options.profile.name_first.toLowerCase(),
-                name_last: options.profile.name_last.toLowerCase(),
-                username: options.profile.username.toLowerCase(),
+                firstName: options.profile.firstName.toLowerCase(),
+                lastName: options.profile.lastName.toLowerCase(),
+                userName: options.profile.userName,
             };
 
             if (user.services.password) {
@@ -123,16 +123,18 @@ if (Meteor.isServer) {
                 // User Defaults
                 const random_1_4 = Math.floor(Math.random() * 4) + 1;
                 const random_avatar = "avatar-" + random_1_4 + ".png";
-                const avatar_url = "/theme/images/" + random_avatar;
+                const avatarUrl = "/theme/assets/images/" + random_avatar;
 
                 // Insert user metadata
                 const userMetaId = await UserMeta.insertAsync({
-                    owner_userid: user._id,
-                    username: user.profile.username,
+                    ownerUserId: user._id,
+                    firstName: user.profile.firstName,
+                    lastName: user.profile.lastName,
+                    userName: user.profile.userName,
                     email: email,
                     createdTimestamp: new Date().getTime(),
 
-                    avatar_url: avatar_url,
+                    avatarUrl: avatarUrl,
 
                 });
 

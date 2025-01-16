@@ -54,7 +54,7 @@ Template.post.events({
     const comment = commentInput.value.trim();
     const postId = instance.post.get()?._id;
     const userId = Meteor.userId();
-    const userMeta = UserMeta.findOne({ owner_userid: userId });
+    const userMeta = UserMeta.findOne({ ownerUserId: userId });
 
     if (!comment) {
       toastr.error('Comment cannot be empty.', 'Validation Error');
@@ -78,8 +78,8 @@ Template.post.events({
           comment,
           createdAt: new Date(),
           author: {
-            username: userMeta.username,
-            avatar_url: userMeta.avatar_url,
+            userName: userMeta.userName,
+            avatarUrl: userMeta.avatarUrl,
           },
         };
         post.comments.unshift(newComment);

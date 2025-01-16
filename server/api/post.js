@@ -8,7 +8,7 @@ WebApp.connectHandlers.use('/api/post', async (req, res) => {
   }
 
   try {
-    const post = await Posts.findOneAsync({ seo_url });
+    const post = await Posts.findOneAsync({ seoUrl: seo_url });
 
     if (!post) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -16,17 +16,17 @@ WebApp.connectHandlers.use('/api/post', async (req, res) => {
       return;
     }
 
-    const userMeta = await UserMeta.findOneAsync({ owner_userid: post.author_id });
+    const userMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
 
     const comments = await Comments.find({ postId: post._id }, { sort: { createdAt: -1 }, limit: 100 }).fetchAsync();
 
     const commentsWithUserMeta = await Promise.all(comments.map(async (comment) => {
-      const commentUserMeta = await UserMeta.findOneAsync({ owner_userid: comment.userId });
+      const commentUserMeta = await UserMeta.findOneAsync({ ownerUserId: comment.userId });
       return {
         ...comment,
         author: {
-          username: commentUserMeta?.username || 'Unknown User',
-          avatar_url: commentUserMeta?.avatar_url || null,
+          userName: commentUserMeta?.userName || 'Unknown User',
+          avatarUrl: commentUserMeta?.avatarUrl || null,
         },
       };
     }));
@@ -34,8 +34,8 @@ WebApp.connectHandlers.use('/api/post', async (req, res) => {
     const postWithAuthorAndComments = {
       ...post,
       author: {
-        username: userMeta?.username || 'Unknown User',
-        avatar_url: userMeta?.avatar_url || null,
+        userName: userMeta?.userName || 'Unknown User',
+        avatarUrl: userMeta?.avatarUrl || null,
       },
       comments: commentsWithUserMeta,
     };

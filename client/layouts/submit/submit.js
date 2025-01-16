@@ -45,7 +45,7 @@ Template.submit.events({
             Meteor.call('files.fetchMeta', fileId, (err, result) => {
               if (err) {
                 console.error('Error fetching file metadata:', err);
-                toastr.error('Error retrieving file details.');
+                // toastr.error('Error retrieving file details.');
               } else {
                 const imageUrl = result.data.url;
                 // Call the method once image upload is complete

@@ -19,13 +19,13 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
       // Fetch user metadata for each post
       posts = await Promise.all(
         posts.map(async (post) => {
-          const userMeta = await UserMeta.findOneAsync({ owner_userid: post.author_id });
+          const userMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
 
           return {
             ...post,
             author: {
-              username: userMeta?.username || 'Unknown User',
-              avatar_url: userMeta?.avatar_url || null,
+              userName: userMeta?.userName || 'Unknown User',
+              avatarUrl: userMeta?.avatarUrl || null,
             },
           };
         })
@@ -48,10 +48,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         image: cdn + '/uploads/disk1/economic-charter-rect.jpg',
         createdAt: Date.now(), // Current timestamp
         author: {
-          username: 'economiccharter',
-          avatar_url: cdn + '/uploads/disk1/economic-charter-avatar.jpg',
-          name_first: null,
-          name_last: null,
+          userName: 'economiccharter',
+          avatarUrl: cdn + '/uploads/disk1/economic-charter-avatar.jpg',
+          firstName: null,
+          lastName: null,
         },
         ad: true,
         url: "https://economiccharter.ca",
@@ -64,10 +64,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         image: cdn + '/uploads/disk1/guhaway-rect.jpg',
         createdAt: Date.now(),
         author: {
-          username: 'guhaway',
-          avatar_url: cdn + '/uploads/disk1/guhaway-avatar.jpg',
-          name_first: null,
-          name_last: null,
+          userName: 'guhaway',
+          avatarUrl: cdn + '/uploads/disk1/guhaway-avatar.jpg',
+          firstName: null,
+          lastName: null,
         },
         ad: true,
         url: "https://www.guhahway.com/",
@@ -80,10 +80,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         image: cdn + '/uploads/disk1/elby-rect.jpg',
         createdAt: Date.now(),
         author: {
-          username: 'elbybikes',
-          avatar_url: cdn + '/uploads/disk1/elby-bikes-avatar.jpg',
-          name_first: null,
-          name_last: null,
+          userName: 'elbybikes',
+          avatarUrl: cdn + '/uploads/disk1/elby-bikes-avatar.jpg',
+          firstName: null,
+          lastName: null,
         },
         ad: true,
         url: "https://elbymobility.com/",
@@ -96,10 +96,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         image: cdn + '/uploads/disk1/sarit-rect.jpg',
         createdAt: Date.now(),
         author: {
-          username: 'saritmobility',
-          avatar_url: cdn + '/uploads/disk1/sarit-mobility-avatar.jpg',
-          name_first: null,
-          name_last: null,
+          userName: 'saritmobility',
+          avatarUrl: cdn + '/uploads/disk1/sarit-mobility-avatar.jpg',
+          firstName: null,
+          lastName: null,
         },
         ad: true,
         url: "https://saritmobility.com",
@@ -112,10 +112,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         image: cdn + '/uploads/disk1/organic-garden-rect.jpg',
         createdAt: Date.now(),
         author: {
-          username: 'organicgarden',
-          avatar_url: cdn + '/uploads/disk1/organic-garden-avatar.jpg',
-          name_first: null,
-          name_last: null,
+          userName: 'organicgarden',
+          avatarUrl: cdn + '/uploads/disk1/organic-garden-avatar.jpg',
+          firstName: null,
+          lastName: null,
         },
         ad: true,
         url: "https://franksorganicgarden.com",
@@ -128,10 +128,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         image: cdn + '/uploads/disk1/academy-rect.jpg',
         createdAt: Date.now(),
         author: {
-          username: 'stronachacademy',
-          avatar_url: cdn + '/uploads/disk1/academy-avatar.jpg',
-          name_first: null,
-          name_last: null,
+          userName: 'stronachacademy',
+          avatarUrl: cdn + '/uploads/disk1/academy-avatar.jpg',
+          firstName: null,
+          lastName: null,
         },
         ad: true,
         url: "https://stronachinternational.com",

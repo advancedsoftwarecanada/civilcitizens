@@ -148,7 +148,7 @@ function renderEverywhere(){
                     Meteor.call('files.fetchMeta', fileId, (err, result) => {
                         if (err) {
                             console.error('Error fetching file metadata:', err);
-                            toastr.error('Error retrieving file details.');
+                            // toastr.error('Error retrieving file details.');
                         } else {
                             console.log('Fetched file metadata:', result);
 
@@ -238,13 +238,13 @@ Template.registerHelper("isLoggedIn", function () {
 
 // Get my user information from usermeta
 Template.registerHelper("myUserMeta", function () {
-    const userMeta = UserMeta.findOne({ owner_userid: Meteor.userId() });
+    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
     if (Meteor.userId() && userMeta) {
         return {
-            name_first: userMeta.name_first?.toLowerCase() || '',
-            name_last: userMeta.name_last?.toLowerCase() || '',
-            username: userMeta.username?.toLowerCase() || '',
-            avatar_url: userMeta.avatar_url || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
+            firstName: userMeta.firstName?.toLowerCase() || '',
+            lastName: userMeta.lastName?.toLowerCase() || '',
+            userName: userMeta.userName || '',
+            avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
         };
     }
     return null;

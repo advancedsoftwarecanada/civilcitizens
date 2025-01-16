@@ -41,8 +41,8 @@ if (Meteor.isServer) {
 
             // Update the user's avatar URL in their `UserMeta` document
             const updateResult = UserMeta.updateAsync(
-                { owner_userid: userId },
-                { $set: { avatar_url: url } }
+                { ownerUserId: userId },
+                { $set: { avatarUrl: url } }
             );
 
             if (updateResult === 0) {

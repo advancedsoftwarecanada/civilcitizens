@@ -9,14 +9,14 @@
                 <div class="avatar-item d-flex gap-3 align-items-center">
                   <div class="avatar position-relative">
                     {{#if isAd this}}
-                      <img class="avatar-img avatar-size" src="{{this.author.avatar_url}}" alt="avatar">
+                      <img class="avatar-img avatar-size" src="{{this.author.avatarUrl}}" alt="avatar">
                     {{else}}
-                      <img class="avatar-img avatar-size" src="{{this.author.avatar_url}}" alt="avatar">
+                      <img class="avatar-img avatar-size" src="{{this.author.avatarUrl}}" alt="avatar">
                     {{/if}}
                   </div>
                   <div class="info-area">
                     <h6 class="m-0" style="text-transform: lowercase;">
-                      @{{this.author.username}}
+                      @{{this.author.userName}}
                     </h6>
                     <span class="mdtxt status">Bay of Quinte</span>
                     {{#if isAd this}}
@@ -35,7 +35,7 @@
                 {{/if}}
 
               </div>
-              <a class="hover-pointer" href="/post/{{seo_url}}">
+              <a class="hover-pointer" href="/post/{{seoUrl}}">
                 <div class="py-4 post-content">
                   <h2 class="mdtxt">{{title}}</h2>
                   <p class="description">{{{body}}}</p>
@@ -77,20 +77,20 @@
 
               <!-- Action Buttons -->
               <div class="action-buttons d-flex align-items-center gap-3">
-                <a href="/post/{{seo_url}}">
+                <a href="/post/{{seoUrl}}">
                   <button class="comment-btn">
                   <i class="material-symbols-outlined mat-icon">chat</i>
-                  0
+                  {{comment_count}}
                 </button>
               </a>
-                <button class="bookmark-btn">
+                <!-- <button class="bookmark-btn">
                   <i class="material-symbols-outlined mat-icon">bookmark</i>
                   0
                 </button>
                 <button class="share-btn">
                   <i class="material-symbols-outlined mat-icon">share</i>
                   0
-                </button>
+                </button> -->
               </div>
             </div>
 

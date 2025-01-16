@@ -19,16 +19,16 @@ Template.profile.events({
     'submit form'(event) {
         event.preventDefault();
 
-        const myUserMeta = UserMeta.findOne({ owner_userid: Meteor.userId() });
+        const myUserMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
 
         const target = event.target;
-        const name_first = target.name_first.value;
-        const name_last = target.name_last.value;
-        const username = target.username.value.toLowerCase();
-        const currentUsername = myUserMeta.username;
+        const firstName = target.firstName.value;
+        const lastName = target.lastName.value;
+        const userName = target.userName.value;
+        const currentuserName = myUserMeta.userName;
 
-        if (username === currentUsername) {
-            Meteor.call('accounts.updateUserProfile', { name_first, name_last, username }, (error, result) => {
+        if (userName === currentuserName) {
+            Meteor.call('accounts.updateUserProfile', { firstName, lastName, userName }, (error, result) => {
                 if (error) {
                     console.error('Error updating profile:', error);
                     toastr.error('An error occurred while updating the profile.', 'Error');
@@ -38,14 +38,14 @@ Template.profile.events({
                 }
             });
         } else {
-            Meteor.call('accounts.isHandleTaken', username, (error, result) => {
+            Meteor.call('accounts.isHandleTaken', userName, (error, result) => {
                 if (error) {
-                    console.error('Error checking username:', error);
-                    toastr.error('An error occurred while checking the username.', 'Error');
+                    console.error('Error checking userName:', error);
+                    toastr.error('An error occurred while checking the userName.', 'Error');
                 } else if (result.status === 'error') {
                     toastr.error(result.message, 'Error');
                 } else {
-                    Meteor.call('accounts.updateUserProfile', { name_first, name_last, username }, (error, result) => {
+                    Meteor.call('accounts.updateUserProfile', { firstName, lastName, userName }, (error, result) => {
                         if (error) {
                             console.error('Error updating profile:', error);
                             toastr.error('An error occurred while updating the profile.', 'Error');
@@ -58,7 +58,7 @@ Template.profile.events({
             });
         }
     },
-    'input #username'(event) {
-        event.target.value = event.target.value.toLowerCase();
+    'input #userName'(event) {
+        event.target.value = event.target.value;
     }
 });

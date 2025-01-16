@@ -29,15 +29,22 @@ if (Meteor.isServer) {
         throw new Meteor.Error('not-authorized', 'You must be logged in to submit a post.');
       }
 
+      // Create an SEO friendly url that is no longer than 30 characters and has a timestamp to ensure uniqueness
+      const seoUrl = `${title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+
       try {
         const postId = await Posts.insertAsync({
           title,
           body,
           chamber,
           image: image || null,
-          author_id: this.userId,
-          votecount: 0,
+          authorId: this.userId,
+          voteCount: 0,
+          commentCount: 0,
+          bookmarkCount: 0,
+          shareCount: 0,
           createdAt: new Date().getTime(),
+          seoUrl: seoUrl,
         });
 
         console.log('Post submitted successfully:', postId);
