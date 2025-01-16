@@ -39,5 +39,52 @@ Template.post.helpers({
   },
   isAd(post) {
     return post.ad === true;
+  },
+  comments() {
+    const post = Template.instance().post.get();
+    return post ? post.comments : [];
+  }
+});
+
+Template.post.events({
+  'submit .comment-form'(event, instance) {
+    event.preventDefault();
+
+    const commentInput = event.target.comment;
+    const comment = commentInput.value.trim();
+    const postId = instance.post.get()?._id;
+    const userId = Meteor.userId();
+    const userMeta = UserMeta.findOne({ owner_userid: userId });
+
+    if (!comment) {
+      toastr.error('Comment cannot be empty.', 'Validation Error');
+      return;
+    }
+
+    HTTP.post(Meteor.settings.public.ROOT_URL + '/api/comments', {
+      data: { postId, userId, comment }
+    }, (error, response) => {
+      if (error) {
+        console.error('Error submitting comment:', error);
+        toastr.error('Error submitting comment.', 'Submit Error');
+      } else {
+        toastr.success('Comment submitted successfully.', 'Success');
+        commentInput.value = ''; // Clear the input field
+        // Add the new comment to the local state
+        const post = instance.post.get();
+        const newComment = {
+          postId,
+          userId,
+          comment,
+          createdAt: new Date(),
+          author: {
+            username: userMeta.username,
+            avatar_url: userMeta.avatar_url,
+          },
+        };
+        post.comments.unshift(newComment);
+        instance.post.set(post);
+      }
+    });
   }
 });

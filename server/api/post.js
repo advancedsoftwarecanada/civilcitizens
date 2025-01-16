@@ -1,5 +1,4 @@
 WebApp.connectHandlers.use('/api/post', async (req, res) => {
-
   const { seo_url } = req.query;
 
   if (!seo_url) {
@@ -19,16 +18,30 @@ WebApp.connectHandlers.use('/api/post', async (req, res) => {
 
     const userMeta = await UserMeta.findOneAsync({ owner_userid: post.author_id });
 
-    const postWithAuthor = {
+    const comments = await Comments.find({ postId: post._id }, { sort: { createdAt: -1 }, limit: 100 }).fetchAsync();
+
+    const commentsWithUserMeta = await Promise.all(comments.map(async (comment) => {
+      const commentUserMeta = await UserMeta.findOneAsync({ owner_userid: comment.userId });
+      return {
+        ...comment,
+        author: {
+          username: commentUserMeta?.username || 'Unknown User',
+          avatar_url: commentUserMeta?.avatar_url || null,
+        },
+      };
+    }));
+
+    const postWithAuthorAndComments = {
       ...post,
       author: {
         username: userMeta?.username || 'Unknown User',
         avatar_url: userMeta?.avatar_url || null,
       },
+      comments: commentsWithUserMeta,
     };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(postWithAuthor));
+    res.end(JSON.stringify(postWithAuthorAndComments));
   } catch (error) {
     console.error('Error fetching post:', error);
     res.writeHead(500, { 'Content-Type': 'application/json' });
