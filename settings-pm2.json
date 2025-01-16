@@ -1,0 +1,39 @@
+{
+    "description":"This is used for pm2 on production servers",
+    "apps": [
+      {
+        "name": "civilcitizens",
+        "script": "./bundle/main.js",
+        "log_date_format": "YYYY-MM-DD HH:mm:ss",
+        "exec_mode": "fork_mode",
+        "instances": 1,
+        "env": {
+          "PORT": 3000,
+          "MONGO_URL": "mongodb://meteor:PEGASUS2025STRONACH92ANDYNORMOREAPPAPPAPPAPPAPP@localhost:27017/meteor",
+          "ROOT_URL": "https://civilcitizens.ca",
+          "METEOR_SETTINGS": {
+            "public": {
+              "ROOT_URL": "https://civilcitizens.ca",
+              "useWebsockets": true,
+              "domain": "https://civilcitizens.ca/",
+              "cdnPath": "https://cdn.civilcitizens.ca/",
+              "filesPath": "/mnt/azure_disk/civil",
+              "environment": "production",
+              "twilio_public": "AC0ab4f3b35e0487479833a1774dc4c3e5",
+              "stripe_public": "pk_test_51Oe4RXBhPmBUylir1McKsm6U2ic3iU2doQ0T8jBQUOfpoMcf51nVXeowOLDv9RlFa6g5R6FdP8zsOysEPz08W9Cp00taLvgk8A",
+              "stripe_product_id": "prod_QnQdrPZlNrMEb5",
+              "stripe_professional": "price_1PvpmCBhPmBUylirkmTozMFn",
+              "stripe_agency": "price_1Pvpn1BhPmBUylirrFmx7H4e",
+              "stripe_white_label": "price_1PvpnNBhPmBUylirQF14TmuP",
+              "stripe_email_address": "price_1PvpnlBhPmBUylirTXDeMY1z",
+              "stripe_sms_number": "price_1Pvpo2BhPmBUylirWxjdeJWw",
+              "stripe_useage_email": "price_1PvppxBhPmBUylirfszvoecn",
+              "stripe_useage_sms": "price_1PvpqGBhPmBUylirpnvTnyHZ",
+              "stripe_addon_domain": "price_1PvsEEBhPmBUylircoJ2Q2P8",
+            },
+            "HOSTNAME": "civilcitizens"
+          }
+        }
+      }
+    ]
+  }

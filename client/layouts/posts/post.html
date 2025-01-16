@@ -20,43 +20,7 @@
                 </div>
               </div>
               {{#unless isAd this}}
-                <div class="btn-group cus-dropdown">
-                  <button type="button" class="dropdown-btn" data-bs-toggle="dropdown" aria-expanded="false">
-                    <i class="material-symbols-outlined fs-xxl m-0">more_horiz</i>
-                  </button>
-                  <ul class="dropdown-menu p-4 pt-2">
-                    <li>
-                      <a class="droplist d-flex align-items-center gap-2" href="#">
-                        <i class="material-symbols-outlined mat-icon">bookmark_add</i>
-                        <span>Saved Post</span>
-                      </a>
-                    </li>
-                    <li>
-                      <a class="droplist d-flex align-items-center gap-2" href="#">
-                        <i class="material-symbols-outlined mat-icon">person_remove</i>
-                        <span>Unfollow</span>
-                      </a>
-                    </li>
-                    <li>
-                      <a class="droplist d-flex align-items-center gap-2" href="#">
-                        <i class="material-symbols-outlined mat-icon">hide_source</i>
-                        <span>Hide Post</span>
-                      </a>
-                    </li>
-                    <li>
-                      <a class="droplist d-flex align-items-center gap-2" href="#">
-                        <i class="material-symbols-outlined mat-icon">lock</i>
-                        <span>Block</span>
-                      </a>
-                    </li>
-                    <li>
-                      <a class="droplist d-flex align-items-center gap-2" href="#">
-                        <i class="material-symbols-outlined mat-icon">flag</i>
-                        <span>Report Post</span>
-                      </a>
-                    </li>
-                  </ul>
-                </div>
+
               {{/unless}}
             </div>
             <div class="py-4 post-content">
@@ -75,37 +39,46 @@
             {{/if}}
           </div>
           {{#unless isAd this}}
-            <div class="like-comment-share py-5 flex-wrap">
-              <!-- Upvote/Downvote Section -->
-              <div class="vote-section d-flex align-items-center gap-2">
-                <button class="upvote-btn">
-                  <i class="material-symbols-outlined mat-icon">thumb_up</i>
-                </button>
-                <span class="score">212</span>
-                <button class="downvote-btn">
-                  <i class="material-symbols-outlined mat-icon">thumb_down</i>
-                </button>
-              </div>
-              <!-- Action Buttons -->
-              <div class="action-buttons d-flex align-items-center gap-3">
-                <a href="/post/{{seo_url}}">
-                  <button class="comment-btn">
-                    <i class="material-symbols-outlined mat-icon">chat</i>
-                    212 Comments
-                  </button>
-                </a>
-                <button class="bookmark-btn">
-                  <i class="material-symbols-outlined mat-icon">bookmark</i>
-                  8 Bookmarks
-                </button>
-                <button class="share-btn">
-                  <i class="material-symbols-outlined mat-icon">share</i>
-                  13 Shares
-                </button>
-              </div>
-            </div>
           {{/unless}}
+
+          <form action="#">
+            <div class="d-flex mt-5 gap-3">
+                <div class="profile-box d-none d-xxl-block">
+                  <img class="avatar-img avatar-size" src="{{this.author.avatar_url}}" alt="avatar">
+                </div>
+                <div class="form-content input-area py-1 d-flex gap-2 align-items-center w-100">
+                    <input placeholder="Write a comment..">
+                </div>
+                <div class="btn-area d-flex">
+                    <button class="cmn-btn px-2 px-sm-5 px-lg-6">
+                        <i class="material-symbols-outlined mat-icon m-0 fs-xxl"> near_me </i>
+                    </button>
+                </div>
+            </div>
+        </form>
+
+          <div class="comments-area mt-5">
+            <div class="single-comment-area">
+                <div class="parent-comment d-flex gap-2 gap-sm-4">
+                    <div class="avatar-item d-center align-items-baseline">
+                      <img class="avatar-img avatar-size" src="{{this.author.avatar_url}}" alt="avatar">
+                    </div>
+                    <div class="info-item">
+                        <div class="top-area px-4 py-3 d-flex gap-3 align-items-start justify-content-between">
+                            <div class="title-area">
+                                <h6 class="m-0 mb-3"><a href="public-profile-post.html">Lori Cortez</a></h6>
+                                <p class="mdtxt">The only way to solve the problem is to code for the hardware directly</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
+
+        </div>
+
+
+
       </div>
     {{/with}}
   </div>

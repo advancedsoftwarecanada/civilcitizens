@@ -1,3 +1,5 @@
+import userManager from "../../userManager.js";
+
 Template.timeline.onCreated(function () {
   this.posts = new ReactiveVar([]);
 
@@ -11,10 +13,10 @@ Template.timeline.onCreated(function () {
       }
     });
   });
+
 });
 
 Template.timeline.onRendered(function () {
-
   this.autorun(() => {
     this.posts.get(); // Re-run when posts change
     Meteor.defer(() => {
@@ -33,5 +35,23 @@ Template.timeline.helpers({
   },
   isAd(post) {
     return post.ad === true;
-  }
+  },
+
+});
+
+Template.timeline.events({
+  // 'click .upvote-btn': async function () {
+  //   const postId = this._id;
+  //   const success = await userManager.vote(postId, 'upvote');
+  //   if (success) {
+  //     console.log(`Successfully upvoted post ${postId}`);
+  //   }
+  // },
+  // 'click .downvote-btn': async function () {
+  //   const postId = this._id;
+  //   const success = await userManager.vote(postId, 'downvote');
+  //   if (success) {
+  //     console.log(`Successfully downvoted post ${postId}`);
+  //   }
+  // },
 });

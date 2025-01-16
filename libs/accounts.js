@@ -98,9 +98,9 @@ if (Meteor.isServer) {
     */
     Accounts.onCreateUser(async function (options, user) {
         try {
-            console.log('New account creation process started!');
-            console.log('User:', user);
-            console.log('Options:', options);
+            // console.log('New account creation process started!');
+            // console.log('User:', user);
+            // console.log('Options:', options);
 
             const email = options.email.toLowerCase();
             const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -141,10 +141,10 @@ if (Meteor.isServer) {
                     $set: {}, // Add fields to update if necessary
                 });
 
-                console.log('UserMeta successfully created:', userMetaId);
+                // console.log('UserMeta successfully created:', userMetaId);
             }
 
-            console.log('Account creation process completed!');
+            // console.log('Account creation process completed!');
             return user; // Return the user object
         } catch (error) {
             console.error('Error in onCreateUser:', error);
@@ -154,11 +154,11 @@ if (Meteor.isServer) {
 
     // Accounts on login attempt (server side console log)
     Accounts.onLogin(function (loginInfo) {
-        console.log('User logged in:', loginInfo.user);
+        // console.log('User logged in:', loginInfo.user);
     });
     // on ATTEMPT
     Accounts.onLoginFailure(function (loginInfo) {
-        console.log('User login attempt failed:', loginInfo);
+        // console.log('User login attempt failed:', loginInfo);
     });
 
 

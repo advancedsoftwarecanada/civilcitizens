@@ -36,6 +36,7 @@ if (Meteor.isServer) {
           chamber,
           image: image || null,
           author_id: this.userId,
+          votecount: 0,
           createdAt: new Date().getTime(),
         });
 
@@ -93,6 +94,71 @@ if (Meteor.isServer) {
         throw new Meteor.Error('internal-server-error', 'An error occurred while deleting the post.');
       }
     },
+
+    'posts.vote': async function ({ userId, postId, vote }) {
+      check(userId, String);
+      check(postId, String);
+      check(vote, String);
+
+      if (!userId) {
+        throw new Meteor.Error('not-authorized', 'You must be logged in to vote.');
+      }
+
+      if (!['upvote', 'downvote'].includes(vote)) {
+        throw new Meteor.Error('invalid-vote', 'Vote must be either "up" or "down".');
+      }
+
+      try {
+        const existingVote = await Votes.findOneAsync({ user_id: userId, post_id: postId });
+
+        if (existingVote) {
+          if (existingVote.vote === vote) {
+            // User is removing their vote
+            await Votes.removeAsync({ _id: existingVote._id });
+
+            // Decrease vote count for the current vote type
+            if (vote === 'upvote') {
+              await Posts.updateAsync({ _id: postId }, { $inc: { voteCount: -1 } });
+            } else {
+              await Posts.updateAsync({ _id: postId }, { $inc: { voteCount: 1 } });
+            }
+          } else {
+            // User is switching their vote
+            await Votes.updateAsync({ _id: existingVote._id }, { $set: { vote } });
+
+            // Adjust the vote count: remove the old vote and add the new vote
+            if (vote === 'upvote') {
+              await Posts.updateAsync({ _id: postId }, { $inc: { voteCount: 2 } }); // Remove downvote and add upvote
+            } else {
+              await Posts.updateAsync({ _id: postId }, { $inc: { voteCount: -2 } }); // Remove upvote and add downvote
+            }
+          }
+        } else {
+          // User is casting a new vote
+          await Votes.insertAsync({
+            user_id: userId,
+            post_id: postId,
+            vote,
+            timestamp: Date.now(),
+          });
+
+          // Increase or decrease the vote count based on the vote type
+          if (vote === 'upvote') {
+            await Posts.updateAsync({ _id: postId }, { $inc: { voteCount: 1 } });
+          } else {
+            await Posts.updateAsync({ _id: postId }, { $inc: { voteCount: -1 } });
+          }
+        }
+
+        return { status: 'success', message: 'Vote recorded successfully.' };
+      } catch (error) {
+        console.error('Error recording vote:', error);
+        throw new Meteor.Error('internal-server-error', 'An error occurred while recording the vote.');
+      }
+    },
+
+
+
   });
 
   // Server-side startup logging

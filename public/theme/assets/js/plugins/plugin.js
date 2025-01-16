@@ -4,124 +4,124 @@ $(function ($) {
   jQuery(document).ready(function () {
 
     /* niceSelect */
-    $("select").niceSelect();
+    // $("select").niceSelect();
 
     /* Magnific Popup video */
-    if (document.querySelector('.popupvideo') !== null) {
-      $('.popupvideo').magnificPopup({
-        disableOn: 300,
-        type: 'iframe',
-        mainClass: 'mfp-fade',
-        removalDelay: 160,
-        preloader: false,
-        fixedContentPos: false,
-      });
-    }
+    // if (document.querySelector('.popupvideo') !== null) {
+    //   $('.popupvideo').magnificPopup({
+    //     disableOn: 300,
+    //     type: 'iframe',
+    //     mainClass: 'mfp-fade',
+    //     removalDelay: 160,
+    //     preloader: false,
+    //     fixedContentPos: false,
+    //   });
+    // }
 
     // story-carousel
-    $(".story-carousel").not('.slick-initialized').slick({
-      infinite: false,
-      autoplay: false,
-      centerMode: false,
-      centerPadding: "0px 50px",
-      focusOnSelect: false,
-      speed: 500,
-      slidesToShow: 4,
-      slidesToScroll: 1,
-      arrows: true,
-      prevArrow: "<button type='button' class='arafat-prev cmn-btn pull-left'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
-      nextArrow: "<button type='button' class='arafat-next cmn-btn pull-right'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
-      dots: false,
-      dotsClass: 'section-dots',
-      customPaging: function (slider, i) {
-        var slideNumber = (i + 1),
-          totalSlides = slider.slideCount;
-        return '<a class="dot" role="button" title="' + slideNumber + ' of ' + totalSlides + '"><span class="string">' + slideNumber + '/' + totalSlides + '</span></a>';
-      },
-      responsive: [
-        {
-          breakpoint: 1400,
-          settings: {
-            slidesToShow: 4,
-          }
-        },
-        {
-          breakpoint: 992,
-          settings: {
-            slidesToShow: 5,
-          }
-        },
-        {
-          breakpoint: 768,
-          settings: {
-            slidesToShow: 4,
-            arrows: false,
-          }
-        },
-        {
-          breakpoint: 576,
-          settings: {
-            slidesToShow: 3,
-            arrows: false,
-          }
-        },
-        {
-          breakpoint: 480,
-          settings: {
-            slidesToShow: 2,
-            arrows: false,
-          }
-        },
-      ]
-    });
+    // $(".story-carousel").not('.slick-initialized').slick({
+    //   infinite: false,
+    //   autoplay: false,
+    //   centerMode: false,
+    //   centerPadding: "0px 50px",
+    //   focusOnSelect: false,
+    //   speed: 500,
+    //   slidesToShow: 4,
+    //   slidesToScroll: 1,
+    //   arrows: true,
+    //   prevArrow: "<button type='button' class='arafat-prev cmn-btn pull-left'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
+    //   nextArrow: "<button type='button' class='arafat-next cmn-btn pull-right'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
+    //   dots: false,
+    //   dotsClass: 'section-dots',
+    //   customPaging: function (slider, i) {
+    //     var slideNumber = (i + 1),
+    //       totalSlides = slider.slideCount;
+    //     return '<a class="dot" role="button" title="' + slideNumber + ' of ' + totalSlides + '"><span class="string">' + slideNumber + '/' + totalSlides + '</span></a>';
+    //   },
+    //   responsive: [
+    //     {
+    //       breakpoint: 1400,
+    //       settings: {
+    //         slidesToShow: 4,
+    //       }
+    //     },
+    //     {
+    //       breakpoint: 992,
+    //       settings: {
+    //         slidesToShow: 5,
+    //       }
+    //     },
+    //     {
+    //       breakpoint: 768,
+    //       settings: {
+    //         slidesToShow: 4,
+    //         arrows: false,
+    //       }
+    //     },
+    //     {
+    //       breakpoint: 576,
+    //       settings: {
+    //         slidesToShow: 3,
+    //         arrows: false,
+    //       }
+    //     },
+    //     {
+    //       breakpoint: 480,
+    //       settings: {
+    //         slidesToShow: 2,
+    //         arrows: false,
+    //       }
+    //     },
+    //   ]
+    // });
 
-    // shop-carousel
-    $(".slider-for").not('.slick-initialized').slick({
-      infinite: false,
-      autoplay: false,
-      centerMode: false,
-      centerPadding: "0px 50px",
-      focusOnSelect: false,
-      slidesToShow: 1,
-      slidesToScroll: 1,
-      arrows: false,
-      fade: true,
-      asNavFor: '.slider-nav',
-      arrows: false,
-      prevArrow: "<button type='button' class='arafat-prev cmn-btn pull-left'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
-      nextArrow: "<button type='button' class='arafat-next cmn-btn pull-right'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
-      dots: false,
-      dotsClass: 'section-dots',
-      customPaging: function (slider, i) {
-        var slideNumber = (i + 1),
-          totalSlides = slider.slideCount;
-        return '<a class="dot" role="button" title="' + slideNumber + ' of ' + totalSlides + '"><span class="string">' + slideNumber + '/' + totalSlides + '</span></a>';
-      },
-    });
-    $(".slider-nav").not('.slick-initialized').slick({
-      slidesToShow: 3,
-      slidesToScroll: 1,
-      asNavFor: '.slider-for',
-      dots: false,
-      centerMode: true,
-      focusOnSelect: true,
-      responsive: [
-        {
-          breakpoint: 576,
-          settings: {
-            slidesToShow: 3,
-            arrows: false,
-          }
-        },
-        {
-          breakpoint: 480,
-          settings: {
-            slidesToShow: 2,
-            arrows: false,
-          }
-        },
-      ]
-    });
+    // // shop-carousel
+    // $(".slider-for").not('.slick-initialized').slick({
+    //   infinite: false,
+    //   autoplay: false,
+    //   centerMode: false,
+    //   centerPadding: "0px 50px",
+    //   focusOnSelect: false,
+    //   slidesToShow: 1,
+    //   slidesToScroll: 1,
+    //   arrows: false,
+    //   fade: true,
+    //   asNavFor: '.slider-nav',
+    //   arrows: false,
+    //   prevArrow: "<button type='button' class='arafat-prev cmn-btn pull-left'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
+    //   nextArrow: "<button type='button' class='arafat-next cmn-btn pull-right'><i class=\"material-symbols-outlined mat-icon\"  aria-hidden='true'>chevron_left</i></button>",
+    //   dots: false,
+    //   dotsClass: 'section-dots',
+    //   customPaging: function (slider, i) {
+    //     var slideNumber = (i + 1),
+    //       totalSlides = slider.slideCount;
+    //     return '<a class="dot" role="button" title="' + slideNumber + ' of ' + totalSlides + '"><span class="string">' + slideNumber + '/' + totalSlides + '</span></a>';
+    //   },
+    // });
+    // $(".slider-nav").not('.slick-initialized').slick({
+    //   slidesToShow: 3,
+    //   slidesToScroll: 1,
+    //   asNavFor: '.slider-for',
+    //   dots: false,
+    //   centerMode: true,
+    //   focusOnSelect: true,
+    //   responsive: [
+    //     {
+    //       breakpoint: 576,
+    //       settings: {
+    //         slidesToShow: 3,
+    //         arrows: false,
+    //       }
+    //     },
+    //     {
+    //       breakpoint: 480,
+    //       settings: {
+    //         slidesToShow: 2,
+    //         arrows: false,
+    //       }
+    //     },
+    //   ]
+    // });
 
     // Video Player
     if (document.querySelector('.player') !== null) {
@@ -136,7 +136,7 @@ $(function ($) {
       ];
       const player = Plyr.setup('.player', { controls });
     }
-    
+
     // Post Apex charts
     if (document.querySelector('#postChart') !== null) {
       var options = {
@@ -353,7 +353,7 @@ $(function ($) {
       var chart = new ApexCharts(document.querySelector("#postContentTwo"), options);
       chart.render();
     }
-    
+
     // post Content Apex Charts
     if (document.querySelector('#postContentThree') !== null) {
         var options = {
@@ -460,7 +460,7 @@ $(function ($) {
     }
 
     /* Wow js */
-    new WOW().init();
+    // new WOW().init();
 
   });
 });

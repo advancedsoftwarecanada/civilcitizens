@@ -2,7 +2,7 @@
 
     <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z">
       {{#each posts}}
-        <div class="post-item d-flex flex-column gap-5 gap-md-7" id="news-feed">
+        <div class="post-item d-flex flex-column gap-5 gap-md-7" id="news-feed" data-post-id="{{_id}}">
           <div class="post-single-box p-3 p-sm-5">
             <div class="top-area pb-5">
               <div class="profile-area d-center justify-content-between">
@@ -31,45 +31,7 @@
 
                 {{else}}
 
-                  <!-- OPTIONS
-                  <div class="btn-group cus-dropdown">
-                    <button type="button" class="dropdown-btn" data-bs-toggle="dropdown" aria-expanded="false">
-                      <i class="material-symbols-outlined fs-xxl m-0">more_horiz</i>
-                    </button>
-                    <ul class="dropdown-menu p-4 pt-2">
-                      <li>
-                        <a class="droplist d-flex align-items-center gap-2" href="#">
-                          <i class="material-symbols-outlined mat-icon">bookmark_add</i>
-                          <span>Saved Post</span>
-                        </a>
-                      </li>
-                      <li>
-                        <a class="droplist d-flex align-items-center gap-2" href="#">
-                          <i class="material-symbols-outlined mat-icon">person_remove</i>
-                          <span>Unfollow</span>
-                        </a>
-                      </li>
-                      <li>
-                        <a class="droplist d-flex align-items-center gap-2" href="#">
-                          <i class="material-symbols-outlined mat-icon">hide_source</i>
-                          <span>Hide Post</span>
-                        </a>
-                      </li>
-                      <li>
-                        <a class="droplist d-flex align-items-center gap-2" href="#">
-                          <i class="material-symbols-outlined mat-icon">lock</i>
-                          <span>Block</span>
-                        </a>
-                      </li>
-                      <li>
-                        <a class="droplist d-flex align-items-center gap-2" href="#">
-                          <i class="material-symbols-outlined mat-icon">flag</i>
-                          <span>Report Post</span>
-                        </a>
-                      </li>
-                    </ul>
-                  </div>
-                  -->
+                  <!-- OPTIONS -->
                 {{/if}}
 
               </div>
@@ -107,7 +69,7 @@
                 <button class="upvote-btn">
                   <i class="material-symbols-outlined mat-icon">thumb_up</i>
                 </button>
-                <span class="score">212</span>
+                <span class="score">{{voteCount}}</span>
                 <button class="downvote-btn">
                   <i class="material-symbols-outlined mat-icon">thumb_down</i>
                 </button>
@@ -118,16 +80,16 @@
                 <a href="/post/{{seo_url}}">
                   <button class="comment-btn">
                   <i class="material-symbols-outlined mat-icon">chat</i>
-                  212 Comments
+                  0
                 </button>
               </a>
                 <button class="bookmark-btn">
                   <i class="material-symbols-outlined mat-icon">bookmark</i>
-                  8 Bookmarks
+                  0
                 </button>
                 <button class="share-btn">
                   <i class="material-symbols-outlined mat-icon">share</i>
-                  13 Shares
+                  0
                 </button>
               </div>
             </div>

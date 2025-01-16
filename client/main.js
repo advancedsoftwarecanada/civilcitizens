@@ -1,8 +1,15 @@
+import userManager from './userManager.js';
+
 /*
  * Client Startup
     * This is the main entry point for the client
 */
-Meteor.startup(() => {
+Meteor.startup(async () => {
+
+    console.log("==================================");
+    console.log("CivilCitizens Client Connected");
+    console.log("----------------------------------");
+
     // Create a reactive variable for subscription readiness
     const userMetaSub = Meteor.subscribe('accounts.myUserMeta');
 
@@ -13,6 +20,14 @@ Meteor.startup(() => {
             console.log('Waiting for UserMeta subscription...');
         }
     });
+
+
+    // User Manager// Create a singleton instance of UserManager
+    console.log("User Manager: ", userManager);
+    await userManager.fetchUserData();
+    window.userManager = userManager;
+
+
 });
 
 
@@ -169,39 +184,40 @@ function renderEverywhere(){
 	});
 
 
+    // CORDOVA IN-APP-BROWSER
+    let cordovaOpenOverride = false;
+    let isOpening = false;
 
-// Prevent overriding multiple times
-let cordovaOpenOverride = false;
-let isOpening = false;
+    if (!cordovaOpenOverride) {
+        if (Meteor.isCordova) {
+            // Override window.open to use InAppBrowser for Cordova
+            window.open = (url) => {
+                if (isOpening) return;
+                isOpening = true;
+                console.log("CORDOVA TRY TO OPEN: " + url);
 
-if (!cordovaOpenOverride) {
-    if (Meteor.isCordova) {
-        // Override window.open to use InAppBrowser for Cordova
-        window.open = (url) => {
-            if (isOpening) return;
-            isOpening = true;
-            console.log("CORDOVA TRY TO OPEN: " + url);
+                // Check if Cordova is on iOS platform
+                if (Meteor.isCordova && cordova.platformId === 'ios') {
+                    console.log("CORDOVA ON IOS AND READY TO OPEN");
+                    // Open the URL using InAppBrowser
+                    cordova.InAppBrowser.open(url, '_system', { location: 'yes' });
+                } else {
+                    console.log("CORDOVA NOT ON IOS AND READY TO OPEN: " + url);
+                    // Open the URL in a new browser tab for non-iOS Cordova platforms
+                    window.open(url, '_blank');
+                }
 
-            // Check if Cordova is on iOS platform
-            if (Meteor.isCordova && cordova.platformId === 'ios') {
-                console.log("CORDOVA ON IOS AND READY TO OPEN");
-                // Open the URL using InAppBrowser
-                cordova.InAppBrowser.open(url, '_system', { location: 'yes' });
-            } else {
-                console.log("CORDOVA NOT ON IOS AND READY TO OPEN: " + url);
-                // Open the URL in a new browser tab for non-iOS Cordova platforms
-                window.open(url, '_blank');
-            }
-
-            // Reset opening flag after a short timeout to avoid multiple triggers
-            setTimeout(() => { isOpening = false; }, 1000);
-        };
-    } else {
-        // Not Cordova, handle normal behavior
-        console.log("IS NOT CORDOVA");
+                // Reset opening flag after a short timeout to avoid multiple triggers
+                setTimeout(() => { isOpening = false; }, 1000);
+            };
+        } else {
+            // Not Cordova, handle normal behavior
+            console.log("IS NOT CORDOVA");
+        }
+        cordovaOpenOverride = true;
     }
-    cordovaOpenOverride = true;
-}
+
+
 
 }
 

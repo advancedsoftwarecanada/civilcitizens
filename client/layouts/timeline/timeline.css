@@ -80,8 +80,18 @@
   color: #0056b3; /* Dark blue text */
 }
 
+.like-comment-share .upvote-btn.active,
+.like-comment-share .downvote-btn.active {
+  background-color: #007bff; /* Active background color */
+  color: #fff; /* Active text color */
+}
+
 .like-comment-share .score {
   font-size: 14px;
   font-weight: bold;
   color: #555;
+}
+
+.main-content .post-item .post-single-box .like-comment-share button.active i {
+  color: #ffffff !important;
 }
