@@ -9,400 +9,55 @@ FlowRouter.route('/chambers', {
 
 Template.chambers.onRendered(function () {
 
-    // Flat file DB
-    var chambers =
-    {
-        "Newfoundland and Labrador": [
-          "Avalon",
-          "Cape Spear",
-          "Central Newfoundland",
-          "Labrador",
-          "Long Range Mountains",
-          "St. John's East",
-          "Terra Nova—The Peninsulas"
-        ],
-        "Prince Edward Island": [
-          "Cardigan",
-          "Charlottetown",
-          "Egmont",
-          "Malpeque"
-        ],
-        "Nova Scotia": [
-          "Acadie—Annapolis",
-          "Cape Breton—Canso—Antigonish",
-          "Central Nova",
-          "Cumberland—Colchester",
-          "Dartmouth—Cole Harbour",
-          "Halifax",
-          "Halifax West",
-          "Kings—Hants",
-          "Sackville—Bedford—Preston",
-          "South Shore—St. Margarets",
-          "Sydney—Glace Bay"
-        ],
-        "New Brunswick": [
-          "Acadie—Bathurst",
-          "Beauséjour",
-          "Fredericton—Oromocto",
-          "Fundy Royal",
-          "Madawaska—Restigouche",
-          "Miramichi—Grand Lake",
-          "Moncton—Dieppe",
-          "Saint John—Kennebecasis",
-          "Saint John—St. Croix",
-          "Tobique—Mactaquac"
-        ],
-        "Quebec": [
-          "Abitibi—Baie-James—Nunavik—Eeyou",
-          "Abitibi—Témiscamingue",
-          "Ahuntsic-Cartierville",
-          "Alfred-Pellan",
-          "Argenteuil—La Petite-Nation",
-          "Beauce",
-          "Beauharnois—Salaberry—Soulanges—Huntingdon",
-          "Beauport—Limoilou",
-          "Bécancour—Nicolet—Saurel—Alnôbak",
-          "Bellechasse—Les Etchemins—Lévis",
-          "Beloeil—Chambly",
-          "Berthier—Maskinongé",
-          "Bourassa",
-          "Brome—Missisquoi",
-          "Brossard—Saint-Lambert",
-          "Charlesbourg—Haute-Saint-Charles",
-          "Châteauguay—Les Jardins-de-Napierville",
-          "Chicoutimi—Le Fjord",
-          "Compton—Stanstead",
-          "Côte-du-Sud—Rivière-du-Loup—Kataskomiq—Témiscouata",
-          "Côte-Nord—Kawawachikamach—Nitassinan",
-          "Dorval—Lachine—LaSalle",
-          "Drummond",
-          "Gaspésie—Les Îles-de-la-Madeleine—Listuguj",
-          "Gatineau",
-          "Hochelaga—Rosemont-Est",
-          "Honoré-Mercier",
-          "Hull—Aylmer",
-          "Joliette—Manawan",
-          "Jonquière",
-          "La Pointe-de-l'Île",
-          "La Prairie—Atateken",
-          "Lac-Saint-Jean",
-          "Lac-Saint-Louis",
-          "LaSalle—Émard—Verdun",
-          "Laurentides—Labelle",
-          "Laurier—Sainte-Marie",
-          "Laval—Les Îles",
-          "Les Pays-d'en-Haut",
-          "Lévis—Lotbinière",
-          "Longueuil—Charles-LeMoyne",
-          "Longueuil—Saint-Hubert",
-          "Louis-Hébert",
-          "Louis-Saint-Laurent—Akiawenhrahk",
-          "Marc-Aurèle-Fortin",
-          "Mégantic—L'Érable—Lotbinière",
-          "Mirabel",
-          "Mount Royal",
-          "Mont-Saint-Bruno—L'Acadie",
-          "Montcalm",
-          "Montmorency—Charlevoix",
-          "Notre-Dame-de-Grâce—Westmount",
-          "Outremont",
-          "Papineau",
-          "Pierre-Boucher—Les Patriotes—Verchères",
-          "Pierrefonds—Dollard",
-          "Pontiac—Kitigan Zibi",
-          "Portneuf—Jacques-Cartier",
-          "Québec Centre",
-          "Repentigny",
-          "Richmond—Arthabaska",
-          "Rimouski—La Matapédia",
-          "Rivière-des-Mille-Îles",
-          "Rivière-du-Nord",
-          "Rosemont—La Petite-Patrie",
-          "Saint-Hyacinthe—Bagot—Acton",
-          "Saint-Jean",
-          "Saint-Laurent",
-          "Saint-Léonard—Saint-Michel",
-          "Saint-Maurice—Champlain",
-          "Shefford",
-          "Sherbrooke",
-          "Terrebonne",
-          "Thérèse-De Blainville",
-          "Trois-Rivières",
-          "Vaudreuil",
-          "Ville-Marie—Le Sud-Ouest—Île-des-Sœurs",
-          "Vimy"
-        ],
-        "Ontario": [
-          "Ajax",
-          "Algonquin—Renfrew—Pembroke",
-          "Aurora—Oak Ridges—Richmond Hill",
-          "Barrie South—Innisfil",
-          "Barrie—Springwater—Oro-Medonte",
-          "Bay of Quinte",
-          "Beaches—East York",
-          "Bowmanville—Oshawa North",
-          "Brampton Centre",
-          "Brampton—Chinguacousy Park",
-          "Brampton East",
-          "Brampton North—Caledon",
-          "Brampton South",
-          "Brampton West",
-          "Brantford—Brant South—Six Nations",
-          "Bruce—Grey—Owen Sound",
-          "Burlington",
-          "Burlington North—Milton West",
-          "Cambridge",
-          "Carleton",
-          "Chatham-Kent—Leamington",
-          "Davenport",
-          "Don Valley North",
-          "Don Valley West",
-          "Dufferin—Caledon",
-          "Eglinton—Lawrence",
-          "Elgin—St. Thomas—London South",
-          "Essex",
-          "Etobicoke Centre",
-          "Etobicoke North",
-          "Etobicoke—Lakeshore",
-          "Flamborough—Glanbrook—Brant North",
-          "Glengarry—Prescott—Russell",
-          "Guelph",
-          "Haldimand—Norfolk",
-          "Haliburton—Kawartha Lakes",
-          "Halton",
-          "Hamilton Centre",
-          "Hamilton East—Stoney Creek",
-          "Hamilton Mountain",
-            "Hamilton West—Ancaster—Dundas",
-            "Huron—Bruce",
-            "Kanata—Carleton",
-            "Kenora",
-            "Kingston and the Islands",
-            "Kitchener Centre",
-            "Kitchener—Conestoga",
-            "Kitchener South—Hespeler",
-            "Lanark—Frontenac—Kingston",
-            "Leeds—Grenville—Thousand Islands and Rideau Lakes",
-            "London Centre",
-            "London North Centre",
-            "London West",
-            "Markham—Stouffville",
-            "Markham—Thornhill",
-            "Markham—Unionville",
-            "Milton",
-            "Mississauga Centre",
-            "Mississauga East—Cooksville",
-            "Mississauga—Erin Mills",
-            "Mississauga—Lakeshore",
-            "Mississauga—Malton",
-            "Mississauga—Streetsville",
-            "Nepean",
-            "Newmarket—Aurora",
-            "Niagara Centre",
-            "Niagara Falls",
-            "Niagara West",
-            "Nickel Belt",
-            "Northumberland—Peterborough South",
-            "Oakville",
-            "Oakville North—Burlington",
-            "Oshawa",
-            "Ottawa Centre",
-            "Ottawa South",
-            "Ottawa—Vanier",
-            "Ottawa West—Nepean",
-            "Oxford",
-            "Parkdale—High Park",
-            "Parry Sound—Muskoka",
-            "Perth—Wellington",
-            "Peterborough—Kawartha",
-            "Pickering—Uxbridge",
-            "Renfrew—Nipissing—Pembroke",
-            "Richmond Hill",
-            "Scarborough Centre",
-            "Scarborough—Guildwood",
-            "Scarborough North",
-            "Scarborough—Rouge Park",
-            "Scarborough Southwest",
-            "Simcoe North",
-            "Simcoe—Grey",
-            "Spadina—Fort York",
-            "St. Catharines",
-            "Stormont—Dundas—South Glengarry",
-            "Sudbury",
-            "Thornhill",
-            "Thunder Bay—Rainy River",
-            "Thunder Bay—Superior North",
-            "Timmins—James Bay",
-            "Toronto Centre",
-            "Toronto—Danforth",
-            "University—Rosedale",
-            "Vaughan—Woodbridge",
-            "Waterloo",
-            "Wellington—Halton Hills",
-            "Whitby",
-            "Willowdale",
-            "Windsor—Tecumseh",
-            "Windsor West",
-            "York Centre",
-            "York South—Weston",
-            "York—Simcoe"
-        ],
-        "Manitoba": [
-            "Brandon—Souris",
-            "Charleswood—St. James—Assiniboia—Headingley",
-            "Churchill—Keewatinook Aski",
-            "Dauphin—Swan River—Neepawa",
-            "Elmwood—Transcona",
-            "Kildonan—St. Paul",
-            "Portage—Lisgar",
-            "Provencher",
-            "Saint Boniface—Saint Vital",
-            "Selkirk—Interlake—Eastman",
-            "Winnipeg Centre",
-            "Winnipeg North",
-            "Winnipeg South",
-            "Winnipeg South Centre"
-        ],
-        "Saskatchewan": [
-            "Battlefords—Lloydminster",
-            "Carlton Trail—Eagle Creek",
-            "Cypress Hills—Grasslands",
-            "Desnethé—Missinippi—Churchill River",
-            "Moose Jaw—Lake Centre—Lanigan",
-            "Prince Albert",
-            "Regina—Lewvan",
-            "Regina—Qu'Appelle",
-            "Regina—Wascana",
-            "Saskatoon—Grasswood",
-            "Saskatoon West",
-            "Souris—Moose Mountain",
-            "Yorkton—Melville"
-        ],
-        "Alberta": [
-            "Banff—Airdrie",
-            "Battle River—Crowfoot",
-            "Bow River",
-            "Calgary Centre",
-            "Calgary Confederation",
-            "Calgary Forest Lawn",
-            "Calgary Heritage",
-            "Calgary Midnapore",
-            "Calgary Nose Hill",
-            "Calgary Shepard",
-            "Calgary Signal Hill",
-            "Calgary Skyview",
-            "Edmonton Centre",
-            "Edmonton Griesbach",
-            "Edmonton Manning",
-            "Edmonton Mill Woods",
-            "Edmonton Riverbend",
-            "Edmonton Strathcona",
-            "Edmonton West",
-            "Edmonton—Wetaskiwin",
-            "Foothills",
-            "Fort McMurray—Cold Lake",
-            "Grande Prairie—Mackenzie",
-            "Lacombe—Ponoka",
-            "Leduc—Beaumont",
-            "Lethbridge",
-            "Medicine Hat—Cardston—Warner",
-            "Peace River—Westlock",
-            "Red Deer—Mountain View",
-            "Red Deer—Lacombe",
-            "Sherwood Park—Fort Saskatchewan",
-            "St. Albert—Edmonton",
-            "Yellowhead"
-        ],
-        "British Columbia": [
-            "Abbotsford",
-            "Burnaby North—Seymour",
-            "Burnaby South",
-            "Cariboo—Prince George",
-            "Central Okanagan—Similkameen—Nicola",
-            "Chilliwack—Hope",
-            "Cloverdale—Langley City",
-            "Coquitlam—Port Coquitlam",
-            "Courtenay—Alberni",
-            "Cowichan—Malahat—Langford",
-            "Delta",
-            "Esquimalt—Saanich—Sooke",
-            "Fleetwood—Port Kells",
-            "Kamloops—Thompson—Cariboo",
-            "Kelowna—Lake Country",
-            "Kootenay—Columbia",
-            "Langley—Aldergrove",
-            "Mission—Matsqui—Fraser Canyon",
-            "New Westminster—Burnaby",
-            "North Island—Powell River",
-            "North Okanagan—Shuswap",
-            "North Vancouver",
-            "Pitt Meadows—Maple Ridge",
-            "Port Moody—Coquitlam",
-            "Prince George—Peace River",
-            "Richmond Centre",
-            "Saanich—Gulf Islands",
-            "South Okanagan—West Kootenay",
-            "South Surrey—White Rock",
-            "Steveston—Richmond East",
-            "Surrey Centre",
-            "Surrey—Newton",
-            "Vancouver Centre",
-            "Vancouver East",
-            "Vancouver Granville",
-            "Vancouver Kingsway",
-            "Vancouver Quadra",
-            "Vancouver South",
-            "Victoria",
-            "West Vancouver—Sunshine Coast—Sea to Sky Country"
-        ],
-        "Yukon": ["Yukon"],
-        "Northwest Territories": ["Northwest Territories"],
-        "Nunavut": ["Nunavut"]
-    };
 
-    var intervalId = setInterval(function() {
-        var provinceDropdown = document.getElementById('provinceDropdown');
-        if (provinceDropdown) {
-            clearInterval(intervalId);
 
-            // Populate province dropdown
-            for (var province in chambers) {
-                if (chambers.hasOwnProperty(province)) {
-                    var option = document.createElement('option');
-                    option.value = province;
-                    option.text = province;
-                    provinceDropdown.appendChild(option);
-                }
-            }
-
-            // Update chambers dropdown based on selected province
-            provinceDropdown.addEventListener('change', function() {
-                var selectedProvince = this.value;
-                var chamberDropdown = document.getElementById('chamberDropdown');
-                chamberDropdown.innerHTML = '<option value="">Select a Chamber</option>'; // Reset chambers dropdown
-
-                if (selectedProvince && chambers[selectedProvince]) {
-                    chambers[selectedProvince].forEach(function(chamber) {
-                        var option = document.createElement('option');
-                        option.value = chamber;
-                        option.text = chamber;
-                        chamberDropdown.appendChild(option);
-                    });
-                }
-            });
-        }
-    }, 500);
 });
 
 Template.chambers.events({
 
+    // Save the selected chamber as the user's home chamber
+    'click #save_chamber': function (event) {
+
+        var province = $('#province_territory').val();
+        var chamber = $('#chamber_select').val();
+        if(chamber) {
+
+            // #province_territory
+            // #chamber_select
+            // Ensure these are both set and return
+
+            if( province == '' ){
+                toastr.error('Please select a province.', 'Validation Error');
+                return false;
+            }
+
+            if( chamber == '' ){
+                toastr.error('Please select a chamber.', 'Validation Error');
+                return false;
+            }
+
+            Meteor.call('userMeta.setHomeChamber', chamber, function(error, result) {
+                if(error) {
+                    console.error('Error setting home chamber:', error);
+                    alert('Error setting home chamber.');
+                } else {
+                    // toastr
+                    toastr.success('Home chamber set, welcome to Civil!.', 'Success');
+                    FlowRouter.go('/timeline');
+                }
+            });
+
+        } else {
+            // alert('Please select a chamber.');
+            toastr.error('Please select a chamber.', 'Validation Error');
+            return false;
+        }
+
+    },
+
+
 });
 
 Template.chambers.helpers({
-    chambers() {
-        return Object.keys(chambers).map(province => ({
-            province,
-            chambers: chambers[province]
-        }));
-    }
+
 });

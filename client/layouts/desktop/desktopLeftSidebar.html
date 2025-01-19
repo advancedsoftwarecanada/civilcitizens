@@ -21,8 +21,8 @@
                 <ul class="profile-link mt-7 mb-7 pb-7">
                     <li>
                         <a href="/" class="d-flex gap-4">
-                            <i class="material-symbols-outlined mat-icon"> home </i>
-                            <span>Timeline</span>
+                            <i class="material-symbols-outlined mat-icon"> newspaper </i>
+                            <span>News Feed</span>
                         </a>
                     </li>
                     <!-- <li>
@@ -55,6 +55,16 @@
                             <span>Profile</span>
                         </a>
                     </li>
+
+                    <!-- Admin Settings -->
+                    {{#if isAdmin}}
+                        <li>
+                            <a href="/admin/chambersBuilder" class="d-flex gap-4">
+                                <i class="material-symbols-outlined mat-icon"> settings </i>
+                                <span>Admin</span>
+                            </a>
+                        </li>
+                    {{/if}}
                 </ul>
             </div>
         {{else}}

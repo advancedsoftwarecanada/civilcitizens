@@ -5,30 +5,53 @@ import userManager from './userManager.js';
     * This is the main entry point for the client
 */
 Meteor.startup(async () => {
-
     console.log("==================================");
     console.log("CivilCitizens Client Connected");
     console.log("----------------------------------");
 
-    // Create a reactive variable for subscription readiness
-    const userMetaSub = Meteor.subscribe('accounts.myUserMeta');
-
+    // Reactive Tracker to handle user state and UserMeta logic
     Tracker.autorun(() => {
+        const user = Meteor.user(); // Reactively track the logged-in user
+        const isLoggedIn = !!user; // Boolean to check if a user is logged in
+
+        if (!isLoggedIn) {
+            console.log("User is not logged in. Redirecting to home...");
+            FlowRouter.go('/');
+            return; // Exit early if not logged in
+        }
+
+        console.log("User is logged in:", user);
+
+        // Subscribe to UserMeta when logged in
+        const userMetaSub = Meteor.subscribe('accounts.myUserMeta');
+
         if (userMetaSub.ready()) {
             console.log('UserMeta subscription is ready');
+
+            const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
+            if (userMeta) {
+                console.log("UserMeta found:", userMeta);
+
+                // Check chamberHome and navigate if necessary
+                if (!userMeta.chamberHome || userMeta.chamberHome === "UNSET" || userMeta.chamberHome === "") {
+                    console.log("No chamberHome set. Redirecting to /chambers...");
+                    FlowRouter.go('/chambers');
+                }
+            } else {
+                console.log("UserMeta not found");
+            }
         } else {
             console.log('Waiting for UserMeta subscription...');
         }
     });
 
-
-    // User Manager// Create a singleton instance of UserManager
+    // User Manager - Create and fetch user data
     console.log("User Manager: ", userManager);
     await userManager.fetchUserData();
     window.userManager = userManager;
-
-
 });
+
+
 
 
 /*
@@ -77,7 +100,6 @@ function renderEverywhere(){
     $('body').removeClass('modal-open modal-with-transition');
     // remove any <div class="modal-backdrop fade show"></div>
     $('.modal-backdrop').remove();
-
 
     // FILE UPLOADER
 	$(document).on('change', '.fileUploader', function (event) {    // image upload
@@ -234,6 +256,17 @@ Template.registerHelper("isLoggedIn", function () {
         return true;
     }
     return false;
+});
+
+// is Admin? Fetch userMeta.admin true/false
+Template.registerHelper("isAdmin", function () {
+
+    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
+    if (Meteor.userId() && userMeta) {
+        return userMeta.admin;
+    }
+    return false;
+
 });
 
 // Get my user information from usermeta

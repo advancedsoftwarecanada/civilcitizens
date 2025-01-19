@@ -1,73 +1,216 @@
 <template name="chambers">
 
-    <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z">
+    <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z ">
 
         <div class="row">
             <div class="col">
                 <form class="text-center d-grid gap-4">
                     <div class="single-box p-3 p-sm-5">
                         <div class="row">
-                            <div class="col-sm-12 mt-4">
-                                <div class="single-input text-start">
-                                    <label for="provinceDropdown">Province or Territory of Canada</label>
-                                    <div class="input-area second">
-                                        <select id="provinceDropdown">
-                                            <option value="">Select a Province / Territory</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-sm-12 mt-4">
-                                <div class="single-input text-start">
-                                    <label for="chamberDropdown">Chamber Of Citizens (EDA Mirror)</label>
-                                    <div class="input-area second">
-                                        <select id="chamberDropdown">
-                                            <option value="">Select a Chamber</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-sm-12 mt-4">
-                                <div class="btn-area text-center">
-                                    <a class="btn btn-primary" href="/">Visit This Chamber of Citizens!</a>
-                                </div>
-                                <p style="margin-top:100px;" class="btn btn-small btn-secondary uiActionShowHiddenChamberInfo">(I don't know what a Chamber of Citizens is...)</p>
+
+                            <div class="col-sm-12">
+                                {{#if userMeta.chamberHome}}
+                                    <h3 class="mb-4">Your Home Chamber Of Citizens</h3>
+                                    <p>Welcome back! You can view your home chamber or select a different one to explore.</p>
+                                {{else}}
+                                    <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo mb-4" alt="logo" width=100>
+                                    <h3 class="mb-4">Welcome to Civil!</h3>
+                                    <hr />
+                                    <h4>Select Your Home Chamber Of Citizens</h4>
+                                    <p>Start by finding and setting your Home Chamber of Citizens, where you can connect with your community to discuss important topics and drive meaningful change.</p>
+                                {{/if}}
                             </div>
 
-                            <div class="hidden-chamber-info" style="display:none;">
-                                <iframe class="responsive-iframe" src="https://www.youtube.com/embed/FIoj2bMAhQg"
-                                    title="YouTube video player" frameborder="0"
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                    referrerpolicy="strict-origin-when-cross-origin" allowfullscreen>
-                                </iframe>
-                            </div>
-                            <style>
-                                @media (max-width: 767px) {
-                                    .responsive-iframe {
-                                        width: 100% !important;
-                                        aspect-ratio: 16 / 9;
-                                    }
-                                }
-                                .responsive-iframe {
-                                    height: 400px; /* Desktop specific height */
-                                    width: 500px;
-                                    display: block;
-                                    margin: 0 auto; /* Center the iframe */
-                                    margin-top:100px;
-                                }
-                            </style>
-                            <script>
+                            <div class="col-sm-12 mt-4">
+                                <div class="single-input text-start select2_custom_container {{#if userMeta.chamberHome}}{{else}}glowing_pulse_border{{/if}}">
+                                    <select class="form-select select2 input-area " id="province_territory" data-placeholder="🇨🇦 Select Province or Territory">
+                                        <option value="">Select Province / Territory</option>
+                                        <option value="nl">Newfoundland And Labrador</option>
+                                        <option value="pe">Prince Edward Island</option>
+                                        <option value="ns">Nova Scotia</option>
+                                        <option value="nb">New Brunswick</option>
+                                        <option value="qc">Quebec</option>
+                                        <option value="on">Ontario</option>
+                                        <option value="mb">Manitoba</option>
+                                        <option value="sk">Saskatchewan</option>
+                                        <option value="ab">Alberta</option>
+                                        <option value="bc">British Columbia</option>
+                                        <option value="yt">Yukon</option>
+                                        <option value="nt">Northwest Territories</option>
+                                        <option value="nu">Nunavut</option>
+                                    </select>
+                                </div>
+                                <div class="single-input text-start select2_custom_container">
+                                    <select class="form-select select2 input-area" id="chamber_select" data-placeholder="Select Your Chamber" disabled>
 
-                                $(document).ready(function() {
-                                    $('.uiActionShowHiddenChamberInfo').click(function() {
-                                        // show the iframe
-                                        $('.hidden-chamber-info').show();
-                                        // hide uiActionShowHiddenChamberInfo
-                                        $('.uiActionShowHiddenChamberInfo').hide();
+                                    </select>
+                                </div>
+                                <script>
+                                    $(document).ready(function(){
+                                        setTimeout( function(){
+                                            $('#province_territory').select2({
+                                                theme: "bootstrap-5",
+                                                width: '100%',
+                                                placeholder: "Select a Province / Territory",
+                                                closeOnSelect: true,
+                                            });
+                                            $('#chamber_select').select2({
+                                                theme: "bootstrap-5",
+                                                width: '100%',
+                                                placeholder: "Select a Chamber",
+                                                closeOnSelect: true,
+                                            });
+
+                                            // SELECT TERRITORY ACTION:
+                                            $('#province_territory').on('change', function() {
+
+                                                var proceed = true;
+
+                                                var province = $("#province_territory").val();
+                                                var chamber = $('#chamber_select').val();
+
+                                                // if we change to nothing / clear the value, disable the chamber select
+                                                if(province == ''){
+                                                    $('#chamber_select').prop('disabled', true); // Disable the chamber select
+                                                    $('#chamber_select').val('').trigger('change'); // Clear the chamber select
+
+                                                    // set proper glowing_pulse_border
+                                                    $('#province_territory').parent().addClass('glowing_pulse_border');
+                                                    $('#chamber_select').parent().removeClass('glowing_pulse_border');
+                                                    proceed = false;
+                                                }
+
+
+                                                if(proceed == true){
+
+                                                    $('#chamber_select').prop('disabled', false); // Enable the chamber select (ENABLE -- not disable)
+                                                    $('#chamber_select').html('<option value="">Loading...</option>'); // Clear the chamber select
+
+                                                    $('#province_territory').parent().removeClass('glowing_pulse_border');
+                                                    $('#chamber_select').parent().addClass('glowing_pulse_border');
+
+                                                    // Refresh the select2
+                                                    $('#chamber_select').select2({
+                                                        theme: "bootstrap-5",
+                                                        width: '100%',
+                                                        placeholder: "Select a Chamber",
+                                                        closeOnSelect: true,
+                                                    });
+
+                                                    $.ajax({
+                                                        url: Meteor.settings.public.ROOT_URL+'/api/chambers',
+                                                        type: 'GET',
+                                                        data: {
+                                                            province: province
+                                                        },
+                                                        success: function(response){
+                                                            $('#chamber_select').html('<option value="">Select a Chamber</option>');
+                                                            // Remove the glowing_pulse_border from province_territory and add it to chamber_select
+
+                                                            response.forEach(function(chamber){
+                                                                $('#chamber_select').append('<option value="'+chamber._id+'">'+chamber.name+'</option>');
+                                                            });
+                                                        },
+                                                        error: function(){
+                                                            $('#chamber_select').html('<option value="">Error Loading Chambers</option>');
+                                                        }
+                                                    });
+
+                                                }
+                                            });
+
+                                            // When a valid chamber_select is selected, enable the save button
+                                            $('#chamber_select').on('change', function() {
+                                                var chamber = $('#chamber_select').val();
+                                                if(chamber != ''){
+                                                    $('#save_chamber').prop('disabled', false);
+                                                    // set glowing_pulse_border
+                                                    $('#chamber_select').parent().removeClass('glowing_pulse_border');
+                                                    // Make the button glow
+                                                    $('#save_chamber').addClass('glowing_pulse_border');
+                                                } else {
+                                                    $('#save_chamber').prop('disabled', true);
+                                                }
+                                            });
+
+                                        },100);
                                     });
-                                });
+                                </script>
+                                <style>
+                                    .select2_custom_container{
+                                        border:1px solid #e5e5e5;
+                                        border-radius: 5px;
+                                    }
+                                    .select2 .selection{
+                                        width:100%;
+                                        text-align: center;
+                                    }
+                                    .select2-selection--single{
+                                        margin-top: 20px;
+                                    }
+                                    .select2-dropdown {
+                                        border:1px solid #e5e5e5;
+                                        border-radius: 5px;
+                                    }
+                                    .glowing_pulse_border {
+                                        animation: glowing 1500ms infinite;
+                                        border: 2px solid red; /* Starting border style */
+                                        border-radius: 4px; /* Optional: Adjust as needed */
+                                        box-sizing: border-box; /* Ensures padding doesn't affect border width */
+                                    }
 
-                            </script>
+                                    @keyframes glowing {
+                                        0% {
+                                            box-shadow: 0 0 5px red;
+                                            border-color: red;
+                                        }
+                                        50% {
+                                            box-shadow: 0 0 20px red;
+                                            border-color: darkred;
+                                        }
+                                        100% {
+                                            box-shadow: 0 0 5px red;
+                                            border-color: red;
+                                        }
+                                    }
+                                </style>
+
+                                {{#if userMeta.chamberHome}}
+
+                                {{else}}
+                                    <style>
+                                        /* Hide the unnecessary elements */
+                                        #desktopLeftSidebar, #desktopRightSidebar, header, #mobileFooterMenu {
+                                            display: none !important;
+                                        }
+
+                                        /* Center the content container */
+                                        #templateMain {
+                                            display: flex; /* Enables Flexbox */
+                                            flex-direction: column; /* Ensures child elements stack vertically */
+                                            align-items: center; /* Centers horizontally */
+                                            justify-content: center; /* Centers vertically */
+                                            width: 100%; /* Makes the container responsive */
+                                            max-width: 600px; /* Optional: Add a max width for better scaling */
+                                            margin: 0 auto; /* Horizontal centering */
+                                        }
+                                    </style>
+                                {{/if}}
+                            </div>
+
+
+                            <div class="col-sm-12 mt-4">
+                                {{#if userMeta.chamberHome}}
+                                    <div class="btn-area text-center">
+                                        <a class="btn btn-primary" href="/">Visit This Chamber of Citizens!</a>
+                                    </div>
+                                {{else}}
+                                    <div class="btn-area text-center">
+                                        <button class="btn btn-success" id="save_chamber" disabled>🏠 Set Home Chamber</button>
+                                    </div>
+                                {{/if}}
+                            </div>
+
 
                         </div>
                     </div>
@@ -75,62 +218,7 @@
             </div>
         </div>
 
-        <div class="tab-content">
-            <div class="tab-pane fade active show" id="popular-tab-pane" role="tabpanel" aria-labelledby="popular-tab" tabindex="0">
-                <div class="row cus-mar friend-request">
 
-                    {{#each chambers}}
-                        <div class="col-xl-4 col-sm-6 col-8">
-                            <div class="single-box p-5">
-                                <div class="avatar-box position-relative">
-                                    <img class="avatar-img w-100" src="/theme/assets/images/group-img-1.png" alt="avatar">
-                                    <div class="abs-area w-100 position-absolute top-0 p-3 d-center justify-content-end">
-                                        <div class="btn-group cus-dropdown dropend">
-                                            <button type="button" class="dropdown-btn d-center px-2" data-bs-toggle="dropdown" aria-expanded="false">
-                                                <i class="material-symbols-outlined fs-xxl m-0"> more_horiz </i>
-                                            </button>
-                                            <ul class="dropdown-menu p-4 pt-2">
-                                                <li>
-                                                    <a class="droplist d-flex align-items-center gap-2" href="#">
-                                                        <i class="material-symbols-outlined mat-icon"> person_remove </i>
-                                                        <span>Unfollow</span>
-                                                    </a>
-                                                </li>
-                                                <li>
-                                                    <a class="droplist d-flex align-items-center gap-2" href="#">
-                                                        <i class="material-symbols-outlined mat-icon"> hide_source </i>
-                                                        <span>Hide</span>
-                                                    </a>
-                                                </li>
-                                            </ul>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="abs-avatar-item">
-                                    <img class="avatar-img max-un" src="/theme/assets/images/group-avatar-1.png" alt="avatar">
-                                </div>
-                                <a href="group-details.html"><h6 class="m-0 mb-2 mt-3">{{province}}</h6></a>
-                                <p class="smtxt public-group">Public Group</p>
-                                <div class="friends-list d-center mt-3 gap-1 text-center">
-                                    <ul class="d-center">
-                                        <li><img src="/theme/assets/images/avatar-2.png" alt="image"></li>
-                                        <li><img src="/theme/assets/images/avatar-3.png" alt="image"></li>
-                                        <li><img src="/theme/assets/images/avatar-4.png" alt="image"></li>
-                                    </ul>
-                                    <span class="smtxt m-0">30k Member</span>
-                                </div>
-                                <div class="d-center btn-border pt-5 gap-2 mt-4">
-                                    <button class="cmn-btn fourth">Joined</button>
-                                    <button class="cmn-btn alt third">Invite</button>
-                                </div>
-                            </div>
-                        </div>
-                    {{/each}}
-
-                </div>
-            </div>
-
-        </div>
 
     </div>
 

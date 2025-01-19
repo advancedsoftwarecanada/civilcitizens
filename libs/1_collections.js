@@ -14,3 +14,9 @@ Bookmarks = new Mongo.Collection('Bookmarks');
 Shares = new Mongo.Collection('Shares');
 
 Comments = new Mongo.Collection('Comments');
+
+
+Chambers = new Mongo.Collection('Chambers');
+if (Meteor.isServer) {
+    Chambers.rawCollection().createIndex({ province: 1 });
+}

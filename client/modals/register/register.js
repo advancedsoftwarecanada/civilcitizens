@@ -148,10 +148,10 @@ Template.modalRegister.events({
 
                         setTimeout(() => {
 
-                            FlowRouter.go("/"); // Redirect to homepage
+                            FlowRouter.go("/chambers"); // Redirect to homepage
 
                             setTimeout(() => {
-                                location.reload();
+                                // location.reload();
                             },500);
 
                         }, 3000);

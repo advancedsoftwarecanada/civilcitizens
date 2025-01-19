@@ -79,6 +79,7 @@ if (Meteor.isServer) {
                         firstName: firstName.toLowerCase(),
                         lastName: lastName.toLowerCase(),
                         userName: userName,
+                        chamberHome: "UNSET",
                     }
                 });
 

@@ -24,7 +24,6 @@ Template.modalLogin.events({
 
 				//ga("send", "event", "user", "login");
 				setTimeout(function(){
-					//FlowRouter.go('/cases');
 					// Javascript redirct
 					window.location.href = "/";
 				},100);
@@ -33,4 +32,5 @@ Template.modalLogin.events({
 
 		});
     },
+
 });
