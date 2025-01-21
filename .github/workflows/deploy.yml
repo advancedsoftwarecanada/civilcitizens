@@ -22,7 +22,10 @@ jobs:
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
-          export PATH=$PATH:/usr/local/bin:/usr/bin:/home/asecc/.nvm/versions/node/v18.16.0/bin
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+          nvm use v18.16.0  # Explicitly use the correct Node.js version
+          export PATH=$PATH:$NVM_DIR/versions/node/v18.16.0/bin
           cd /home/asecc/build
           ./stop.sh
           ./update.sh
