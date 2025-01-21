@@ -26,4 +26,4 @@ jobs:
           ./start.sh
 
     - name: Deployment Completed
-      run: echo "Deployment process finished successfully!"
+      run: echo "Deployment process finished successfully."
