@@ -10,6 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Debug Secrets
+      run: |
+        echo "Host: ${{ secrets.SERVER_HOST }}"
+        echo "User: ${{ secrets.SERVER_USER }}"
+
     - name: Connect to Server and Deploy
       uses: appleboy/ssh-action@master
       with:
