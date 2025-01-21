@@ -1,78 +1,70 @@
 Meteor.methods({
-    'admin.chambers.buildChambers': async function () {
+  'admin.chambers.buildChambers': async function () {
+    // Ensure server-side execution
+    if (!Meteor.isServer) {
+      return false;
+    }
 
-        // if client, return false;
-        if (!Meteor.isServer) {
-            return false;
-        }
+    const provinceCodes = {
+      "newfoundland and labrador": "nl",
+      "prince edward island": "pe",
+      "nova scotia": "ns",
+      "new brunswick": "nb",
+      "quebec": "qc",
+      "ontario": "on",
+      "manitoba": "mb",
+      "saskatchewan": "sk",
+      "alberta": "ab",
+      "british columbia": "bc",
+      "yukon": "yt",
+      "northwest territories": "nt",
+      "nunavut": "nu",
+    };
 
-      const provinceCodes = {
-        "newfoundland and labrador": "nl",
-        "prince edward island": "pe",
-        "nova scotia": "ns",
-        "new brunswick": "nb",
-        "quebec": "qc",
-        "ontario": "on",
-        "manitoba": "mb",
-        "saskatchewan": "sk",
-        "alberta": "ab",
-        "british columbia": "bc",
-        "yukon": "yt",
-        "northwest territories": "nt",
-        "nunavut": "nu",
-      };
+    // Ensure the user is authorized
+    if (!this.userId) {
+      throw new Meteor.Error('not-authorized', 'You must be logged in to perform this action.');
+    }
 
-      // call admin.chambers.fetchChambersJson to get the chambers
-      const chambers = await Meteor.call('admin.chambers.fetchChambersJson');
-      // console.log('ADMIN: Chambers:', chambers);
+    // Configuration variables
+    const GEOCODING_API_KEY = 'AIzaSyAhAqw_XtMPo1mgmDQMdkSWPJry3AxS4GU';
+    const BASE_URL = `https://maps.googleapis.com/maps/api/geocode/json`;
 
-      if (!this.userId) {
-        throw new Meteor.Error('not-authorized', 'You must be logged in to perform this action.');
+    const REBUILD_GEO = false; // Toggle to control geocoding rebuild
+    const REBUILD_SEO = true; // Toggle to control SEO URL rebuild
+
+    // Fetch chambers data
+    const chambers = await Meteor.call('admin.chambers.fetchChambersJson');
+    const chamberCount = chambers.length;
+    console.log(`ADMIN: FlatFile Contains: ${chamberCount} chambers`);
+
+    let processedChamberCount = 0;
+    for (const chamber of chambers) {
+      processedChamberCount++;
+
+      const { code, name, province } = chamber;
+      const provinceCode = provinceCodes[province.toLowerCase()];
+
+      if (!provinceCode) {
+        console.error(`Invalid province: ${province} for chamber: ${name}`);
+        continue;
       }
-      const GEOCODING_API_KEY = 'AIzaSyAhAqw_XtMPo1mgmDQMdkSWPJry3AxS4GU';
-      const BASE_URL = `https://maps.googleapis.com/maps/api/geocode/json`;
 
-      console.log('ADMIN: Building Chambers');
-      // Count the amount of rows in the CSV
-      const chamberCount = chambers.length;
-      console.log(`ADMIN: FlatFile Contains: ${chamberCount} chambers`);
+      let seoUrl = null;
+      if (REBUILD_SEO) {
+        seoUrl = name.toLowerCase()
+          .replace(/—/g, '-')            // Replace em dash with dash
+          .replace(/[^\w\s-]/g, '')      // Remove special characters except dash
+          .replace(/\s+/g, '-')          // Replace spaces with dashes
+          .replace(/-+/g, '-');          // Remove consecutive dashes
+      }
 
-      let processedChamberCount = 0;
-      for (const chamber of chambers) {
-
-        processedChamberCount++;
-
-        const { code, name, province } = chamber;
-
-        const provinceCode = provinceCodes[province.toLowerCase()];
-        if (!provinceCode) {
-          console.error(`Invalid province: ${province} for chamber: ${name}`);
-          continue;
-        }
-
-        const seoUrl = name.toLowerCase()
-          .replace(/[^\w\s-]/g, '') // Remove special characters
-          .replace(/\s+/g, '-')     // Replace spaces with dashes
-          .replace(/-+/g, '-')      // Remove consecutive dashes
-          .replace(/—/g, '-');      // Replace em dash with dash
-
+      let lat = null, lng = null;
+      if (REBUILD_GEO) {
         const address = `${name}, ${province}, Canada`.trim();
         const geocodeUrl = `${BASE_URL}?address=${encodeURIComponent(address)}&key=${GEOCODING_API_KEY}`;
-        let lat = null;
-        let lng = null;
 
         try {
-          const existingChamber = await Chambers.findOneAsync({ code });
-
-          if (existingChamber) {
-            console.log(`Checking: ${name} (${code}) - Exists`);
-            // Check if location is already set
-            if (existingChamber.location) {
-              console.log(`Skipped: ${name} (${code}) - Location Already Set`);
-              continue;
-            }
-          }
-
           const response = await fetch(geocodeUrl);
           const data = await response.json();
 
@@ -84,46 +76,49 @@ Meteor.methods({
           } else {
             console.warn(`Failed to geocode: ${name} (${code}) - ${data.status}`);
           }
-
-          const chamberData = {
-            code,
-            name,
-            province: provinceCode,
-            seoUrl,
-            location: lat && lng ? { lat, lng } : null,
-            createdAt: existingChamber ? existingChamber.createdAt : new Date().getTime(),
-            stats:{
-                members: 0,
-                posts: 0,
-                comments: 0,
-                bookmarks: 0,
-                upvotes: 0,
-                downvotes: 0,
-                chambers: 0,
-                boards: 0,
-            }
-          };
-
-          if (existingChamber) {
-            // Update existing chamber
-            await Chambers.updateAsync({ code }, { $set: chamberData });
-            console.log(`Updated: ${name} (${code})`);
-          } else {
-            // Insert new chamber
-            await Chambers.insertAsync(chamberData);
-            console.log(`Inserted: ${name} (${code})`);
-          }
-
         } catch (error) {
           console.error(`Error during geocoding: ${name} (${code})`, error);
         }
-
-        // Add a delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
       }
 
-      console.log('≥>>>>>>>>>>>>>> DONE <<<<<<<<<<<<≤');
-      console.log(`ADMIN: Processed ${processedChamberCount} chambers`);
+      try {
+        const existingChamber = await Chambers.findOneAsync({ code });
 
-    },
-  });
+        const chamberData = {
+          code,
+          name,
+          province: provinceCode,
+          seoUrl: REBUILD_SEO ? seoUrl : existingChamber?.seoUrl,
+          location: REBUILD_GEO && lat && lng ? { lat, lng } : existingChamber?.location,
+          createdAt: existingChamber ? existingChamber.createdAt : new Date().getTime(),
+          stats: existingChamber?.stats || {
+            members: 0,
+            posts: 0,
+            comments: 0,
+            bookmarks: 0,
+            upvotes: 0,
+            downvotes: 0,
+            chambers: 0,
+            boards: 0,
+          },
+        };
+
+        if (existingChamber) {
+          await Chambers.updateAsync({ code }, { $set: chamberData });
+          console.log(`Updated: ${name} (${code})`);
+        } else {
+          await Chambers.insertAsync(chamberData);
+          console.log(`Inserted: ${name} (${code})`);
+        }
+      } catch (error) {
+        console.error(`Error updating/inserting chamber: ${name} (${code})`, error);
+      }
+
+      // Add a delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+    }
+
+    console.log('>>>>>>>>>>>>>> DONE <<<<<<<<<<<<');
+    console.log(`ADMIN: Processed ${processedChamberCount} chambers`);
+  },
+});
