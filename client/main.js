@@ -283,6 +283,15 @@ Template.registerHelper("myUserMeta", function () {
     return null;
 });
 
+// userMeta.chamberHomeSet
+Template.registerHelper("chamberHomeSet", function () {
+    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
+    if (Meteor.userId() && userMeta) {
+        return userMeta.chamberHome !== "UNSET";
+    }
+    return false;
+});
+
 Template.registerHelper("cdn", function () {
     return Meteor.settings.public.cdnPath;
 });

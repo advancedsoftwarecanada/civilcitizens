@@ -1,5 +1,27 @@
 import userManager from "../../userManager.js";
 
+
+/*
+ * Main client-side application code
+ * Detects if we are a guest or not
+*/
+FlowRouter.route('/c/:province/:chamber', {
+  name: "home",
+  action() {
+      if (Meteor.userId()) {
+
+          BlazeLayout.render('CivilApp_3', {
+              main: 'timeline',
+          });
+      } else {
+          BlazeLayout.render('CivilApp_0', {
+              main: 'guest',
+          });
+      }
+  }
+});
+
+
 Template.timeline.onCreated(function () {
   this.posts = new ReactiveVar([]);
 
@@ -36,7 +58,12 @@ Template.timeline.helpers({
   isAd(post) {
     return post.ad === true;
   },
-
+  province() {
+    return FlowRouter.getParam('province');
+  },
+  chamber() {
+    return FlowRouter.getParam('chamber');
+  },
 });
 
 Template.timeline.events({

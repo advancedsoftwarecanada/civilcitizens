@@ -55,6 +55,28 @@ Template.chambers.events({
 
     },
 
+    // uiActionVisitChamber
+    'click .uiActionVisitChamber': function (event) {
+
+        // We should visit
+        // /c/province/chamberSeoUrl
+
+        var province = $('#province_territory').val();
+        var chamber = $('#chamber_select').val();
+
+        if( province == '' ){
+            toastr.error('Please select a province.', 'Validation Error');
+            return false;
+        }
+
+        if( chamber == '' ){
+            toastr.error('Please select a chamber.', 'Validation Error');
+            return false;
+        }
+
+        FlowRouter.go('/c/'+province+'/'+chamber);
+    }
+
 
 });
 

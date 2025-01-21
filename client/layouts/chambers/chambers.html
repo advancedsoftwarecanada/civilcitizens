@@ -9,9 +9,9 @@
                         <div class="row">
 
                             <div class="col-sm-12">
-                                {{#if userMeta.chamberHome}}
-                                    <h3 class="mb-4">Your Home Chamber Of Citizens</h3>
-                                    <p>Welcome back! You can view your home chamber or select a different one to explore.</p>
+                                {{#if chamberHomeSet}}
+                                    <h3 class="mb-4">View Other Chambers of Citizens</h3>
+                                    <p>Explorer the depth of Canada across 343 Chambers of Citizens!</p>
                                 {{else}}
                                     <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo mb-4" alt="logo" width=100>
                                     <h3 class="mb-4">Welcome to Civil!</h3>
@@ -108,7 +108,7 @@
                                                             // Remove the glowing_pulse_border from province_territory and add it to chamber_select
 
                                                             response.forEach(function(chamber){
-                                                                $('#chamber_select').append('<option value="'+chamber._id+'">'+chamber.name+'</option>');
+                                                                $('#chamber_select').append('<option value="'+chamber.seoUrl+'">'+chamber.name+'</option>');
                                                             });
                                                         },
                                                         error: function(){
@@ -136,6 +136,7 @@
                                         },100);
                                     });
                                 </script>
+
                                 <style>
                                     .select2_custom_container{
                                         border:1px solid #e5e5e5;
@@ -152,30 +153,37 @@
                                         border:1px solid #e5e5e5;
                                         border-radius: 5px;
                                     }
-                                    .glowing_pulse_border {
-                                        animation: glowing 1500ms infinite;
-                                        border: 2px solid red; /* Starting border style */
-                                        border-radius: 4px; /* Optional: Adjust as needed */
-                                        box-sizing: border-box; /* Ensures padding doesn't affect border width */
-                                    }
-
-                                    @keyframes glowing {
-                                        0% {
-                                            box-shadow: 0 0 5px red;
-                                            border-color: red;
-                                        }
-                                        50% {
-                                            box-shadow: 0 0 20px red;
-                                            border-color: darkred;
-                                        }
-                                        100% {
-                                            box-shadow: 0 0 5px red;
-                                            border-color: red;
-                                        }
-                                    }
                                 </style>
 
-                                {{#if userMeta.chamberHome}}
+                                {{#if chamberHomeSet}}
+
+                                {{else}}
+                                    <style>
+                                        .glowing_pulse_border {
+                                            animation: glowing 1500ms infinite;
+                                            border: 2px solid red; /* Starting border style */
+                                            border-radius: 4px; /* Optional: Adjust as needed */
+                                            box-sizing: border-box; /* Ensures padding doesn't affect border width */
+                                        }
+
+                                        @keyframes glowing {
+                                            0% {
+                                                box-shadow: 0 0 5px red;
+                                                border-color: red;
+                                            }
+                                            50% {
+                                                box-shadow: 0 0 20px red;
+                                                border-color: darkred;
+                                            }
+                                            100% {
+                                                box-shadow: 0 0 5px red;
+                                                border-color: red;
+                                            }
+                                        }
+                                    </style>
+                                {{/if}}
+
+                                {{#if chamberHomeSet}}
 
                                 {{else}}
                                     <style>
@@ -200,10 +208,12 @@
 
 
                             <div class="col-sm-12 mt-4">
-                                {{#if userMeta.chamberHome}}
+                                {{#if chamberHomeSet}}
                                     <div class="btn-area text-center">
-                                        <a class="btn btn-primary" href="/">Visit This Chamber of Citizens!</a>
+                                        <div class="btn btn-primary uiActionVisitChamber" >Visit This Chamber of Citizens!</div>
                                     </div>
+
+
                                 {{else}}
                                     <div class="btn-area text-center">
                                         <button class="btn btn-success" id="save_chamber" disabled>🏠 Set Home Chamber</button>
