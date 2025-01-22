@@ -26,7 +26,11 @@ Template.timeline.onCreated(function () {
   this.posts = new ReactiveVar([]);
 
   this.autorun(() => {
-    HTTP.get(Meteor.settings.public.ROOT_URL+'/api/timeline?type=my_timeline', (error, response) => {
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?type=my_timeline&province=${province}&chamber=${chamber}`;
+
+    HTTP.get(apiUrl, (error, response) => {
       if (error) {
         console.error('Error fetching timeline posts:', error);
       } else {
@@ -64,6 +68,16 @@ Template.timeline.helpers({
   chamber() {
     return FlowRouter.getParam('chamber');
   },
+  isViewingChamber() {
+    let province = FlowRouter.getParam('province');
+    let chamber = FlowRouter.getParam('chamber');
+
+    if (province && chamber) {
+      return true;
+    }
+    return false;
+
+  }
 });
 
 Template.timeline.events({

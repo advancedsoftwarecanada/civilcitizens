@@ -2,7 +2,10 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
 
   const cdn = Meteor.settings.public.cdnPath
 
-  const { type } = req.query;
+  const { type, province, chamber } = req.query;
+
+  console.log('Province:', province);
+  console.log('Chamber:', chamber);
 
   if (!type) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
