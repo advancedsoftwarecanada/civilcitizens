@@ -18,37 +18,18 @@ Meteor.startup(async () => {
             console.log("User is not logged in. Redirecting to home...");
             FlowRouter.go('/');
             return; // Exit early if not logged in
+        }else{
+
+            console.log("User is logged in:", user);
+            console.log("Fetching User Data...");
+            userManager.fetchUserData();
+            window.userManager = userManager;
+            console.log("User Manager: ", userManager);
         }
 
-        console.log("User is logged in:", user);
-
-        // Subscribe to UserMeta when logged in
-        const userMetaSub = Meteor.subscribe('accounts.myUserMeta');
-
-        if (userMetaSub.ready()) {
-            console.log('UserMeta subscription is ready');
-
-            const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
-            if (userMeta) {
-                console.log("UserMeta found:", userMeta);
-
-                // Check chamberHome and navigate if necessary
-                if (!userMeta.chamberHome || userMeta.chamberHome === "UNSET" || userMeta.chamberHome === "") {
-                    console.log("No chamberHome set. Redirecting to /chambers...");
-                    FlowRouter.go('/chambers');
-                }
-            } else {
-                console.log("UserMeta not found");
-            }
-        } else {
-            console.log('Waiting for UserMeta subscription...');
-        }
     });
 
-    // User Manager - Create and fetch user data
-    console.log("User Manager: ", userManager);
-    await userManager.fetchUserData();
-    window.userManager = userManager;
+
 });
 
 
@@ -90,7 +71,6 @@ Template.CivilApp_3.onRendered(function () {
 
 function renderEverywhere(){
 
-    // #templateMain scroll to top
     $('html, body').animate({
         scrollTop: 0
     }, 0);
@@ -294,4 +274,28 @@ Template.registerHelper("chamberHomeSet", function () {
 
 Template.registerHelper("cdn", function () {
     return Meteor.settings.public.cdnPath;
+});
+
+// Nice Name (some-title-like-this) -> Some Title Like This
+Template.registerHelper("niceName", function (text) {
+    return text.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+});
+
+
+// My Chambers - MINUS home chamber
+Template.registerHelper("myChambers", function () {
+    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
+    if (Meteor.userId() && userMeta) {
+        return userMeta.chambers.filter(chamber => chamber !== userMeta.chamberHome);
+    }
+    return [];
+});
+
+// My Home Chamber
+Template.registerHelper("myHomeChamber", function () {
+    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
+    if (Meteor.userId() && userMeta) {
+        return userMeta.chamberHome;
+    }
+    return null;
 });

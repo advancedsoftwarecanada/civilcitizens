@@ -28,7 +28,8 @@ Template.timeline.onCreated(function () {
   this.autorun(() => {
     const province = FlowRouter.getParam('province');
     const chamber = FlowRouter.getParam('chamber');
-    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?type=my_timeline&province=${province}&chamber=${chamber}`;
+    const path = FlowRouter.current().path;
+    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?path=${path}&province=${province}&chamber=${chamber}`;
 
     HTTP.get(apiUrl, (error, response) => {
       if (error) {
@@ -36,8 +37,14 @@ Template.timeline.onCreated(function () {
       } else {
         this.posts.set(response.data);
         console.log('Timeline posts:', response.data);
+
+        $('html, body').animate({
+          scrollTop: 0
+        }, 0);
+
       }
     });
+
   });
 
 });
@@ -77,7 +84,20 @@ Template.timeline.helpers({
     }
     return false;
 
+  },
+
+  postType(type) {
+    const post = this;
+    if (type === 'self' && post.chamber === "self_post") {
+      return true;
+    } else if (type === 'chamber' && post.chamber) {
+      return true;
+    } else if (type === 'topic' && !post.chamber) {
+      return true;
+    }
+    return false;
   }
+
 });
 
 Template.timeline.events({

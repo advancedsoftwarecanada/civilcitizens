@@ -31,9 +31,55 @@ class UserManager {
     }
 
     async fetchUserData() {
-        // just get the loadFromStorage data
-        this.data = this.loadFromStorage();
+        try {
+            // Validate if the user is logged in
+            const user = Meteor.user();
+            if (!user) {
+                throw new Error('User is not logged in.');
+            }
+
+            // Load existing data from local storage (fallback if API fails)
+            this.data = this.loadFromStorage();
+
+            // API call to fetch the latest user data
+            const token = localStorage.getItem('Meteor.loginToken');
+            if (!token) {
+                throw new Error('No login token found.');
+            }
+
+            const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/user?id=${user._id}`;
+            const response = await fetch(apiUrl, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.json();
+                console.error('Error response from server:', errorBody);
+                throw new Error(`Failed to fetch user data: ${response.statusText}`);
+            }
+
+            const userData = await response.json();
+            console.log('Fetched user data:', userData);
+
+            // Save the fetched data as the entire user object
+            this.data = userData;
+
+            // Persist to local storage
+            this.saveToStorage();
+            console.log('UserManager data successfully updated and saved.');
+        } catch (error) {
+            console.error('Error fetching user data:', error);
+
+            // Fallback: Retain the local data if the API fails
+            console.warn('Using locally cached user data.');
+        }
     }
+
+
 
     getVotes() {
         return this.data.votes;

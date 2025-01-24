@@ -11,11 +11,13 @@
                 </div>
                 <div class="profile-pic d-flex gap-2 align-items-center">
                     <div class="avatar position-relative">
-                        <img class="avatar-img avatar-size" src="{{myUserMeta.avatarUrl}}" alt="avatar">
+                        <a href="/u/{{myUserMeta.userName}}">
+                            <img class="avatar-img avatar-size" src="{{myUserMeta.avatarUrl}}" alt="avatar">
+                        </a>
                     </div>
                     <div class="text-area">
-                        <h6 class="m-0 mb-1"><a href="profile-post.html">{{myUserMeta.firstName}} {{myUserMeta.lastName}}</a></h6>
-                        <p class="mdtxt">@{{myUserMeta.userName}}</p>
+                        <h6 class="m-0 mb-1"><a href="/u/{{myUserMeta.userName}}">{{myUserMeta.firstName}} {{myUserMeta.lastName}}</a></h6>
+                        <p class="mdtxt"><a href="/u/{{myUserMeta.userName}}">@{{myUserMeta.userName}}</a></p>
                     </div>
                 </div>
                 <ul class="profile-link mt-7 mb-7 pb-7">
@@ -25,30 +27,49 @@
                             <span>News Feed</span>
                         </a>
                     </li>
-                    <!-- <li>
+                    <li>
                         <a href="/notifications" class="d-flex gap-4">
                             <i class="material-symbols-outlined mat-icon"> notifications </i>
                             <span>Notifications</span>
                         </a>
-                    </li> -->
-                    <!-- <li>
+                    </li>
+                    <li>
                         <a href="/messages" class="d-flex gap-4">
                             <i class="material-symbols-outlined mat-icon"> mail </i>
                             <span>Messages</span>
                         </a>
-                    </li> -->
+                    </li>
                     <li>
                         <a href="/chambers" class="d-flex gap-4">
-                            <i class="material-symbols-outlined mat-icon"> workspaces </i>
+                            <i class="material-symbols-outlined mat-icon"> groups </i>
                             <span>Chambers</span>
                         </a>
                     </li>
-                    <!-- <li>
+                    <!-- Boards -->
+                    <li>
+                        <a href="/boards" class="d-flex gap-4">
+                            <i class="material-symbols-outlined mat-icon"> tenancy </i>
+                            <span>Boards</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/topics" class="d-flex gap-4">
+                            <i class="material-symbols-outlined mat-icon"> tag </i>
+                            <span>Topics</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="/courses" class="d-flex gap-4">
+                            <i class="material-symbols-outlined mat-icon"> school </i>
+                            <span>Courses</span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="/friends" class="d-flex gap-4">
                             <i class="material-symbols-outlined mat-icon"> person </i>
-                            <span>Friends</span>
+                            <span>Connections</span>
                         </a>
-                    </li> -->
+                    </li>
                     <li>
                         <a href="/profile" class="d-flex gap-4">
                             <i class="material-symbols-outlined mat-icon"> account_circle </i>
@@ -57,6 +78,7 @@
                     </li>
 
                     <!-- Admin Settings -->
+                    <hr class="mt-7 mb-7">
                     {{#if isAdmin}}
                         <li>
                             <a href="/admin/chambersBuilder" class="d-flex gap-4">

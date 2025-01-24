@@ -2,34 +2,6 @@ console.log("Loaded: accounts.js");
 
 if (Meteor.isServer) {
 
-    Meteor.publish('accounts.myUserMeta', function() {
-
-        if (!this.userId) {
-            return this.ready();
-        }
-
-        // Use an async function to handle async calls
-        return (async () => {
-            try {
-                const user = await Meteor.users.findOneAsync(this.userId);
-                if (!user || !user.profile || !user.profile.userName) {
-                    return this.ready();
-                }
-
-                const userMeta = await UserMeta.findOneAsync({ ownerUserId: this.userId });
-                if (!userMeta) {
-                    return this.ready();
-                }
-
-                return UserMeta.find({ ownerUserId: this.userId });
-
-            } catch (error) {
-                console.error("Error publishing userMeta:", error);
-                return this.ready();
-            }
-        })();
-    });
-
     Meteor.methods({
         'accounts.isHandleTaken': async function (userName) {
             try {

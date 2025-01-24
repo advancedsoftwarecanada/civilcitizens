@@ -20,3 +20,8 @@ Chambers = new Mongo.Collection('Chambers');
 if (Meteor.isServer) {
     Chambers.rawCollection().createIndex({ province: 1 });
 }
+ChamberFollows = new Mongo.Collection('ChamberFollows');
+if (Meteor.isServer) {
+    ChamberFollows.rawCollection().createIndex({ userId: 1 });
+    ChamberFollows.rawCollection().createIndex({ chamberId: 1 });
+}

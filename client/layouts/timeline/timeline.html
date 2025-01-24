@@ -12,7 +12,7 @@
                           <div class="d-flex gap-3 align-items-center">
                               <div class="text-area text-start">
                                   <h6>Citizens Chamber Of</h6>
-                                  <h4 class="m-0">{{chamber}}</h4>
+                                  <h4 class="m-0">{{niceName chamber}}</h4>
                                   <h5 class="m-0"><span style="text-transform: uppercase;">{{province}}</span>, Canada</h5>
                                   <div class="mt-4 friends-list d-flex flex-wrap gap-2 align-items-center text-center">
                                       <span class="mdtxt d-center following">7,401 Members</span>
@@ -29,9 +29,9 @@
                                   <i class="material-symbols-outlined mat-icon fs-4"> person_add </i>
                                   Follow
                               </a>
-                              <a href="#" class="cmn-btn d-center gap-1">
+                              <a href="/submit/c/{{province}}/{{chamber}}" class="cmn-btn d-center gap-1">
                                   <i class="material-symbols-outlined mat-icon fs-4"> send </i>
-                                  Message
+                                  Create Post
                               </a>
                           </div>
                       </div>
@@ -75,18 +75,27 @@
                     {{#if isAd this}}
                       <img class="avatar-img avatar-size" src="{{this.author.avatarUrl}}" alt="avatar">
                     {{else}}
-                      <img class="avatar-img avatar-size" src="{{this.author.avatarUrl}}" alt="avatar">
+                      <a href="/u/{{this.author.userName}}">
+                        <img class="avatar-img avatar-size" src="{{this.author.avatarUrl}}" alt="avatar">
+                      </a>
                     {{/if}}
                   </div>
                   <div class="info-area">
-                    <h6 class="m-0" style="text-transform: lowercase;">
-                      @{{this.author.userName}}
-                    </h6>
-                    <span class="mdtxt status">Bay of Quinte</span>
+                      <h6 class="m-0">
+                        <a href="/u/{{this.author.userName}}">
+                          @{{this.author.userName}}
+                        </a>
+                      </h6>
                     {{#if isAd this}}
                       <span class="mdtxt status">Sponsored Advertisement</span>
                     {{else}}
-
+                      {{#if postType 'self'}}
+                        <span class="mdtxt status">Self</span>
+                      {{else if postType 'chamber'}}
+                        <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong></span>
+                      {{else}}
+                        <span class="mdtxt status">Topic</span>
+                      {{/if}}
                     {{/if}}
                   </div>
                 </div>

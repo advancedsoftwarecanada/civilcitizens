@@ -5,46 +5,90 @@
         <div class="row">
             <div class="col">
                 <form class="text-center d-grid gap-4">
-                    <div class="single-box p-3 p-sm-5">
-                        <div class="row">
 
-                            <div class="col-sm-12">
-                                {{#if chamberHomeSet}}
-                                    <h3 class="mb-4">View Other Chambers of Citizens</h3>
-                                    <p>Explorer the depth of Canada across 343 Chambers of Citizens!</p>
-                                {{else}}
+                            {{#if chamberHomeSet}}
+                                <div class="single-box p-3 p-sm-5">
+                                    <div class="row">
+
+                                        <div class="col-sm-12">
+                                            <h3 class="mb-4">Your Chambers of Citizens</h3>
+                                            <table class="table m-0">
+                                                <tbody>
+                                                    <tr>
+                                                        <th scope="row">
+                                                            <div class="d-flex gap-3 align-items-center">
+                                                                <a href="public-profile-post.html">
+                                                                    <a class="btn btn-primary d-center gap-1" href="/c/on/bay-of-quintie">⭐ Bay of Quintie</a>
+                                                                </a>
+                                                            </div>
+                                                        </th>
+                                                        <td>
+                                                            <div class="btn-area d-flex justify-content-end gap-3">
+                                                                <button class="d-center cmn-btn alt px-2">
+                                                                    <i class="material-symbols-outlined"> delete </i>
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+
+                                    </div>
+                                </div>
+                            {{else}}
+                                <div class="col-sm-12">
                                     <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo mb-4" alt="logo" width=100>
                                     <h3 class="mb-4">Welcome to Civil!</h3>
                                     <hr />
                                     <h4>Select Your Home Chamber Of Citizens</h4>
                                     <p>Start by finding and setting your Home Chamber of Citizens, where you can connect with your community to discuss important topics and drive meaningful change.</p>
-                                {{/if}}
-                            </div>
-
-                            <div class="col-sm-12 mt-4">
-                                <div class="single-input text-start select2_custom_container {{#if userMeta.chamberHome}}{{else}}glowing_pulse_border{{/if}}">
-                                    <select class="form-select select2 input-area " id="province_territory" data-placeholder="🇨🇦 Select Province or Territory">
-                                        <option value="">Select Province / Territory</option>
-                                        <option value="nl">Newfoundland And Labrador</option>
-                                        <option value="pe">Prince Edward Island</option>
-                                        <option value="ns">Nova Scotia</option>
-                                        <option value="nb">New Brunswick</option>
-                                        <option value="qc">Quebec</option>
-                                        <option value="on">Ontario</option>
-                                        <option value="mb">Manitoba</option>
-                                        <option value="sk">Saskatchewan</option>
-                                        <option value="ab">Alberta</option>
-                                        <option value="bc">British Columbia</option>
-                                        <option value="yt">Yukon</option>
-                                        <option value="nt">Northwest Territories</option>
-                                        <option value="nu">Nunavut</option>
-                                    </select>
                                 </div>
-                                <div class="single-input text-start select2_custom_container">
-                                    <select class="form-select select2 input-area" id="chamber_select" data-placeholder="Select Your Chamber" disabled>
+                            {{/if}}
 
-                                    </select>
+                            <div class="single-box p-3 p-sm-5">
+                                <div class="row">
+
+                                    {{#if chamberHomeSet}}
+                                        <div class="col-sm-12">
+                                            <h3 class="mb-4">Explore Other Chambers of Citizens</h3>
+                                            <p>Explorer the depth of Canada across 343 Chambers of Citizens!</p>
+                                        </div>
+                                    {{else}}
+                                        <div class="col-sm-12">
+                                            <h4 class="mb-4">Select Your Home Chamber</h4>
+                                        </div>
+                                    {{/if}}
+
+
+                                    <div class="col-sm-12 mt-4">
+                                        <div class="single-input text-start select2_custom_container {{#if userMeta.chamberHome}}{{else}}glowing_pulse_border{{/if}}">
+                                            <select class="form-select select2 input-area " id="province_territory" data-placeholder="🇨🇦 Select Province or Territory">
+                                                <option value="">Select Province / Territory</option>
+                                                <option value="nl">Newfoundland And Labrador</option>
+                                                <option value="pe">Prince Edward Island</option>
+                                                <option value="ns">Nova Scotia</option>
+                                                <option value="nb">New Brunswick</option>
+                                                <option value="qc">Quebec</option>
+                                                <option value="on">Ontario</option>
+                                                <option value="mb">Manitoba</option>
+                                                <option value="sk">Saskatchewan</option>
+                                                <option value="ab">Alberta</option>
+                                                <option value="bc">British Columbia</option>
+                                                <option value="yt">Yukon</option>
+                                                <option value="nt">Northwest Territories</option>
+                                                <option value="nu">Nunavut</option>
+                                            </select>
+                                        </div>
+                                        <div class="single-input text-start select2_custom_container">
+                                            <select class="form-select select2 input-area" id="chamber_select" data-placeholder="Select Your Chamber" disabled>
+
+                                            </select>
+                                        </div>
+
+                                    </div>
                                 </div>
+
                                 <script>
                                     $(document).ready(function(){
                                         setTimeout( function(){
@@ -222,8 +266,6 @@
                             </div>
 
 
-                        </div>
-                    </div>
                 </form>
             </div>
         </div>
