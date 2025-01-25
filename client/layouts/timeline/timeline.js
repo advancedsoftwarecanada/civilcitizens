@@ -10,9 +10,14 @@ FlowRouter.route('/c/:province/:chamber', {
   action() {
       if (Meteor.userId()) {
 
-          BlazeLayout.render('CivilApp_3', {
-              main: 'timeline',
-          });
+        const checkUserDataReady = setInterval(() => {
+          if (window.userDataReady) {
+              clearInterval(checkUserDataReady);
+              BlazeLayout.render('CivilApp_3', {
+                  main: 'timeline',
+              });
+          }
+      }, 100);
       } else {
           BlazeLayout.render('CivilApp_0', {
               main: 'guest',
@@ -37,7 +42,6 @@ Template.timeline.onCreated(function () {
       } else {
         this.posts.set(response.data);
         console.log('Timeline posts:', response.data);
-
         $('html, body').animate({
           scrollTop: 0
         }, 0);
@@ -49,6 +53,7 @@ Template.timeline.onCreated(function () {
 
 });
 
+// TODO: we want to limit the height of posts on the timeline, and show a "Read More" button if the post is too long
 Template.timeline.onRendered(function () {
   this.autorun(() => {
     this.posts.get(); // Re-run when posts change

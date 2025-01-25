@@ -1,45 +1,142 @@
 class UserManager {
     constructor() {
-        this.storageKey = 'UserManagerData';
-        this.data = this.loadFromStorage();
-        this.setupEventHandlers(); // Initialize event handlers
-        this.startVoteCheckInterval(); // Start interval to check votes
+        this.dbName = 'UserManagerDB';
+        this.storeName = 'userManagerData';
+        this.db = null;
+        this.data = { votes: {}, bookmarks: [] }; // Default structure
+        this.reactiveData = new Tracker.Dependency(); // Add a Tracker dependency
+        this.isDataReady = false;
+
+        console.log("Loaded: User Manager (Constructor)");
+        this.initialize(); // Centralized initialization
     }
 
-    loadFromStorage() {
+    async initialize() {
         try {
-            const storedData = localStorage.getItem(this.storageKey);
-            return storedData ? JSON.parse(storedData) : { votes: {}, bookmarks: [] };
+            await this.initDatabase();
+            await this.loadFromStorage(); // Only load data after DB is ready
+            this.setupEventHandlers(); // Initialize event handlers
+
+            this.startVoteCheckInterval();
+
         } catch (error) {
-            console.error('Error loading from local storage:', error);
-            return { votes: {}, bookmarks: [] };
+            console.error('Error initializing UserManager:', error);
         }
     }
 
-    saveToStorage() {
+    async initDatabase() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 1);
+
+            // Create the object store if the database is being initialized for the first time
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                db.createObjectStore(this.storeName, { keyPath: 'id' });
+            };
+
+            request.onsuccess = (event) => {
+                this.db = event.target.result;
+                console.log('IndexedDB initialized.');
+                this.loadFromStorage();
+                resolve();
+            };
+
+            request.onerror = (event) => {
+                console.error('Error initializing IndexedDB:', event.target.error);
+                reject(event.target.error);
+            };
+        });
+    }
+
+    isReady(){
+        return this.isDataReady;
+    }
+
+    // Call this whenever `data` is updated
+    setData(newData) {
+        this.data = { ...this.data, ...newData };
+        this.reactiveData.changed(); // Notify reactivity
+    }
+
+    getData() {
+        this.reactiveData.depend(); // Register dependency
+        return this.data;
+    }
+
+    async loadFromStorage() {
         try {
-            console.log("UserManager SAVED");
-            localStorage.setItem(this.storageKey, JSON.stringify(this.data));
+            const data = await this.getFromIndexedDB('userData');
+            if (data) {
+                console.log('Loaded data from IndexedDB:', data);
+                this.data = data;
+            } else {
+                console.log('No data found in IndexedDB. Using default structure.');
+            }
         } catch (error) {
-            console.error('Error saving to local storage:', error);
+            console.error('Error loading data from IndexedDB:', error);
         }
     }
 
-    clearStorage(){
-        console.log("Clearing storage");
-        localStorage.removeItem(this.storageKey);
+    async saveToStorage() {
+        try {
+            await this.saveToIndexedDB('userData', this.data);
+            console.log('Data saved to IndexedDB:', this.data);
+        } catch (error) {
+            console.error('Error saving data to IndexedDB:', error);
+        }
     }
 
-    async fetchUserData() {
+    async clearStorage() {
+        try {
+            await this.deleteFromIndexedDB('userData');
+            this.data = { votes: {}, bookmarks: [] }; // Reset structure
+            console.log('Cleared storage and reset data.');
+        } catch (error) {
+            console.error('Error clearing IndexedDB storage:', error);
+        }
+    }
+
+    // IndexedDB operations
+    async getFromIndexedDB(key) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(this.storeName, 'readonly');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.get(key);
+
+            request.onsuccess = () => resolve(request.result?.data || null);
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+
+    async saveToIndexedDB(key, value) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(this.storeName, 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.put({ id: key, data: value });
+
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+
+    async deleteFromIndexedDB(key) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(this.storeName, 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.delete(key);
+
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+
+    async fetchUserDataFromServer() {
         try {
             // Validate if the user is logged in
             const user = Meteor.user();
             if (!user) {
                 throw new Error('User is not logged in.');
             }
-
-            // Load existing data from local storage (fallback if API fails)
-            this.data = this.loadFromStorage();
 
             // API call to fetch the latest user data
             const token = localStorage.getItem('Meteor.loginToken');
@@ -68,8 +165,8 @@ class UserManager {
             // Save the fetched data as the entire user object
             this.data = userData;
 
-            // Persist to local storage
-            this.saveToStorage();
+            // Persist to IndexedDB
+            await this.saveToStorage();
             console.log('UserManager data successfully updated and saved.');
         } catch (error) {
             console.error('Error fetching user data:', error);
@@ -78,8 +175,6 @@ class UserManager {
             console.warn('Using locally cached user data.');
         }
     }
-
-
 
     getVotes() {
         return this.data.votes;
@@ -92,17 +187,20 @@ class UserManager {
     addVote(postId, newVote) {
         console.log("ADDING VOTE: " + postId + " : " + newVote);
         this.data.votes[postId] = newVote;
+        this.saveToStorage();
     }
 
     removeVote(postId) {
         console.log("REMOVING VOTE: " + postId);
         delete this.data.votes[postId];
+        this.saveToStorage();
     }
 
     setupEventHandlers() {
         $(document).on('click', '.upvote-btn', async (event) => {
             console.log('Upvote clicked');
             const postId = $(event.target).closest('[data-post-id]').data('post-id');
+            console.log("POST ID: " + postId);
             const success = await this.voteHttp(postId, 'upvote');
             if (success) {
                 this.voteClient(postId, 'upvote');
@@ -119,6 +217,7 @@ class UserManager {
         });
     }
 
+
     async voteHttp(postId, newVote) {
         try {
             const token = localStorage.getItem('Meteor.loginToken');
@@ -129,7 +228,7 @@ class UserManager {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${token}`,
                 },
-                body: JSON.stringify({ action: newVote, post_id: postId }),
+                body: JSON.stringify({ action: newVote, postId: postId }),
             });
 
             if (!response.ok) {
@@ -154,24 +253,18 @@ class UserManager {
             const scoreElement = postElement.find('.score');
             if (scoreElement.length) {
                 // Log the current user votes
-                console.log("User votes are:");
-                console.log(this.getVotes());
+                // console.log("User votes are:");
+                // console.log(this.getVotes());
 
                 let currentScore = parseInt(scoreElement.text(), 10) || 0;
-                console.log("Initial currentScore:", currentScore);
+                // console.log("Initial currentScore:", currentScore);
 
                 const previousVote = this.getVote(postId);
-                console.log("Previous vote:", previousVote);
-                console.log("Vote state:", newVote);
+                // console.log("Previous vote:", previousVote);
+                // console.log("Vote state:", newVote);
 
-                // Remove active class from previous vote button
-                if (previousVote) {
-                    if (previousVote === 'upvote') {
-                        postElement.find('.upvote-btn').removeClass('active');
-                    } else {
-                        postElement.find('.downvote-btn').removeClass('active');
-                    }
-                }
+                postElement.find('.upvote-btn').removeClass('active');
+                postElement.find('.downvote-btn').removeClass('active');
 
                 if (previousVote) {
                     if (previousVote === newVote) {
@@ -208,7 +301,7 @@ class UserManager {
                     postElement.find('.downvote-btn').addClass('active');
                 }
 
-                console.log("New currentScore:", currentScore);
+                // console.log("New currentScore:", currentScore);
 
                 this.saveToStorage();
 
@@ -225,31 +318,32 @@ class UserManager {
     startVoteCheckInterval() {
         setInterval(() => {
             this.updateVoteClasses();
-        }, 500);
+        }, 1000);
     }
 
     updateVoteClasses() {
         const votes = this.getVotes();
-        for (const postId in votes) {
-            const vote = votes[postId];
-            const postElement = $(`[data-post-id="${postId}"]`);
+        votes.forEach((vote) => {
+            // console.log(vote);
+            const postElement = $(`[data-post-id="${vote.postId}"]`);
             if (postElement.length) {
+
+                // console.log("POST ELEMENT FOUND: " + vote.postId);
                 const upvoteBtn = postElement.find('.upvote-btn');
                 const downvoteBtn = postElement.find('.downvote-btn');
 
-                upvoteBtn.removeClass('active');
-                downvoteBtn.removeClass('active');
-
-                if (vote === 'upvote' && !upvoteBtn.hasClass('active')) {
+                if (vote.vote == 'upvote' ) {
                     upvoteBtn.addClass('active');
-                } else if (vote === 'downvote' && !downvoteBtn.hasClass('active')) {
+                }
+                if (vote.vote == 'downvote' ) {
                     downvoteBtn.addClass('active');
                 }
             }
-        }
+        });
     }
 
-}
 
+}
 const userManager = new UserManager();
-export default userManager;
+export default UserManager; // Ensure this is the default export
+window.userManager = userManager; // Expose globally for debugging

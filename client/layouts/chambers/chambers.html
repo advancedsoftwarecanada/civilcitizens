@@ -14,11 +14,14 @@
                                             <h3 class="mb-4">Your Chambers of Citizens</h3>
                                             <table class="table m-0">
                                                 <tbody>
+                                                    {{#each myChambers}}
                                                     <tr>
                                                         <th scope="row">
                                                             <div class="d-flex gap-3 align-items-center">
                                                                 <a href="public-profile-post.html">
-                                                                    <a class="btn btn-primary d-center gap-1" href="/c/on/bay-of-quintie">⭐ Bay of Quintie</a>
+                                                                    <a class="btn btn-primary d-center gap-1 {{#if home}}highlight-home{{/if}}" href="/c/{{province}}/{{chamber}}">
+                                                                        {{#if home}}⭐ {{/if}}{{niceName chamber}}
+                                                                    </a>
                                                                 </a>
                                                             </div>
                                                         </th>
@@ -30,6 +33,7 @@
                                                             </div>
                                                         </td>
                                                     </tr>
+                                                    {{/each}}
                                                 </tbody>
                                             </table>
                                         </div>

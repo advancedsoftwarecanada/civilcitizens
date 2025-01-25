@@ -1,38 +1,39 @@
-import userManager from './userManager.js';
+import UserManager from './userManager.js';
 
 /*
  * Client Startup
     * This is the main entry point for the client
 */
-Meteor.startup(async () => {
+Meteor.startup(() => {
     console.log("==================================");
     console.log("CivilCitizens Client Connected");
     console.log("----------------------------------");
+    window.userDataReady = false;
 
     // Reactive Tracker to handle user state and UserMeta logic
-    Tracker.autorun(() => {
-        const user = Meteor.user(); // Reactively track the logged-in user
-        const isLoggedIn = !!user; // Boolean to check if a user is logged in
+    setTimeout(() => {
+        Tracker.autorun(async () => {
+            const user = Meteor.user(); // Reactively track the logged-in user
+            const isLoggedIn = !!user; // Boolean to check if a user is logged in
 
-        if (!isLoggedIn) {
-            console.log("User is not logged in. Redirecting to home...");
-            FlowRouter.go('/');
-            return; // Exit early if not logged in
-        }else{
+            if (!isLoggedIn) {
+                console.log("User is not logged in. Redirecting to home...");
+                FlowRouter.go('/');
+                return; // Exit early if not logged in
+            } else {
+                console.log("User is logged in:", user);
+                console.log("Initializing UserManager...");
 
-            console.log("User is logged in:", user);
-            console.log("Fetching User Data...");
-            userManager.fetchUserData();
-            window.userManager = userManager;
-            console.log("User Manager: ", userManager);
-        }
+                await userManager.fetchUserDataFromServer(); // Fetch user data
 
-    });
-
+                console.log("User Manager initialized and data fetched: ENABLE userDataReady");
+                window.userDataReady = true;
+                console.log(userManager);
+            }
+        });
+    }, 1000);
 
 });
-
-
 
 
 /*
@@ -44,9 +45,16 @@ FlowRouter.route('/', {
     action() {
         if (Meteor.userId()) {
 
-            BlazeLayout.render('CivilApp_3', {
-                main: 'timeline',
-            });
+            const checkUserDataReady = setInterval(() => {
+                if (window.userDataReady) {
+                    clearInterval(checkUserDataReady);
+                    BlazeLayout.render('CivilApp_3', {
+                        main: 'timeline',
+                    });
+                }
+            }, 100);
+
+
         } else {
             BlazeLayout.render('CivilApp_0', {
                 main: 'guest',
@@ -241,9 +249,13 @@ Template.registerHelper("isLoggedIn", function () {
 // is Admin? Fetch userMeta.admin true/false
 Template.registerHelper("isAdmin", function () {
 
-    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
-    if (Meteor.userId() && userMeta) {
-        return userMeta.admin;
+    const userId = Meteor.userId(); // Reactively track the logged-in user
+    if (!userId) return null;
+
+    // Reactively fetch data from UserManager
+    const userMeta = userManager.getData().meta || {}; // `getData()` is reactive
+    if( userMeta.admin === true ) {
+        return true;
     }
     return false;
 
@@ -251,25 +263,55 @@ Template.registerHelper("isAdmin", function () {
 
 // Get my user information from usermeta
 Template.registerHelper("myUserMeta", function () {
-    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
-    if (Meteor.userId() && userMeta) {
-        return {
-            firstName: userMeta.firstName?.toLowerCase() || '',
-            lastName: userMeta.lastName?.toLowerCase() || '',
-            userName: userMeta.userName || '',
-            avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
-        };
-    }
-    return null;
+    const userId = Meteor.userId(); // Reactively track the logged-in user
+    if (!userId) return null;
+
+    // Reactively fetch data from UserManager
+    const userMeta = userManager.getData().meta || {}; // `getData()` is reactive
+
+    // Return transformed user meta
+    return {
+        firstName: userMeta.firstName?.toLowerCase() || '',
+        lastName: userMeta.lastName?.toLowerCase() || '',
+        userName: userMeta.userName || '',
+        avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
+    };
 });
 
 // userMeta.chamberHomeSet
 Template.registerHelper("chamberHomeSet", function () {
-    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
-    if (Meteor.userId() && userMeta) {
-        return userMeta.chamberHome !== "UNSET";
+
+    const userId = Meteor.userId(); // Reactively track the logged-in user
+    if (!userId) return null;
+
+    // Reactively fetch data from UserManager
+    const chambers = userManager.getData().chamberFollows || []; // `getData()` is reactive
+    // Loop through each chamber to check if one is set as a home chamber
+    for (const chamber of chambers) {
+        if (chamber.home === true) {
+            return true;
+        }
     }
     return false;
+});
+
+// My Chambers
+Template.registerHelper("myChambers", function () {
+    const userId = Meteor.userId(); // Reactively track the logged-in user
+    if (!userId) return [];
+
+    // Reactively fetch data from UserManager
+    const chambers = userManager.getData().chamberFollows || []; // `getData()` is reactive
+
+    // Sort chambers so `.home = true` comes first
+    chambers.sort((a, b) => {
+        if (a.home && !b.home) return -1; // `a` is home, `b` is not => `a` first
+        if (!a.home && b.home) return 1;  // `b` is home, `a` is not => `b` first
+        return 0; // No change in order for non-home chambers
+    });
+
+    console.log("Sorted MY CHAMBERS:", chambers);
+    return chambers;
 });
 
 Template.registerHelper("cdn", function () {
@@ -279,23 +321,4 @@ Template.registerHelper("cdn", function () {
 // Nice Name (some-title-like-this) -> Some Title Like This
 Template.registerHelper("niceName", function (text) {
     return text.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-});
-
-
-// My Chambers - MINUS home chamber
-Template.registerHelper("myChambers", function () {
-    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
-    if (Meteor.userId() && userMeta) {
-        return userMeta.chambers.filter(chamber => chamber !== userMeta.chamberHome);
-    }
-    return [];
-});
-
-// My Home Chamber
-Template.registerHelper("myHomeChamber", function () {
-    const userMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
-    if (Meteor.userId() && userMeta) {
-        return userMeta.chamberHome;
-    }
-    return null;
 });

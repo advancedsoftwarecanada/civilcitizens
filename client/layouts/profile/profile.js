@@ -1,9 +1,16 @@
 FlowRouter.route('/profile', {
     name: "profile",
     action() {
-        BlazeLayout.render('CivilApp_3', {
-            main: 'profile',
-        });
+
+        const checkUserDataReady = setInterval(() => {
+            if (window.userDataReady) {
+                clearInterval(checkUserDataReady);
+                BlazeLayout.render('CivilApp_3', {
+                    main: 'profile',
+                });
+            }
+        }, 100);
+
     }
 });
 

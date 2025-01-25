@@ -1,9 +1,14 @@
 FlowRouter.route('/chambers', {
     name: "chambers",
     action() {
-        BlazeLayout.render('CivilApp_3', {
-            main: 'chambers',
-        });
+        const checkUserDataReady = setInterval(() => {
+            if (window.userDataReady) {
+                clearInterval(checkUserDataReady);
+                BlazeLayout.render('CivilApp_3', {
+                    main: 'chambers',
+                });
+            }
+        }, 100);
     }
 });
 
@@ -17,6 +22,9 @@ Template.chambers.events({
 
     // Save the selected chamber as the user's home chamber
     'click #save_chamber': function (event) {
+
+        // prevent form submit
+        event.preventDefault();
 
         var province = $('#province_territory').val();
         var chamber = $('#chamber_select').val();
@@ -36,14 +44,14 @@ Template.chambers.events({
                 return false;
             }
 
-            Meteor.call('userMeta.setHomeChamber', chamber, function(error, result) {
+            Meteor.call('chambers.setHomeChamber', province, chamber, function(error, result) {
                 if(error) {
                     console.error('Error setting home chamber:', error);
-                    alert('Error setting home chamber.');
+                    toastr.error('An error occurred while setting the home chamber.', 'Error');
                 } else {
                     // toastr
                     toastr.success('Home chamber set, welcome to Civil!.', 'Success');
-                    FlowRouter.go('/timeline');
+                    FlowRouter.go('/c/'+province+'/'+chamber);
                 }
             });
 

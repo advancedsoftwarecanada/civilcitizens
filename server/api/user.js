@@ -29,11 +29,11 @@ WebApp.connectHandlers.use('/api/user', async (req, res) => {
         returnUserMeta.meta = userMeta || {};
 
         // Fetch user's followed chambers
-        const userChamberFollows = await ChamberFollows.find({ user_id: userId }).fetch();
+        const userChamberFollows = await ChamberFollows.find({ userId: userId }).fetch();
         returnUserMeta.chamberFollows = userChamberFollows || [];
 
         // Fetch user's most recent 100 votes
-        const userVotes = await Votes.find({ user_id: userId }, { limit: 100, sort: { createdAt: -1 } }).fetch();
+        const userVotes = await Votes.find({ userId: userId }, { limit: 100, sort: { createdAt: -1 } }).fetch();
         returnUserMeta.votes = userVotes || [];
 
         // Respond with the combined user metadata

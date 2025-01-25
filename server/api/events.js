@@ -5,8 +5,13 @@ WebApp.connectHandlers.use(bodyParser.json());
 
 WebApp.connectHandlers.use('/api/events', async (req, res) => {
 
-    console.log("VOTE EVENT API");
+  console.log("VOTE EVENT API");
 
+  // ---------------
+  // Checks
+  // ---------------
+
+  //  Only allow POST requests
   if (req.method !== 'POST') {
     res.writeHead(405, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Method not allowed. Use POST.' }));
@@ -21,6 +26,7 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
     return;
   }
 
+  // Find the user by token
   const user = await Meteor.users.findOneAsync({ 'services.resume.loginTokens.hashedToken': Accounts._hashLoginToken(token) });
   if (!user) {
     res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -28,14 +34,20 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
     return;
   }
 
-  const { action, post_id } = req.body;
+  const { action, postId } = req.body;
 
-  if (!action || !post_id) {
+  // Validate the action and post ID
+  if (!action || !postId) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Action and post ID are required.' }));
     return;
   }
 
+  // ---------------
+  // Event
+  // ---------------
+
+  // Check for valid Event
   const validActions = ['upvote', 'downvote', 'bookmark', 'share'];
   if (!validActions.includes(action)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -44,9 +56,11 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
   }
 
   try {
+
+    // Upvotes and downvotes!
     if (action === 'upvote' || action === 'downvote') {
         console.log("VOTE: " + action);
-      await Meteor.callAsync('posts.vote', { userId: user._id, postId: post_id, vote: action === 'upvote' ? 'upvote' : 'downvote' });
+      await Meteor.callAsync('posts.vote', { userId: user._id, postId: postId, vote: action === 'upvote' ? 'upvote' : 'downvote' });
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });

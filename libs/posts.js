@@ -157,7 +157,7 @@ if (Meteor.isServer) {
       }
 
       try {
-        const existingVote = await Votes.findOneAsync({ user_id: userId, post_id: postId });
+        const existingVote = await Votes.findOneAsync({ userId: userId, postId: postId });
 
         if (existingVote) {
           if (existingVote.vote === vote) {
@@ -184,8 +184,8 @@ if (Meteor.isServer) {
         } else {
           // User is casting a new vote
           await Votes.insertAsync({
-            user_id: userId,
-            post_id: postId,
+            userId: userId,
+            postId: postId,
             vote,
             timestamp: Date.now(),
           });
