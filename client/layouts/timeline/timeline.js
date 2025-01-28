@@ -1,5 +1,7 @@
 import userManager from "../../userManager.js";
 
+// Reactive varaible for thisChamber
+const thisChamber = new ReactiveVar(null);
 
 /*
  * Main client-side application code
@@ -55,6 +57,9 @@ Template.timeline.onCreated(function () {
 
 // TODO: we want to limit the height of posts on the timeline, and show a "Read More" button if the post is too long
 Template.timeline.onRendered(function () {
+
+  console.log("TIMELINE RENDERED");
+
   this.autorun(() => {
     this.posts.get(); // Re-run when posts change
     Meteor.defer(() => {
@@ -65,6 +70,26 @@ Template.timeline.onRendered(function () {
       });
     });
   });
+
+
+    let province = FlowRouter.getParam('province');
+    let chamber = FlowRouter.getParam('chamber');
+
+    if (province && chamber) {
+      // This is a chamber we must request its details over http and update the reactive var
+      console.log("CHAMBER PPAGE IS LOADED");
+      const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/chamber?province=${province}&chamber=${chamber}`;
+      console.log("API URL", apiUrl);
+      HTTP.get(apiUrl, (error, response) => {
+        if (error) {
+          console.error('Error fetching chamber:', error);
+        } else {
+          thisChamber.set(response.data);
+          console.log('Chamber:', response.data);
+        }
+      });
+    }
+
 });
 
 Template.timeline.helpers({
@@ -89,6 +114,9 @@ Template.timeline.helpers({
     }
     return false;
 
+  },
+  thisChamber() {
+    return thisChamber.get();
   },
 
   postType(type) {

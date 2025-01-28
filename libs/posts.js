@@ -99,6 +99,10 @@ if (Meteor.isServer) {
           });
 
           console.log('Post submitted successfully:', postId);
+
+          // Update the Chamber stats.posts
+          await Chambers.updateAsync({ province:thePostJson.province, seoUrl:thePostJson.chamber }, { $inc: { 'stats.posts': 1 } });
+
           return { status: 'success', message: 'Post submitted successfully.', postId };
         } catch (error) {
           console.error('Error submitting post:', error);

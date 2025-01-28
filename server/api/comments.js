@@ -1,6 +1,6 @@
 WebApp.connectHandlers.use('/api/comments', async (req, res) => {
 
-    console.log("NEW COMMENT");
+  console.log("NEW COMMENT");
 
   if (req.method !== 'POST') {
     res.writeHead(405, { 'Content-Type': 'application/json' });

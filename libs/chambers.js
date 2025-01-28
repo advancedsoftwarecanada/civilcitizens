@@ -18,7 +18,11 @@ if (Meteor.isServer) {
             console.log("SEARCHING FOR HOME CHAMBER:", theProvince, theChamber, this.userId);
 
             // Remove any existing home chamber
-            await ChamberFollows.removeAsync({ userId: this.userId, home: true });
+            const existingHomeChamber = await ChamberFollows.findOneAsync({ userId: this.userId, home: true });
+            if (existingHomeChamber) {
+                await ChamberFollows.removeAsync({ _id: existingHomeChamber._id });
+                await Chambers.updateAsync({ province: existingHomeChamber.province, seoUrl: existingHomeChamber.chamber }, { $inc: { 'stats.members': -1 } });
+            }
 
             // Check if the specific chamber already exists
             const chamberFollow = await ChamberFollows.findOneAsync({
@@ -35,8 +39,6 @@ if (Meteor.isServer) {
                     { _id: chamberFollow._id },
                     { $set: { home: true } }
                 );
-
-                return { status: 'success', message: 'Home chamber updated successfully.' };
             } else {
                 console.log("Inserting new chamberFollow as home");
 
@@ -47,9 +49,12 @@ if (Meteor.isServer) {
                     chamber: theChamber,
                     home: true,
                 });
-
-                return { status: 'success', message: 'Home chamber set successfully.' };
             }
+
+            // Increment the members stat for the new home chamber
+            await Chambers.updateAsync({ province: theProvince, seoUrl: theChamber }, { $inc: { 'stats.members': 1 } });
+
+            return { status: 'success', message: 'Home chamber set successfully.' };
         },
     });
 }
