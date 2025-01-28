@@ -118,7 +118,6 @@ Template.timeline.helpers({
   thisChamber() {
     return thisChamber.get();
   },
-
   postType(type) {
     const post = this;
     if (type === 'self' && post.chamber === "self") {
@@ -129,11 +128,38 @@ Template.timeline.helpers({
       return true;
     }
     return false;
+  },
+  isFollowing() {
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+    const chambers = userManager.getData().chamberFollows || [];
+    return chambers.some(c => c.province === province && c.chamber === chamber);
   }
-
 });
 
 Template.timeline.events({
+  'click .follow-btn': function () {
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+    Meteor.call('chambers.follow', province, chamber, (error, result) => {
+      if (error) {
+        console.error('Error following chamber:', error);
+      } else {
+        console.log('Chamber followed successfully:', result);
+      }
+    });
+  },
+  'click .unfollow-btn': function () {
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+    Meteor.call('chambers.unfollow', province, chamber, (error, result) => {
+      if (error) {
+        console.error('Error unfollowing chamber:', error);
+      } else {
+        console.log('Chamber unfollowed successfully:', result);
+      }
+    });
+  },
   // 'click .upvote-btn': async function () {
   //   const postId = this._id;
   //   const success = await userManager.vote(postId, 'upvote');

@@ -26,14 +26,28 @@
                                 </div>
                             </div>
                             <div class="btn-item d-center gap-3">
-                                <a href="#" class="cmn-btn d-center gap-1">
+                              {{#if isHomeChamber}}
+                                <div class="cmn-btn d-center gap-1">
+                                  <i class="material-symbols-outlined mat-icon fs-4"> star </i>
+                                  Home Chamber
+                                </div>
+                              {{else}}
+                                {{#if isFollowing}}
+                                  <div class="cmn-btn d-center gap-1 unfollow-btn">
+                                    <i class="material-symbols-outlined mat-icon fs-4"> person_add_disabled </i>
+                                    Unfollow
+                                  </div>
+                                {{else}}
+                                  <div class="cmn-btn d-center gap-1 follow-btn">
                                     <i class="material-symbols-outlined mat-icon fs-4"> person_add </i>
                                     Follow
-                                </a>
-                                <a href="/submit/c/{{province}}/{{chamber}}" class="cmn-btn d-center gap-1">
-                                    <i class="material-symbols-outlined mat-icon fs-4"> send </i>
-                                    Create Post
-                                </a>
+                                  </div>
+                                {{/if}}
+                              {{/if}}
+                              <a href="/submit/c/{{province}}/{{chamber}}" class="cmn-btn d-center gap-1">
+                                <i class="material-symbols-outlined mat-icon fs-4"> send </i>
+                                Create Post
+                              </a>
                             </div>
                         </div>
                         <div class="page-details">

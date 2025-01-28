@@ -56,6 +56,61 @@ if (Meteor.isServer) {
 
             return { status: 'success', message: 'Home chamber set successfully.' };
         },
+
+        async 'chambers.follow'(theProvince, theChamber) {
+            check(theProvince, String);
+            check(theChamber, String);
+
+            if (!this.userId) {
+                throw new Meteor.Error('not-authorized');
+            }
+
+            const chamberFollow = await ChamberFollows.findOneAsync({
+                userId: this.userId,
+                province: theProvince,
+                chamber: theChamber,
+            });
+
+            if (chamberFollow) {
+                throw new Meteor.Error('already-following', 'You are already following this chamber.');
+            }
+
+            await ChamberFollows.insertAsync({
+                userId: this.userId,
+                province: theProvince,
+                chamber: theChamber,
+                home: false,
+            });
+
+            await Chambers.updateAsync({ province: theProvince, seoUrl: theChamber }, { $inc: { 'stats.followers': 1 } });
+
+            return { status: 'success', message: 'Chamber followed successfully.' };
+        },
+
+        async 'chambers.unfollow'(theProvince, theChamber) {
+            check(theProvince, String);
+            check(theChamber, String);
+
+            if (!this.userId) {
+                throw new Meteor.Error('not-authorized');
+            }
+
+            const chamberFollow = await ChamberFollows.findOneAsync({
+                userId: this.userId,
+                province: theProvince,
+                chamber: theChamber,
+            });
+
+            if (!chamberFollow) {
+                throw new Meteor.Error('not-following', 'You are not following this chamber.');
+            }
+
+            await ChamberFollows.removeAsync({ _id: chamberFollow._id });
+
+            await Chambers.updateAsync({ province: theProvince, seoUrl: theChamber }, { $inc: { 'stats.followers': -1 } });
+
+            return { status: 'success', message: 'Chamber unfollowed successfully.' };
+        },
     });
 }
 

@@ -314,6 +314,16 @@ Template.registerHelper("myChambers", function () {
     return chambers;
 });
 
+// Check if the current chamber is the user's home chamber
+Template.registerHelper("isHomeChamber", function (province, chamber) {
+    const userId = Meteor.userId(); // Reactively track the logged-in user
+    if (!userId) return false;
+
+    // Reactively fetch data from UserManager
+    const chambers = userManager.getData().chamberFollows || []; // `getData()` is reactive
+    return chambers.some(c => c.province === province && c.chamber === chamber && c.home === true);
+});
+
 Template.registerHelper("cdn", function () {
     return Meteor.settings.public.cdnPath;
 });
