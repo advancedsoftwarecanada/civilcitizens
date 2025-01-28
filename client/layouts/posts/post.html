@@ -1,7 +1,7 @@
 <template name="post">
   <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z">
     {{#with post}}
-      <div class="post-item d-flex flex-column gap-5 gap-md-7" id="news-feed">
+      <div class="post-item d-flex flex-column gap-5 gap-md-7" id="news-feed" data-post-id="{{_id}}">
         <div class="post-single-box p-3 p-sm-5">
           <div class="top-area pb-5">
             <div class="profile-area d-center justify-content-between">
@@ -10,12 +10,21 @@
                   <img class="avatar-img avatar-size" src="{{author.avatarUrl}}" alt="avatar">
                 </div>
                 <div class="info-area">
-                  <h6 class="m-0" style="text-transform: lowercase;">
-                    @{{author.userName}}
+                  <h6 class="m-0">
+                    <a href="/u/{{this.author.userName}}">
+                      @{{niceName author.userName}}
+                    </a>
                   </h6>
-                  <span class="mdtxt status">Bay of Quinte</span>
                   {{#if isAd this}}
                     <span class="mdtxt status">Sponsored Advertisement</span>
+                  {{else}}
+                    {{#if postType 'self'}}
+                      <span class="mdtxt status">Self</span>
+                    {{else if postType 'chamber'}}
+                      <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong></span>
+                    {{else}}
+                      <span class="mdtxt status">Topic</span>
+                    {{/if}}
                   {{/if}}
                 </div>
               </div>
@@ -40,6 +49,37 @@
           </div>
           {{#unless isAd this}}
           {{/unless}}
+
+          <div class="like-comment-share py-5 flex-wrap">
+            <!-- Upvote/Downvote Section -->
+            <div class="vote-section d-flex align-items-center gap-2">
+              <button class="upvote-btn">
+                <i class="material-symbols-outlined mat-icon">thumb_up</i>
+              </button>
+              <span class="score">{{voteCount}}</span>
+              <button class="downvote-btn">
+                <i class="material-symbols-outlined mat-icon">thumb_down</i>
+              </button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons d-flex align-items-center gap-3">
+              <a href="/post/{{seoUrl}}">
+                <button class="comment-btn">
+                <i class="material-symbols-outlined mat-icon">chat</i>
+                {{comment_count}}
+              </button>
+            </a>
+              <!-- <button class="bookmark-btn">
+                <i class="material-symbols-outlined mat-icon">bookmark</i>
+                0
+              </button>
+              <button class="share-btn">
+                <i class="material-symbols-outlined mat-icon">share</i>
+                0
+              </button> -->
+            </div>
+          </div>
 
           {{#if isLoggedIn}}
             <form class="comment-form" onkeydown="return event.key !== 'Enter';">

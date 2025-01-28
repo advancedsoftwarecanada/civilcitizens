@@ -9,9 +9,14 @@ FlowRouter.route('/post/', {
 FlowRouter.route('/post/:seo_url', {
   name: "post",
   action(params) {
-    BlazeLayout.render('CivilApp_3', {
-      main: 'post',
-    });
+      const checkUserDataReady = setInterval(() => {
+        if (window.userDataReady) {
+            clearInterval(checkUserDataReady);
+            BlazeLayout.render('CivilApp_3', {
+                main: 'post',
+            });
+        }
+    }, 100);
     console.log('SEO URL:', params.seo_url);
   }
 });
@@ -31,6 +36,7 @@ Template.post.onCreated(function () {
       }
     });
   });
+
 });
 
 Template.post.helpers({
@@ -43,7 +49,41 @@ Template.post.helpers({
   comments() {
     const post = Template.instance().post.get();
     return post ? post.comments : [];
+  },
+
+
+  posts() {
+    return Template.instance().posts.get();
+  },
+  province() {
+    return FlowRouter.getParam('province');
+  },
+  chamber() {
+    return FlowRouter.getParam('chamber');
+  },
+  isViewingChamber() {
+    let province = FlowRouter.getParam('province');
+    let chamber = FlowRouter.getParam('chamber');
+
+    if (province && chamber) {
+      return true;
+    }
+    return false;
+
+  },
+
+  postType(type) {
+    const post = this;
+    if (type === 'self' && post.chamber === "self") {
+      return true;
+    } else if (type === 'chamber' && post.chamber) {
+      return true;
+    } else if (type === 'topic' && !post.chamber) {
+      return true;
+    }
+    return false;
   }
+
 });
 
 Template.post.events({
@@ -54,7 +94,7 @@ Template.post.events({
     const comment = commentInput.value.trim();
     const postId = instance.post.get()?._id;
     const userId = Meteor.userId();
-    const userMeta = UserMeta.findOne({ ownerUserId: userId });
+    const userMeta = userManager.getData().meta || {}; // `getData()` is reactive
 
     if (!comment) {
       toastr.error('Comment cannot be empty.', 'Validation Error');
