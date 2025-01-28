@@ -129,12 +129,7 @@ Template.timeline.helpers({
     }
     return false;
   },
-  isFollowing() {
-    const province = FlowRouter.getParam('province');
-    const chamber = FlowRouter.getParam('chamber');
-    const chambers = userManager.getData().chamberFollows || [];
-    return chambers.some(c => c.province === province && c.chamber === chamber);
-  }
+
 });
 
 Template.timeline.events({
@@ -145,6 +140,7 @@ Template.timeline.events({
       if (error) {
         console.error('Error following chamber:', error);
       } else {
+        toastr.success('Chamber followed successfully.', 'Success');
         console.log('Chamber followed successfully:', result);
       }
     });
@@ -156,6 +152,7 @@ Template.timeline.events({
       if (error) {
         console.error('Error unfollowing chamber:', error);
       } else {
+        toastr.success('No longer following this Chamber.', 'Success');
         console.log('Chamber unfollowed successfully:', result);
       }
     });

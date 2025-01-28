@@ -315,13 +315,33 @@ Template.registerHelper("myChambers", function () {
 });
 
 // Check if the current chamber is the user's home chamber
-Template.registerHelper("isHomeChamber", function (province, chamber) {
+Template.registerHelper("isHomeChamber", function () {
+
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+
     const userId = Meteor.userId(); // Reactively track the logged-in user
     if (!userId) return false;
 
     // Reactively fetch data from UserManager
     const chambers = userManager.getData().chamberFollows || []; // `getData()` is reactive
-    return chambers.some(c => c.province === province && c.chamber === chamber && c.home === true);
+    const isChamberHome = chambers.some(c => c.province === province && c.chamber === chamber && c.home === true);
+    console.log("IS HOME CHAMBER:", isChamberHome);
+    return isChamberHome;
+});
+
+// Check if the user is following the current chamber
+Template.registerHelper("isFollowing", function () {
+
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+
+    const userId = Meteor.userId(); // Reactively track the logged-in user
+    if (!userId) return false;
+
+    // Reactively fetch data from UserManager
+    const chambers = userManager.getData().chamberFollows || []; // `getData()` is reactive
+    return chambers.some(c => c.province === province && c.chamber === chamber);
 });
 
 Template.registerHelper("cdn", function () {
