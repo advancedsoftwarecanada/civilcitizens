@@ -9,8 +9,8 @@ if (Meteor.isServer) {
 
     check(chamber, String);
 
-    // Publish posts by chamber, or self posts if chamber is "self_post"
-    if (chamber === 'self_post') {
+    // Publish posts by chamber, or self posts if chamber is "self"
+    if (chamber === 'self') {
       return Posts.find({ author: this.userId }, { sort: { createdAt: -1 } });
     } else {
       return Posts.find({ chamber }, { sort: { createdAt: -1 } });
@@ -19,13 +19,13 @@ if (Meteor.isServer) {
 
   Meteor.methods({
     // Submit a new post
-    'posts.submit': async function ({ postTitle, postBody, postChamber, image, postType }) {
+    'posts.submit': async function (thePostJson ) {
 
-      check(postTitle, Match.Maybe(String));
-      check(postBody, Match.Maybe(String));
-      check(postChamber, Match.Maybe(String));
-      check(image, Match.Maybe(String));
-      check(postType, Match.Maybe(String));
+      // check(, Match.Maybe(String));
+      // check(postBody, Match.Maybe(String));
+      // check(postChamber, Match.Maybe(String));
+      // check(image, Match.Maybe(String));
+      // check(postType, Match.Maybe(String));
 
       if (!this.userId) {
         throw new Meteor.Error('not-authorized', 'You must be logged in to submit a post.');
@@ -33,67 +33,81 @@ if (Meteor.isServer) {
 
       // log inputs
       console.log("++++++++++++++++++++++++++");
-      console.log('postTitle:', postTitle);
-      console.log('postBody:', postBody);
-      console.log('postChamber:', postChamber);
-      console.log('image:', image);
-      console.log('postType:', postType);
+      console.log(thePostJson);
 
-      let province = "";
-      let chamber = "self_post";
-      let chamberParts = "";
 
-      // See if this is self_post or a chamber post
-      if(postChamber !== 'self_post') {
-        chamberParts = postChamber.split('/');
-      }
+      // Todo later
+      // if( postJson.type == "chamber"){
+      //   // Ensure the province and chamber are valid
+      //   if (!['nl', 'pe', 'ns', 'nb', 'qc', 'on', 'mb', 'sk', 'ab', 'bc', 'yt', 'nt', 'nu'].includes(province)) {
+      //     throw new Meteor.Error('invalid-province', 'Invalid province.');
+      //   }
+      // }
 
-      // Create an SEO friendly url that is no longer than 30 characters and has a timestamp to ensure uniqueness
-      const seoUrl = `${postTitle.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+      // SELF POST
+      if( thePostJson.type == "self"){
 
-      if (chamberParts.length > 1) {
-        province = chamberParts[0];
-        chamber = chamberParts[1];
+        // Create an SEO friendly url that is no longer than 30 characters and has a timestamp to ensure uniqueness
+        const seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
 
-        // Ensure the province and chamber are valid
-        if (!province || !chamber) {
-          throw new Meteor.Error('invalid-chamber', 'Invalid chamber format.');
+        try {
+          const postId = await Posts.insertAsync({
+            title: thePostJson.title,
+            body: thePostJson.body,
+            type: "self",
+            image: thePostJson.image || null,
+            authorId: this.userId,
+            voteCount: 0,
+            commentCount: 0,
+            bookmarkCount: 0,
+            shareCount: 0,
+            createdAt: new Date().getTime(),
+            seoUrl: seoUrl,
+          });
+
+          console.log('Post submitted successfully:', postId);
+          return { status: 'success', message: 'Post submitted successfully.', postId };
+        } catch (error) {
+          console.error('Error submitting post:', error);
+          throw new Meteor.Error('internal-server-error', 'An error occurred while submitting the post.');
         }
 
-        // Ensure the province and chamber are valid
-        if (!['nl', 'pe', 'ns', 'nb', 'qc', 'on', 'mb', 'sk', 'ab', 'bc', 'yt', 'nt', 'nu'].includes(province)) {
-          throw new Meteor.Error('invalid-province', 'Invalid province.');
+      }
+
+
+      // CHAMBER
+      if( thePostJson.type == "chamber"){
+
+        // Create an SEO friendly url that is no longer than 30 characters and has a timestamp to ensure uniqueness
+        const seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+
+        try {
+          const postId = await Posts.insertAsync({
+            title: thePostJson.title,
+            body: thePostJson.body,
+            type: "chamber",
+            chamber: thePostJson.chamber,
+            province: thePostJson.province,
+            image: thePostJson.image || null,
+            authorId: this.userId,
+            voteCount: 0,
+            commentCount: 0,
+            bookmarkCount: 0,
+            shareCount: 0,
+            createdAt: new Date().getTime(),
+            seoUrl: seoUrl,
+          });
+
+          console.log('Post submitted successfully:', postId);
+          return { status: 'success', message: 'Post submitted successfully.', postId };
+        } catch (error) {
+          console.error('Error submitting post:', error);
+          throw new Meteor.Error('internal-server-error', 'An error occurred while submitting the post.');
         }
 
-        // Could do a check later.
-        // if (!['house-of-assembly', 'legislative-assembly', 'national-assembly'].includes(chamber)) {
-        //   throw new Meteor.Error('invalid-chamber', 'Invalid chamber.');
-        // }
-
       }
 
-      try {
-        const postId = await Posts.insertAsync({
-          title: postTitle,
-          body: postBody,
-          province: province,
-          chamber: chamber,
-          image: image || null,
-          authorId: this.userId,
-          voteCount: 0,
-          commentCount: 0,
-          bookmarkCount: 0,
-          shareCount: 0,
-          createdAt: new Date().getTime(),
-          seoUrl: seoUrl,
-        });
 
-        console.log('Post submitted successfully:', postId);
-        return { status: 'success', message: 'Post submitted successfully.', postId };
-      } catch (error) {
-        console.error('Error submitting post:', error);
-        throw new Meteor.Error('internal-server-error', 'An error occurred while submitting the post.');
-      }
     },
 
     // Fetch a single post by ID

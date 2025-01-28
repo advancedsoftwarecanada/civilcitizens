@@ -93,7 +93,7 @@ Template.timeline.helpers({
 
   postType(type) {
     const post = this;
-    if (type === 'self' && post.chamber === "self_post") {
+    if (type === 'self' && post.chamber === "self") {
       return true;
     } else if (type === 'chamber' && post.chamber) {
       return true;

@@ -6,9 +6,12 @@
       <div class="form-group">
         <label for="postChamber" class="dropdown-label">Where to post this?</label>
         <select id="postChamber" class="dropdown-select">
-          <option value="self_post">Self Post (@{{myUserMeta.userName}})</option>
+          <option value="self">Self Post (@{{myUserMeta.userName}})</option>
+          {{#each myChambers}}
+            <option value="{{this.province}}/{{this.chamber}}">Chamber: {{niceName this.province}}/{{niceName this.chamber}}</option>
+          {{/each}}
           {{#if province}}
-            <option value="{{province}}/{{chamber}}">{{province}}/{{chamber}}</option>
+            <option value="{{province}}/{{chamber}}">{{niceName province}}/{{niceName chamber}}</option>
           {{/if}}
         </select>
       </div>

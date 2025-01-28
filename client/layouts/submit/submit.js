@@ -1,30 +1,61 @@
+
+const postTypeVar = new ReactiveVar(null);
 const provinceVar = new ReactiveVar(null);
 const chamberVar = new ReactiveVar(null);
-const postTypeVar = new ReactiveVar(null);
+
+const topicVar = new ReactiveVar(null);
 
 FlowRouter.route('/submit', {
   name: "submit",
   action() {
-      BlazeLayout.render('CivilApp_3', {
-          main: 'submit',
-      });
+        const checkUserDataReady = setInterval(() => {
+          if (window.userDataReady) {
+              clearInterval(checkUserDataReady);
+              BlazeLayout.render('CivilApp_3', {
+                  main: 'submit',
+              });
+          }
+      }, 100);
+      postTypeVar.set("self");
       provinceVar.set("");
       chamberVar.set("");
-      postType.set("self_post");
   }
 });
 
 FlowRouter.route('/submit/c/:province/:chamber', {
   name: "submit",
   action(params) {
-      BlazeLayout.render('CivilApp_3', {
-          main: 'submit',
-      });
+    const checkUserDataReady = setInterval(() => {
+      if (window.userDataReady) {
+          clearInterval(checkUserDataReady);
+          BlazeLayout.render('CivilApp_3', {
+              main: 'submit',
+          });
+      }
+  }, 100);
+      postTypeVar.set("chamber");
       provinceVar.set(params.province);
       chamberVar.set(params.chamber);
-      postTypeVar.set("chamber");
   }
 });
+
+FlowRouter.route('/submit/t/:topic', {
+  name: "submit",
+  action(params) {
+    const checkUserDataReady = setInterval(() => {
+      if (window.userDataReady) {
+          clearInterval(checkUserDataReady);
+          BlazeLayout.render('CivilApp_3', {
+              main: 'submit',
+          });
+      }
+  }, 100);
+      postTypeVar.set("topic");
+      provinceVar.set("");
+      chamberVar.set("");
+  }
+});
+
 
 
 Template.submit.onRendered(function() {
@@ -35,7 +66,7 @@ Template.submit.onRendered(function() {
       $('#postChamber').append(`<option value="${province}/${chamber}">${province}/${chamber}</option>`);
       $('#postChamber').val(`${province}/${chamber}`);
     } else {
-      $('#postChamber').val('self_post');
+      $('#postChamber').val('self');
     }
   });
 });
@@ -51,16 +82,22 @@ Template.submit.events({
     const fileInput = $('#postImage')[0];
     const file = fileInput.files[0];
 
+
     let postJson = {
-      postTitle,
-      postBody,
-      postChamber,
-      postType: postTypeVar.get()
+      type: postTypeVar.get(),
+      title: postTitle,
+      body: postBody,
+
+      chamber: chamberVar.get(),
+      province: provinceVar.get(),
+
+      topic: topicVar.get(),
+
     };
 
     // Validate inputs
     if (!postTitle || !postBody) {
-      toastr.error('Title and postBody are required.', 'Validation Error');
+      toastr.error('Title and Text are required.', 'Validation Error');
       return;
     }
 
@@ -113,14 +150,17 @@ Template.submit.events({
 
       upload.start();
     } else {
-      // log inputs
-      console.log("NO IMAGE");
-      console.log('postTitle:', postTitle);
-      console.log('postBody:', postBody);
-      console.log('postChamber:', postChamber);
-      console.log('postType:', postTypeVar.get());
+
+      // // log inputs
+      // console.log('postType:', postTypeVar.get());
+      // console.log('postTitle:', postTitle);
+      // console.log('postBody:', postBody);
+      // console.log('postChamber:', postChamber);
+      // console.log("NO IMAGE");
 
       // Call the method directly if no file upload is required
+      console.log("SUBMITTING POST JSON:");
+      console.log(postJson);
       Meteor.call('posts.submit', postJson, (error, result) => {
         if (error) {
           toastr.error(error.reason || 'Error submitting the post.', 'Submit Error');
