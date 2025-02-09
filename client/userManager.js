@@ -3,13 +3,21 @@ class UserManager {
         this.dbName = 'UserManagerDB';
         this.storeName = 'userManagerData';
         this.db = null;
-        this.data = { votes: {}, bookmarks: [] }; // Default structure
+        this.data = { chambers: {}, votes: {}, bookmarks: [] }; // Default structure
         this.reactiveData = new Tracker.Dependency(); // Add a Tracker dependency
         this.isDataReady = false;
+        this.thisChamber = new ReactiveVar(null); // Add a reactive variable for the current chamber
 
         console.log("Loaded: User Manager (Constructor)");
         this.initialize(); // Centralized initialization
     }
+
+
+    // =============
+    //
+    // SETUP 
+    //
+    // =============
 
     async initialize() {
         try {
@@ -17,7 +25,7 @@ class UserManager {
             await this.loadFromStorage(); // Only load data after DB is ready
             this.setupEventHandlers(); // Initialize event handlers
 
-            this.startVoteCheckInterval();
+            this.DOMRENDER();
 
         } catch (error) {
             console.error('Error initializing UserManager:', error);
@@ -130,6 +138,15 @@ class UserManager {
         });
     }
 
+
+
+
+
+    // =============
+    //
+    // FETCH USER DATA 
+    //
+    // =============
     async fetchUserDataFromServer() {
         try {
             // Validate if the user is logged in
@@ -176,6 +193,66 @@ class UserManager {
         }
     }
 
+
+
+
+    // =============
+    //
+    // UNIVERSAL EVENT HANDLING
+    //
+    // =============
+    setupEventHandlers() {
+        $(document).on('click', '.upvote-btn', this.handleUpvoteClick.bind(this));
+        $(document).on('click', '.downvote-btn', this.handleDownvoteClick.bind(this));
+        $(document).on('click', '.follow-btn', this.handleFollowClick.bind(this));
+        $(document).on('click', '.unfollow-btn', this.handleUnfollowClick.bind(this));
+    }
+
+
+
+
+    // =============
+    //
+    // DOMRENDER 
+    //
+    // =============
+    //     
+    DOMRENDER() {
+        setInterval(() => {
+            this.updateVoteClasses();
+            this.updateChamberClasses();
+        }, 1000);
+    }
+
+
+
+    // =============
+    //
+    // VOTING 
+    //
+    // =============
+
+    
+    async handleUpvoteClick(event) {
+        console.log('Upvote clicked');
+        const postId = $(event.target).closest('[data-post-id]').data('post-id');
+        console.log("POST ID: " + postId);
+        const success = await this.voteHttp(postId, 'upvote');
+        if (success) {
+            this.voteClient(postId, 'upvote');
+        }
+    }
+
+    async handleDownvoteClick(event) {
+        console.log('Downvote clicked');
+        const postId = $(event.target).closest('[data-post-id]').data('post-id');
+        const success = await this.voteHttp(postId, 'downvote');
+        if (success) {
+            this.voteClient(postId, 'downvote');
+        }
+    }
+
+
     getVotes() {
         return this.data.votes;
     }
@@ -195,28 +272,6 @@ class UserManager {
         delete this.data.votes[postId];
         this.saveToStorage();
     }
-
-    setupEventHandlers() {
-        $(document).on('click', '.upvote-btn', async (event) => {
-            console.log('Upvote clicked');
-            const postId = $(event.target).closest('[data-post-id]').data('post-id');
-            console.log("POST ID: " + postId);
-            const success = await this.voteHttp(postId, 'upvote');
-            if (success) {
-                this.voteClient(postId, 'upvote');
-            }
-        });
-
-        $(document).on('click', '.downvote-btn', async (event) => {
-            console.log('Downvote clicked');
-            const postId = $(event.target).closest('[data-post-id]').data('post-id');
-            const success = await this.voteHttp(postId, 'downvote');
-            if (success) {
-                this.voteClient(postId, 'downvote');
-            }
-        });
-    }
-
 
     async voteHttp(postId, newVote) {
         try {
@@ -315,12 +370,6 @@ class UserManager {
         }
     }
 
-    startVoteCheckInterval() {
-        setInterval(() => {
-            this.updateVoteClasses();
-        }, 1000);
-    }
-
     updateVoteClasses() {
         const votes = this.getVotes();
         votes.forEach((vote) => {
@@ -341,6 +390,106 @@ class UserManager {
             }
         });
     }
+
+
+
+    // =============
+    //
+    // CHAMBERS 
+    //
+    // =============
+    async handleFollowClick(event) {
+        const province = FlowRouter.getParam('province');
+        const chamber = FlowRouter.getParam('chamber');
+        try {
+            const response = await fetch('/api/events', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('Meteor.loginToken')}`,
+                },
+                body: JSON.stringify({ 
+                    action: 'follow', 
+                    province, 
+                    chamber 
+                }),
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                console.error('Error following chamber:', error);
+                throw new Error('Failed to follow chamber');
+            }
+
+            toastr.success('You will see this on your news feed.', 'Following');
+            console.log('Chamber followed successfully:', await response.json());
+
+            // Update this chamber array and save to storage
+            this.data.chamberFollows.push({ province, chamber, following: true });
+            this.saveToStorage();
+            this.reactiveData.changed(); // Notify reactivity
+
+        } catch (error) {
+            console.error('Error following chamber:', error);
+        }
+    }
+
+    async handleUnfollowClick(event) {
+        const userId = Meteor.userId();
+        const province = FlowRouter.getParam('province');
+        const chamber = FlowRouter.getParam('chamber');
+        try {
+            const response = await fetch('/api/events', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('Meteor.loginToken')}`,
+                },
+                body: JSON.stringify({ 
+                    action: 'unfollow', 
+                    province, 
+                    chamber 
+                }),
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                console.error('Error unfollowing chamber:', error);
+                throw new Error('Failed to unfollow chamber');
+            }
+
+            toastr.warning('You will not longer see this on your news feed', 'Unfollowed');
+            console.log('Chamber unfollowed successfully:', await response.json());
+
+            // Update this chamber array and save to storage
+            this.data.chamberFollows = this.data.chamberFollows.filter((ch) => ch.province !== province || ch.chamber !== chamber);
+            this.saveToStorage();
+            this.reactiveData.changed(); // Notify reactivity
+
+        } catch (error) {
+            console.error('Error unfollowing chamber:', error);
+        }
+    }
+
+
+    updateChamberClasses() {
+        const chambers = userManager.getData().chamberFollows
+        if(chambers){
+            chambers.forEach((chamber) => {
+                const chamberElement = $(`[data-chamber-id="${chamber.chamber}"]`);
+                if (chamberElement.length) {
+                    if (chamber.following) {
+                        chamberElement.find('.follow-btn').addClass('active');
+                        chamberElement.find('.unfollow-btn').removeClass('active');
+                    } else {
+                        chamberElement.find('.follow-btn').removeClass('active');
+                        chamberElement.find('.unfollow-btn').addClass('active');
+                    }
+                }
+            });
+        }
+    }
+
 
 
 }

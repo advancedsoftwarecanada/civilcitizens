@@ -1,3 +1,46 @@
+/* Container layout */
+main {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: stretch;
+}
+
+/* Sidebars and Main Content */
+#desktopLeftSidebar {
+  flex: 1 1 200px;  /* Allows it to shrink but not disappear immediately */
+  min-width: 180px; /* Ensures it doesn't shrink below a reasonable size */
+}
+
+#desktopRightSidebar {
+  flex: 1.2 1 280px; /* Slightly larger for ad space */
+  min-width: 220px;  /* Ensures it holds size longer */
+}
+
+#templateMain {
+  padding-top:0px;
+  flex: 2 1 600px; /* Takes up most space but can shrink */
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* Responsive behavior: Remove BOTH sidebars together */
+@media (max-width: 1100px) { 
+  #desktopLeftSidebar, #desktopRightSidebar {
+    display: none !important;
+  }
+
+  #templateMain {
+    flex: 1 1 100%; /* Full width on mobile */
+  }
+}
+
+
+
+
+
+
 .post-content {
   max-height: 33vh;
   overflow: hidden;

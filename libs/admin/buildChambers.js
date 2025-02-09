@@ -99,7 +99,7 @@ Meteor.methods({
             upvotes: 0,
             downvotes: 0,
             chambers: 0,
-            boards: 0,
+            organizations: 0,
           },
         };
 

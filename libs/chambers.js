@@ -57,18 +57,18 @@ if (Meteor.isServer) {
             return { status: 'success', message: 'Home chamber set successfully.' };
         },
 
-        async 'chambers.follow'(theProvince, theChamber) {
-            check(theProvince, String);
-            check(theChamber, String);
+        'chambers.follow': async function ({ userId, province, chamber }) {
+            check(province, String);
+            check(chamber, String);
 
-            if (!this.userId) {
+            if (!userId) {
                 throw new Meteor.Error('not-authorized');
             }
 
             const chamberFollow = await ChamberFollows.findOneAsync({
-                userId: this.userId,
-                province: theProvince,
-                chamber: theChamber,
+                userId: userId,
+                province: province,
+                chamber: chamber,
             });
 
             if (chamberFollow) {
@@ -76,29 +76,31 @@ if (Meteor.isServer) {
             }
 
             await ChamberFollows.insertAsync({
-                userId: this.userId,
-                province: theProvince,
-                chamber: theChamber,
+                userId: userId,
+                province: province,
+                chamber: chamber,
                 home: false,
             });
 
-            await Chambers.updateAsync({ province: theProvince, seoUrl: theChamber }, { $inc: { 'stats.followers': 1 } });
+            await Chambers.updateAsync({ province: province, seoUrl: chamber }, { $inc: { 'stats.followers': 1 } });
 
             return { status: 'success', message: 'Chamber followed successfully.' };
         },
 
-        async 'chambers.unfollow'(theProvince, theChamber) {
-            check(theProvince, String);
-            check(theChamber, String);
+        'chambers.unfollow': async function ({ userId, province, chamber }) {
+            console.log("UNFOLLOWING CHAMBER", userId, province, chamber);
 
-            if (!this.userId) {
+            check(province, String);
+            check(chamber, String);
+
+            if (!userId) {
                 throw new Meteor.Error('not-authorized');
             }
 
             const chamberFollow = await ChamberFollows.findOneAsync({
-                userId: this.userId,
-                province: theProvince,
-                chamber: theChamber,
+                userId: userId,
+                province: province,
+                chamber: chamber,
             });
 
             if (!chamberFollow) {
@@ -107,7 +109,7 @@ if (Meteor.isServer) {
 
             await ChamberFollows.removeAsync({ _id: chamberFollow._id });
 
-            await Chambers.updateAsync({ province: theProvince, seoUrl: theChamber }, { $inc: { 'stats.followers': -1 } });
+            await Chambers.updateAsync({ province: province, seoUrl: chamber }, { $inc: { 'stats.followers': -1 } });
 
             return { status: 'success', message: 'Chamber unfollowed successfully.' };
         },

@@ -1,6 +1,6 @@
 <template name="timeline">
 
-    <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z">
+    <div id="templateMain" class="">
 
 
       {{#if isViewingChamber}}
@@ -19,8 +19,7 @@
                                         <span class="mdtxt d-center following">{{stats.members}} Home Members</span>
                                         <span class="mdtxt d-center following">{{stats.followers}} Followers</span>
                                         <span class="mdtxt d-center following">{{stats.posts}} Posts</span>
-                                        <span class="mdtxt d-center following">{{stats.boards}} Boards</span>
-                                        <span class="mdtxt d-center following">{{stats.businesses}} Businesses</span>
+                                        <span class="mdtxt d-center following">{{stats.organizations}} Organizations</span>
                                         <span class="mdtxt d-center following">{{stats.events}} Events</span>
                                     </div>
                                 </div>
@@ -52,20 +51,16 @@
                         <div class="page-details">
                             <ul class="nav mt-5 pt-4 flex-wrap gap-2 tab-area">
                                 <li class="nav-item" role="presentation">
-                                    <a href="/c/{{province}}/{{chamber}}/trending" class="nav-link d-center active">Trending</a>
+                                    <a href="/c/{{province}}/{{chamber}}" class="nav-link d-center active">Newest</a>
                                 </li>
-                                <li class="nav-item" role="presentation">
-                                    <a href="/c/{{province}}/{{chamber}}/new" class="nav-link d-center">New</a>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <a href="/c/{{province}}/{{chamber}}/boards" class="nav-link d-center">Boards of Citizens</a>
-                                </li>
+                                <!--
                                 <li class="nav-item" role="presentation">
                                   <a href="/c/{{province}}/{{chamber}}/businesses" class="nav-link d-center">Businesses</a>
-                              </li>
+                                </li>
                                 <li class="nav-item" role="presentation">
                                     <a href="/c/{{province}}/{{chamber}}/events" class="nav-link d-center">Events</a>
                                 </li>
+                                -->
                             </ul>
                         </div>
                     </div>

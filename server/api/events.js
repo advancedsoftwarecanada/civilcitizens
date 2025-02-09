@@ -4,9 +4,6 @@ import bodyParser from 'body-parser';
 WebApp.connectHandlers.use(bodyParser.json());
 
 WebApp.connectHandlers.use('/api/events', async (req, res) => {
-
-  console.log("VOTE EVENT API");
-
   // ---------------
   // Checks
   // ---------------
@@ -26,6 +23,8 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
     return;
   }
 
+  console.log("EVENT API");
+
   // Find the user by token
   const user = await Meteor.users.findOneAsync({ 'services.resume.loginTokens.hashedToken': Accounts._hashLoginToken(token) });
   if (!user) {
@@ -34,12 +33,12 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
     return;
   }
 
-  const { action, postId } = req.body;
+  const { action, postId, province, chamber } = req.body;
 
   // Validate the action and post ID
-  if (!action || !postId) {
+  if (!action || (!postId && !province && !chamber)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Action and post ID are required.' }));
+    res.end(JSON.stringify({ error: 'Action and post ID or province and chamber are required.' }));
     return;
   }
 
@@ -48,7 +47,7 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
   // ---------------
 
   // Check for valid Event
-  const validActions = ['upvote', 'downvote', 'bookmark', 'share'];
+  const validActions = ['upvote', 'downvote', 'bookmark', 'share', 'follow', 'unfollow'];
   if (!validActions.includes(action)) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Invalid action.' }));
@@ -56,11 +55,19 @@ WebApp.connectHandlers.use('/api/events', async (req, res) => {
   }
 
   try {
-
     // Upvotes and downvotes!
     if (action === 'upvote' || action === 'downvote') {
-        console.log("VOTE: " + action);
+      console.log("VOTE: " + action);
       await Meteor.callAsync('posts.vote', { userId: user._id, postId: postId, vote: action === 'upvote' ? 'upvote' : 'downvote' });
+    }
+
+    // Follow and unfollow actions
+    if (action === 'follow') {
+      await Meteor.callAsync('chambers.follow', {userId: user._id, province: province, chamber: chamber});
+    }
+
+    if (action === 'unfollow') {
+      await Meteor.callAsync('chambers.unfollow', {userId: user._id, province: province, chamber: chamber});
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });

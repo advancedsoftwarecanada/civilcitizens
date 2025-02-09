@@ -1,6 +1,6 @@
 import userManager from "../../userManager.js";
 
-// Reactive varaible for thisChamber
+// Reactive variable for thisChamber
 const thisChamber = new ReactiveVar(null);
 
 /*
@@ -77,7 +77,7 @@ Template.timeline.onRendered(function () {
 
     if (province && chamber) {
       // This is a chamber we must request its details over http and update the reactive var
-      console.log("CHAMBER PPAGE IS LOADED");
+      console.log("CHAMBER PAGE IS LOADED");
       const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/chamber?province=${province}&chamber=${chamber}`;
       console.log("API URL", apiUrl);
       HTTP.get(apiUrl, (error, response) => {
@@ -129,46 +129,10 @@ Template.timeline.helpers({
     }
     return false;
   },
-
+  currentChamber() {
+    return userManager.currentChamber.get();
+  }
 });
 
 Template.timeline.events({
-  'click .follow-btn': function () {
-    const province = FlowRouter.getParam('province');
-    const chamber = FlowRouter.getParam('chamber');
-    Meteor.call('chambers.follow', province, chamber, (error, result) => {
-      if (error) {
-        console.error('Error following chamber:', error);
-      } else {
-        toastr.success('Chamber followed successfully.', 'Success');
-        console.log('Chamber followed successfully:', result);
-      }
-    });
-  },
-  'click .unfollow-btn': function () {
-    const province = FlowRouter.getParam('province');
-    const chamber = FlowRouter.getParam('chamber');
-    Meteor.call('chambers.unfollow', province, chamber, (error, result) => {
-      if (error) {
-        console.error('Error unfollowing chamber:', error);
-      } else {
-        toastr.success('No longer following this Chamber.', 'Success');
-        console.log('Chamber unfollowed successfully:', result);
-      }
-    });
-  },
-  // 'click .upvote-btn': async function () {
-  //   const postId = this._id;
-  //   const success = await userManager.vote(postId, 'upvote');
-  //   if (success) {
-  //     console.log(`Successfully upvoted post ${postId}`);
-  //   }
-  // },
-  // 'click .downvote-btn': async function () {
-  //   const postId = this._id;
-  //   const success = await userManager.vote(postId, 'downvote');
-  //   if (success) {
-  //     console.log(`Successfully downvoted post ${postId}`);
-  //   }
-  // },
 });
