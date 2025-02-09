@@ -8,38 +8,119 @@ export default class TimelineBuild {
      * @param {Object} bodyRequest - The request body containing parameters for the timeline.
      * @returns {Promise<Array>} - A promise resolving to an array of posts with metadata.
      */
-    async build(buildType, searchProvince, searchChamber) {
+    async build(buildType, userId, searchProvince, searchChamber) {
         console.log("=============== BUILDING TIMELINE ===============");
 
         try {
 
             let enrichedPosts = [];
 
-            // HOME TIMELINE
-            if( buildType === "home" ) {
-                console.log(">>>>>> BUILDING HOME TIMELINE <<<<<<<<");
-                // Fetch posts (modify query based on `bodyRequest` if needed)
-                const posts = await Posts.find({}, { sort: { createdAt: -1 }, limit: 7 }).fetch();
+            // If there is a user id
 
-                // Add user metadata to each post
+            // HOME TIMELINE
+            // =======================
+            // if( buildType === "home" ) {
+            //     console.log(">>>>>> BUILDING HOME NEWS FEED <<<<<<<<");
+
+            //     const posts = await Posts.find({}, { sort: { createdAt: -1 }, limit: 7 }).fetch();
+
+                
+            //     enrichedPosts = await Promise.all(
+            //         posts.map(async (post) => {
+
+            //             // Add user metadata to each post
+            //             const userMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
+            //             return {
+            //                 ...post,
+            //                 author: {
+            //                     userName: userMeta?.userName || 'Unknown User',
+            //                     avatarUrl: userMeta?.avatarUrl || null,
+            //                 },
+            //             };
+
+            //         })
+            //     );
+
+            // }
+
+
+            if (buildType === "home") {
+                console.log(">>>>>> BUILDING HOME NEWS FEED FOR USER:", userId, "<<<<<<<<");
+            
+                // Fetch the userMeta from ownerUserId
+                const userMeta = await UserMeta.findOneAsync({ ownerUserId: userId });
+            
+                // Fetch user's home Chamber
+                const userHomeChamber = userMeta.chamberHome;
+            
+                // Fetch followed Chambers (excluding the home one, since it's already included)
+                const followedChambers = await ChamberFollows.find(
+                    { userId: userId, chamber: { $ne: userHomeChamber } }
+                ).fetch();
+                const followedChamberIds = followedChambers.map(c => c.chamber);
+            
+                // Placeholder: Future connections list (for now it's empty)
+                const userConnections = []; // In the future, this will contain user IDs
+            
+                // Fetch user's own posts
+                const myPosts = await Posts.find(
+                    { authorId: userId },
+                    { sort: { createdAt: -1 }, limit: 3 }
+                ).fetch();
+            
+                // Fetch posts from user's home Chamber
+                const homeChamberPosts = await Posts.find(
+                    { chamberId: userHomeChamber },
+                    { sort: { createdAt: -1 }, limit: 4 }
+                ).fetch();
+            
+                // Fetch posts from followed Chambers
+                const followedChamberPosts = await Posts.find(
+                    { chamberId: { $in: followedChamberIds } },
+                    { sort: { createdAt: -1 }, limit: 2 }
+                ).fetch();
+            
+                // Merge all posts
+                const seenPosts = new Set();
+                let uniquePosts = [...myPosts, ...homeChamberPosts, ...followedChamberPosts]
+                    .filter(post => {
+                        // Remove duplicates
+                        if (seenPosts.has(post._id)) return false;
+                        seenPosts.add(post._id);
+            
+                        // Handle "self" posts:
+                        if (post.type === "self" && post.authorId !== userId) {
+                            return false; // Only include if it's the user's own post (Connections feature coming later)
+                        }
+            
+                        return true; // Keep valid post
+                    })
+                    .sort((a, b) => b.createdAt - a.createdAt) // Sort by newest first
+                    .slice(0, 7); // Ensure max 7 posts
+            
+                // Enrich posts with user metadata
                 enrichedPosts = await Promise.all(
-                    posts.map(async (post) => {
-                        const userMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
+                    uniquePosts.map(async (post) => {
+                        const authorMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
                         return {
                             ...post,
                             author: {
-                                userName: userMeta?.userName || 'Unknown User',
-                                avatarUrl: userMeta?.avatarUrl || null,
+                                userName: authorMeta?.userName || 'Unknown User',
+                                avatarUrl: authorMeta?.avatarUrl || null,
                             },
                         };
                     })
                 );
-
             }
+            
+            
+            
 
+            // CHAMBER NEWS FEED
+            // =======================
             if( buildType === "chamber" ) {
-                console.log(">>>>>> BUILDING CHAMBER TIMELINE <<<<<<<<");
-                // Fetch posts (modify query based on `bodyRequest` if needed)
+                console.log(">>>>>> BUILDING CHAMBER NEWS FEED <<<<<<<<");
+
                 const posts = await Posts.find({ province: searchProvince, chamber: searchChamber}, { sort: { createdAt: -1 }, limit: 7 }).fetch();
 
                 // Add user metadata to each post

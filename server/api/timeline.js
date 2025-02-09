@@ -17,10 +17,12 @@ class Timeline {
 }
 
 export const TimelineInstance = new Timeline();
-TimelineInstance.log('Timeline instance created.');
+
+TimelineInstance.log('Timeline instance created');
 
 WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
-  const { type, province, chamber } = req.query;
+  const { type, uid, province, chamber } = req.query;
+  const userId = uid;
 
   // Detect the timeline type
   const detectedTimelineType = TimelineInstance.timelineDetectType.detect(req.query);
@@ -32,11 +34,11 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
     // Fetch posts based on timeline type
     switch (detectedTimelineType.type) {
       case 'home':
-        posts = await TimelineInstance.timelineBuild.build("home");
+        posts = await TimelineInstance.timelineBuild.build("home", userId);
         break;
 
       case 'chamber':
-        posts = await TimelineInstance.timelineBuild.build("chamber", province, chamber);
+        posts = await TimelineInstance.timelineBuild.build("chamber", userId, province, chamber);
         break;
 
       default:

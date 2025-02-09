@@ -33,10 +33,13 @@ Template.timeline.onCreated(function () {
   this.posts = new ReactiveVar([]);
 
   this.autorun(() => {
+
+    let userId = "";
+    userId = Meteor.userId();
     const province = FlowRouter.getParam('province');
     const chamber = FlowRouter.getParam('chamber');
     const path = FlowRouter.current().path;
-    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?path=${path}&province=${province}&chamber=${chamber}`;
+    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?uid=${userId}&path=${path}&province=${province}&chamber=${chamber}`;
 
     HTTP.get(apiUrl, (error, response) => {
       if (error) {
