@@ -53,10 +53,8 @@ export default class TimelineBuild {
                 // Fetch user's home Chamber
                 const userHomeChamber = userMeta.chamberHome;
             
-                // Fetch followed Chambers (excluding the home one, since it's already included)
-                const followedChambers = await ChamberFollows.find(
-                    { userId: userId, chamber: { $ne: userHomeChamber } }
-                ).fetch();
+                // Fetch all followed Chambers, INCLUDING the home Chamber
+                const followedChambers = await ChamberFollows.find({ userId: userId }).fetch();
                 const followedChamberIds = followedChambers.map(c => c.chamber);
             
                 // Placeholder: Future connections list (for now it's empty)
@@ -68,21 +66,15 @@ export default class TimelineBuild {
                     { sort: { createdAt: -1 }, limit: 3 }
                 ).fetch();
             
-                // Fetch posts from user's home Chamber
-                const homeChamberPosts = await Posts.find(
-                    { chamberId: userHomeChamber },
-                    { sort: { createdAt: -1 }, limit: 4 }
-                ).fetch();
-            
-                // Fetch posts from followed Chambers
-                const followedChamberPosts = await Posts.find(
+                // Fetch posts from all followed Chambers (including home Chamber)
+                const chamberPosts = await Posts.find(
                     { chamberId: { $in: followedChamberIds } },
-                    { sort: { createdAt: -1 }, limit: 2 }
+                    { sort: { createdAt: -1 }, limit: 6 } // Adjusted to allow more variety
                 ).fetch();
             
                 // Merge all posts
                 const seenPosts = new Set();
-                let uniquePosts = [...myPosts, ...homeChamberPosts, ...followedChamberPosts]
+                let uniquePosts = [...myPosts, ...chamberPosts]
                     .filter(post => {
                         // Remove duplicates
                         if (seenPosts.has(post._id)) return false;
@@ -112,6 +104,7 @@ export default class TimelineBuild {
                     })
                 );
             }
+            
             
             
             
