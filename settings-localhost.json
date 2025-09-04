@@ -5,7 +5,7 @@
       "useWebsockets": true,
       "domain": "https://appdev.civilcitizens.ca/",
       "cdnPath": "https://cdndev.civilcitizens.ca/",
-      "filesPath": "/Users/andrewnormore/cdndev.civilcitizens.ca",
+      "filesPath": "/mnt/webdisk/civil",
       "environment": "development",
       "twilio_public": "AC0ab4f3b35e0487479833a1774dc4c3e5",
       "stripe_public": "pk_test_51Oe4RXBhPmBUylir1McKsm6U2ic3iU2doQ0T8jBQUOfpoMcf51nVXeowOLDv9RlFa6g5R6FdP8zsOysEPz08W9Cp00taLvgk8A",

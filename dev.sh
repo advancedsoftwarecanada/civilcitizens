@@ -43,8 +43,9 @@ case $1 in
     export ROOT_URL=https://appdev.civilcitizens.ca
     export  PORT=3000
     export METEOR_ENV=development
+    export HTTP_FORWARDED_COUNT=1
     echo "Starting Meteor for development with ROOT_URL=$ROOT_URL..."
-    meteor --settings settings-localhost.json --port $PORT
+    meteor --settings settings-localhost.json --port 127.0.0.1:$PORT
     ;;
 
   buildios)
