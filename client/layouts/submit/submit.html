@@ -41,7 +41,7 @@
             <span class="upload-text">Click or drag and drop to upload images (up to 8)</span>
           </div>
         </label>
-        <div id="imagePreview" class="image-preview"></div>
+        <div id="imagePreview" class="file-list"></div>
       </div>
 
       <div id="videoAttachment" class="attachment-area" style="display: none;">
@@ -309,17 +309,56 @@
         gap: 5px;
       }
 
-      .image-preview {
+      .file-list {
         display: flex;
+        flex-direction: column;
         gap: 10px;
         margin-top: 10px;
       }
 
-      .preview-img {
-        width: 100px;
-        height: 100px;
+      .file-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f9f9f9;
+      }
+
+      .file-preview {
+        width: 50px;
+        height: 50px;
         object-fit: cover;
         border-radius: 4px;
+      }
+
+      .file-info {
+        flex: 1;
+      }
+
+      .file-name {
+        font-weight: bold;
+      }
+
+      .file-status {
+        font-size: 12px;
+        color: #666;
+      }
+
+      .upload-progress {
+        width: 100px;
+        height: 4px;
+        background: #eee;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      .upload-progress-bar {
+        height: 100%;
+        background: #007bff;
+        width: 0%;
+        transition: width 0.3s;
       }
 
       .add-title-btn {

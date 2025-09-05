@@ -132,6 +132,17 @@ Files.on('afterUpload', async function (fileRef) {
 
             console.log('Final fileRef with metadata:', fileRef);
 
+            // Update the post if postId is in meta
+            if (fileRef.meta.postId) {
+                const postId = fileRef.meta.postId;
+                try {
+                    await Posts.updateAsync(postId, { $push: { images: fileRef._id } });
+                    console.log('Post updated with file ID:', fileRef._id);
+                } catch (updateErr) {
+                    console.error('Error updating post with file ID:', updateErr);
+                }
+            }
+
             // Emit an event to the client
             files.emit('uploadComplete', {
                 _id: fileRef._id,

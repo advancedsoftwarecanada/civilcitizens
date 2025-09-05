@@ -29,6 +29,9 @@ Meteor.startup(() => {
                 console.log("User Manager initialized and data fetched: ENABLE userDataReady");
                 window.userDataReady = true;
                 console.log(userManager);
+
+                // Subscribe to user's files
+                Meteor.subscribe('files.user');
             }
         });
     }, 1000);
@@ -142,6 +145,7 @@ function renderEverywhere(){
 				// toastr["success"]("", "Uploading");
 			});
 
+            const fileName = file.name;
             upload.on('end', function (error, clientFile) {
                 if (error) {
                     toastr.error('Error uploading file.');
@@ -150,39 +154,7 @@ function renderEverywhere(){
                     console.log("UPLOAD END");
                     console.log(clientFile);
 
-                    // Store the file ID for future requests
-                    const fileId = clientFile._id; // Ensure `_id` is present in `clientFile`
-                    console.log('Uploaded file ID:', fileId);
-
-                    // Fetch the enriched file metadata from the server
-                    Meteor.call('files.fetchMeta', fileId, (err, result) => {
-                        if (err) {
-                            console.error('Error fetching file metadata:', err);
-                            // toastr.error('Error retrieving file details.');
-                        } else {
-                            console.log('Fetched file metadata:', result);
-
-                            // Extract the file's URL
-                            const { url } = result.data;
-
-                            // Update the avatar URL if this is an avatar upload
-                            // Removed from client side
-                            // if (clientFile.meta.type === 'avatar') {
-                            //     Meteor.call('files.updateAvatarUrl', url, (updateErr, updateResult) => {
-                            //         if (updateErr) {
-                            //             console.error('Error updating avatar URL:', updateErr);
-                            //             toastr.error('Error updating avatar URL.');
-                            //         } else {
-                            //             console.log('Avatar URL updated successfully:', updateResult);
-                            //             toastr.success('Avatar updated successfully!');
-
-                            //             // Update the UI
-                            //             $('.preview-avatar').attr('src', url);
-                            //         }
-                            //     });
-                            // }
-                        }
-                    });
+                    // File uploaded, no need to update post here
                 }
             });
 

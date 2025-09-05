@@ -1,14 +1,18 @@
 // Define the FilesCollection
 Files = new FilesCollection({
-    debug: true,
     collectionName: 'Files',
     storagePath: Meteor.settings.public.filesPath + '/_processing/',
-    allowClientCode: false,
+    allowClientCode: true,
     debug: false,
 });
 
 // Publish files to the client
 if (Meteor.isServer) {
+
+    Meteor.publish('files.user', function () {
+        if (!this.userId) return this.ready();
+        return Files.find({ userId: this.userId });
+    });
 
     Meteor.methods({
 

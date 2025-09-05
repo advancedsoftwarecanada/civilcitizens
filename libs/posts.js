@@ -29,6 +29,14 @@ if (Meteor.isServer) {
       console.log("++++++++++++++++++++++++++");
       console.log(thePostJson);
 
+      // Check for existing draft if creating a draft
+      if (thePostJson.draft) {
+        const existingDraft = await Posts.findOneAsync({ authorId: this.userId, draft: true });
+        if (existingDraft) {
+          return { status: 'success', message: 'Draft post found.', postId: existingDraft._id };
+        }
+      }
+
       // Generate SEO URL
       let seoUrl;
       if (thePostJson.title && thePostJson.title.trim()) {
@@ -49,6 +57,7 @@ if (Meteor.isServer) {
         shareCount: 0,
         createdAt: new Date().getTime(),
         seoUrl: seoUrl,
+        draft: thePostJson.draft || false,
       };
 
       // Handle attachments
@@ -158,6 +167,34 @@ if (Meteor.isServer) {
       } catch (error) {
         console.error('Error deleting post:', error);
         throw new Meteor.Error('internal-server-error', 'An error occurred while deleting the post.');
+      }
+    },
+
+    // Update a post
+    'posts.update': async function (postId, updateData) {
+      check(postId, String);
+      check(updateData, Object);
+
+      if (!this.userId) {
+        throw new Meteor.Error('not-authorized', 'You must be logged in to update posts.');
+      }
+
+      const post = await Posts.findOneAsync({ _id: postId });
+      if (!post) {
+        throw new Meteor.Error('not-found', 'Post not found.');
+      }
+
+      if (post.authorId !== this.userId) {
+        throw new Meteor.Error('not-authorized', 'You can only update your own posts.');
+      }
+
+      try {
+        await Posts.updateAsync({ _id: postId }, { $set: updateData });
+        console.log('Post updated successfully:', postId);
+        return { status: 'success', message: 'Post updated successfully.' };
+      } catch (error) {
+        console.error('Error updating post:', error);
+        throw new Meteor.Error('internal-server-error', 'An error occurred while updating the post.');
       }
     },
 

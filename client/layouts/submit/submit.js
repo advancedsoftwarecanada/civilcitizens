@@ -8,17 +8,17 @@ const topicVar = new ReactiveVar(null);
 FlowRouter.route('/submit', {
   name: "submit",
   action() {
-        const checkUserDataReady = setInterval(() => {
-          if (window.userDataReady) {
-              clearInterval(checkUserDataReady);
-              BlazeLayout.render('CivilApp_3', {
-                  main: 'submit',
-              });
-          }
-      }, 100);
-      postTypeVar.set("self");
-      provinceVar.set("");
-      chamberVar.set("");
+    const checkUserDataReady = setInterval(() => {
+      if (window.userDataReady) {
+        clearInterval(checkUserDataReady);
+        BlazeLayout.render('CivilApp_3', {
+          main: 'submit',
+        });
+      }
+    }, 100);
+    postTypeVar.set("self");
+    provinceVar.set("");
+    chamberVar.set("");
   }
 });
 
@@ -69,15 +69,135 @@ Template.submit.onRendered(function() {
       $('#postChamber').val('self');
     }
   });
+
+  // Create draft post if not exists
+  if (!Session.get('draftPostId')) {
+    Meteor.call('posts.submit', {
+      type: postTypeVar.get(),
+      title: null,
+      body: '',
+      chamber: chamberVar.get(),
+      province: provinceVar.get(),
+      topic: topicVar.get(),
+      attachments: null,
+      draft: true
+    }, (error, result) => {
+      if (error) {
+        toastr.error(error.reason);
+      } else {
+        Session.set('draftPostId', result.postId);
+      }
+    });
+  }
 });
 
+let stagedFiles = {
+  images: [],
+  video: null
+};
+
 Template.submit.events({
+  'change #postImages'(event) {
+    const files = Array.from(event.target.files);
+    stagedFiles.images = [];
+    $('#imagePreview').empty();
+
+    const postId = Session.get('draftPostId');
+    if (!postId) {
+      toastr.error('Draft post not ready yet.');
+      return;
+    }
+
+    // Upload the files
+    files.forEach((file, index) => {
+      const upload = Files.insert({
+        file: file,
+        chunkSize: 'dynamic',
+        meta: {
+          processing: true,
+          type: 'postImage',
+          postId: postId,
+          timeCreated: Date.now(),
+          timeAgo: new Date().toISOString(),
+        },
+      }, false);
+
+      stagedFiles.images.push(upload);
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const item = $(`
+          <div class="file-item" data-index="${index}">
+            <img src="${e.target.result}" class="file-preview">
+            <div class="file-info">
+              <div class="file-name">${file.name}</div>
+              <div class="file-status">Ready to upload</div>
+            </div>
+            <div class="upload-progress">
+              <div class="upload-progress-bar"></div>
+            </div>
+          </div>
+        `);
+        $('#imagePreview').append(item);
+      };
+      reader.readAsDataURL(file);
+
+      upload.on('progress', function (progress) {
+        const progressBar = $(`.file-item[data-index="${index}"] .upload-progress-bar`);
+        progressBar.css('width', progress + '%');
+      });
+
+      upload.on('end', function (error, clientFile) {
+        if (error) {
+          toastr.error('Error uploading file.');
+        } else {
+          // File uploaded and post updated on server
+        }
+      });
+
+      upload.start();
+    });
+  },
+
+  'change #postVideo'(event) {
+    const file = event.target.files[0];
+    if (file) {
+      const upload = Files.insert({
+        file: file,
+        chunkSize: 'dynamic',
+        meta: {
+          processing: true,
+          type: 'postVideo',
+          timeCreated: Date.now(),
+          timeAgo: new Date().toISOString(),
+        },
+      }, false);
+
+      stagedFiles.video = upload;
+
+      $('#videoAttachment .upload-box').hide();
+      const item = $(`
+        <div class="file-item">
+          <div class="file-info">
+            <div class="file-name">${file.name}</div>
+            <div class="file-status">Ready to upload</div>
+          </div>
+          <div class="upload-progress">
+            <div class="upload-progress-bar"></div>
+          </div>
+        </div>
+      `);
+      $('#videoAttachment').append(item);
+    }
+  },
+
   'click #savePost'(event) {
     event.preventDefault();
 
     // Get form values
     const postTitle = $('#postTitle').length ? ($('#postTitle').val() || '').trim() : null;
-    const postBody = $('#summernote').summernote('code').trim(); // Get HTML from Summernote
+    const summernoteContent = $('#summernote').summernote('code');
+    const postBody = summernoteContent ? summernoteContent.trim() : '';
     const postChamber = $('#postChamber').val();
 
     let postJson = {
@@ -96,16 +216,14 @@ Template.submit.events({
     if (visibleAttachment.length > 0) {
       const attachmentId = visibleAttachment.attr('id');
       if (attachmentId === 'imageAttachment') {
-        const files = $('#postImages')[0].files;
-        if (files.length > 0) {
+        if (stagedFiles.images.length > 0) {
           hasAttachment = true;
-          postJson.attachments = { type: 'images', files: files };
+          postJson.attachments = { type: 'images', uploads: stagedFiles.images };
         }
       } else if (attachmentId === 'videoAttachment') {
-        const file = $('#postVideo')[0].files[0];
-        if (file) {
+        if (stagedFiles.video) {
           hasAttachment = true;
-          postJson.attachments = { type: 'video', file: file };
+          postJson.attachments = { type: 'video', upload: stagedFiles.video };
         }
       } else if (attachmentId === 'linkAttachment') {
         const url = $('#postLink').val().trim();
@@ -132,27 +250,31 @@ Template.submit.events({
 
     // Handle file uploads if any
     if (postJson.attachments && (postJson.attachments.type === 'images' || postJson.attachments.type === 'video')) {
-      const files = postJson.attachments.type === 'images' ? postJson.attachments.files : [postJson.attachments.file];
+      const uploads = postJson.attachments.type === 'images' ? postJson.attachments.uploads : [postJson.attachments.upload];
       const uploadPromises = [];
 
-      for (let file of files) {
-        const upload = Files.insert({
-          file: file,
-          chunkSize: 'dynamic',
-          meta: {
-            processing: true,
-            type: postJson.attachments.type === 'images' ? 'postImage' : 'postVideo',
-            timeCreated: Date.now(),
-            timeAgo: new Date().toISOString(),
-          },
-        }, false);
+      for (let i = 0; i < uploads.length; i++) {
+        const upload = uploads[i];
+
+        upload.on('progress', function (progress) {
+          // Update progress bar
+          if (postJson.attachments.type === 'images') {
+            const progressBar = $(`.file-item[data-index="${i}"] .upload-progress-bar`);
+            progressBar.css('width', progress + '%');
+          } else {
+            const progressBar = $('#videoAttachment .upload-progress-bar');
+            progressBar.css('width', progress + '%');
+          }
+        });
 
         uploadPromises.push(new Promise((resolve, reject) => {
           upload.on('end', function (error, clientFile) {
             if (error) {
               reject(error);
             } else {
-              resolve(clientFile._id);
+              const fileDoc = Files.findOne({ userId: Meteor.userId(), name: file.name });
+              const fileId = fileDoc ? fileDoc._id : null;
+              resolve(fileId);
             }
           });
           upload.start();
@@ -165,8 +287,8 @@ Template.submit.events({
         } else {
           postJson.attachments.fileId = fileIds[0];
         }
-        delete postJson.attachments.files;
-        delete postJson.attachments.file;
+        delete postJson.attachments.uploads;
+        delete postJson.attachments.upload;
 
         submitPost(postJson);
       }).catch(error => {
@@ -179,14 +301,27 @@ Template.submit.events({
     function submitPost(json) {
       console.log("SUBMITTING POST JSON:");
       console.log(json);
-      Meteor.call('posts.submit', json, (error, result) => {
-        if (error) {
-          toastr.error(error.reason || 'Error submitting the post.', 'Submit Error');
-        } else {
-          toastr.success(result.message, 'Success');
-          FlowRouter.go('/'); // Redirect to home or another page after submission
-        }
-      });
+      const postId = Session.get('draftPostId');
+      if (postId) {
+        Meteor.call('posts.update', postId, { title: json.title, body: json.body, draft: false }, (error, result) => {
+          if (error) {
+            toastr.error(error.reason || 'Error updating the post.', 'Submit Error');
+          } else {
+            toastr.success(result.message, 'Success');
+            Session.set('draftPostId', null); // Clear the draft
+            FlowRouter.go('/'); // Redirect to home or another page after submission
+          }
+        });
+      } else {
+        Meteor.call('posts.submit', json, (error, result) => {
+          if (error) {
+            toastr.error(error.reason || 'Error submitting the post.', 'Submit Error');
+          } else {
+            toastr.success(result.message, 'Success');
+            FlowRouter.go('/'); // Redirect to home or another page after submission
+          }
+        });
+      }
     }
   }
 });
