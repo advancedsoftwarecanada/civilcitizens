@@ -76,92 +76,110 @@ Template.submit.events({
     event.preventDefault();
 
     // Get form values
-    const postTitle = $('#postTitle').val().trim();
+    const postTitle = $('#postTitle').length ? ($('#postTitle').val() || '').trim() : null;
     const postBody = $('#summernote').summernote('code').trim(); // Get HTML from Summernote
-    const postChamber = $('#postpostChamber').val();
-    const fileInput = $('#postImage')[0];
-    const file = fileInput.files[0];
-
+    const postChamber = $('#postChamber').val();
 
     let postJson = {
       type: postTypeVar.get(),
       title: postTitle,
       body: postBody,
-
       chamber: chamberVar.get(),
       province: provinceVar.get(),
-
       topic: topicVar.get(),
-
     };
 
+    // Check for attachments
+    const visibleAttachment = $('.attachment-area:visible');
+    let hasAttachment = false;
+
+    if (visibleAttachment.length > 0) {
+      const attachmentId = visibleAttachment.attr('id');
+      if (attachmentId === 'imageAttachment') {
+        const files = $('#postImages')[0].files;
+        if (files.length > 0) {
+          hasAttachment = true;
+          postJson.attachments = { type: 'images', files: files };
+        }
+      } else if (attachmentId === 'videoAttachment') {
+        const file = $('#postVideo')[0].files[0];
+        if (file) {
+          hasAttachment = true;
+          postJson.attachments = { type: 'video', file: file };
+        }
+      } else if (attachmentId === 'linkAttachment') {
+        const url = $('#postLink').val().trim();
+        if (url) {
+          hasAttachment = true;
+          postJson.attachments = { type: 'link', url: url };
+        }
+      } else if (attachmentId === 'pollAttachment') {
+        const options = $('.poll-option').map(function() { return $(this).val().trim(); }).get().filter(val => val);
+        const duration = $('#pollDuration').val();
+        const allowMulti = $('#allowMulti').is(':checked');
+        if (options.length >= 2) {
+          hasAttachment = true;
+          postJson.attachments = { type: 'poll', options: options, duration: duration, allowMulti: allowMulti };
+        }
+      }
+    }
+
     // Validate inputs
-    if (!postTitle || !postBody) {
-      toastr.error('Title and Text are required.', 'Validation Error');
+    if (!postBody && !hasAttachment) {
+      toastr.error('Please enter a body or add an attachment.', 'Validation Error');
       return;
     }
 
-    // Handle optional file upload
-    if (file) {
-      const upload = Files.insert({
-        file: file,
-        chunkSize: 'dynamic',
-        meta: {
-          processing: true,
-          type: 'postImage',
-          timeCreated: Date.now(),
-          timeAgo: new Date().toISOString(),
-        },
-      }, false);
+    // Handle file uploads if any
+    if (postJson.attachments && (postJson.attachments.type === 'images' || postJson.attachments.type === 'video')) {
+      const files = postJson.attachments.type === 'images' ? postJson.attachments.files : [postJson.attachments.file];
+      const uploadPromises = [];
 
-      upload.on('end', function (error, clientFile) {
-        if (error) {
-          toastr.error('Error uploading image: ' + error.message, 'Upload Error');
-        } else {
-          const fileId = clientFile._id;
+      for (let file of files) {
+        const upload = Files.insert({
+          file: file,
+          chunkSize: 'dynamic',
+          meta: {
+            processing: true,
+            type: postJson.attachments.type === 'images' ? 'postImage' : 'postVideo',
+            timeCreated: Date.now(),
+            timeAgo: new Date().toISOString(),
+          },
+        }, false);
 
-          // log inputs
-          console.log('postTitle:', postTitle);
-          console.log('postBody:', postBody);
-          console.log('postChamber:', postChamber);
-          console.log('postType:', postTypeVar.get());
-          console.log('file:', file);
-
-          Meteor.call('files.fetchMeta', fileId, (err, result) => {
-            if (err) {
-              console.error('Error fetching file metadata:', err);
+        uploadPromises.push(new Promise((resolve, reject) => {
+          upload.on('end', function (error, clientFile) {
+            if (error) {
+              reject(error);
             } else {
-              const postImageUrl = result.data.url;
-              postJson.image = fileId;
-
-              // Call the method once image upload is complete
-              Meteor.call('posts.submit', postJson, (error, result) => {
-                if (error) {
-                  toastr.error(error.reason || 'Error submitting the post.', 'Submit Error');
-                } else {
-                  toastr.success(result.message, 'Success');
-                  FlowRouter.go('/'); // Redirect to home or another page after submission
-                }
-              });
+              resolve(clientFile._id);
             }
           });
+          upload.start();
+        }));
+      }
+
+      Promise.all(uploadPromises).then(fileIds => {
+        if (postJson.attachments.type === 'images') {
+          postJson.attachments.fileIds = fileIds;
+        } else {
+          postJson.attachments.fileId = fileIds[0];
         }
+        delete postJson.attachments.files;
+        delete postJson.attachments.file;
+
+        submitPost(postJson);
+      }).catch(error => {
+        toastr.error('Error uploading files: ' + error.message, 'Upload Error');
       });
-
-      upload.start();
     } else {
+      submitPost(postJson);
+    }
 
-      // // log inputs
-      // console.log('postType:', postTypeVar.get());
-      // console.log('postTitle:', postTitle);
-      // console.log('postBody:', postBody);
-      // console.log('postChamber:', postChamber);
-      // console.log("NO IMAGE");
-
-      // Call the method directly if no file upload is required
+    function submitPost(json) {
       console.log("SUBMITTING POST JSON:");
-      console.log(postJson);
-      Meteor.call('posts.submit', postJson, (error, result) => {
+      console.log(json);
+      Meteor.call('posts.submit', json, (error, result) => {
         if (error) {
           toastr.error(error.reason || 'Error submitting the post.', 'Submit Error');
         } else {
