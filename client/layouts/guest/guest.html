@@ -1,103 +1,167 @@
 <template name="guest">
-    <div id="guestContainer" class="container">
-        <div class="row">
-            <div class="col-md-4 text-center">
-                <a href="/">
-                    <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo" alt="logo">
-                </a>
-            </div>
-            <div class="col-md-8">
-                <div class="text-center d-grid gap-4">
-                    <div class="single-box p-5">
-                        <div class="col-md-12">
-                            <div class="upload-single cover-img">
-                                <div class="head-area mb-2 text-start text-center">
-                                    <h3>Welcome To Civil Citizens!</h3>
-                                </div>
-                                <div class="profile-picture position-relative text-start">
-                                    <iframe class="responsive-iframe" src="https://www.youtube.com/embed/FIoj2bMAhQg"
-                                        title="YouTube video player" frameborder="0"
-                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                        referrerpolicy="strict-origin-when-cross-origin" allowfullscreen>
-                                    </iframe>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row"> <div class="head-area mb-2 text-start text-center mt-4">
-                            <h4>Create Your Free Account</h4>
-                        </div>
-                            <div class="col-sm-12 mt-4">
-                                <div class="btn-area text-center">
-                                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
-                                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
-                                </div>
-                            </div>
+    <div id="guestContainer" class="container-fluid p-0" style="background: linear-gradient(180deg, #FFFFFF 0%, #F8F9FA 50%, #FFFFFF 100%); min-height: 100vh;">
+        <!-- Hero Section -->
+        <section class="hero-section text-dark py-5">
+            <div class="container">
+                <div class="row align-items-center">
+                    <div class="col-lg-6 d-none d-lg-block text-center">
+                        <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo" alt="Civil Citizens Logo" style="max-width: 400px; height: auto;">
+                    </div>
+                    <div class="col-lg-6 text-center text-lg-start">
+                        <h1 class="display-4 fw-bold mb-3">Welcome to Civil Citizens</h1>
+                        <p class="lead mb-4">Connect with your community, engage in local politics, support local businesses, and stay informed with Canada-first news and advertising.</p>
+                        <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center justify-content-lg-start">
+                            <button class="btn btn-lg" style="background-color: #D52B1E; color: white; border-color: #D52B1E;" data-bs-toggle="modal" data-bs-target="#registerModal">Get Started</button>
+                            <button class="btn btn-lg" style="color: #D52B1E; border-color: #D52B1E; background-color: transparent;" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
+
+        <!-- Benefits Section -->
+        <section id="benefits" class="py-5" style="background: linear-gradient(135deg, #F8F9FA 0%, #E9ECEF 100%);">
+            <div class="container">
+                <div class="text-center mb-5">
+                    <h2 class="display-5 fw-bold text-dark">Why Choose Civil Citizens?</h2>
+                    <p class="lead text-muted">Discover the benefits of joining a platform built for Canadians, by Canadians.</p>
+                </div>
+                <div class="benefit-grid">
+                    <!-- Political -->
+                    <article class="benefit-card card h-100 border-0 shadow-sm">
+                        <div class="card-body">
+                            <div class="text-center mb-3">
+                                <i class="fas fa-landmark fa-3x" style="color: #D52B1E;"></i>
+                            </div>
+                            <h3 class="card-title h5 fw-bold text-center">Political Engagement</h3>
+                            <ul class="list-unstyled">
+                                <li><i class="fas fa-check text-success me-2"></i>Connect with your EDA</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Get updates from your MP</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Understand political involvement</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Turn conversations into action</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Coordinate volunteers and events</li>
+                                <li><i class="fas fa-check text-success me-2"></i>See neighbouring ridings</li>
+                            </ul>
+                        </div>
+                    </article>
+
+                    <!-- Business -->
+                    <article class="benefit-card card h-100 border-0 shadow-sm">
+                        <div class="card-body">
+                            <div class="text-center mb-3">
+                                <i class="fas fa-briefcase fa-3x" style="color: #D52B1E;"></i>
+                            </div>
+                            <h3 class="card-title h5 fw-bold text-center">Local Business Support</h3>
+                            <ul class="list-unstyled">
+                                <li><i class="fas fa-check text-success me-2"></i>Connect with local businesses</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Canada-first economy</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Discover suppliers and partners</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Shop-local opportunities</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Highlight local hiring and contracts</li>
+                            </ul>
+                        </div>
+                    </article>
+
+                    <!-- Advertising & News -->
+                    <article class="benefit-card card h-100 border-0 shadow-sm">
+                        <div class="card-body">
+                            <div class="text-center mb-3">
+                                <i class="fas fa-newspaper fa-3x" style="color: #D52B1E;"></i>
+                            </div>
+                            <h3 class="card-title h5 fw-bold text-center">Curated News & Ads</h3>
+                            <ul class="list-unstyled">
+                                <li><i class="fas fa-check text-success me-2"></i>Canada-first, community-centered</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Less outrage, more relevance</li>
+                                <li><i class="fas fa-check text-success me-2"></i>National stories with local impact</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Transparent advertising</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Support local organizations</li>
+                            </ul>
+                        </div>
+                    </article>
+
+                    <!-- Built by Canadians -->
+                    <article class="benefit-card card h-100 border-0 shadow-sm">
+                        <div class="card-body">
+                            <div class="text-center mb-3">
+                                <i class="fas fa-users fa-3x" style="color: #D52B1E;"></i>
+                            </div>
+                            <h3 class="card-title h5 fw-bold text-center">Built by Canadians</h3>
+                            <ul class="list-unstyled">
+                                <li><i class="fas fa-check text-success me-2"></i>Citizens come first</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Independent and community-led</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Privacy and dignity matter</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Transparent governance</li>
+                                <li><i class="fas fa-check text-success me-2"></i>Strengthen Canadian communities</li>
+                            </ul>
+                        </div>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- Call to Action Section -->
+        <section class="cta-section text-dark py-5">
+            <div class="container text-center">
+                <h2 class="display-5 fw-bold mb-3">Join the Community Today</h2>
+                <p class="lead mb-4">Start connecting, engaging, and making a difference in your local community.</p>
+                <button class="btn btn-lg" style="background-color: #D52B1E; color: white; border-color: #D52B1E;" data-bs-toggle="modal" data-bs-target="#registerModal">Create Your Free Account</button>
+            </div>
+        </section>
     </div>
 
     <style>
-        @media (max-width: 767px) {
-            #guestLogo {
-                width: calc(100% - 300px);
-                height: auto;
-            }
-            .main-content {
-                padding-top: 0 !important;
-            }
-            .responsive-iframe {
-                width: 100% !important;
-                aspect-ratio: 16 / 9;
+        .hero-section {
+            background: #FFFFFF;
+            min-height: 70vh;
+            display: flex;
+            align-items: center;
+        }
+
+        .benefit-grid {
+            display: grid;
+            gap: 2rem;
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .benefit-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+
+        .benefit-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+        }
+
+        .cta-section {
+            background: #FFFFFF;
+        }
+
+        @media (min-width: 768px) {
+            .benefit-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
-        .responsive-iframe {
-            height: 400px; /* Desktop specific height */
-            width: 500px;
-            display: block;
-            margin: 0 auto; /* Center the iframe */
+
+        @media (max-width: 767px) {
+            .hero-section {
+                text-align: center !important;
+            }
+            .display-4 {
+                font-size: 2.5rem !important;
+            }
+            .lead {
+                font-size: 1.1rem !important;
+            }
         }
     </style>
 
     <script>
-        // Hide <header>
+        // Hide header and sidebars for guest page
         $('header').hide();
-
-        // mobileFooterMenu
         $('#mobileFooterMenu').hide();
-
-        // hide sidebars
         $('#desktopLeftSidebar').hide();
         $('#desktopRightSidebar').hide();
     </script>
-
-
-
-
-    <div id="welcomeToCivilCitizens" style="display:none">
-        <div class="container">
-            <div class="row justify-content-center">
-                <div class="col-md-8">
-                    <div class="text-center d-grid gap-4">
-
-                        <div class="single-box p-5">
-                            <div class="col-md-12">
-                                <div class="upload-single cover-img">
-                                    <div class="head-area mb-2 text-start text-center">
-                                        <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo" alt="logo" style="width:50%;">
-                                        <h3>Welcome To Civil Citizens!</h3>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-
-    </div>
-
 </template>

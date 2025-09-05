@@ -41,7 +41,7 @@ case $1 in
   startdev)
     kill_port_3000
     export ROOT_URL=https://appdev.civilcitizens.ca
-    export  PORT=3000
+    export PORT=3000
     export METEOR_ENV=development
     export HTTP_FORWARDED_COUNT=1
     echo "Starting Meteor for development with ROOT_URL=$ROOT_URL..."
