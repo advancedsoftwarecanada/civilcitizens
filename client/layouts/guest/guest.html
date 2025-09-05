@@ -4,7 +4,7 @@
         <section class="hero-section text-dark py-5">
             <div class="container">
                 <div class="row align-items-center">
-                    <div class="col-lg-6 d-none d-lg-block text-center">
+                    <div class="col-lg-6 text-center">
                         <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo" alt="Civil Citizens Logo" style="max-width: 400px; height: auto;">
                     </div>
                     <div class="col-lg-6 text-center text-lg-start">
@@ -144,6 +144,14 @@
             }
         }
 
+        @media (min-width: 768px) and (max-width: 991px) {
+            #guestLogo {
+                max-width: 200px !important;
+                margin-bottom: 1rem;
+                padding: 20px;
+            }
+        }
+
         @media (max-width: 767px) {
             .hero-section {
                 text-align: center !important;
@@ -153,6 +161,11 @@
             }
             .lead {
                 font-size: 1.1rem !important;
+            }
+            #guestLogo {
+                max-width: 200px !important;
+                margin-bottom: 1rem;
+                padding: 20px;
             }
         }
     </style>
