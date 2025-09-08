@@ -26,7 +26,7 @@ Template.profile.events({
     'submit form'(event) {
         event.preventDefault();
 
-        const myUserMeta = UserMeta.findOne({ ownerUserId: Meteor.userId() });
+        const myUserMeta = UserMeta.find({ ownerUserId: Meteor.userId() }).fetch()[0];
 
         const target = event.target;
         const firstName = target.firstName.value;

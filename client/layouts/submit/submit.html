@@ -89,7 +89,11 @@
                   ['table', ['table']],
                   ['insert', ['link']],
                   ['view', ['undo', 'redo']]
-                ]
+                ],
+                popover: {
+                  image: []
+                },
+                tooltip: false
               });
               console.log('Summernote initialized successfully!');
             }
@@ -126,7 +130,7 @@
               const file = files[i];
               const reader = new FileReader();
               reader.onload = function(e) {
-                $('#imagePreview').append('<img src="' + e.target.result + '" class="preview-img">');
+                //$('#imagePreview').append('<img src="' + e.target.result + '" class="preview-img">');
               };
               reader.readAsDataURL(file);
             }

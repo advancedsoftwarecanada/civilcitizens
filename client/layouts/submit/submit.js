@@ -70,24 +70,16 @@ Template.submit.onRendered(function() {
     }
   });
 
-  // Create draft post if not exists
-  if (!Session.get('draftPostId')) {
-    Meteor.call('posts.submit', {
-      type: postTypeVar.get(),
-      title: null,
-      body: '',
-      chamber: chamberVar.get(),
-      province: provinceVar.get(),
-      topic: topicVar.get(),
-      attachments: null,
-      draft: true
-    }, (error, result) => {
-      if (error) {
-        toastr.error(error.reason);
-      } else {
-        Session.set('draftPostId', result.postId);
-      }
-    });
+  // Subscribe to files
+  // this.subscribe('files.user');
+
+  // Draft post is already ensured by userManager during initialization
+  // Just verify it's available
+  const draftId = window.userManager ? window.userManager.getDraftPostId() : Session.get('draftPostId');
+  if (draftId) {
+    console.log('Draft post ready:', draftId);
+  } else {
+    console.warn('Draft post not found - userManager may not be initialized yet');
   }
 });
 
@@ -102,7 +94,7 @@ Template.submit.events({
     stagedFiles.images = [];
     $('#imagePreview').empty();
 
-    const postId = Session.get('draftPostId');
+    const postId = window.userManager ? window.userManager.getDraftPostId() : Session.get('draftPostId');
     if (!postId) {
       toastr.error('Draft post not ready yet.');
       return;
@@ -152,6 +144,8 @@ Template.submit.events({
           toastr.error('Error uploading file.');
         } else {
           // File uploaded and post updated on server
+          $(`.file-item[data-index="${index}"] .file-status`).text('Uploaded');
+          stagedFiles.images[index].fileId = clientFile._id;
         }
       });
 
@@ -192,6 +186,7 @@ Template.submit.events({
   },
 
   'click #savePost'(event) {
+    console.log('POST button clicked - event handler fired');
     event.preventDefault();
 
     // Get form values
@@ -256,28 +251,30 @@ Template.submit.events({
       for (let i = 0; i < uploads.length; i++) {
         const upload = uploads[i];
 
-        upload.on('progress', function (progress) {
-          // Update progress bar
-          if (postJson.attachments.type === 'images') {
-            const progressBar = $(`.file-item[data-index="${i}"] .upload-progress-bar`);
-            progressBar.css('width', progress + '%');
-          } else {
-            const progressBar = $('#videoAttachment .upload-progress-bar');
-            progressBar.css('width', progress + '%');
-          }
-        });
-
         uploadPromises.push(new Promise((resolve, reject) => {
-          upload.on('end', function (error, clientFile) {
-            if (error) {
-              reject(error);
-            } else {
-              const fileDoc = Files.findOne({ userId: Meteor.userId(), name: file.name });
-              const fileId = fileDoc ? fileDoc._id : null;
-              resolve(fileId);
-            }
-          });
-          upload.start();
+          if (upload.fileId) {
+            // Already uploaded, get the file ID
+            resolve(upload.fileId);
+          } else if (upload.state && upload.state.get() === 'completed') {
+            // Upload completed but no fileId set yet, wait for it
+            upload.on('end', function (error, clientFile) {
+              if (error) {
+                reject(error);
+              } else {
+                resolve(clientFile._id);
+              }
+            });
+          } else {
+            // Not yet uploaded, wait for end
+            upload.on('end', function (error, clientFile) {
+              if (error) {
+                reject(error);
+              } else {
+                resolve(clientFile._id);
+              }
+            });
+            // Do not start again, assume already started
+          }
         }));
       }
 
@@ -299,27 +296,62 @@ Template.submit.events({
     }
 
     function submitPost(json) {
-      console.log("SUBMITTING POST JSON:");
-      console.log(json);
-      const postId = Session.get('draftPostId');
+      const postId = window.userManager ? window.userManager.getDraftPostId() : Session.get('draftPostId');
       if (postId) {
-        Meteor.call('posts.update', postId, { title: json.title, body: json.body, draft: false }, (error, result) => {
-          if (error) {
-            toastr.error(error.reason || 'Error updating the post.', 'Submit Error');
-          } else {
+        // Use API call instead of Meteor.call
+        const token = localStorage.getItem('Meteor.loginToken');
+        fetch('/api/posts/update', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            postId: postId,
+            title: json.title,
+            body: json.body,
+            draft: false
+          }),
+        })
+        .then(response => response.json())
+        .then(result => {
+          if (result.status === 'success') {
             toastr.success(result.message, 'Success');
-            Session.set('draftPostId', null); // Clear the draft
+            if (window.userManager) {
+              window.userManager.clearDraftPost();
+            } else {
+              Session.set('draftPostId', null);
+            }
             FlowRouter.go('/'); // Redirect to home or another page after submission
+          } else {
+            toastr.error(result.error || 'Error updating the post.', 'Submit Error');
           }
+        })
+        .catch(error => {
+          toastr.error('Error updating the post.', 'Submit Error');
         });
       } else {
-        Meteor.call('posts.submit', json, (error, result) => {
-          if (error) {
-            toastr.error(error.reason || 'Error submitting the post.', 'Submit Error');
-          } else {
+        // Use API call instead of Meteor.call
+        const token = localStorage.getItem('Meteor.loginToken');
+        fetch('/api/posts/submit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(json),
+        })
+        .then(response => response.json())
+        .then(result => {
+          if (result.status === 'success') {
             toastr.success(result.message, 'Success');
             FlowRouter.go('/'); // Redirect to home or another page after submission
+          } else {
+            toastr.error(result.error || 'Error submitting the post.', 'Submit Error');
           }
+        })
+        .catch(error => {
+          toastr.error('Error submitting the post.', 'Submit Error');
         });
       }
     }

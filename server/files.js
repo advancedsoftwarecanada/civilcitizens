@@ -136,10 +136,10 @@ Files.on('afterUpload', async function (fileRef) {
             if (fileRef.meta.postId) {
                 const postId = fileRef.meta.postId;
                 try {
-                    await Posts.updateAsync(postId, { $push: { images: fileRef._id } });
-                    console.log('Post updated with file ID:', fileRef._id);
+                    await Posts.updateAsync(postId, { $push: { images: { id: fileRef._id, url: fileUrl, dimensions: dimensions, size: fileRef.size } } });
+                    console.log('Post updated with file metadata:', { id: fileRef._id, url: fileUrl, dimensions, size: fileRef.size });
                 } catch (updateErr) {
-                    console.error('Error updating post with file ID:', updateErr);
+                    console.error('Error updating post with file metadata:', updateErr);
                 }
             }
 

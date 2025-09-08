@@ -25,3 +25,13 @@ if (Meteor.isServer) {
     ChamberFollows.rawCollection().createIndex({ userId: 1 });
     ChamberFollows.rawCollection().createIndex({ chamberId: 1 });
 }
+
+// Files collection (ostrio:files)
+if (Meteor.isServer) {
+    Files = new FilesCollection({
+        collectionName: 'Files',
+        storagePath: Meteor.settings.public.filesPath + '/_processing/',
+        allowClientCode: true,
+        debug: false,
+    });
+}

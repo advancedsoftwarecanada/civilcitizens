@@ -1,5 +1,8 @@
 import UserManager from './userManager.js';
 
+// Instantiate UserManager
+const userManager = new UserManager();
+
 /*
  * Client Startup
     * This is the main entry point for the client
@@ -25,6 +28,10 @@ Meteor.startup(() => {
                 console.log("Initializing UserManager...");
 
                 await userManager.fetchUserDataFromServer(); // Fetch user data
+
+                // Ensure draft post exists
+                console.log("Ensuring draft post exists...");
+                await userManager.ensureDraftPost();
 
                 console.log("User Manager initialized and data fetched: ENABLE userDataReady");
                 window.userDataReady = true;
