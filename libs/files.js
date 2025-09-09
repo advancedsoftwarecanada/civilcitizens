@@ -7,18 +7,17 @@ if (Meteor.isServer) {
 
     Meteor.publish('files.user', function () {
         if (!this.userId) {
-            this.ready();
-            return; // Do not return the result of ready()
+            return this.ready();
         }
-
-        // Guard: if Files collection is not available, just mark ready
-        if (typeof Files === 'undefined' || !Files || typeof Files.find !== 'function') {
-            this.ready();
-            return;
+        // Prefer underlying raw collection for a guaranteed standard cursor
+        if (!Files || !Files.collection || typeof Files.collection.find !== 'function') {
+            console.warn('[publish files.user] Missing Files.collection');
+            return this.ready();
         }
-
-        // Return a cursor as required by Meteor publish
-        return Files.find({ userId: this.userId });
+        const cursor = Files.collection.find({ userId: this.userId }, {
+            fields: { meta: 1, url: 1, userId: 1, createdAt: 1 }
+        });
+        return cursor; // Standard Mongo cursor with fetch()
     });
 
     Meteor.methods({

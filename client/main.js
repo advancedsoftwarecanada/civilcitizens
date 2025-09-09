@@ -326,7 +326,7 @@ Template.registerHelper('myUserMeta', function () {
     lastName: userMeta.lastName?.toLowerCase() || '',
     userName: userMeta.userName || '',
   avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
-  coverUrl: userMeta.coverUrl || '/theme/assets/images/profile-edit-cover.png',
+  coverUrl: userMeta.coverUrl || '/theme/assets/images/fancy-wallpaper.jpg',
   };
 });
 
