@@ -132,6 +132,15 @@ Template.timeline.helpers({
     }
     return false;
   },
+
+  linkAttachment() {
+    const post = this;
+    if (post && post.attachments && post.attachments.type === 'link') {
+      return post.attachments;
+    }
+    return null;
+  },
+
   currentChamber() {
     return userManager.currentChamber.get();
   }

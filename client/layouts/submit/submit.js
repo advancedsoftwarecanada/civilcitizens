@@ -90,6 +90,15 @@ let stagedFiles = {
 
 console.log("stagedFiles initialized:", stagedFiles);
 
+// Function to get link preview data from the HTML template
+function getLinkPreviewData() {
+  // Access the linkPreviewData variable from the HTML template's JavaScript
+  if (typeof window.linkPreviewData !== 'undefined') {
+    return window.linkPreviewData;
+  }
+  return null;
+}
+
 Template.submit.events({
   'change #postImages'(event) {
     const files = Array.from(event.target.files);
@@ -277,7 +286,13 @@ Template.submit.events({
         const url = $('#postLink').val().trim();
         if (url) {
           hasAttachment = true;
-          postJson.attachments = { type: 'link', url: url };
+          // Get link preview data from the HTML template's JavaScript
+          const linkPreviewData = getLinkPreviewData();
+          postJson.attachments = {
+            type: 'link',
+            url: url,
+            preview: linkPreviewData
+          };
         }
       } else if (attachmentId === 'pollAttachment') {
         const options = $('.poll-option').map(function() { return $(this).val().trim(); }).get().filter(val => val);
@@ -327,6 +342,7 @@ Template.submit.events({
             postId: postId,
             title: json.title,
             body: json.body,
+            attachments: json.attachments,
             draft: false
           }),
         })
@@ -363,6 +379,7 @@ Template.submit.events({
             type: json.type,
             title: json.title,
             body: json.body,
+            attachments: json.attachments,
             chamber: json.chamber,
             province: json.province,
             topic: json.topic

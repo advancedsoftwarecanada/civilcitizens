@@ -136,6 +136,21 @@
                     </div>
                   {{/each}}
                 </div>
+              {{else if linkAttachment}}
+                <div class="post-link-preview">
+                  <a href="{{linkAttachment.url}}" target="_blank" class="link-preview-card">
+                    {{#if linkAttachment.preview.image}}
+                      <div class="link-preview-image">
+                        <img src="{{linkAttachment.preview.image}}" alt="Link preview" onerror="this.style.display='none'">
+                      </div>
+                    {{/if}}
+                    <div class="link-preview-content">
+                      <h4 class="link-preview-title">{{linkAttachment.preview.title}}</h4>
+                      <p class="link-preview-description">{{linkAttachment.preview.description}}</p>
+                      <small class="link-preview-url">{{linkAttachment.url}}</small>
+                    </div>
+                  </a>
+                </div>
               {{/if}}
               {{#if isAd this}}
                 <p style="font-size: 0.8em; text-align: center;">30% Of this ad was donated to charity</p>

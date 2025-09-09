@@ -157,7 +157,11 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
       } else if (att.type === 'video') {
         postData.video = att.fileId;
       } else if (att.type === 'link') {
-        postData.link = att.url;
+        postData.attachments = {
+          type: 'link',
+          url: att.url,
+          preview: att.preview
+        };
       } else if (att.type === 'poll') {
         postData.poll = {
           options: att.options,
