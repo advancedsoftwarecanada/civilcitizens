@@ -31,7 +31,7 @@ Template.userTimeline.onCreated(function () {
 
   // Defaults used by UI; keep here for comparison so we can overwrite placeholders
   const DEFAULT_AVATAR_URL = 'https://civilcitizens.ca/theme/assets/images/avatar-1.png';
-  const DEFAULT_COVER_URL = '/theme/assets/images/profile-edit-cover.png';
+  const DEFAULT_COVER_URL = '/theme/assets/images/fancy-wallpaper.jpg';
 
   // Load target user meta by username
   this.autorun(() => {
@@ -53,7 +53,7 @@ Template.userTimeline.onCreated(function () {
           targetUserVar.set({
             userName: username,
             avatarUrl: 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
-            coverUrl: '/theme/assets/images/profile-edit-cover.png',
+            coverUrl: '/theme/assets/images/fancy-wallpaper.jpg',
           });
         }
       } else {
@@ -64,7 +64,7 @@ Template.userTimeline.onCreated(function () {
         const merged = {
           userName: data.userName || current.userName || username,
           avatarUrl: data.avatarUrl || current.avatarUrl || (isSelf ? (myMeta.avatarUrl || null) : null) || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
-          coverUrl: data.coverUrl || current.coverUrl || (isSelf ? (myMeta.coverUrl || null) : null) || '/theme/assets/images/profile-edit-cover.png',
+          coverUrl: data.coverUrl || current.coverUrl || (isSelf ? (myMeta.coverUrl || null) : null) || '/theme/assets/images/fancy-wallpaper.jpg',
         };
         targetUserVar.set(merged);
       }
@@ -152,7 +152,7 @@ Template.userTimeline.helpers({
       // Always show a handle: prefer API value, then route param
       userName: meta.userName || username || '',
       avatarUrl: (isSelf && myMeta.avatarUrl) ? myMeta.avatarUrl : (meta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png'),
-      coverUrl: (isSelf && myMeta.coverUrl) ? myMeta.coverUrl : (meta.coverUrl || '/theme/assets/images/profile-edit-cover.png'),
+      coverUrl: (isSelf && myMeta.coverUrl) ? myMeta.coverUrl : (meta.coverUrl || '/theme/assets/images/fancy-wallpaper.jpg'),
     };
   },
   posts() {
