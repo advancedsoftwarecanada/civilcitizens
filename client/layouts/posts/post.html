@@ -36,11 +36,64 @@
               <h2 class="mdtxt">{{title}}</h2>
               <p class="description">{{{body}}}</p>
             </div>
-            {{#if image}}
-              <div class="post-img">
-                <img src="{{image}}" class="w-100" alt="image">
+            {{#if images}}
+              <div class="post-images">
+                {{#each images}}
+                  <div class="post-img" data-image-url="{{url}}">
+                    <img src="{{url}}" class="w-100" alt="image"
+                         onload="console.log('✅ Image loaded successfully:', '{{url}}')"
+                         onerror="console.error('❌ Image failed to load:', '{{url}}'); this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <div class="image-error" style="display: none; padding: 20px; text-align: center; background: #f8f9fa; border-radius: 12px; color: #666;">
+                      <i class="material-symbols-outlined" style="font-size: 48px; opacity: 0.5;">image_not_supported</i>
+                      <p>Image failed to load</p>
+                      <small>{{url}}</small>
+                    </div>
+                  </div>
+                {{/each}}
+              </div>
+            {{else}}
+              <div style="text-align: center; padding: 40px; color: #666; font-style: italic; background: #f8f9fa; border-radius: 12px;">
+                <i class="material-symbols-outlined" style="font-size: 64px; opacity: 0.3;">image</i>
+                <p style="margin-top: 20px;">No images attached to this post</p>
               </div>
             {{/if}}
+
+            <!-- Enhanced Image Gallery Modal -->
+            <div class="image-gallery-modal" id="imageGalleryModal">
+              <div class="gallery-overlay"></div>
+              <div class="gallery-container">
+                <!-- Close Button -->
+                <button class="gallery-close-btn" id="galleryCloseBtn">
+                  <i class="material-symbols-outlined">close</i>
+                </button>
+
+                <!-- Navigation Arrows -->
+                <button class="gallery-nav-btn gallery-prev-btn" id="galleryPrevBtn">
+                  <i class="material-symbols-outlined">chevron_left</i>
+                </button>
+                <button class="gallery-nav-btn gallery-next-btn" id="galleryNextBtn">
+                  <i class="material-symbols-outlined">chevron_right</i>
+                </button>
+
+                <!-- Main Image -->
+                <div class="gallery-main-image">
+                  <img id="galleryMainImage" src="" alt="Gallery image">
+                  <div class="gallery-loading" id="galleryLoading">
+                    <div class="loading-spinner"></div>
+                  </div>
+                </div>
+
+                <!-- Image Counter -->
+                <div class="gallery-counter" id="galleryCounter">
+                  <span id="currentImageNumber">1</span> / <span id="totalImages">1</span>
+                </div>
+
+                <!-- Thumbnail Strip (optional, can be toggled) -->
+                <div class="gallery-thumbnails" id="galleryThumbnails">
+                  <div class="thumbnails-container" id="thumbnailsContainer"></div>
+                </div>
+              </div>
+            </div>
             {{#if isAd this}}
               <p style="font-size: 0.8em; text-align: center;">30% Of this ad was donated to charity</p>
             {{else}}

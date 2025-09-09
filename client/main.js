@@ -1,5 +1,8 @@
 import UserManager from './userManager.js';
 
+// Instantiate UserManager
+const userManager = new UserManager();
+
 /*
  * Client Startup
     * This is the main entry point for the client
@@ -11,27 +14,95 @@ Meteor.startup(() => {
     window.userDataReady = false;
 
     // Reactive Tracker to handle user state and UserMeta logic
-    setTimeout(() => {
-        Tracker.autorun(async () => {
-            const user = Meteor.user(); // Reactively track the logged-in user
-            const isLoggedIn = !!user; // Boolean to check if a user is logged in
+    let initializationStarted = false;
+    let initializationCompleted = false;
+    let logoutDetected = false;
+    let logoutTimeout = null;
 
-            if (!isLoggedIn) {
+    Tracker.autorun(async () => {
+        const user = Meteor.user(); // Reactively track the logged-in user
+        const isLoggedIn = !!user; // Boolean to check if a user is logged in
+        const hasLoginToken = !!localStorage.getItem('Meteor.loginToken');
+        const isConnected = Meteor.status().connected;
+
+        if (!isLoggedIn) {
+            // Don't immediately redirect - check if this is a false positive
+            if (hasLoginToken && isConnected && !logoutDetected) {
+                console.log("User appears logged out but token exists - waiting to confirm...");
+                console.log("Current Meteor.userId():", Meteor.userId());
+                console.log("Login token length:", localStorage.getItem('Meteor.loginToken')?.length);
+
+                // Set a timeout to check again in 3 seconds (increased from 2)
+                if (logoutTimeout) clearTimeout(logoutTimeout);
+                logoutTimeout = setTimeout(() => {
+                    const stillLoggedOut = !Meteor.user();
+                    const stillHasToken = !!localStorage.getItem('Meteor.loginToken');
+                    const stillConnected = Meteor.status().connected;
+
+                    console.log("Timeout check - still logged out:", stillLoggedOut, "still has token:", stillHasToken, "still connected:", stillConnected);
+
+                    if (stillLoggedOut && stillHasToken && stillConnected) {
+                        console.log("Confirmed logout after timeout - redirecting to home");
+                        logoutDetected = true;
+                        // Reset initialization flags when user logs out
+                        initializationStarted = false;
+                        initializationCompleted = false;
+                        window.userDataReady = false;
+                        FlowRouter.go('/');
+                    } else if (!stillLoggedOut) {
+                        console.log("False logout detected - user recovered");
+                    } else {
+                        console.log("Logout condition not met - keeping user logged in");
+                    }
+                }, 3000); // Increased to 3 seconds
+                return; // Don't redirect yet
+            } else if (!hasLoginToken || !isConnected) {
                 console.log("User is not logged in. Redirecting to home...");
+                console.log("Login token in localStorage:", hasLoginToken);
+                console.log("Meteor.userId():", Meteor.userId());
+                console.log("Connection status:", isConnected);
+                logoutDetected = true;
+                // Reset initialization flags when user logs out
+                initializationStarted = false;
+                initializationCompleted = false;
+                window.userDataReady = false;
                 FlowRouter.go('/');
                 return; // Exit early if not logged in
-            } else {
+            }
+        } else {
+            // User is logged in - clear any pending logout timeout
+            if (logoutTimeout) {
+                clearTimeout(logoutTimeout);
+                logoutTimeout = null;
+            }
+            logoutDetected = false;
+            // Only initialize once per session
+            if (!initializationStarted && !initializationCompleted) {
+                initializationStarted = true;
                 console.log("User is logged in:", user);
                 console.log("Initializing UserManager...");
 
-                await userManager.fetchUserDataFromServer(); // Fetch user data
+                try {
+                    await userManager.fetchUserDataFromServer(); // Fetch user data
 
-                console.log("User Manager initialized and data fetched: ENABLE userDataReady");
-                window.userDataReady = true;
-                console.log(userManager);
+                    // Ensure draft post exists
+                    console.log("Ensuring draft post exists...");
+                    await userManager.ensureDraftPost();
+
+                    console.log("User Manager initialized and data fetched: ENABLE userDataReady");
+                    window.userDataReady = true;
+                    initializationCompleted = true;
+                    console.log(userManager);
+
+                    // Subscribe to user's files
+                    Meteor.subscribe('files.user');
+                } catch (error) {
+                    console.error("Error during initialization:", error);
+                    initializationStarted = false; // Allow retry on error
+                }
             }
-        });
-    }, 1000);
+        }
+    });
 
 });
 
@@ -92,6 +163,10 @@ function renderEverywhere(){
     // FILE UPLOADER
 	$(document).on('change', '.fileUploader', function (event) {    // image upload
 
+        // Skip if this is handled by specific submit form handlers
+        if ($(this).is('#postImages, #postVideo')) {
+            return;
+        }
 
         // fetch this data-upload-type
         const uploadType = $(this).data('upload-type');
@@ -121,74 +196,46 @@ function renderEverywhere(){
 
             console.log("STARTING UPLOAD");
 
-			const upload = Files.insert({
-				file: file,
-				//streams: 'dynamic', // this seems to not be needed and breaks on mac
-				chunkSize: 'dynamic',
-				meta: {
-					processing: true,
-					type: uploadType,
-					timeCreated: Date.now(),
-					timeAgo: new Date().toISOString(),
+			const formData = new FormData();
+			formData.append('file', file);
+			formData.append('type', uploadType);
+			formData.append('processing', 'true');
+			formData.append('timeCreated', String(Date.now()));
+			formData.append('timeAgo', new Date().toISOString());
+
+			// Include draft post ID if available
+			const draftPostId = userManager.getDraftPostId();
+			if (draftPostId) {
+				formData.append('draftPostId', draftPostId);
+			}
+
+			// Use Fetch API instead of XMLHttpRequest to avoid Meteor connection issues
+			const token = localStorage.getItem('Meteor.loginToken');
+			console.log("Upload starting - token exists:", !!token, "user logged in:", !!Meteor.userId());
+			fetch('/api/files/upload', {
+				method: 'POST',
+				headers: {
+					'Authorization': `Bearer ${token}`,
 				},
-			}, false);
-
-			upload.on('progress', function () {
-				// $(".uploaderPercent").css('width', this.progress.curValue + "%");
+				body: formData,
+			})
+			.then(response => {
+				console.log("UPLOAD END - General file uploader, response status:", response.status);
+				console.log("User still logged in after upload:", !!Meteor.userId());
+				if (response.ok) {
+					return response.json();
+				} else {
+					throw new Error('Upload failed');
+				}
+			})
+			.then(result => {
+				console.log("Response:", result);
+				// File uploaded, no need to update post here
+			})
+			.catch(error => {
+				console.error('Upload error:', error);
+				toastr.error('Error uploading file.');
 			});
-
-			upload.on('start', function () {
-				// console.log("Start Upload");
-				// toastr["success"]("", "Uploading");
-			});
-
-            upload.on('end', function (error, clientFile) {
-                if (error) {
-                    toastr.error('Error uploading file.');
-                } else {
-
-                    console.log("UPLOAD END");
-                    console.log(clientFile);
-
-                    // Store the file ID for future requests
-                    const fileId = clientFile._id; // Ensure `_id` is present in `clientFile`
-                    console.log('Uploaded file ID:', fileId);
-
-                    // Fetch the enriched file metadata from the server
-                    Meteor.call('files.fetchMeta', fileId, (err, result) => {
-                        if (err) {
-                            console.error('Error fetching file metadata:', err);
-                            // toastr.error('Error retrieving file details.');
-                        } else {
-                            console.log('Fetched file metadata:', result);
-
-                            // Extract the file's URL
-                            const { url } = result.data;
-
-                            // Update the avatar URL if this is an avatar upload
-                            // Removed from client side
-                            // if (clientFile.meta.type === 'avatar') {
-                            //     Meteor.call('files.updateAvatarUrl', url, (updateErr, updateResult) => {
-                            //         if (updateErr) {
-                            //             console.error('Error updating avatar URL:', updateErr);
-                            //             toastr.error('Error updating avatar URL.');
-                            //         } else {
-                            //             console.log('Avatar URL updated successfully:', updateResult);
-                            //             toastr.success('Avatar updated successfully!');
-
-                            //             // Update the UI
-                            //             $('.preview-avatar').attr('src', url);
-                            //         }
-                            //     });
-                            // }
-                        }
-                    });
-                }
-            });
-
-
-
-			upload.start();
 		}
 
 	});

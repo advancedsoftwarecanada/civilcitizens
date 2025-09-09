@@ -21,12 +21,6 @@ if (Meteor.isServer) {
     // Submit a new post
     'posts.submit': async function (thePostJson ) {
 
-      // check(, Match.Maybe(String));
-      // check(postBody, Match.Maybe(String));
-      // check(postChamber, Match.Maybe(String));
-      // check(image, Match.Maybe(String));
-      // check(postType, Match.Maybe(String));
-
       if (!this.userId) {
         throw new Meteor.Error('not-authorized', 'You must be logged in to submit a post.');
       }
@@ -35,83 +29,98 @@ if (Meteor.isServer) {
       console.log("++++++++++++++++++++++++++");
       console.log(thePostJson);
 
+      // Check for existing draft if creating a draft
+      if (thePostJson.draft) {
+        const existingDraft = await Posts.findOneAsync({ authorId: this.userId, draft: true });
+        if (existingDraft) {
+          return { status: 'success', message: 'Draft post found.', postId: existingDraft._id };
+        }
+      }
 
-      // Todo later
-      // if( postJson.type == "chamber"){
-      //   // Ensure the province and chamber are valid
-      //   if (!['nl', 'pe', 'ns', 'nb', 'qc', 'on', 'mb', 'sk', 'ab', 'bc', 'yt', 'nt', 'nu'].includes(province)) {
-      //     throw new Meteor.Error('invalid-province', 'Invalid province.');
-      //   }
-      // }
+      // Generate SEO URL
+      let seoUrl;
+      if (thePostJson.title && thePostJson.title.trim()) {
+        seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+      } else {
+        seoUrl = `post-${Date.now()}`;
+      }
+
+      // Prepare post data
+      const postData = {
+        title: thePostJson.title || null,
+        body: thePostJson.body || null,
+        type: thePostJson.type,
+        authorId: this.userId,
+        voteCount: 0,
+        commentCount: 0,
+        bookmarkCount: 0,
+        shareCount: 0,
+        createdAt: new Date().getTime(),
+        seoUrl: seoUrl,
+        draft: thePostJson.draft || false,
+      };
+
+      // Handle attachments
+      if (thePostJson.attachments) {
+        const att = thePostJson.attachments;
+        if (att.type === 'images') {
+          postData.images = att.fileIds;
+        } else if (att.type === 'video') {
+          postData.video = att.fileId;
+        } else if (att.type === 'link') {
+          postData.link = att.url;
+        } else if (att.type === 'poll') {
+          postData.poll = {
+            options: att.options,
+            duration: att.duration,
+            allowMulti: att.allowMulti,
+          };
+        }
+      }
 
       // SELF POST
       if( thePostJson.type == "self"){
-
-        // Create an SEO friendly url that is no longer than 30 characters and has a timestamp to ensure uniqueness
-        const seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
-
         try {
-          const postId = await Posts.insertAsync({
-            title: thePostJson.title,
-            body: thePostJson.body,
-            type: "self",
-            image: thePostJson.image || null,
-            authorId: this.userId,
-            voteCount: 0,
-            commentCount: 0,
-            bookmarkCount: 0,
-            shareCount: 0,
-            createdAt: new Date().getTime(),
-            seoUrl: seoUrl,
-          });
-
+          const postId = await Posts.insertAsync(postData);
           console.log('Post submitted successfully:', postId);
           return { status: 'success', message: 'Post submitted successfully.', postId };
         } catch (error) {
           console.error('Error submitting post:', error);
           throw new Meteor.Error('internal-server-error', 'An error occurred while submitting the post.');
         }
-
       }
-
 
       // CHAMBER
       if( thePostJson.type == "chamber"){
-
-        // Create an SEO friendly url that is no longer than 30 characters and has a timestamp to ensure uniqueness
-        const seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+        postData.chamber = thePostJson.chamber;
+        postData.province = thePostJson.province;
 
         try {
-          const postId = await Posts.insertAsync({
-            title: thePostJson.title,
-            body: thePostJson.body,
-            type: "chamber",
-            chamber: thePostJson.chamber,
-            province: thePostJson.province,
-            image: thePostJson.image || null,
-            authorId: this.userId,
-            voteCount: 0,
-            commentCount: 0,
-            bookmarkCount: 0,
-            shareCount: 0,
-            createdAt: new Date().getTime(),
-            seoUrl: seoUrl,
-          });
-
+          const postId = await Posts.insertAsync(postData);
           console.log('Post submitted successfully:', postId);
 
           // Update the Chamber stats.posts
-          await Chambers.updateAsync({ province:thePostJson.province, seoUrl:thePostJson.chamber }, { $inc: { 'stats.posts': 1 } });
+          await Chambers.updateAsync({ province: thePostJson.province, seoUrl: thePostJson.chamber }, { $inc: { 'stats.posts': 1 } });
 
           return { status: 'success', message: 'Post submitted successfully.', postId };
         } catch (error) {
           console.error('Error submitting post:', error);
           throw new Meteor.Error('internal-server-error', 'An error occurred while submitting the post.');
         }
-
       }
 
-
+      // TOPIC (if needed)
+      if( thePostJson.type == "topic"){
+        postData.topic = thePostJson.topic;
+        try {
+          const postId = await Posts.insertAsync(postData);
+          console.log('Post submitted successfully:', postId);
+          return { status: 'success', message: 'Post submitted successfully.', postId };
+        } catch (error) {
+          console.error('Error submitting post:', error);
+          throw new Meteor.Error('internal-server-error', 'An error occurred while submitting the post.');
+        }
+      }
     },
 
     // Fetch a single post by ID
@@ -158,6 +167,34 @@ if (Meteor.isServer) {
       } catch (error) {
         console.error('Error deleting post:', error);
         throw new Meteor.Error('internal-server-error', 'An error occurred while deleting the post.');
+      }
+    },
+
+    // Update a post
+    'posts.update': async function (postId, updateData) {
+      check(postId, String);
+      check(updateData, Object);
+
+      if (!this.userId) {
+        throw new Meteor.Error('not-authorized', 'You must be logged in to update posts.');
+      }
+
+      const post = await Posts.findOneAsync({ _id: postId });
+      if (!post) {
+        throw new Meteor.Error('not-found', 'Post not found.');
+      }
+
+      if (post.authorId !== this.userId) {
+        throw new Meteor.Error('not-authorized', 'You can only update your own posts.');
+      }
+
+      try {
+        await Posts.updateAsync({ _id: postId }, { $set: updateData });
+        console.log('Post updated successfully:', postId);
+        return { status: 'success', message: 'Post updated successfully.' };
+      } catch (error) {
+        console.error('Error updating post:', error);
+        throw new Meteor.Error('internal-server-error', 'An error occurred while updating the post.');
       }
     },
 

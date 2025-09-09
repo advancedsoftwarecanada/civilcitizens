@@ -138,4 +138,11 @@ Template.timeline.helpers({
 });
 
 Template.timeline.events({
+  'click .post-img'(event, instance) {
+    event.preventDefault();
+    const postUrl = event.currentTarget.dataset.postUrl;
+    if (postUrl) {
+      FlowRouter.go(postUrl);
+    }
+  }
 });

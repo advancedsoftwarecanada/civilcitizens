@@ -1,21 +1,20 @@
-// Define the FilesCollection
-Files = new FilesCollection({
-    debug: true,
-    collectionName: 'Files',
-    storagePath: Meteor.settings.public.filesPath + '/_processing/',
-    allowClientCode: false,
-    debug: false,
-});
+// Global declarations for Meteor collections and ostrio:files
+/* global FilesCollection, UserMeta, Files */
 
 // Publish files to the client
 if (Meteor.isServer) {
+
+    Meteor.publish('files.user', function () {
+        if (!this.userId) return this.ready();
+        return Files.find({ userId: this.userId });
+    });
 
     Meteor.methods({
 
         'files.fetchMeta'(fileId) {
             check(fileId, String);
 
-            const file = Files.findOne({ _id: fileId });
+            const file = Files.findOne(fileId);
             if (!file) {
                 throw new Meteor.Error('file-not-found', 'File not found.');
             }

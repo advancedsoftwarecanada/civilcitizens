@@ -21,14 +21,19 @@ class UserManager {
 
     async initialize() {
         try {
+            console.log('🚀 UserManager initialization started');
             await this.initDatabase();
             await this.loadFromStorage(); // Only load data after DB is ready
             this.setupEventHandlers(); // Initialize event handlers
 
-            this.DOMRENDER();
+            // Ensure draft post exists immediately after initialization
+            console.log('📝 Ensuring draft post exists...');
+            await this.ensureDraftPost();
 
+            this.DOMRENDER();
+            console.log('✅ UserManager initialization completed');
         } catch (error) {
-            console.error('Error initializing UserManager:', error);
+            console.error('❌ Error initializing UserManager:', error);
         }
     }
 
@@ -292,7 +297,7 @@ class UserManager {
                 return false;
             }
 
-            console.log(`HTTP Post ${postId} ${newVote} voted successfully.`);
+            console.log(`HTTP Post ${postId} ${newVote}🧪 POST request detected, setting up body parsi voted successfully.`);
 
             return true;
         } catch (error) {
@@ -395,9 +400,146 @@ class UserManager {
 
     // =============
     //
-    // CHAMBERS 
+    // DRAFT POST MANAGEMENT
     //
     // =============
+
+    async ensureDraftPost() {
+        try {
+            console.log('🔍 ensureDraftPost called');
+            console.log('Current data.draftPostId:', this.data.draftPostId);
+
+            // Check if we already have a draft post ID stored
+            if (this.data.draftPostId) {
+                console.log('✅ Draft post already exists:', this.data.draftPostId);
+                Session.set('draftPostId', this.data.draftPostId);
+                return this.data.draftPostId;
+            }else{
+                console.log('❌ No draft post ID found in data. Proceeding to create one.');
+            }
+
+            // First test the simple endpoint
+            console.log('🧪 Testing simple endpoint first...');
+            console.log('🧪 Current window location:', window.location.href);
+            console.log('🧪 Fetching from URL:', '/api/test');
+
+            // First test the simple ping endpoint
+            console.log('🏓 Testing ping endpoint...');
+            try {
+                const pingResponse = await fetch('/ping');
+                const pingText = await pingResponse.text();
+                console.log('🏓 Ping response:', pingText);
+            } catch (pingError) {
+                console.error('🏓 Ping failed:', pingError);
+            }
+
+            // Try with absolute URL first
+            const baseUrl = window.location.origin;
+            const testUrl = `${baseUrl}/api/test`;
+            console.log('🧪 Trying absolute URL:', testUrl);
+
+            try {
+                const testResponse = await fetch(testUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ test: 'data' }),
+                });
+                const testResult = await testResponse.json();
+                console.log('🧪 Test endpoint result:', testResult);
+            } catch (testError) {
+                console.error('🧪 Test endpoint failed with absolute URL:', testError);
+                console.error('🧪 Error details:', {
+                    message: testError.message,
+                    stack: testError.stack
+                });
+
+                // Try with relative URL as fallback
+                console.log('🧪 Trying relative URL as fallback...');
+                try {
+                    const fallbackResponse = await fetch('/api/test', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ test: 'data' }),
+                    });
+                    const fallbackResult = await fallbackResponse.json();
+                    console.log('🧪 Fallback test endpoint result:', fallbackResult);
+                } catch (fallbackError) {
+                    console.error('🧪 Fallback also failed:', fallbackError);
+                }
+            }
+
+            // Check if user has an existing draft post in the database
+            const token = localStorage.getItem('Meteor.loginToken');
+            console.log('🔑 Login token available:', !!token);
+
+            if (!token) {
+                console.error('❌ No login token found for draft post creation');
+                return null;
+            }
+
+            console.log('📡 Making API call to create draft post...');
+
+            const requestData = {
+                type: 'self', // Default to self post
+                title: null,
+                body: '',
+                chamber: null,
+                province: null,
+                topic: null,
+                attachments: null,
+                draft: true
+            };
+
+            console.log('📡 Request data:', requestData);
+            console.log('📡 Request JSON:', JSON.stringify(requestData));
+            console.log('📡 Request JSON length:', JSON.stringify(requestData).length);
+
+            const response = await fetch('/api/posts/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`,
+                },
+                body: JSON.stringify(requestData),
+            });
+
+            console.log('📡 Fetch response status:', response.status);
+            console.log('📡 Fetch response ok:', response.ok);
+
+            console.log('📡 API response status:', response.status);
+
+            const result = await response.json();
+            console.log('📡 API response:', result);
+
+            if (result.status === 'success') {
+                console.log('✅ Draft post created:', result.postId);
+                this.data.draftPostId = result.postId;
+                this.saveToStorage();
+                Session.set('draftPostId', result.postId);
+                return result.postId;
+            } else {
+                console.error('❌ Failed to create draft post:', result.error);
+                return null;
+            }
+        } catch (error) {
+            console.error('❌ Error ensuring draft post:', error);
+            return null;
+        }
+    }
+
+    getDraftPostId() {
+        return this.data.draftPostId || Session.get('draftPostId');
+    }
+
+    clearDraftPost() {
+        this.data.draftPostId = null;
+        Session.set('draftPostId', null);
+        this.saveToStorage();
+    }
     async handleFollowClick(event) {
         const province = FlowRouter.getParam('province');
         const chamber = FlowRouter.getParam('chamber');

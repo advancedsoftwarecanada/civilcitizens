@@ -122,15 +122,19 @@
                   <p class="description">{{{body}}}</p>
                 </div>
               </a>
-              {{#if image}}
-                <div class="post-img">
-                  {{#if isAd this}}
-                    <a href="{{url}}" onclick="window.open('{{url}}'); return false;">
-                      <img src="{{image}}" class="w-100" alt="image">
-                    </a>
-                  {{else}}
-                    <img src="{{image}}" class="w-100" alt="image">
-                  {{/if}}
+              {{#if images}}
+                <div class="post-images">
+                  {{#each images}}
+                    <div class="post-img" data-post-url="/post/{{../seoUrl}}">
+                      {{#if ../isAd}}
+                        <a href="{{../url}}" onclick="window.open('{{../url}}'); return false;">
+                          <img src="{{url}}" class="w-100" alt="image">
+                        </a>
+                      {{else}}
+                        <img src="{{url}}" class="w-100" alt="image">
+                      {{/if}}
+                    </div>
+                  {{/each}}
                 </div>
               {{/if}}
               {{#if isAd this}}

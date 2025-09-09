@@ -1,5 +1,4 @@
 <template name="submit">
-
     <div id="templateMain" class="submit-container">
 
       <!-- Dropdown for Posting Location -->
@@ -16,19 +15,61 @@
         </select>
       </div>
 
-      <!-- Post Title -->
-      <div class="form-group">
-        <input type="text" id="postTitle" class="mt-2 post-title-input" placeholder="Title*">
+      <button id="addTitleBtn" class="add-title-btn">Add Title</button>
+
+      <!-- Attachment Tray -->
+      <div class="attachment-tray">
+        <button class="attachment-btn btn" id="addImageBtn" title="Add Image">
+          <i class="fa fa-image"></i>
+        </button>
+        <button class="attachment-btn btn" id="addVideoBtn" title="Add Video">
+          <i class="fa fa-video"></i>
+        </button>
+        <button class="attachment-btn btn" id="addLinkBtn" title="Add Link">
+          <i class="fa fa-link"></i>
+        </button>
+        <button class="attachment-btn btn" id="addPollBtn" title="Add Poll">
+          <i class="fa fa-chart-bar"></i>
+        </button>
       </div>
 
-      <!-- Tabs for Different Post Types
-      <div class="post-tabs">
-        <button class="tab-button active">Text</button>
-        <button class="tab-button">Images & Video</button>
-        <button class="tab-button">Link</button>
-        <button class="tab-button">Poll</button>
+      <!-- Attachment Areas -->
+      <div id="imageAttachment" class="attachment-area" style="display: none;">
+        <label for="postImages" class="upload-label">
+          <input type="file" id="postImages" class="fileUploader" accept=".jpg, .jpeg, .png" multiple>
+          <div class="upload-box">
+            <span class="upload-text">Click or drag and drop to upload images (up to 8)</span>
+          </div>
+        </label>
+        <div id="imagePreview" class="file-list"></div>
       </div>
-       -->
+
+      <div id="videoAttachment" class="attachment-area" style="display: none;">
+        <label for="postVideo" class="upload-label">
+          <input type="file" id="postVideo" class="fileUploader" accept=".mp4, .avi, .mov">
+          <div class="upload-box">
+            <span class="upload-text">Click or drag and drop to upload a video</span>
+          </div>
+        </label>
+      </div>
+
+      <div id="linkAttachment" class="attachment-area" style="display: none;">
+        <input type="url" id="postLink" placeholder="Enter URL" class="link-input">
+      </div>
+
+      <div id="pollAttachment" class="attachment-area" style="display: none;">
+        <div class="poll-options">
+          <input type="text" placeholder="Option 1" class="poll-option">
+          <input type="text" placeholder="Option 2" class="poll-option">
+          <button id="addPollOption" class="add-option-btn">Add Option</button>
+        </div>
+        <div class="poll-settings">
+          <label>Duration: <input type="number" id="pollDuration" value="1" min="1"> days</label>
+          <label><input type="checkbox" id="allowMulti"> Allow multiple selections</label>
+        </div>
+      </div>
+
+
 
       <!-- Summernote Editor -->
       <div id="summernote" class="editor mt-3"></div>
@@ -48,23 +89,56 @@
                   ['table', ['table']],
                   ['insert', ['link']],
                   ['view', ['undo', 'redo']]
-                ]
+                ],
+                popover: {
+                  image: []
+                },
+                tooltip: false
               });
               console.log('Summernote initialized successfully!');
             }
           }, 10);
+
+          // Add Title Button
+          $('#addTitleBtn').click(function() {
+            const input = $('<input type="text" id="postTitle" class="mt-2 post-title-input" placeholder="Title (optional)">');
+            $(this).replaceWith(input);
+          });
+
+          // Attachment Buttons
+          $('.attachment-btn').click(function() {
+            const type = $(this).attr('id').replace('add', '').replace('Btn', '').toLowerCase();
+            $('.attachment-area').hide();
+            $('.attachment-btn').removeClass('active');
+            $(this).addClass('active');
+            $('#' + type + 'Attachment').show();
+          });
+
+          // Poll Add Option
+          $('#addPollOption').click(function() {
+            const options = $('.poll-option').length;
+            if (options < 4) {
+              $('.poll-options').append('<input type="text" placeholder="Option ' + (options + 1) + '" class="poll-option">');
+            }
+          });
+
+          // Image Preview - REMOVED to avoid conflicts with submit.js handler
+          // $('#postImages').change(function() {
+          //   const files = this.files;
+          //   $('#imagePreview').empty();
+          //   for (let i = 0; i < files.length && i < 8; i++) {
+          //     const file = files[i];
+          //     const reader = new FileReader();
+          //     reader.onload = function(e) {
+          //       //$('#imagePreview').append('<img src="' + e.target.result + '" class="preview-img">');
+          //     };
+          //     reader.readAsDataURL(file);
+          //   }
+          // });
         });
       </script>
 
-      <!-- Post Image Uploader -->
-      <div class="upload-area mt-4" style="display:none;">
-        <label for="postImage" class="upload-label">
-          <input type="file" id="postImage" class="fileUploader" accept=".jpg, .jpeg, .png">
-          <div class="upload-box">
-            <span class="upload-text">Click or drag and drop to upload an image</span>
-          </div>
-        </label>
-      </div>
+
 
       <!-- Save & Post Buttons -->
       <div class="button-area">
@@ -168,36 +242,140 @@
         color: #666;
       }
 
-      /* Buttons */
-      .button-area {
-        text-align: right;
+      /* Attachment Tray */
+      .attachment-tray {
+        display: flex;
+        gap: 10px;
+        margin: 10px 0;
       }
 
-      .cmn-btn {
-        padding: 10px 20px;
-        font-size: 14px;
-        border: none;
+      .attachment-btn {
+        background: none;
+        border: 1px solid #ccc;
         border-radius: 4px;
+        padding: 8px;
         cursor: pointer;
-        margin-left: 10px;
-      }
-
-      .draft-btn {
-        background-color: #f1f1f1;
+        font-size: 16px;
         color: #666;
       }
 
-      .draft-btn:hover {
-        background-color: #e0e0e0;
+      .attachment-btn:hover {
+        background: #f0f0f0;
       }
 
-      .post-btn {
-        background-color: #007bff;
-        color: #fff;
+      .attachment-btn.active {
+        background: #007bff;
+        color: white;
       }
 
-      .post-btn:hover {
-        background-color: #0056b3;
+      /* Attachment Areas */
+      .attachment-area {
+        margin: 10px 0;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f9f9f9;
+      }
+
+      .link-input, .quote-input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      .poll-options {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .poll-option {
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      .add-option-btn {
+        margin-top: 5px;
+        padding: 5px 10px;
+        background: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .poll-settings {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .file-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .file-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f9f9f9;
+      }
+
+      .file-preview {
+        width: 50px;
+        height: 50px;
+        object-fit: cover;
+        border-radius: 4px;
+      }
+
+      .file-info {
+        flex: 1;
+      }
+
+      .file-name {
+        font-weight: bold;
+      }
+
+      .file-status {
+        font-size: 12px;
+        color: #666;
+      }
+
+      .upload-progress {
+        width: 100px;
+        height: 4px;
+        background: #eee;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      .upload-progress-bar {
+        height: 100%;
+        background: #007bff;
+        width: 0%;
+        transition: width 0.3s;
+      }
+
+      .add-title-btn {
+        background: none;
+        border: 1px solid #ccc;
+        padding: 5px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        color: #666;
+      }
+
+      .add-title-btn:hover {
+        background: #f0f0f0;
       }
     </style>
 
