@@ -100,21 +100,51 @@ Template.submit.events({
       return;
     }
 
-    // Upload the files
+    // Upload the files via API
     files.forEach((file, index) => {
-      const upload = Files.insert({
-        file: file,
-        chunkSize: 'dynamic',
-        meta: {
-          processing: true,
-          type: 'postImage',
-          postId: postId,
-          timeCreated: Date.now(),
-          timeAgo: new Date().toISOString(),
-        },
-      }, false);
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', 'postImage');
+      formData.append('postId', postId);
+      formData.append('timeCreated', Date.now().toString());
+      formData.append('timeAgo', new Date().toISOString());
 
-      stagedFiles.images.push(upload);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/files/upload', true);
+      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('Meteor.loginToken')}`);
+
+      // Progress handler
+      xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+          const percentComplete = (e.loaded / e.total) * 100;
+          const progressBar = $(`.file-item[data-index="${index}"] .upload-progress-bar`);
+          progressBar.css('width', percentComplete + '%');
+        }
+      };
+
+      // Load handler (success)
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          const response = JSON.parse(xhr.responseText);
+          if (response.status === 'success') {
+            $(`.file-item[data-index="${index}"] .file-status`).text('Uploaded');
+            stagedFiles.images[index].fileId = response.fileId;
+          } else {
+            toastr.error('Error uploading file: ' + response.error);
+          }
+        } else {
+          toastr.error('Error uploading file.');
+        }
+      };
+
+      // Error handler
+      xhr.onerror = function() {
+        toastr.error('Error uploading file.');
+      };
+
+      xhr.send(formData);
+
+      stagedFiles.images.push({ xhr: xhr, fileId: null }); // Store xhr for potential cancellation
 
       const reader = new FileReader();
       reader.onload = function(e) {
@@ -123,7 +153,7 @@ Template.submit.events({
             <img src="${e.target.result}" class="file-preview">
             <div class="file-info">
               <div class="file-name">${file.name}</div>
-              <div class="file-status">Ready to upload</div>
+              <div class="file-status">Uploading...</div>
             </div>
             <div class="upload-progress">
               <div class="upload-progress-bar"></div>
@@ -133,48 +163,62 @@ Template.submit.events({
         $('#imagePreview').append(item);
       };
       reader.readAsDataURL(file);
-
-      upload.on('progress', function (progress) {
-        const progressBar = $(`.file-item[data-index="${index}"] .upload-progress-bar`);
-        progressBar.css('width', progress + '%');
-      });
-
-      upload.on('end', function (error, clientFile) {
-        if (error) {
-          toastr.error('Error uploading file.');
-        } else {
-          // File uploaded and post updated on server
-          $(`.file-item[data-index="${index}"] .file-status`).text('Uploaded');
-          stagedFiles.images[index].fileId = clientFile._id;
-        }
-      });
-
-      upload.start();
     });
   },
 
   'change #postVideo'(event) {
     const file = event.target.files[0];
     if (file) {
-      const upload = Files.insert({
-        file: file,
-        chunkSize: 'dynamic',
-        meta: {
-          processing: true,
-          type: 'postVideo',
-          timeCreated: Date.now(),
-          timeAgo: new Date().toISOString(),
-        },
-      }, false);
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('type', 'postVideo');
+      formData.append('postId', postId);
+      formData.append('timeCreated', Date.now().toString());
+      formData.append('timeAgo', new Date().toISOString());
 
-      stagedFiles.video = upload;
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/files/upload', true);
+      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('Meteor.loginToken')}`);
+
+      // Progress handler
+      xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+          const percentComplete = (e.loaded / e.total) * 100;
+          const progressBar = $('#videoAttachment .upload-progress-bar');
+          progressBar.css('width', percentComplete + '%');
+        }
+      };
+
+      // Load handler (success)
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          const response = JSON.parse(xhr.responseText);
+          if (response.status === 'success') {
+            $('#videoAttachment .file-status').text('Uploaded');
+            stagedFiles.video = { fileId: response.fileId };
+          } else {
+            toastr.error('Error uploading video: ' + response.error);
+          }
+        } else {
+          toastr.error('Error uploading video.');
+        }
+      };
+
+      // Error handler
+      xhr.onerror = function() {
+        toastr.error('Error uploading video.');
+      };
+
+      xhr.send(formData);
+
+      stagedFiles.video = { xhr: xhr, fileId: null };
 
       $('#videoAttachment .upload-box').hide();
       const item = $(`
         <div class="file-item">
           <div class="file-info">
             <div class="file-name">${file.name}</div>
-            <div class="file-status">Ready to upload</div>
+            <div class="file-status">Uploading...</div>
           </div>
           <div class="upload-progress">
             <div class="upload-progress-bar"></div>
@@ -253,40 +297,35 @@ Template.submit.events({
 
         uploadPromises.push(new Promise((resolve, reject) => {
           if (upload.fileId) {
-            // Already uploaded, get the file ID
+            // Already uploaded
             resolve(upload.fileId);
-          } else if (upload.state && upload.state.get() === 'completed') {
-            // Upload completed but no fileId set yet, wait for it
-            upload.on('end', function (error, clientFile) {
-              if (error) {
-                reject(error);
-              } else {
-                resolve(clientFile._id);
-              }
-            });
+          } else if (upload.xhr && upload.xhr.readyState === 4) {
+            // Upload completed
+            if (upload.xhr.status === 200) {
+              const response = JSON.parse(upload.xhr.responseText);
+              resolve(response.fileId);
+            } else {
+              reject(new Error('Upload failed'));
+            }
           } else {
-            // Not yet uploaded, wait for end
-            upload.on('end', function (error, clientFile) {
-              if (error) {
-                reject(error);
+            // Wait for upload to complete
+            upload.xhr.onload = function() {
+              if (upload.xhr.status === 200) {
+                const response = JSON.parse(upload.xhr.responseText);
+                resolve(response.fileId);
               } else {
-                resolve(clientFile._id);
+                reject(new Error('Upload failed'));
               }
-            });
-            // Do not start again, assume already started
+            };
+            upload.xhr.onerror = function() {
+              reject(new Error('Upload failed'));
+            };
           }
         }));
       }
 
       Promise.all(uploadPromises).then(fileIds => {
-        if (postJson.attachments.type === 'images') {
-          postJson.attachments.fileIds = fileIds;
-        } else {
-          postJson.attachments.fileId = fileIds[0];
-        }
-        delete postJson.attachments.uploads;
-        delete postJson.attachments.upload;
-
+        // Files are already uploaded and associated with post on server
         submitPost(postJson);
       }).catch(error => {
         toastr.error('Error uploading files: ' + error.message, 'Upload Error');
@@ -339,7 +378,14 @@ Template.submit.events({
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
           },
-          body: JSON.stringify(json),
+          body: JSON.stringify({
+            type: json.type,
+            title: json.title,
+            body: json.body,
+            chamber: json.chamber,
+            province: json.province,
+            topic: json.topic
+          }),
         })
         .then(response => response.json())
         .then(result => {

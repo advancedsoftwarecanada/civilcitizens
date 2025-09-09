@@ -131,43 +131,54 @@ function renderEverywhere(){
 
             console.log("STARTING UPLOAD");
 
-			const upload = Files.insert({
-				file: file,
-				//streams: 'dynamic', // this seems to not be needed and breaks on mac
-				chunkSize: 'dynamic',
-				meta: {
-					processing: true,
-					type: uploadType,
-					timeCreated: Date.now(),
-					timeAgo: new Date().toISOString(),
-				},
-			}, false);
+			const formData = new FormData();
+			formData.append('file', file);
+			formData.append('type', uploadType);
+			formData.append('processing', 'true');
+			formData.append('timeCreated', String(Date.now()));
+			formData.append('timeAgo', new Date().toISOString());
 
-			upload.on('progress', function () {
-				// $(".uploaderPercent").css('width', this.progress.curValue + "%");
-			});
+			// Include draft post ID if available
+			const draftPostId = userManager.getDraftPostId();
+			if (draftPostId) {
+				formData.append('draftPostId', draftPostId);
+			}
 
-			upload.on('start', function () {
+			const xhr = new XMLHttpRequest();
+
+			xhr.upload.onprogress = function(event) {
+				if (event.lengthComputable) {
+					const percentComplete = (event.loaded / event.total) * 100;
+					// $(".uploaderPercent").css('width', percentComplete + "%");
+				}
+			};
+
+			xhr.onloadstart = function() {
 				// console.log("Start Upload");
 				// toastr["success"]("", "Uploading");
-			});
+			};
 
-            const fileName = file.name;
-            upload.on('end', function (error, clientFile) {
-                if (error) {
-                    toastr.error('Error uploading file.');
-                } else {
+			xhr.onload = function() {
+				if (xhr.status === 200) {
+					console.log("UPLOAD END");
+					console.log(xhr.responseText);
 
-                    console.log("UPLOAD END");
-                    console.log(clientFile);
+					// File uploaded, no need to update post here
+				} else {
+					toastr.error('Error uploading file.');
+				}
+			};
 
-                    // File uploaded, no need to update post here
-                }
-            });
+			xhr.onerror = function() {
+				toastr.error('Error uploading file.');
+			};
 
-
-
-			upload.start();
+			xhr.open('POST', '/api/files/upload');
+			const token = localStorage.getItem('Meteor.loginToken');
+			if (token) {
+				xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+			}
+			xhr.send(formData);
 		}
 
 	});
