@@ -114,7 +114,10 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
 
     // Get the parsed body from body-parser
     const thePostJson = req.body;
-    console.log('📝 Received post data from body-parser:', thePostJson);
+    console.log('📝 SERVER - Received post data from body-parser:', thePostJson);
+    console.log('📝 SERVER - Post type:', thePostJson.type);
+    console.log('📝 SERVER - Post chamber:', thePostJson.chamber);
+    console.log('📝 SERVER - Post province:', thePostJson.province);
 
     // Check for existing draft if creating a draft
     if (thePostJson.draft) {
@@ -185,9 +188,10 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
     if (thePostJson.type === "chamber") {
       postData.chamber = thePostJson.chamber;
       postData.province = thePostJson.province;
-      console.log('💾 Inserting chamber post into database...');
+      console.log('💾 SERVER - Inserting chamber post into database...');
+      console.log('💾 SERVER - Chamber data:', { chamber: postData.chamber, province: postData.province });
       postId = await Posts.insertAsync(postData);
-      console.log('✅ Chamber post inserted with ID:', postId);
+      console.log('✅ SERVER - Chamber post inserted with ID:', postId);
 
       // Update the Chamber stats.posts
       await Chambers.updateAsync({ province: thePostJson.province, seoUrl: thePostJson.chamber }, { $inc: { 'stats.posts': 1 } });

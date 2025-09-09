@@ -95,3 +95,31 @@ table {
 .hover-pointer, a {
     cursor: pointer !important;
 }
+
+/* Timeline post status and time styling */
+.mdtxt.status {
+    font-size: 0.875rem;
+    color: #666;
+    font-weight: 500;
+}
+
+.mdtxt.time-ago {
+    font-size: 0.875rem;
+    color: #999;
+    font-weight: 400;
+    margin-left: 0.5rem;
+}
+
+.mdtxt.status a {
+    color: #666 !important;
+    text-decoration: none !important;
+}
+
+.mdtxt.status a:hover {
+    color: #007bff !important;
+    text-decoration: underline !important;
+}
+
+.province-uppercase {
+    text-transform: uppercase;
+}
