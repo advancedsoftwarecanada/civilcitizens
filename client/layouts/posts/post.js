@@ -110,6 +110,14 @@ Template.post.helpers({
       return true;
     }
     return false;
+  },
+
+  linkAttachment() {
+    const post = Template.instance().post.get();
+    if (post && post.attachments && post.attachments.type === 'link') {
+      return post.attachments;
+    }
+    return null;
   }
 
 });
