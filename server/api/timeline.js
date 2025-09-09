@@ -1,3 +1,5 @@
+// @ts-nocheck
+/* global WebApp */
 import TimelineAds from '/server/api/timeline/TimelineAds.js';
 import TimelineDetectType from '/server/api/timeline/TimelineDetectType.js';
 import TimelineBuild from '/server/api/timeline/TimelineBuild.js';
@@ -40,6 +42,17 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
       case 'chamber':
         posts = await TimelineInstance.timelineBuild.build("chamber", userId, province, chamber, parseInt(offset), parseInt(limit));
         break;
+
+      case 'user': {
+        // Username can be provided explicitly or parsed from path
+        let username = req.query.username;
+        if (!username && typeof req.query.path === 'string') {
+          const m = req.query.path.match(/^\/u\/([^\/?#]+)/);
+          if (m) username = m[1];
+        }
+        posts = await TimelineInstance.timelineBuild.build("user", userId, null, null, parseInt(offset), parseInt(limit), { username });
+        break;
+      }
 
       default:
         console.warn(`Unsupported timeline type: ${detectedTimelineType.type}`);

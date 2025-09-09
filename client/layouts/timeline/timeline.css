@@ -139,6 +139,12 @@ main {
   color: #ffffff !important;
 }
 
+/* Remove borders on the like/comment/share section container */
+.main-content .post-item .post-single-box .like-comment-share {
+  border-top: 0 !important;
+  border-bottom: 0 !important;
+}
+
 /* Post Images - Timeline Thumbnails */
 .post-images {
   display: grid;

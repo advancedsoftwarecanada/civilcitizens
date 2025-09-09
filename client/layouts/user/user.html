@@ -1,0 +1,83 @@
+<template name="userTimeline">
+  <div id="templateMain" class="">
+    <div class="single-box p-0 overflow-hidden mb-5">
+      <div class="col-md-12">
+        <div class="upload-single cover-img position-relative">
+          <div class="profile-picture text-start">
+            <img class="w-100" src="{{targetUser.coverUrl}}" alt="Cover Image" style="height: 220px; object-fit: cover;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mb-4">
+      <div class="col-12 col-md-4">
+        <div class="single-box p-3 d-flex align-items-center gap-3">
+          <div class="profile-picture">
+            <img class="avatar-img avatar-size" src="{{targetUser.avatarUrl}}" alt="Avatar">
+          </div>
+          <div>
+            <h5 class="m-0">@{{targetUser.userName}}</h5>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {{> timelinePosts posts=posts}}
+  </div>
+</template>
+
+<template name="timelinePosts">
+  {{#each posts}}
+    <div class="post-item d-flex flex-column gap-5 gap-md-7" id="news-feed" data-post-id="{{_id}}">
+      <div class="post-single-box p-3 p-sm-5">
+        <div class="top-area pb-5">
+          <div class="profile-area d-center justify-content-between">
+            <div class="avatar-item d-flex gap-3 align-items-center">
+              <div class="avatar position-relative">
+                <a href="/u/{{this.author.userName}}">
+                  <img class="avatar-img avatar-size" src="{{this.author.avatarUrl}}" alt="avatar">
+                </a>
+              </div>
+              <div class="info-area">
+                <h6 class="m-0">
+                  <a href="/u/{{this.author.userName}}">@{{this.author.userName}}</a>
+                </h6>
+                <span class="mdtxt status">Self</span>
+                <span class="mdtxt time-ago">• {{timeAgo this.createdAt}}</span>
+              </div>
+            </div>
+          </div>
+          <a class="hover-pointer" href="/post/{{seoUrl}}">
+            <div class="mt-2">
+              <div class="">
+                <h2 class="mdtxt">{{title}}</h2>
+                <p class="description">{{{body}}}</p>
+              </div>
+            </div>
+          </a>
+          {{#if images}}
+            <div class="post-images">
+              {{#each images}}
+                <div class="post-img" data-post-url="/post/{{../seoUrl}}">
+                  <img src="{{url}}" class="w-100" alt="image">
+                </div>
+              {{/each}}
+            </div>
+          {{/if}}
+          <button class="read-more-btn" style="display: none;">Read More</button>
+        </div>
+        <div class="like-comment-share py-5 flex-wrap">
+          <div class="action-buttons d-flex align-items-center gap-3">
+            <a href="/post/{{seoUrl}}">
+              <button class="comment-btn">
+                <i class="material-symbols-outlined mat-icon">chat</i>
+                {{commentCount}}
+              </button>
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  {{/each}}
+</template>

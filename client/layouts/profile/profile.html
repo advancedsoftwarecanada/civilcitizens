@@ -1,29 +1,25 @@
 <template name="profile">
 
     <div id="templateMain" class="col-12 col-sm-7 mt-0 mt-lg-10 mt-xl-0 d-flex flex-column gap-7 cus-z">
-            <!-- Banner... do later?
-            <div class="single-box p-5">
+            <!-- Profile Cover Image -->
+            <div class="single-box p-0 overflow-hidden">
                 <div class="col-md-12">
-                    <div class="upload-single cover-img">
-                        <div class="head-area mb-2 text-start">
-                            <h6>Cover Image</h6>
+                    <div class="upload-single cover-img position-relative">
+                        <div class="profile-picture text-start">
+                            <img class="preview-image w-100 preview-cover" src="{{myUserMeta.coverUrl}}" alt="Cover Image" style="height: 220px; object-fit: cover;">
                         </div>
-                        <div class="profile-picture position-relative text-start">
-                            <img class="preview-image w-100" src="/theme/assets//images/profile-edit-cover.png" alt="Preview Image">
-                            <div class="file-upload p-4 bottom-0 end-0">
-                                <label class="file text-start mt-2">
-                                    <input type="file">
-                                    <span class="cmn-btn d-center gap-1">
-                                        <i class="material-symbols-outlined mat-icon fs-2"> edit_note </i>
-                                        Change Cover Photo
-                                    </span>
-                                </label>
-                            </div>
+                        <div class="file-upload p-3 position-absolute" style="right: 10px; bottom: 10px;">
+                            <label class="file text-start mt-2">
+                                <input type="file" class="fileUploader" data-upload-type="cover" data-upload-preview-class="preview-cover" accept=".jpg, .jpeg, .png, .webp">
+                                <span class="cmn-btn d-center gap-1">
+                                    <i class="material-symbols-outlined mat-icon fs-2"> edit_note </i>
+                                    Change Cover Photo
+                                </span>
+                            </label>
                         </div>
                     </div>
                 </div>
             </div>
-            -->
 
             <div class="row">
 

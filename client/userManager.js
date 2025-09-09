@@ -1,12 +1,16 @@
+/* global Meteor, Tracker, ReactiveVar, Session, FlowRouter, BlazeLayout, Template, $, toastr, indexedDB, localStorage, window */
+
 class UserManager {
     constructor() {
         this.dbName = 'UserManagerDB';
         this.storeName = 'userManagerData';
         this.db = null;
-        this.data = { chambers: {}, votes: {}, bookmarks: [] }; // Default structure
+    this.data = { chambers: {}, votes: {}, bookmarks: [], chamberFollows: [] }; // Default structure
         this.reactiveData = new Tracker.Dependency(); // Add a Tracker dependency
         this.isDataReady = false;
         this.thisChamber = new ReactiveVar(null); // Add a reactive variable for the current chamber
+    this._handlersBound = false; // ensure we only bind once
+    this._requestsInFlight = {}; // prevent rapid double-clicks
 
         console.log("Loaded: User Manager (Constructor)");
         this.initialize(); // Centralized initialization
@@ -43,20 +47,23 @@ class UserManager {
 
             // Create the object store if the database is being initialized for the first time
             request.onupgradeneeded = (event) => {
-                const db = event.target.result;
+                const target = /** @type {any} */ (event.target);
+                const db = target.result;
                 db.createObjectStore(this.storeName, { keyPath: 'id' });
             };
 
             request.onsuccess = (event) => {
-                this.db = event.target.result;
+                const target = /** @type {any} */ (event.target);
+                this.db = target.result;
                 console.log('IndexedDB initialized.');
                 this.loadFromStorage();
                 resolve();
             };
 
             request.onerror = (event) => {
-                console.error('Error initializing IndexedDB:', event.target.error);
-                reject(event.target.error);
+                const target = /** @type {any} */ (event.target);
+                console.error('Error initializing IndexedDB:', target.error);
+                reject(target.error);
             };
         });
     }
@@ -102,7 +109,7 @@ class UserManager {
     async clearStorage() {
         try {
             await this.deleteFromIndexedDB('userData');
-            this.data = { votes: {}, bookmarks: [] }; // Reset structure
+            this.data = { chambers: {}, votes: {}, bookmarks: [], chamberFollows: [] }; // Reset structure
             console.log('Cleared storage and reset data.');
         } catch (error) {
             console.error('Error clearing IndexedDB storage:', error);
@@ -207,10 +214,26 @@ class UserManager {
     //
     // =============
     setupEventHandlers() {
-        $(document).on('click', '.upvote-btn', this.handleUpvoteClick.bind(this));
-        $(document).on('click', '.downvote-btn', this.handleDownvoteClick.bind(this));
-        $(document).on('click', '.follow-btn', this.handleFollowClick.bind(this));
-        $(document).on('click', '.unfollow-btn', this.handleUnfollowClick.bind(this));
+        if (this._handlersBound) return;
+
+        // Use namespaced events and clear any existing ones from hot reloads
+        $(document)
+            .off('click.userManagerUpvote')
+            .on('click.userManagerUpvote', '.upvote-btn', this.handleUpvoteClick.bind(this));
+
+        $(document)
+            .off('click.userManagerDownvote')
+            .on('click.userManagerDownvote', '.downvote-btn', this.handleDownvoteClick.bind(this));
+
+        $(document)
+            .off('click.userManagerFollow')
+            .on('click.userManagerFollow', '.follow-btn', this.handleFollowClick.bind(this));
+
+        $(document)
+            .off('click.userManagerUnfollow')
+            .on('click.userManagerUnfollow', '.unfollow-btn', this.handleUnfollowClick.bind(this));
+
+        this._handlersBound = true;
     }
 
 
@@ -543,7 +566,21 @@ class UserManager {
     async handleFollowClick(event) {
         const province = FlowRouter.getParam('province');
         const chamber = FlowRouter.getParam('chamber');
+
+        const key = `${province}/${chamber}`;
+        if (this._requestsInFlight[key]) return; // prevent double-click
+
+        // Avoid duplicate follows client-side
+        const follows = this.data.chamberFollows || [];
+        const already = follows.some(c => c.province === province && c.chamber === chamber);
+        if (already) {
+            toastr.info('Already following this chamber.');
+            return;
+        }
+
         try {
+            this._requestsInFlight[key] = true;
+
             const response = await fetch('/api/events', {
                 method: 'POST',
                 headers: {
@@ -566,13 +603,18 @@ class UserManager {
             toastr.success('You will see this on your news feed.', 'Following');
             console.log('Chamber followed successfully:', await response.json());
 
-            // Update this chamber array and save to storage
-            this.data.chamberFollows.push({ province, chamber, following: true });
+            // Update local follows without duplicates
+            this.data.chamberFollows = [
+                ...follows,
+                { province, chamber, following: true }
+            ];
             this.saveToStorage();
             this.reactiveData.changed(); // Notify reactivity
 
         } catch (error) {
             console.error('Error following chamber:', error);
+        } finally {
+            delete this._requestsInFlight[key];
         }
     }
 
@@ -580,7 +622,18 @@ class UserManager {
         const userId = Meteor.userId();
         const province = FlowRouter.getParam('province');
         const chamber = FlowRouter.getParam('chamber');
+
+        const key = `${province}/${chamber}`;
+        if (this._requestsInFlight[key]) return; // prevent double-click
+
+        // If not following, do nothing
+        const follows = this.data.chamberFollows || [];
+        const isFollowing = follows.some(c => c.province === province && c.chamber === chamber);
+        if (!isFollowing) return;
+
         try {
+            this._requestsInFlight[key] = true;
+
             const response = await fetch('/api/events', {
                 method: 'POST',
                 headers: {
@@ -603,19 +656,21 @@ class UserManager {
             toastr.warning('You will not longer see this on your news feed', 'Unfollowed');
             console.log('Chamber unfollowed successfully:', await response.json());
 
-            // Update this chamber array and save to storage
-            this.data.chamberFollows = this.data.chamberFollows.filter((ch) => ch.province !== province || ch.chamber !== chamber);
+            // Update follows and save
+            this.data.chamberFollows = follows.filter((ch) => ch.province !== province || ch.chamber !== chamber);
             this.saveToStorage();
             this.reactiveData.changed(); // Notify reactivity
 
         } catch (error) {
             console.error('Error unfollowing chamber:', error);
+        } finally {
+            delete this._requestsInFlight[key];
         }
     }
 
 
     updateChamberClasses() {
-        const chambers = userManager.getData().chamberFollows
+        const chambers = this.getData().chamberFollows
         if(chambers){
             chambers.forEach((chamber) => {
                 const chamberElement = $(`[data-chamber-id="${chamber.chamber}"]`);
@@ -635,6 +690,4 @@ class UserManager {
 
 
 }
-const userManager = new UserManager();
-export default UserManager; // Ensure this is the default export
-window.userManager = userManager; // Expose globally for debugging
+export default UserManager; // Export the class; instance created in main.js
