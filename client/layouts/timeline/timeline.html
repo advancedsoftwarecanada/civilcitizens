@@ -138,7 +138,7 @@
                 </div>
               {{else if linkAttachment}}
                 <div class="post-link-preview">
-                  <a href="{{linkAttachment.url}}" target="_blank" class="link-preview-card">
+                  <a href="{{linkAttachment.url}}" target="_blank" class="link-preview-card {{#unless linkAttachment.preview.image}}no-image{{/unless}}">
                     {{#if linkAttachment.preview.image}}
                       <div class="link-preview-image">
                         <img src="{{linkAttachment.preview.image}}" alt="Link preview" onerror="this.style.display='none'">
@@ -199,5 +199,24 @@
           </div>
         </div>
       {{/each}}
+
+      <!-- Loading indicator -->
+      {{#if isLoading}}
+        <div class="loading-indicator text-center py-4">
+          <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+          <p class="mt-2 text-muted">Loading more posts...</p>
+        </div>
+      {{/if}}
+
+      <!-- No more posts indicator -->
+      {{#unless hasMore}}
+        {{#if posts}}
+          <div class="no-more-posts text-center py-4">
+            <p class="text-muted">You've reached the end! 🎉</p>
+          </div>
+        {{/if}}
+      {{/unless}}
     </div>
   </template>

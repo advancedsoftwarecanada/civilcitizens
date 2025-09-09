@@ -53,7 +53,7 @@
               </div>
             {{else if linkAttachment}}
               <div class="post-link-preview">
-                <a href="{{linkAttachment.url}}" target="_blank" class="link-preview-card">
+                <a href="{{linkAttachment.url}}" target="_blank" class="link-preview-card {{#unless linkAttachment.preview.image}}no-image{{/unless}}">
                   {{#if linkAttachment.preview.image}}
                     <div class="link-preview-image">
                       <img src="{{linkAttachment.preview.image}}" alt="Link preview" onerror="this.style.display='none'">
@@ -67,10 +67,12 @@
                 </a>
               </div>
             {{else}}
+              <!-- 
               <div style="text-align: center; padding: 40px; color: #666; font-style: italic; background: #f8f9fa; border-radius: 12px;">
                 <i class="material-symbols-outlined" style="font-size: 64px; opacity: 0.3;">image</i>
                 <p style="margin-top: 20px;">No images attached to this post</p>
-              </div>
+              </div> 
+              -->
             {{/if}}
 
             <!-- Enhanced Image Gallery Modal -->

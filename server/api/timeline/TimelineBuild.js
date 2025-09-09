@@ -8,7 +8,7 @@ export default class TimelineBuild {
      * @param {Object} bodyRequest - The request body containing parameters for the timeline.
      * @returns {Promise<Array>} - A promise resolving to an array of posts with metadata.
      */
-    async build(buildType, userId, searchProvince, searchChamber) {
+    async build(buildType, userId, searchProvince, searchChamber, offset = 0, limit = 10) {
         console.log("=============== BUILDING TIMELINE ===============");
 
         try {
@@ -63,13 +63,13 @@ export default class TimelineBuild {
                 // Fetch user's own posts
                 const myPosts = await Posts.find(
                     { authorId: userId, draft: false },
-                    { sort: { createdAt: -1 }, limit: 3 }
+                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 2) }
                 ).fetch();
             
                 // Fetch posts from all followed Chambers (including home Chamber)
                 const chamberPosts = await Posts.find(
                     { chamber: { $in: followedChamberIds }, draft: false },
-                    { sort: { createdAt: -1 }, limit: 6 } // Adjusted to allow more variety
+                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 2) } // Adjusted to allow more variety
                 ).fetch();
             
                 // Merge all posts
@@ -88,7 +88,7 @@ export default class TimelineBuild {
                         return true; // Keep valid post
                     })
                     .sort((a, b) => b.createdAt - a.createdAt) // Sort by newest first
-                    .slice(0, 7); // Ensure max 7 posts
+                    .slice(0, limit); // Ensure max limit posts
             
                 // Enrich posts with user metadata
                 enrichedPosts = await Promise.all(
@@ -115,7 +115,7 @@ export default class TimelineBuild {
             if( buildType === "chamber" ) {
                 console.log(">>>>>> BUILDING CHAMBER NEWS FEED <<<<<<<<");
 
-                const posts = await Posts.find({ province: searchProvince, chamber: searchChamber, draft: false }, { sort: { createdAt: -1 }, limit: 7 }).fetch();
+                const posts = await Posts.find({ province: searchProvince, chamber: searchChamber, draft: false }, { sort: { createdAt: -1 }, skip: offset, limit: limit }).fetch();
 
                 // Add user metadata to each post
                 enrichedPosts = await Promise.all(

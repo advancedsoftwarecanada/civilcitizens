@@ -228,6 +228,14 @@ main {
   color: inherit;
 }
 
+.link-preview-card.no-image {
+  flex-direction: column;
+}
+
+.link-preview-card.no-image .link-preview-content {
+  padding: 16px;
+}
+
 .link-preview-image {
   flex: 0 0 120px;
   height: 120px;
@@ -313,4 +321,37 @@ main {
     -webkit-line-clamp: 4;
     line-clamp: 4;
   }
+}
+
+/* Loading and No More Posts Styles */
+.loading-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  margin: 20px 0;
+}
+
+.loading-indicator .spinner-border {
+  width: 2rem;
+  height: 2rem;
+}
+
+.loading-indicator p {
+  margin: 10px 0 0 0;
+  font-size: 14px;
+  color: #666;
+}
+
+.no-more-posts {
+  padding: 30px 20px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+.no-more-posts p {
+  margin: 0;
+  font-size: 16px;
 }
