@@ -46,50 +46,62 @@ export default class TimelineBuild {
 
             if (buildType === "home") {
                 console.log(">>>>>> BUILDING HOME NEWS FEED FOR USER:", userId, "<<<<<<<<");
-            
+
                 // Fetch the userMeta from ownerUserId
                 const userMeta = await UserMeta.findOneAsync({ ownerUserId: userId });
-            
-                // Fetch user's home Chamber
-                const userHomeChamber = userMeta.chamberHome;
-            
-                // Fetch all followed Chambers, INCLUDING the home Chamber
+
+                // Get user's home chamber
+                const userHomeChamber = userMeta?.chamberHome;
+
+                // Fetch all followed Chambers
                 const followedChambers = await ChamberFollows.find({ userId: userId }).fetch();
                 const followedChamberIds = followedChambers.map(c => c.chamber);
-            
-                // Placeholder: Future connections list (for now it's empty)
-                const userConnections = []; // In the future, this will contain user IDs
-            
-                // Fetch user's own posts
-                const myPosts = await Posts.find(
-                    { authorId: userId, draft: false },
-                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 2) }
+
+                // Always include user's home chamber in the feed (if they have one)
+                if (userHomeChamber && !followedChamberIds.includes(userHomeChamber)) {
+                    followedChamberIds.push(userHomeChamber);
+                }
+
+                console.log("User home chamber:", userHomeChamber);
+                console.log("Followed chambers:", followedChamberIds);
+
+                // Fetch user's own posts (self posts - like blog posts, visible to all)
+                const mySelfPosts = await Posts.find(
+                    { authorId: userId, type: "self", draft: false },
+                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
                 ).fetch();
-            
-                // Fetch posts from all followed Chambers (including home Chamber)
-                const chamberPosts = await Posts.find(
-                    { chamber: { $in: followedChamberIds }, draft: false },
-                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 2) } // Adjusted to allow more variety
+
+                // Fetch posts from user's home chamber (if they have one)
+                let homeChamberPosts = [];
+                if (userHomeChamber) {
+                    homeChamberPosts = await Posts.find(
+                        { province: userMeta?.province, chamber: userHomeChamber, type: 'chamber', draft: false },
+                        { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
+                    ).fetch();
+                }
+
+                // Fetch posts from all followed Chambers
+                const followedChamberPosts = await Posts.find(
+                    { chamber: { $in: followedChamberIds }, type: 'chamber', draft: false },
+                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
                 ).fetch();
-            
-                // Merge all posts
+
+                // Merge all posts and remove duplicates
                 const seenPosts = new Set();
-                let uniquePosts = [...myPosts, ...chamberPosts]
+                let allPosts = [...mySelfPosts, ...homeChamberPosts, ...followedChamberPosts];
+
+                let uniquePosts = allPosts
                     .filter(post => {
                         // Remove duplicates
                         if (seenPosts.has(post._id)) return false;
                         seenPosts.add(post._id);
-            
-                        // Handle "self" posts:
-                        if (post.type === "self" && post.authorId !== userId) {
-                            return false; // Only include if it's the user's own post (Connections feature coming later)
-                        }
-            
-                        return true; // Keep valid post
+                        return true;
                     })
                     .sort((a, b) => b.createdAt - a.createdAt) // Sort by newest first
                     .slice(0, limit); // Ensure max limit posts
-            
+
+                console.log(`Timeline built: ${uniquePosts.length} posts (${mySelfPosts.length} self, ${homeChamberPosts.length} home, ${followedChamberPosts.length} followed)`);
+
                 // Enrich posts with user metadata
                 enrichedPosts = await Promise.all(
                     uniquePosts.map(async (post) => {
@@ -101,6 +113,7 @@ export default class TimelineBuild {
                                 avatarUrl: authorMeta?.avatarUrl || null,
                             },
                             images: post.images || [], // Include images array
+                            attachments: post.attachments || null, // Include attachments
                         };
                     })
                 );
@@ -113,9 +126,20 @@ export default class TimelineBuild {
             // CHAMBER NEWS FEED
             // =======================
             if( buildType === "chamber" ) {
-                console.log(">>>>>> BUILDING CHAMBER NEWS FEED <<<<<<<<");
+                console.log(">>>>>> BUILDING CHAMBER NEWS FEED FOR:", searchProvince, "/", searchChamber, "<<<<<<<");
 
-                const posts = await Posts.find({ province: searchProvince, chamber: searchChamber, draft: false }, { sort: { createdAt: -1 }, skip: offset, limit: limit }).fetch();
+                const posts = await Posts.find({
+                    province: searchProvince,
+                    chamber: searchChamber,
+                    type: 'chamber',
+                    draft: false
+                }, {
+                    sort: { createdAt: -1 },
+                    skip: offset,
+                    limit: limit
+                }).fetch();
+
+                console.log(`Found ${posts.length} posts in chamber ${searchProvince}/${searchChamber}`);
 
                 // Add user metadata to each post
                 enrichedPosts = await Promise.all(
@@ -128,10 +152,10 @@ export default class TimelineBuild {
                                 avatarUrl: userMeta?.avatarUrl || null,
                             },
                             images: post.images || [], // Include images array
+                            attachments: post.attachments || null, // Include attachments
                         };
                     })
                 );
-
             }
 
             return enrichedPosts;

@@ -33,6 +33,11 @@ FlowRouter.route('/submit/c/:province/:chamber', {
           });
       }
   }, 100);
+      console.log('🔧 SUBMIT CHAMBER ROUTE - Setting reactive vars:', {
+        type: "chamber",
+        province: params.province,
+        chamber: params.chamber
+      });
       postTypeVar.set("chamber");
       provinceVar.set(params.province);
       chamberVar.set(params.chamber);
@@ -257,14 +262,47 @@ Template.submit.events({
     const postBody = summernoteContent ? summernoteContent.trim() : '';
     const postChamber = $('#postChamber').val();
 
+    // Determine post type and context from dropdown selection
+    let postType, province, chamber, topic;
+    if (postChamber === 'self') {
+      postType = 'self';
+      province = '';
+      chamber = '';
+      topic = '';
+    } else if (postChamber.includes('/')) {
+      // Chamber post: format is "province/chamber"
+      const parts = postChamber.split('/');
+      if (parts.length === 2) {
+        postType = 'chamber';
+        province = parts[0];
+        chamber = parts[1];
+        topic = '';
+      } else {
+        // Fallback to reactive vars if parsing fails
+        postType = postTypeVar.get();
+        province = provinceVar.get();
+        chamber = chamberVar.get();
+        topic = topicVar.get();
+      }
+    } else {
+      // Topic post
+      postType = 'topic';
+      province = '';
+      chamber = '';
+      topic = postChamber;
+    }
+
     let postJson = {
-      type: postTypeVar.get(),
+      type: postType,
       title: postTitle,
       body: postBody,
-      chamber: chamberVar.get(),
-      province: provinceVar.get(),
-      topic: topicVar.get(),
+      chamber: chamber,
+      province: province,
+      topic: topic,
     };
+
+    console.log('📤 SUBMIT POST - Post JSON being sent:', postJson);
+    console.log('📤 SUBMIT POST - Dropdown value:', postChamber);
 
     // Check for attachments
     const visibleAttachment = $('.attachment-area:visible');
@@ -340,9 +378,13 @@ Template.submit.events({
           },
           body: JSON.stringify({
             postId: postId,
-            title: json.title,
-            body: json.body,
-            attachments: json.attachments,
+            title: postJson.title,
+            body: postJson.body,
+            attachments: postJson.attachments,
+            type: postJson.type,
+            chamber: postJson.chamber,
+            province: postJson.province,
+            topic: postJson.topic,
             draft: false
           }),
         })
@@ -376,13 +418,14 @@ Template.submit.events({
             'Authorization': `Bearer ${token}`,
           },
           body: JSON.stringify({
-            type: json.type,
-            title: json.title,
-            body: json.body,
-            attachments: json.attachments,
-            chamber: json.chamber,
-            province: json.province,
-            topic: json.topic
+            type: postJson.type,
+            title: postJson.title,
+            body: postJson.body,
+            attachments: postJson.attachments,
+            chamber: postJson.chamber,
+            province: postJson.province,
+            topic: postJson.topic,
+            draft: false
           }),
         })
         .then(response => response.json())

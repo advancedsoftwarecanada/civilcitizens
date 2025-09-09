@@ -100,10 +100,11 @@
                       {{#if postType 'self'}}
                         <span class="mdtxt status">Self</span>
                       {{else if postType 'chamber'}}
-                        <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong></span>
+                        <span class="mdtxt status"><a href="/c/{{this.province}}/{{this.chamber}}" style="color: inherit; text-decoration: none;"><strong class="province-uppercase">{{this.province}}</strong> / <strong>{{niceName this.chamber}}</strong></a></span>
                       {{else}}
                         <span class="mdtxt status">Topic</span>
                       {{/if}}
+                      <span class="mdtxt time-ago">• {{timeAgo this.createdAt}}</span>
                     {{/if}}
                   </div>
                 </div>
@@ -180,7 +181,7 @@
                 <a href="/post/{{seoUrl}}">
                   <button class="comment-btn">
                   <i class="material-symbols-outlined mat-icon">chat</i>
-                  {{comment_count}}
+                  {{commentCount}}
                 </button>
               </a>
                 <!-- <button class="bookmark-btn">

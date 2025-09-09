@@ -6,30 +6,31 @@ export default class TimelineDetectType {
     detect(bodyRequest) {
 
         console.log("=============== DETECTING TIMELINE TYPE ===============");
-        console.log(bodyRequest.path);
-        console.log(bodyRequest.province);
-        console.log(bodyRequest.chamber);
-        // { type: 'my_timeline', province: 'ns', chamber: 'halifax-west' }
+        console.log("Path:", bodyRequest.path);
+        console.log("Province:", bodyRequest.province);
+        console.log("Chamber:", bodyRequest.chamber);
 
         let returnType = "none";
-        let returnTypeFound = false;
 
-        // HOME
-        // If path = "/" and all other parameters are null, or undefined, we are on "home"
-        if( bodyRequest.path === "/" && bodyRequest.province == "undefined" && bodyRequest.chamber == "undefined" ) {
-          returnType = "home";
-          returnTypeFound = true;
+        // HOME TIMELINE
+        // If path = "/" and no province/chamber specified, we are on "home"
+        if (bodyRequest.path === "/" &&
+            (!bodyRequest.province || bodyRequest.province === "undefined" || bodyRequest.province === "") &&
+            (!bodyRequest.chamber || bodyRequest.chamber === "undefined" || bodyRequest.chamber === "")) {
+            returnType = "home";
+        }
+        // CHAMBER TIMELINE
+        // If we have both province and chamber specified, we are on a chamber
+        else if (bodyRequest.province && bodyRequest.province !== "undefined" && bodyRequest.province.length > 0 &&
+                 bodyRequest.chamber && bodyRequest.chamber !== "undefined" && bodyRequest.chamber.length > 0) {
+            returnType = "chamber";
         }
 
-        // CHAMBER
-        // If we have a province and a chamber length, we are on a chamber
-        if( !returnTypeFound && bodyRequest.province.length > 0 && bodyRequest.chamber.length > 0 ) {
-          returnType = "chamber";
-        }
+        console.log("Detected timeline type:", returnType);
 
         // Return the type
         return {
-          type: returnType,
+            type: returnType,
         }
 
     }

@@ -399,3 +399,25 @@ Template.registerHelper("cdn", function () {
 Template.registerHelper("niceName", function (text) {
     return text.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 });
+
+// Time Ago helper
+Template.registerHelper("timeAgo", function (timestamp) {
+    if (!timestamp) return '';
+
+    const now = new Date().getTime();
+    const time = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime();
+    const diff = now - time;
+
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+
+    // For older posts, show the actual date
+    const date = new Date(time);
+    return date.toLocaleDateString();
+});

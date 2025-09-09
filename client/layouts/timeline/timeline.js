@@ -35,6 +35,7 @@ Template.timeline.onCreated(function () {
   this.hasMore = new ReactiveVar(true);
   this.currentOffset = new ReactiveVar(0);
   this.initialLoad = new ReactiveVar(true);
+  this.lastPath = null; // track route changes
 
   this.loadPosts = (append = false) => {
     if (this.isLoading.get() || (!append && !this.hasMore.get())) return;
@@ -81,13 +82,23 @@ Template.timeline.onCreated(function () {
     });
   };
 
-  // Initial load
+  // Reload when route/path changes (home <-> chamber, or between chambers)
   this.autorun(() => {
     const userId = Meteor.userId();
     const province = FlowRouter.getParam('province');
     const chamber = FlowRouter.getParam('chamber');
+    const path = FlowRouter.current().path;
 
-    if (userId && this.initialLoad.get()) {
+    if (!userId) return;
+
+    if (this.lastPath !== path) {
+      this.lastPath = path;
+      // Reset state
+      this.posts.set([]);
+      this.currentOffset.set(0);
+      this.hasMore.set(true);
+      this.initialLoad.set(true);
+      // Load fresh posts for the new route
       this.loadPosts(false);
     }
   });
@@ -139,23 +150,25 @@ Template.timeline.onRendered(function () {
   });
 
 
-    let province = FlowRouter.getParam('province');
-    let chamber = FlowRouter.getParam('chamber');
+    // Reactively fetch chamber details when route changes
+    this.autorun(() => {
+      const province = FlowRouter.getParam('province');
+      const chamber = FlowRouter.getParam('chamber');
 
-    if (province && chamber) {
-      // This is a chamber we must request its details over http and update the reactive var
-      console.log("CHAMBER PAGE IS LOADED");
-      const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/chamber?province=${province}&chamber=${chamber}`;
-      console.log("API URL", apiUrl);
-      HTTP.get(apiUrl, (error, response) => {
-        if (error) {
-          console.error('Error fetching chamber:', error);
-        } else {
-          thisChamber.set(response.data);
-          console.log('Chamber:', response.data);
-        }
-      });
-    }
+      if (province && chamber) {
+        const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/chamber?province=${province}&chamber=${chamber}`;
+        HTTP.get(apiUrl, (error, response) => {
+          if (error) {
+            console.error('Error fetching chamber:', error);
+          } else {
+            thisChamber.set(response.data);
+          }
+        });
+      } else {
+        // Clear when not on a chamber route
+        thisChamber.set(null);
+      }
+    });
 
 });
 
@@ -200,11 +213,11 @@ Template.timeline.helpers({
   },
   postType(type) {
     const post = this;
-    if (type === 'self' && post.chamber === "self") {
+    if (type === 'self' && post.type === 'self') {
       return true;
-    } else if (type === 'chamber' && post.chamber) {
+    } else if (type === 'chamber' && post.type === 'chamber') {
       return true;
-    } else if (type === 'topic' && !post.chamber) {
+    } else if (type === 'topic' && post.type === 'topic') {
       return true;
     }
     return false;
