@@ -100,6 +100,7 @@ export default class TimelineBuild {
                                 userName: authorMeta?.userName || 'Unknown User',
                                 avatarUrl: authorMeta?.avatarUrl || null,
                             },
+                            images: post.images || [], // Include images array
                         };
                     })
                 );
@@ -126,6 +127,7 @@ export default class TimelineBuild {
                                 userName: userMeta?.userName || 'Unknown User',
                                 avatarUrl: userMeta?.avatarUrl || null,
                             },
+                            images: post.images || [], // Include images array
                         };
                     })
                 );

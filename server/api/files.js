@@ -1,7 +1,26 @@
-// Global declarations for Meteor collections and WebApp
-/* global Files, Posts, UserMeta, Accounts, Random */
+// Add static file serving for uploaded images
+WebApp.connectHandlers.use('/uploads/', (req, res, next) => {
+  // Serve uploaded files directly from the Meteor app
+  const filePath = path.join(process.env.PWD, 'uploads', req.url.replace('/uploads/', ''));
+  console.log('Serving file from:', filePath);
 
-import { WebApp } from 'meteor/webapp';
+  if (fs.existsSync(filePath)) {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeType = mime.getType(ext) || 'application/octet-stream';
+
+    res.writeHead(200, {
+      'Content-Type': mimeType,
+      'Cache-Control': 'public, max-age=31536000' // Cache for 1 year
+    });
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } else {
+    console.log('File not found:', filePath);
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('File not found');
+  }
+});
 
 const mime = require('mime'); // Ensure this is installed (npm install mime)
 const path = require('path');
@@ -47,8 +66,17 @@ async function processUploadedFile(file, meta) {
   const disk = getDiskForFile();
   const fileId = Random.id();
   const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
-  const fileUrl = `${cdnPath}/uploads/${disk}/${fileId}.${ext}`;
+
+  // Use local app URL for development instead of CDN
+  const isDevelopment = Meteor.settings.public.environment === 'development';
+  const baseUrl = isDevelopment ? Meteor.settings.public.ROOT_URL : Meteor.settings.public.cdnPath;
+  const fileUrl = `${baseUrl}/uploads/${disk}/${fileId}.${ext}`;
+
   const outputPath = `${filesPath}/uploads/${disk}/${fileId}.${ext}`;
+
+  console.log('📁 File URL generated:', fileUrl);
+  console.log('📁 Output path:', outputPath);
+  console.log('📁 Environment:', isDevelopment ? 'development' : 'production');
 
   // Ensure directory exists
   fs.ensureDirSync(`${filesPath}/uploads/${disk}`);

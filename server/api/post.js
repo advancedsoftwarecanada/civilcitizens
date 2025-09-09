@@ -55,6 +55,7 @@ WebApp.connectHandlers.use('/api/post', async (req, res) => {
         avatarUrl: userMeta?.avatarUrl || null,
       },
       comments: commentsWithUserMeta,
+      images: post.images || [], // Explicitly include images array
     };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
