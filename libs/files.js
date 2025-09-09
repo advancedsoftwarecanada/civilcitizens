@@ -6,7 +6,18 @@
 if (Meteor.isServer) {
 
     Meteor.publish('files.user', function () {
-        if (!this.userId) return this.ready();
+        if (!this.userId) {
+            this.ready();
+            return; // Do not return the result of ready()
+        }
+
+        // Guard: if Files collection is not available, just mark ready
+        if (typeof Files === 'undefined' || !Files || typeof Files.find !== 'function') {
+            this.ready();
+            return;
+        }
+
+        // Return a cursor as required by Meteor publish
         return Files.find({ userId: this.userId });
     });
 
