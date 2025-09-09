@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Global declarations for Meteor collections and ostrio:files
 /* global FilesCollection, UserMeta, Files */
 
@@ -29,7 +30,7 @@ if (Meteor.isServer) {
             };
         },
 
-        'files.updateAvatarUrl'(url, userId) {
+    'files.updateAvatarUrl': async function (url, userId) {
             check(url, String);
             check(userId, String);
 
@@ -39,7 +40,7 @@ if (Meteor.isServer) {
             }
 
             // Update the user's avatar URL in their `UserMeta` document
-            const updateResult = UserMeta.updateAsync(
+            const updateResult = await UserMeta.updateAsync(
                 { ownerUserId: userId },
                 { $set: { avatarUrl: url } }
             );
@@ -50,6 +51,28 @@ if (Meteor.isServer) {
 
             console.log(`Avatar URL updated for user ${userId}: ${url}`);
             return { status: 'success', message: 'Avatar updated successfully.', url };
+        },
+
+        'files.updateCoverUrl': async function (url, userId) {
+            check(url, String);
+            check(userId, String);
+
+            // Skip authorization check if called from the server
+            if (Meteor.isClient && !this.userId) {
+                throw new Meteor.Error('not-authorized', 'You must be logged in to update your cover.');
+            }
+
+            const updateResult = await UserMeta.updateAsync(
+                { ownerUserId: userId },
+                { $set: { coverUrl: url } }
+            );
+
+            if (updateResult === 0) {
+                throw new Meteor.Error('not-found', 'User meta data not found.');
+            }
+
+            console.log(`Cover URL updated for user ${userId}: ${url}`);
+            return { status: 'success', message: 'Cover updated successfully.', url };
         },
 
     });

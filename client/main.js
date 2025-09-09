@@ -238,6 +238,10 @@ function renderEverywhere() {
           .then((result) => {
             console.log('Response:', result);
             // File uploaded, no need to update post here
+            if (uploadType === 'avatar' || uploadType === 'cover') {
+              // Refresh user data so avatar/cover updates immediately
+              userManager.fetchUserDataFromServer().catch((e) => console.error('Failed to refresh user data:', e));
+            }
           })
           .catch((error) => {
             console.error('Upload error:', error);
@@ -321,7 +325,8 @@ Template.registerHelper('myUserMeta', function () {
     firstName: userMeta.firstName?.toLowerCase() || '',
     lastName: userMeta.lastName?.toLowerCase() || '',
     userName: userMeta.userName || '',
-    avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
+  avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
+  coverUrl: userMeta.coverUrl || '/theme/assets/images/profile-edit-cover.png',
   };
 });
 

@@ -25,6 +25,11 @@ export default class TimelineDetectType {
                  bodyRequest.chamber && bodyRequest.chamber !== "undefined" && bodyRequest.chamber.length > 0) {
             returnType = "chamber";
         }
+        // USER TIMELINE
+        // If path starts with "/u/" we are viewing a user timeline
+        else if (typeof bodyRequest.path === 'string' && bodyRequest.path.indexOf('/u/') === 0) {
+            returnType = "user";
+        }
 
         console.log("Detected timeline type:", returnType);
 

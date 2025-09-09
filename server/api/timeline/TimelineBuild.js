@@ -1,14 +1,22 @@
+// @ts-nocheck
+/* global Posts, UserMeta, ChamberFollows */
+
 export default class TimelineBuild {
     constructor(self) {
         this.self = self; // Reference to the main instance (if needed)
     }
 
     /**
-     * Builds a timeline based on the provided request body.
-     * @param {Object} bodyRequest - The request body containing parameters for the timeline.
-     * @returns {Promise<Array>} - A promise resolving to an array of posts with metadata.
+     * Build a timeline
+     * @param {('home'|'chamber'|'user')} buildType
+     * @param {string} userId
+     * @param {string|null} searchProvince
+     * @param {string|null} searchChamber
+     * @param {number} offset
+     * @param {number} limit
+     * @param {{username?: string}} options
      */
-    async build(buildType, userId, searchProvince, searchChamber, offset = 0, limit = 10) {
+    async build(buildType, userId, searchProvince, searchChamber, offset = 0, limit = 10, options = {}) {
         console.log("=============== BUILDING TIMELINE ===============");
 
         try {
@@ -111,6 +119,7 @@ export default class TimelineBuild {
                             author: {
                                 userName: authorMeta?.userName || 'Unknown User',
                                 avatarUrl: authorMeta?.avatarUrl || null,
+                                coverUrl: authorMeta?.coverUrl || null,
                             },
                             images: post.images || [], // Include images array
                             attachments: post.attachments || null, // Include attachments
@@ -150,12 +159,54 @@ export default class TimelineBuild {
                             author: {
                                 userName: userMeta?.userName || 'Unknown User',
                                 avatarUrl: userMeta?.avatarUrl || null,
+                                coverUrl: userMeta?.coverUrl || null,
                             },
                             images: post.images || [], // Include images array
                             attachments: post.attachments || null, // Include attachments
                         };
                     })
                 );
+            }
+
+            // USER NEWS FEED
+            // =======================
+            if (buildType === 'user') {
+                const username = options && options.username ? options.username : null;
+                console.log(">>>>>> BUILDING USER NEWS FEED FOR:", username, "<<<<<<");
+
+                if (!username) {
+                    return [];
+                }
+
+                // Find the user by username in UserMeta (case-insensitive) and handle duplicates
+                const metas = await UserMeta.find({ userName: { $regex: `^${username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } }).fetchAsync();
+                if (!metas || metas.length === 0) {
+                    console.log('User not found for username:', username);
+                    return [];
+                }
+                const targetMeta = metas.find(m => !!m.avatarUrl || !!m.coverUrl) ||
+                                   metas.slice().sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0))[0] ||
+                                   metas[0];
+
+                const posts = await Posts.find({ authorId: targetMeta.ownerUserId, draft: false }, {
+                    sort: { createdAt: -1 },
+                    skip: offset,
+                    limit: limit,
+                }).fetch();
+
+                enrichedPosts = await Promise.all(posts.map(async (post) => {
+                    const authorMeta = targetMeta; // same user
+                    return {
+                        ...post,
+                        author: {
+                            userName: authorMeta?.userName || 'Unknown User',
+                            avatarUrl: authorMeta?.avatarUrl || null,
+                            coverUrl: authorMeta?.coverUrl || null,
+                        },
+                        images: post.images || [],
+                        attachments: post.attachments || null,
+                    };
+                }));
             }
 
             return enrichedPosts;

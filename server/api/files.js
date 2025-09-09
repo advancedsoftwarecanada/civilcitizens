@@ -1,26 +1,4 @@
-// Add static file serving for uploaded images
-WebApp.connectHandlers.use('/uploads/', (req, res, next) => {
-  // Serve uploaded files directly from the Meteor app
-  const filePath = path.join(process.env.PWD, 'uploads', req.url.replace('/uploads/', ''));
-  console.log('Serving file from:', filePath);
-
-  if (fs.existsSync(filePath)) {
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeType = mime.getType(ext) || 'application/octet-stream';
-
-    res.writeHead(200, {
-      'Content-Type': mimeType,
-      'Cache-Control': 'public, max-age=31536000' // Cache for 1 year
-    });
-
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.pipe(res);
-  } else {
-    console.log('File not found:', filePath);
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('File not found');
-  }
-});
+// @ts-nocheck
 
 const mime = require('mime'); // Ensure this is installed (npm install mime)
 const path = require('path');
@@ -31,7 +9,8 @@ const graphicsMagick = require('gm');
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    const tempDir = path.join(process.env.PWD, 'uploads/temp');
+    const baseFilesPath = Meteor.settings.public.filesPath; // e.g., /mnt/webdisk/civil
+    const tempDir = path.join(baseFilesPath, 'uploads', 'temp');
     fs.ensureDirSync(tempDir);
     cb(null, tempDir);
   },
@@ -58,8 +37,8 @@ const acceptedImageTypes = ['png', 'jpeg', 'jpg', 'webp'];
 // Accepted video types
 const acceptedVideoTypes = ['mp4', 'avi', 'mov', 'mkv'];
 
-// Create a simple MongoDB collection for API file uploads
-const ApiFiles = new Mongo.Collection('apiFiles');
+// Use shared ApiFiles collection
+import { ApiFiles } from '/libs/apiFiles.js';
 
 // Process uploaded file
 async function processUploadedFile(file, meta) {
@@ -67,16 +46,14 @@ async function processUploadedFile(file, meta) {
   const fileId = Random.id();
   const ext = path.extname(file.originalname).toLowerCase().replace('.', '');
 
-  // Use local app URL for development instead of CDN
-  const isDevelopment = Meteor.settings.public.environment === 'development';
-  const baseUrl = isDevelopment ? Meteor.settings.public.ROOT_URL : Meteor.settings.public.cdnPath;
-  const fileUrl = `${baseUrl}/uploads/${disk}/${fileId}.${ext}`;
+  // Always use CDN URL for uploaded file references
+  const fileUrl = `${Meteor.settings.public.cdnPath}/uploads/${disk}/${fileId}.${ext}`;
 
   const outputPath = `${filesPath}/uploads/${disk}/${fileId}.${ext}`;
 
   console.log('📁 File URL generated:', fileUrl);
   console.log('📁 Output path:', outputPath);
-  console.log('📁 Environment:', isDevelopment ? 'development' : 'production');
+  // Note: files are served by CDN, never proxied by app server
 
   // Ensure directory exists
   fs.ensureDirSync(`${filesPath}/uploads/${disk}`);
@@ -112,20 +89,26 @@ async function processUploadedFile(file, meta) {
   try {
     await fs.move(file.path, outputPath);
 
+    // If this upload is a profile asset, update the user's meta accordingly
+    try {
+      if (meta.type === 'avatar') {
+        await Meteor.callAsync('files.updateAvatarUrl', fileUrl, meta.userId);
+      } else if (meta.type === 'cover') {
+        await Meteor.callAsync('files.updateCoverUrl', fileUrl, meta.userId);
+      }
+    } catch (profileErr) {
+      console.error('Error updating profile media URL:', profileErr);
+    }
+
     // Associate with draft post if provided
     if (meta.draftPostId) {
       const postId = meta.draftPostId;
-      await Posts.updateAsync(postId, { $push: { images: { id: fileId, url: fileUrl, size: meta.size } } });
+      try {
+        await Posts.updateAsync(postId, { $push: { images: { id: fileId, url: fileUrl, size: meta.size } } });
+      } catch (e) {
+        console.error('Error attaching file to draft post:', e);
+      }
     }
-
-    // Clean up temp file
-    Meteor.setTimeout(() => {
-      fs.remove(file.path.replace(path.basename(file.path), ''), (removeErr) => {
-        if (removeErr) {
-          console.error('Error removing temp file:', removeErr);
-        }
-      });
-    }, 5000);
 
   } catch (error) {
     console.error('Error processing file:', error);
