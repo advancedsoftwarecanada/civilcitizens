@@ -31,29 +31,65 @@ FlowRouter.route('/c/:province/:chamber', {
 
 Template.timeline.onCreated(function () {
   this.posts = new ReactiveVar([]);
+  this.isLoading = new ReactiveVar(false);
+  this.hasMore = new ReactiveVar(true);
+  this.currentOffset = new ReactiveVar(0);
+  this.initialLoad = new ReactiveVar(true);
 
-  this.autorun(() => {
+  this.loadPosts = (append = false) => {
+    if (this.isLoading.get() || (!append && !this.hasMore.get())) return;
 
-    let userId = "";
-    userId = Meteor.userId();
+    this.isLoading.set(true);
+    const userId = Meteor.userId();
     const province = FlowRouter.getParam('province');
     const chamber = FlowRouter.getParam('chamber');
     const path = FlowRouter.current().path;
-    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?uid=${userId}&path=${path}&province=${province}&chamber=${chamber}`;
+    const offset = append ? this.currentOffset.get() : 0;
+    const limit = 10; // Load 10 posts at a time
+
+    const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?uid=${userId}&path=${path}&province=${province}&chamber=${chamber}&offset=${offset}&limit=${limit}`;
 
     HTTP.get(apiUrl, (error, response) => {
+      this.isLoading.set(false);
+
       if (error) {
         console.error('Error fetching timeline posts:', error);
+        return;
+      }
+
+      const data = response.data;
+      console.log('Timeline posts response:', data);
+
+      if (append) {
+        // Append new posts to existing ones
+        const currentPosts = this.posts.get();
+        this.posts.set([...currentPosts, ...data.posts]);
+        this.currentOffset.set(data.offset);
+        this.hasMore.set(data.hasMore);
       } else {
-        this.posts.set(response.data);
-        console.log('Timeline posts:', response.data);
+        // Replace posts for initial load
+        this.posts.set(data.posts);
+        this.currentOffset.set(data.offset);
+        this.hasMore.set(data.hasMore);
+        this.initialLoad.set(false);
+
+        // Scroll to top only on initial load
         $('html, body').animate({
           scrollTop: 0
         }, 0);
-
       }
     });
+  };
 
+  // Initial load
+  this.autorun(() => {
+    const userId = Meteor.userId();
+    const province = FlowRouter.getParam('province');
+    const chamber = FlowRouter.getParam('chamber');
+
+    if (userId && this.initialLoad.get()) {
+      this.loadPosts(false);
+    }
   });
 
 });
@@ -62,6 +98,34 @@ Template.timeline.onCreated(function () {
 Template.timeline.onRendered(function () {
 
   console.log("TIMELINE RENDERED");
+
+  // Scroll detection for lazy loading
+  this.scrollHandler = () => {
+    const scrollTop = $(window).scrollTop();
+    const windowHeight = $(window).height();
+    const documentHeight = $(document).height();
+    const scrollPercentage = (scrollTop + windowHeight) / documentHeight;
+
+    // Load more posts when user scrolls to 80% of the page
+    if (scrollPercentage > 0.8 && !this.isLoading.get() && this.hasMore.get()) {
+      console.log('Loading more posts...');
+      this.loadPosts(true);
+    }
+  };
+
+  // Throttle scroll events for better performance
+  let scrollTimeout;
+  this.throttledScrollHandler = () => {
+    if (!scrollTimeout) {
+      scrollTimeout = setTimeout(() => {
+        this.scrollHandler();
+        scrollTimeout = null;
+      }, 200); // 200ms throttle
+    }
+  };
+
+  // Attach scroll listener
+  $(window).on('scroll.timeline', this.throttledScrollHandler);
 
   this.autorun(() => {
     this.posts.get(); // Re-run when posts change
@@ -95,12 +159,25 @@ Template.timeline.onRendered(function () {
 
 });
 
+Template.timeline.onDestroyed(function() {
+  // Clean up scroll event listener
+  if (this.throttledScrollHandler) {
+    $(window).off('scroll.timeline', this.throttledScrollHandler);
+  }
+});
+
 Template.timeline.helpers({
   posts() {
     return Template.instance().posts.get();
   },
   isAd(post) {
     return post.ad === true;
+  },
+  isLoading() {
+    return Template.instance().isLoading.get();
+  },
+  hasMore() {
+    return Template.instance().hasMore.get();
   },
   province() {
     return FlowRouter.getParam('province');

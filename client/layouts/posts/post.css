@@ -68,6 +68,15 @@
   transition: all 0.2s ease;
 }
 
+.link-preview-card.no-image {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.link-preview-card.no-image .link-preview-content {
+  padding: 0;
+}
+
 .link-preview-card:hover {
   background: #f8f9fa;
   text-decoration: none;

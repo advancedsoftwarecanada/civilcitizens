@@ -21,7 +21,7 @@ export const TimelineInstance = new Timeline();
 TimelineInstance.log('Timeline instance created');
 
 WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
-  const { type, uid, province, chamber } = req.query;
+  const { type, uid, province, chamber, offset = 0, limit = 10 } = req.query;
   const userId = uid;
 
   // Detect the timeline type
@@ -34,11 +34,11 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
     // Fetch posts based on timeline type
     switch (detectedTimelineType.type) {
       case 'home':
-        posts = await TimelineInstance.timelineBuild.build("home", userId);
+        posts = await TimelineInstance.timelineBuild.build("home", userId, null, null, parseInt(offset), parseInt(limit));
         break;
 
       case 'chamber':
-        posts = await TimelineInstance.timelineBuild.build("chamber", userId, province, chamber);
+        posts = await TimelineInstance.timelineBuild.build("chamber", userId, province, chamber, parseInt(offset), parseInt(limit));
         break;
 
       default:
@@ -46,15 +46,24 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         break;
     }
 
-    // Insert a random ad into the posts
-    const { randomAd, randomPosition } = TimelineInstance.timelineAds.generateAds();
-    if (randomAd) {
-      posts.splice(randomPosition, 0, randomAd);
+    // Insert a random ad into the posts (only for first page)
+    if (parseInt(offset) === 0) {
+      const { randomAd, randomPosition } = TimelineInstance.timelineAds.generateAds();
+      if (randomAd) {
+        posts.splice(randomPosition, 0, randomAd);
+      }
     }
+
+    // Check if there are more posts available
+    const hasMore = posts.length === parseInt(limit);
 
     // Respond with the timeline
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(posts));
+    res.end(JSON.stringify({
+      posts: posts,
+      hasMore: hasMore,
+      offset: parseInt(offset) + posts.length
+    }));
 
   } catch (error) {
 
