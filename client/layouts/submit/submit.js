@@ -88,6 +88,8 @@ let stagedFiles = {
   video: null
 };
 
+console.log("stagedFiles initialized:", stagedFiles);
+
 Template.submit.events({
   'change #postImages'(event) {
     const files = Array.from(event.target.files);
@@ -100,7 +102,7 @@ Template.submit.events({
       return;
     }
 
-    // Upload the files via API
+    // Upload the files via API using Fetch instead of XMLHttpRequest
     files.forEach((file, index) => {
       const formData = new FormData();
       formData.append('file', file);
@@ -109,42 +111,42 @@ Template.submit.events({
       formData.append('timeCreated', Date.now().toString());
       formData.append('timeAgo', new Date().toISOString());
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/files/upload', true);
-      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('Meteor.loginToken')}`);
-
-      // Progress handler
-      xhr.upload.onprogress = function(e) {
-        if (e.lengthComputable) {
-          const percentComplete = (e.loaded / e.total) * 100;
-          const progressBar = $(`.file-item[data-index="${index}"] .upload-progress-bar`);
-          progressBar.css('width', percentComplete + '%');
-        }
-      };
-
-      // Load handler (success)
-      xhr.onload = function() {
-        if (xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText);
-          if (response.status === 'success') {
-            $(`.file-item[data-index="${index}"] .file-status`).text('Uploaded');
-            stagedFiles.images[index].fileId = response.fileId;
-          } else {
-            toastr.error('Error uploading file: ' + response.error);
-          }
+      // Use Fetch API instead of XMLHttpRequest to avoid Meteor connection issues
+      const token = localStorage.getItem('Meteor.loginToken');
+      console.log("Submit image upload starting - token exists:", !!token, "user logged in:", !!Meteor.userId());
+      fetch('/api/files/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      })
+      .then(response => {
+        console.log("UPLOAD END - Submit form image upload, response status:", response.status);
+        console.log("User still logged in after submit image upload:", !!Meteor.userId());
+        if (response.ok) {
+          return response.json();
         } else {
-          toastr.error('Error uploading file.');
+          throw new Error('Upload failed');
         }
-      };
-
-      // Error handler
-      xhr.onerror = function() {
+      })
+      .then(result => {
+        console.log("Upload response:", result);
+        if (result.status === 'success') {
+          $(`.file-item[data-index="${index}"] .file-status`).text('Uploaded');
+          stagedFiles.images[index].fileId = result.fileId;
+          console.log("stagedFiles updated after image upload:", stagedFiles);
+          console.log("Image upload completed successfully, fileId:", result.fileId);
+        } else {
+          toastr.error('Error uploading file: ' + result.error);
+        }
+      })
+      .catch(error => {
+        console.error('Upload error:', error);
         toastr.error('Error uploading file.');
-      };
+      });
 
-      xhr.send(formData);
-
-      stagedFiles.images.push({ xhr: xhr, fileId: null }); // Store xhr for potential cancellation
+      stagedFiles.images.push({ fileId: null }); // Store for tracking
 
       const reader = new FileReader();
       reader.onload = function(e) {
@@ -169,6 +171,12 @@ Template.submit.events({
   'change #postVideo'(event) {
     const file = event.target.files[0];
     if (file) {
+      const postId = window.userManager ? window.userManager.getDraftPostId() : Session.get('draftPostId');
+      if (!postId) {
+        toastr.error('Draft post not ready yet.');
+        return;
+      }
+
       const formData = new FormData();
       formData.append('file', file);
       formData.append('type', 'postVideo');
@@ -176,42 +184,42 @@ Template.submit.events({
       formData.append('timeCreated', Date.now().toString());
       formData.append('timeAgo', new Date().toISOString());
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/files/upload', true);
-      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('Meteor.loginToken')}`);
-
-      // Progress handler
-      xhr.upload.onprogress = function(e) {
-        if (e.lengthComputable) {
-          const percentComplete = (e.loaded / e.total) * 100;
-          const progressBar = $('#videoAttachment .upload-progress-bar');
-          progressBar.css('width', percentComplete + '%');
-        }
-      };
-
-      // Load handler (success)
-      xhr.onload = function() {
-        if (xhr.status === 200) {
-          const response = JSON.parse(xhr.responseText);
-          if (response.status === 'success') {
-            $('#videoAttachment .file-status').text('Uploaded');
-            stagedFiles.video = { fileId: response.fileId };
-          } else {
-            toastr.error('Error uploading video: ' + response.error);
-          }
+      // Use Fetch API instead of XMLHttpRequest to avoid Meteor connection issues
+      const token = localStorage.getItem('Meteor.loginToken');
+      console.log("Submit video upload starting - token exists:", !!token, "user logged in:", !!Meteor.userId());
+      fetch('/api/files/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      })
+      .then(response => {
+        console.log("UPLOAD END - Submit form video upload, response status:", response.status);
+        console.log("User still logged in after submit video upload:", !!Meteor.userId());
+        if (response.ok) {
+          return response.json();
         } else {
-          toastr.error('Error uploading video.');
+          throw new Error('Upload failed');
         }
-      };
-
-      // Error handler
-      xhr.onerror = function() {
+      })
+      .then(result => {
+        console.log("Video upload response:", result);
+        if (result.status === 'success') {
+          $('#videoAttachment .file-status').text('Uploaded');
+          stagedFiles.video = { fileId: result.fileId };
+          console.log("stagedFiles updated after video upload:", stagedFiles);
+          console.log("Video upload completed successfully, fileId:", result.fileId);
+        } else {
+          toastr.error('Error uploading video: ' + result.error);
+        }
+      })
+      .catch(error => {
+        console.error('Upload error:', error);
         toastr.error('Error uploading video.');
-      };
+      });
 
-      xhr.send(formData);
-
-      stagedFiles.video = { xhr: xhr, fileId: null };
+      stagedFiles.video = { fileId: null };
 
       $('#videoAttachment .upload-box').hide();
       const item = $(`
@@ -231,6 +239,7 @@ Template.submit.events({
 
   'click #savePost'(event) {
     console.log('POST button clicked - event handler fired');
+    console.log('Event details:', event);
     event.preventDefault();
 
     // Get form values
@@ -287,52 +296,21 @@ Template.submit.events({
       return;
     }
 
-    // Handle file uploads if any
+    // For file uploads, check if they're still uploading
     if (postJson.attachments && (postJson.attachments.type === 'images' || postJson.attachments.type === 'video')) {
       const uploads = postJson.attachments.type === 'images' ? postJson.attachments.uploads : [postJson.attachments.upload];
-      const uploadPromises = [];
 
-      for (let i = 0; i < uploads.length; i++) {
-        const upload = uploads[i];
+      // Check if any uploads are still in progress (no fileId means still uploading)
+      const hasIncompleteUploads = uploads.some(upload => !upload.fileId);
 
-        uploadPromises.push(new Promise((resolve, reject) => {
-          if (upload.fileId) {
-            // Already uploaded
-            resolve(upload.fileId);
-          } else if (upload.xhr && upload.xhr.readyState === 4) {
-            // Upload completed
-            if (upload.xhr.status === 200) {
-              const response = JSON.parse(upload.xhr.responseText);
-              resolve(response.fileId);
-            } else {
-              reject(new Error('Upload failed'));
-            }
-          } else {
-            // Wait for upload to complete
-            upload.xhr.onload = function() {
-              if (upload.xhr.status === 200) {
-                const response = JSON.parse(upload.xhr.responseText);
-                resolve(response.fileId);
-              } else {
-                reject(new Error('Upload failed'));
-              }
-            };
-            upload.xhr.onerror = function() {
-              reject(new Error('Upload failed'));
-            };
-          }
-        }));
+      if (hasIncompleteUploads) {
+        toastr.warning('Please wait for file uploads to complete before submitting.', 'Upload In Progress');
+        return;
       }
-
-      Promise.all(uploadPromises).then(fileIds => {
-        // Files are already uploaded and associated with post on server
-        submitPost(postJson);
-      }).catch(error => {
-        toastr.error('Error uploading files: ' + error.message, 'Upload Error');
-      });
-    } else {
-      submitPost(postJson);
     }
+
+    // Submit the post immediately - files are already uploaded and associated
+    submitPost(postJson);
 
     function submitPost(json) {
       const postId = window.userManager ? window.userManager.getDraftPostId() : Session.get('draftPostId');
@@ -356,8 +334,11 @@ Template.submit.events({
         .then(result => {
           if (result.status === 'success') {
             toastr.success(result.message, 'Success');
+            // Clear current draft and prepare next one
             if (window.userManager) {
               window.userManager.clearDraftPost();
+              // Immediately create a new draft post for the next submission
+              window.userManager.ensureDraftPost();
             } else {
               Session.set('draftPostId', null);
             }
@@ -391,6 +372,10 @@ Template.submit.events({
         .then(result => {
           if (result.status === 'success') {
             toastr.success(result.message, 'Success');
+            // Prepare next draft post for future submissions
+            if (window.userManager) {
+              window.userManager.ensureDraftPost();
+            }
             FlowRouter.go('/'); // Redirect to home or another page after submission
           } else {
             toastr.error(result.error || 'Error submitting the post.', 'Submit Error');

@@ -14,34 +14,95 @@ Meteor.startup(() => {
     window.userDataReady = false;
 
     // Reactive Tracker to handle user state and UserMeta logic
-    setTimeout(() => {
-        Tracker.autorun(async () => {
-            const user = Meteor.user(); // Reactively track the logged-in user
-            const isLoggedIn = !!user; // Boolean to check if a user is logged in
+    let initializationStarted = false;
+    let initializationCompleted = false;
+    let logoutDetected = false;
+    let logoutTimeout = null;
 
-            if (!isLoggedIn) {
+    Tracker.autorun(async () => {
+        const user = Meteor.user(); // Reactively track the logged-in user
+        const isLoggedIn = !!user; // Boolean to check if a user is logged in
+        const hasLoginToken = !!localStorage.getItem('Meteor.loginToken');
+        const isConnected = Meteor.status().connected;
+
+        if (!isLoggedIn) {
+            // Don't immediately redirect - check if this is a false positive
+            if (hasLoginToken && isConnected && !logoutDetected) {
+                console.log("User appears logged out but token exists - waiting to confirm...");
+                console.log("Current Meteor.userId():", Meteor.userId());
+                console.log("Login token length:", localStorage.getItem('Meteor.loginToken')?.length);
+
+                // Set a timeout to check again in 3 seconds (increased from 2)
+                if (logoutTimeout) clearTimeout(logoutTimeout);
+                logoutTimeout = setTimeout(() => {
+                    const stillLoggedOut = !Meteor.user();
+                    const stillHasToken = !!localStorage.getItem('Meteor.loginToken');
+                    const stillConnected = Meteor.status().connected;
+
+                    console.log("Timeout check - still logged out:", stillLoggedOut, "still has token:", stillHasToken, "still connected:", stillConnected);
+
+                    if (stillLoggedOut && stillHasToken && stillConnected) {
+                        console.log("Confirmed logout after timeout - redirecting to home");
+                        logoutDetected = true;
+                        // Reset initialization flags when user logs out
+                        initializationStarted = false;
+                        initializationCompleted = false;
+                        window.userDataReady = false;
+                        FlowRouter.go('/');
+                    } else if (!stillLoggedOut) {
+                        console.log("False logout detected - user recovered");
+                    } else {
+                        console.log("Logout condition not met - keeping user logged in");
+                    }
+                }, 3000); // Increased to 3 seconds
+                return; // Don't redirect yet
+            } else if (!hasLoginToken || !isConnected) {
                 console.log("User is not logged in. Redirecting to home...");
+                console.log("Login token in localStorage:", hasLoginToken);
+                console.log("Meteor.userId():", Meteor.userId());
+                console.log("Connection status:", isConnected);
+                logoutDetected = true;
+                // Reset initialization flags when user logs out
+                initializationStarted = false;
+                initializationCompleted = false;
+                window.userDataReady = false;
                 FlowRouter.go('/');
                 return; // Exit early if not logged in
-            } else {
+            }
+        } else {
+            // User is logged in - clear any pending logout timeout
+            if (logoutTimeout) {
+                clearTimeout(logoutTimeout);
+                logoutTimeout = null;
+            }
+            logoutDetected = false;
+            // Only initialize once per session
+            if (!initializationStarted && !initializationCompleted) {
+                initializationStarted = true;
                 console.log("User is logged in:", user);
                 console.log("Initializing UserManager...");
 
-                await userManager.fetchUserDataFromServer(); // Fetch user data
+                try {
+                    await userManager.fetchUserDataFromServer(); // Fetch user data
 
-                // Ensure draft post exists
-                console.log("Ensuring draft post exists...");
-                await userManager.ensureDraftPost();
+                    // Ensure draft post exists
+                    console.log("Ensuring draft post exists...");
+                    await userManager.ensureDraftPost();
 
-                console.log("User Manager initialized and data fetched: ENABLE userDataReady");
-                window.userDataReady = true;
-                console.log(userManager);
+                    console.log("User Manager initialized and data fetched: ENABLE userDataReady");
+                    window.userDataReady = true;
+                    initializationCompleted = true;
+                    console.log(userManager);
 
-                // Subscribe to user's files
-                Meteor.subscribe('files.user');
+                    // Subscribe to user's files
+                    Meteor.subscribe('files.user');
+                } catch (error) {
+                    console.error("Error during initialization:", error);
+                    initializationStarted = false; // Allow retry on error
+                }
             }
-        });
-    }, 1000);
+        }
+    });
 
 });
 
@@ -102,6 +163,10 @@ function renderEverywhere(){
     // FILE UPLOADER
 	$(document).on('change', '.fileUploader', function (event) {    // image upload
 
+        // Skip if this is handled by specific submit form handlers
+        if ($(this).is('#postImages, #postVideo')) {
+            return;
+        }
 
         // fetch this data-upload-type
         const uploadType = $(this).data('upload-type');
@@ -144,41 +209,33 @@ function renderEverywhere(){
 				formData.append('draftPostId', draftPostId);
 			}
 
-			const xhr = new XMLHttpRequest();
-
-			xhr.upload.onprogress = function(event) {
-				if (event.lengthComputable) {
-					const percentComplete = (event.loaded / event.total) * 100;
-					// $(".uploaderPercent").css('width', percentComplete + "%");
-				}
-			};
-
-			xhr.onloadstart = function() {
-				// console.log("Start Upload");
-				// toastr["success"]("", "Uploading");
-			};
-
-			xhr.onload = function() {
-				if (xhr.status === 200) {
-					console.log("UPLOAD END");
-					console.log(xhr.responseText);
-
-					// File uploaded, no need to update post here
-				} else {
-					toastr.error('Error uploading file.');
-				}
-			};
-
-			xhr.onerror = function() {
-				toastr.error('Error uploading file.');
-			};
-
-			xhr.open('POST', '/api/files/upload');
+			// Use Fetch API instead of XMLHttpRequest to avoid Meteor connection issues
 			const token = localStorage.getItem('Meteor.loginToken');
-			if (token) {
-				xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-			}
-			xhr.send(formData);
+			console.log("Upload starting - token exists:", !!token, "user logged in:", !!Meteor.userId());
+			fetch('/api/files/upload', {
+				method: 'POST',
+				headers: {
+					'Authorization': `Bearer ${token}`,
+				},
+				body: formData,
+			})
+			.then(response => {
+				console.log("UPLOAD END - General file uploader, response status:", response.status);
+				console.log("User still logged in after upload:", !!Meteor.userId());
+				if (response.ok) {
+					return response.json();
+				} else {
+					throw new Error('Upload failed');
+				}
+			})
+			.then(result => {
+				console.log("Response:", result);
+				// File uploaded, no need to update post here
+			})
+			.catch(error => {
+				console.error('Upload error:', error);
+				toastr.error('Error uploading file.');
+			});
 		}
 
 	});

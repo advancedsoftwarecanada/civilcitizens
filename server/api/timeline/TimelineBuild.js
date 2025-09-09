@@ -62,13 +62,13 @@ export default class TimelineBuild {
             
                 // Fetch user's own posts
                 const myPosts = await Posts.find(
-                    { authorId: userId },
+                    { authorId: userId, draft: false },
                     { sort: { createdAt: -1 }, limit: 3 }
                 ).fetch();
             
                 // Fetch posts from all followed Chambers (including home Chamber)
                 const chamberPosts = await Posts.find(
-                    { chamberId: { $in: followedChamberIds } },
+                    { chamber: { $in: followedChamberIds }, draft: false },
                     { sort: { createdAt: -1 }, limit: 6 } // Adjusted to allow more variety
                 ).fetch();
             
@@ -114,7 +114,7 @@ export default class TimelineBuild {
             if( buildType === "chamber" ) {
                 console.log(">>>>>> BUILDING CHAMBER NEWS FEED <<<<<<<<");
 
-                const posts = await Posts.find({ province: searchProvince, chamber: searchChamber}, { sort: { createdAt: -1 }, limit: 7 }).fetch();
+                const posts = await Posts.find({ province: searchProvince, chamber: searchChamber, draft: false }, { sort: { createdAt: -1 }, limit: 7 }).fetch();
 
                 // Add user metadata to each post
                 enrichedPosts = await Promise.all(

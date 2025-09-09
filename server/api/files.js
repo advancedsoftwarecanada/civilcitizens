@@ -126,15 +126,29 @@ WebApp.connectHandlers.use('/api/files/upload', upload.single('file'), async (re
 
     // Extract and validate the token
     const token = authHeader.replace('Bearer ', '');
+    console.log('🔑 Validating token for file upload, token exists:', !!token, 'length:', token ? token.length : 0);
+
+    if (!token || token.length < 10) {
+      console.log('❌ Token validation failed - token missing or too short');
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized: Invalid token format.' }));
+      return;
+    }
+
     const hashedToken = Accounts._hashLoginToken(token);
+    console.log('🔑 Hashed token created successfully');
+
     const user = await Meteor.users.findOneAsync({ 'services.resume.loginTokens.hashedToken': hashedToken });
+    console.log('🔑 User lookup result:', user ? 'found' : 'not found');
 
     if (!user) {
+      console.log('❌ Token validation failed - no user found for hashed token');
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized: Invalid token.' }));
       return;
     }
 
+    console.log('✅ Token validation successful for user:', user._id);
     const userId = user._id;
 
     if (!req.file) {

@@ -122,19 +122,19 @@
             }
           });
 
-          // Image Preview
-          $('#postImages').change(function() {
-            const files = this.files;
-            $('#imagePreview').empty();
-            for (let i = 0; i < files.length && i < 8; i++) {
-              const file = files[i];
-              const reader = new FileReader();
-              reader.onload = function(e) {
-                //$('#imagePreview').append('<img src="' + e.target.result + '" class="preview-img">');
-              };
-              reader.readAsDataURL(file);
-            }
-          });
+          // Image Preview - REMOVED to avoid conflicts with submit.js handler
+          // $('#postImages').change(function() {
+          //   const files = this.files;
+          //   $('#imagePreview').empty();
+          //   for (let i = 0; i < files.length && i < 8; i++) {
+          //     const file = files[i];
+          //     const reader = new FileReader();
+          //     reader.onload = function(e) {
+          //       //$('#imagePreview').append('<img src="' + e.target.result + '" class="preview-img">');
+          //     };
+          //     reader.readAsDataURL(file);
+          //   }
+          // });
         });
       </script>
 
