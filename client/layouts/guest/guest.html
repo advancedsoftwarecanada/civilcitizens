@@ -1,186 +1,159 @@
 <template name="guest">
-    <div id="guestContainer" class="container-fluid p-0" style="background: linear-gradient(180deg, #FFFFFF 0%, #F8F9FA 50%, #FFFFFF 100%); min-height: 100vh;">
-        <!-- Hero Section -->
-        <section class="hero-section text-dark py-5">
-            <div class="container">
-                <div class="row align-items-center">
-                    <div class="col-lg-6 text-center">
-                        <img id="guestLogo" src="/theme/assets/images/logo-lg.png" class="logo" alt="Civil Citizens Logo" style="max-width: 400px; height: auto;">
-                    </div>
-                    <div class="col-lg-6 text-center text-lg-start">
-                        <h1 class="display-4 fw-bold mb-3">Welcome to Civil Citizens</h1>
-                        <p class="lead mb-4">Connect with your community, engage in local politics, support local businesses, and stay informed with Canada-first news and advertising.</p>
-                        <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center justify-content-lg-start">
-                            <button class="btn btn-lg" style="background-color: #D52B1E; color: white; border-color: #D52B1E;" data-bs-toggle="modal" data-bs-target="#registerModal">Get Started</button>
-                            <button class="btn btn-lg" style="color: #D52B1E; border-color: #D52B1E; background-color: transparent;" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
-                        </div>
-                    </div>
-                </div>
+  <div id="guestContainer" class="container-fluid p-0" style="background: linear-gradient(180deg,#FFFFFF 0%,#F8F9FA 50%,#FFFFFF 100%); min-height: 100vh;">
+
+    <!-- Hero -->
+    <section class="hero-section text-dark py-5">
+      <div class="container">
+        <div class="row align-items-center g-4">
+          <div class="col-lg-6 text-center">
+            <img id="guestLogo" src="/theme/assets/images/logo-lg.png" alt="Civil Citizens" style="max-width:420px;height:auto;">
+          </div>
+          <div class="col-lg-6 text-center text-lg-start">
+            <h1 class="display-5 fw-bold mb-3">Chambers of Citizens</h1>
+            <p class="lead mb-4">
+              Every Canadian lives in an <strong>Electoral District Association (EDA)</strong>. Civil turns that into value: a place to
+              <strong>stay up to date on EDA news</strong>, see what your MP said today in plain English, and work with neighbours and local
+              businesses to get things done — one Chamber for real conversations and real impact.
+            </p>
+            <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center justify-content-lg-start">
+              <button class="btn btn-lg btn-primary-cc" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
+              <button class="btn btn-lg btn-outline-primary-cc" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
             </div>
-        </section>
+          </div>
+        </div>
+      </div>
+    </section>
 
-        <!-- Benefits Section -->
-        <section id="benefits" class="py-5" style="background: linear-gradient(135deg, #F8F9FA 0%, #E9ECEF 100%);">
-            <div class="container">
-                <div class="text-center mb-5">
-                    <h2 class="display-5 fw-bold text-dark">Why Join Civil Citizens?</h2>
-                    <p class="lead text-muted">Discover the benefits of joining a platform built for Canadians, by Canadians.</p>
-                </div>
-                <div class="benefit-grid">
-                    <!-- Political -->
-                    <article class="benefit-card card h-100 border-0 shadow-sm">
-                        <div class="card-body">
-                            <div class="text-center mb-3">
-                                <i class="fas fa-landmark fa-3x" style="color: #D52B1E;"></i>
-                            </div>
-                            <h3 class="card-title h5 fw-bold text-center">Political Engagement</h3>
-                            <ul class="list-unstyled">
-                                <li><i class="fas fa-check text-success me-2"></i>Connect with your EDA</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Get updates from your MP</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Understand political involvement</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Turn conversations into action</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Coordinate volunteers and events</li>
-                                <li><i class="fas fa-check text-success me-2"></i>See neighbouring ridings</li>
-                            </ul>
-                        </div>
-                    </article>
+    <!-- Everyone in One Room -->
+    <section id="stakeholders" class="py-5" style="background: linear-gradient(135deg,#F8F9FA 0%, #E9ECEF 100%);">
+      <div class="container">
+        <div class="text-center mb-5">
+          <h2 class="display-6 fw-bold text-dark">Everyone In One Room</h2>
+          <p class="lead text-muted">Six voices, one Chamber — organized by your <strong>Electoral District Association (EDA)</strong>.</p>
+        </div>
 
-                    <!-- Business -->
-                    <article class="benefit-card card h-100 border-0 shadow-sm">
-                        <div class="card-body">
-                            <div class="text-center mb-3">
-                                <i class="fas fa-briefcase fa-3x" style="color: #D52B1E;"></i>
-                            </div>
-                            <h3 class="card-title h5 fw-bold text-center">Local Business Support</h3>
-                            <ul class="list-unstyled">
-                                <li><i class="fas fa-check text-success me-2"></i>Connect with local businesses</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Canada-first economy</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Discover suppliers and partners</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Shop-local opportunities</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Highlight local hiring and contracts</li>
-                            </ul>
-                        </div>
-                    </article>
-
-                    <!-- Advertising & News -->
-                    <article class="benefit-card card h-100 border-0 shadow-sm">
-                        <div class="card-body">
-                            <div class="text-center mb-3">
-                                <i class="fas fa-newspaper fa-3x" style="color: #D52B1E;"></i>
-                            </div>
-                            <h3 class="card-title h5 fw-bold text-center">Curated News & Ads</h3>
-                            <ul class="list-unstyled">
-                                <li><i class="fas fa-check text-success me-2"></i>Canada-first, community-centered</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Less outrage, more relevance</li>
-                                <li><i class="fas fa-check text-success me-2"></i>National stories with local impact</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Transparent advertising</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Support local organizations</li>
-                            </ul>
-                        </div>
-                    </article>
-
-                    <!-- Built by Canadians -->
-                    <article class="benefit-card card h-100 border-0 shadow-sm">
-                        <div class="card-body">
-                            <div class="text-center mb-3">
-                                <i class="fas fa-users fa-3x" style="color: #D52B1E;"></i>
-                            </div>
-                            <h3 class="card-title h5 fw-bold text-center">Built by Canadians</h3>
-                            <ul class="list-unstyled">
-                                <li><i class="fas fa-check text-success me-2"></i>Citizens come first</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Independent and community-led</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Privacy and dignity matter</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Transparent governance</li>
-                                <li><i class="fas fa-check text-success me-2"></i>Strengthen Canadian communities</li>
-                            </ul>
-                        </div>
-                    </article>
-                </div>
+        <div class="benefit-grid">
+          <!-- EDA -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-map-marked-alt fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">Electoral District Association (EDA)</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>One home for everything happening in your riding</li>
+                <li><i class="fas fa-check text-success me-2"></i>Meet neighbours, officials, and local businesses in one place</li>
+                <li><i class="fas fa-check text-success me-2"></i>See timely, relevant updates without the national noise</li>
+              </ul>
             </div>
-        </section>
+          </article>
 
-        <!-- Call to Action Section -->
-        <section class="cta-section text-dark py-5">
-            <div class="container text-center">
-                <h2 class="display-5 fw-bold mb-3">Join the Community Today</h2>
-                <p class="lead mb-4">Start connecting, engaging, and making a difference in your local community.</p>
-                <button class="btn btn-lg" style="background-color: #D52B1E; color: white; border-color: #D52B1E;" data-bs-toggle="modal" data-bs-target="#registerModal">Create Your Free Account</button>
+          <!-- MPs -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-user-tie fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">MPs</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>Reach constituents with clear, plain-language updates</li>
+                <li><i class="fas fa-check text-success me-2"></i>Hear structured feedback from real people in your EDA</li>
+                <li><i class="fas fa-check text-success me-2"></i>Host townhalls that turn discussion into action</li>
+              </ul>
             </div>
-        </section>
-    </div>
+          </article>
 
-    <style>
+          <!-- City Councils -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-city fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">City Councils</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>Get important notices in front of the right residents</li>
+                <li><i class="fas fa-check text-success me-2"></i>Coordinate faster across neighbouring municipalities</li>
+                <li><i class="fas fa-check text-success me-2"></i>Escalate local concerns to MPs with community backing</li>
+              </ul>
+            </div>
+          </article>
 
-        .main-content {margin:0; padding:0;}
+          <!-- Businesses -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-store fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">Businesses</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>Be discovered by people who actually live and shop here</li>
+                <li><i class="fas fa-check text-success me-2"></i>Join civic conversations that affect your costs and customers</li>
+                <li><i class="fas fa-check text-success me-2"></i>Find partners and talent nearby—grow local</li>
+              </ul>
+            </div>
+          </article>
 
-        .hero-section {
-            background: #FFFFFF;
-            min-height: 70vh;
-            display: flex;
-            align-items: center;
-        }
+          <!-- Citizens -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-users fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">Citizens</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>Stay current with EDA-based news and MP updates</li>
+                <li><i class="fas fa-check text-success me-2"></i>Discuss local problems respectfully; find solutions</li>
+                <li><i class="fas fa-check text-success me-2"></i>Join actions: townhalls, petitions, volunteer drives</li>
+              </ul>
+            </div>
+          </article>
 
-        .benefit-grid {
-            display: grid;
-            gap: 2rem;
-            grid-template-columns: repeat(2, 1fr);
-        }
+          <!-- Civil AI -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-robot fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">@Civil AI</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>Turns Hansard into plain-speak with citations</li>
+                <li><i class="fas fa-check text-success me-2"></i>Neutral, sourced corrections to keep debate fair</li>
+                <li><i class="fas fa-check text-success me-2"></i>Context for bills, MPs, and riding changes—so you don’t have to Google</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
-        .benefit-card {
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-        }
+    <!-- CTA -->
+    <section class="cta-section text-dark py-5">
+      <div class="container text-center">
+        <h2 class="display-6 fw-bold mb-3">Start Building Your Chamber of Citizens</h2>
+        <p class="lead mb-4">Stay informed. Solve problems together. Keep politics civil.</p>
+        <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center">
+          <button class="btn btn-lg btn-primary-cc" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
+          <button class="btn btn-lg btn-outline-primary-cc" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
+        </div>
+      </div>
+    </section>
+  </div>
 
-        .benefit-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
-        }
+  <style>
+    .btn-primary-cc{ background:#D52B1E; border-color:#D52B1E; color:#fff; }
+    .btn-primary-cc:hover, .btn-primary-cc:focus{ background:#b0261a; border-color:#b0261a; color:#fff; }
+    .btn-outline-primary-cc{ color:#D52B1E; border-color:#D52B1E; background:transparent; }
+    .btn-outline-primary-cc:hover, .btn-outline-primary-cc:focus{ background:#D52B1E; border-color:#D52B1E; color:#fff; }
+    .text-primary-cc{ color:#D52B1E!important; }
 
-        .cta-section {
-            background: #FFFFFF;
-        }
+    .hero-section{ background:#FFFFFF; min-height:68vh; display:flex; align-items:center; }
+    .benefit-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
+    .benefit-card{ transition:transform .3s ease, box-shadow .3s ease; background:rgba(255,255,255,.95); backdrop-filter:blur(10px); }
+    .benefit-card:hover{ transform:translateY(-5px); box-shadow:0 10px 25px rgba(0,0,0,.15)!important; }
 
-        @media (min-width: 768px) {
-            .benefit-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
+    @media (max-width: 767px){
+      .benefit-grid{ grid-template-columns:1fr!important; }
+      #guestLogo{ max-width:220px!important; margin-bottom:1rem; padding:20px; }
+    }
 
-        @media (min-width: 768px) and (max-width: 991px) {
-            #guestLogo {
-                max-width: 200px !important;
-                margin-bottom: 1rem;
-                padding: 20px;
-            }
-        }
+    /* 3 columns on lg+ for 6 cards */
+    @media (min-width: 992px){
+      .benefit-grid{ grid-template-columns: repeat(3, 1fr); }
+    }
 
-        @media (max-width: 767px) {
-            .hero-section {
-                text-align: center !important;
-            }
-            .display-4 {
-                font-size: 2.5rem !important;
-            }
-            .lead {
-                font-size: 1.1rem !important;
-            }
-            #guestLogo {
-                max-width: 200px !important;
-                margin-bottom: 1rem;
-                padding: 20px;
-            }
-            .benefit-grid {
-                grid-template-columns: 1fr !important;
-            }
-        }
-    </style>
+    .main-content{ padding:0!important; }
+  </style>
 
-    <script>
-        // Hide header and sidebars for guest page
-        $('header').hide();
-        $('#mobileFooterMenu').hide();
-        $('#desktopLeftSidebar').hide();
-        $('#desktopRightSidebar').hide();
-    </script>
+  <script>
+    // Hide app chrome on landing
+    $('header,#mobileFooterMenu,#desktopLeftSidebar,#desktopRightSidebar').hide();
+  </script>
 </template>
