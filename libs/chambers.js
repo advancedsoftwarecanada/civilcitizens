@@ -113,6 +113,60 @@ if (Meteor.isServer) {
 
             return { status: 'success', message: 'Chamber unfollowed successfully.' };
         },
+
+        // Find nearest chamber to supplied coordinates (simple Haversine over all chambers)
+        async 'chambers.findNearest'(lat, lng) {
+            check(lat, Number);
+            check(lng, Number);
+
+            // Optional auth: allow only logged-in to reduce abuse (can relax later)
+            if (!this.userId) {
+                throw new Meteor.Error('not-authorized');
+            }
+
+            const raw = Chambers.rawCollection();
+            const chambers = await raw.find({ 'location.lat': { $exists: true }, 'location.lng': { $exists: true } }, { projection: { province: 1, seoUrl: 1, name: 1, location: 1 } }).toArray();
+            if (!chambers.length) {
+                return null;
+            }
+
+            const R = 6371; // km
+            let best = null;
+            for (const c of chambers) {
+                const dLat = (c.location.lat - lat) * Math.PI / 180;
+                const dLng = (c.location.lng - lng) * Math.PI / 180;
+                const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat*Math.PI/180)*Math.cos(c.location.lat*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+                const d = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                if (!best || d < best.distanceKm) {
+                    best = { province: c.province, seoUrl: c.seoUrl, name: c.name, distanceKm: Number(d.toFixed(1)) };
+                }
+            }
+            return best;
+        },
+
+        // Return up to N nearest chambers
+        async 'chambers.findNearestMany'(lat, lng, limit = 5) {
+            check(lat, Number);
+            check(lng, Number);
+            check(limit, Number);
+            if (!this.userId) {
+                throw new Meteor.Error('not-authorized');
+            }
+            if (limit > 25) limit = 25; // safety cap
+            const raw = Chambers.rawCollection();
+            const chambers = await raw.find({ 'location.lat': { $exists: true }, 'location.lng': { $exists: true } }, { projection: { province: 1, seoUrl: 1, name: 1, location: 1 } }).toArray();
+            if (!chambers.length) return [];
+            const R = 6371;
+            const scored = chambers.map(c => {
+                const dLat = (c.location.lat - lat) * Math.PI / 180;
+                const dLng = (c.location.lng - lng) * Math.PI / 180;
+                const a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(lat*Math.PI/180)*Math.cos(c.location.lat*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+                const d = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return { province: c.province, seoUrl: c.seoUrl, name: c.name, distanceKm: Number(d.toFixed(1)) };
+            });
+            scored.sort((a,b)=> a.distanceKm - b.distanceKm);
+            return scored.slice(0, limit);
+        },
     });
 }
 
