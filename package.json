@@ -7,17 +7,26 @@
   },
   "dependencies": {
     "@babel/runtime": "^7.28.3",
+    "@turf/turf": "^7.2.0",
+    "adm-zip": "^0.5.10",
     "body-parser": "^1.20.3",
     "express": "^5.1.0",
+    "fast-xml-parser": "^4.3.6",
     "fs-extra": "^11.2.0",
+    "geolib": "^3.3.4",
     "gm": "^1.25.0",
     "jquery": "^3.7.1",
     "jsdom": "^26.1.0",
     "meteor-node-stubs": "^1.2.7",
     "mime": "^4.0.6",
     "multer": "^2.0.2",
+    "proj4": "^2.19.10",
+  "topojson-client": "^3.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "shapefile": "^0.6.6",
+    "unzipper": "^0.10.14",
+    "yauzl": "^2.10.0"
   },
   "meteor": {
     "disableMinifier": true

@@ -374,6 +374,220 @@ Meteor.methods({
 
         ];
 
+    },
+
+    'admin.chambers.syncFromParliamentXml': async function () {
+        // Ensure server-side execution
+        if (!Meteor.isServer) {
+            return false;
+        }
+
+        // Ensure the user is authorized
+        if (!this.userId) {
+            throw new Meteor.Error('not-authorized', 'You must be logged in to perform this action.');
+        }
+
+        const { XMLParser } = require('fast-xml-parser');
+
+        const parser = new XMLParser({
+            ignoreAttributes: false,
+            attributeNamePrefix: '@_'
+        });
+
+        try {
+            // Fetch XML from Parliament website
+            console.log('Fetching XML from Parliament...');
+            const response = await fetch('https://www.ourcommons.ca/Members/en/constituencies/XML');
+            if (!response.ok) {
+                throw new Meteor.Error('fetch-failed', `Failed to fetch XML: ${response.status}`);
+            }
+            const xmlText = await response.text();
+            console.log('XML Response length:', xmlText.length);
+            console.log('XML Response preview:', xmlText.substring(0, 500));
+
+            // Parse XML
+            const parsedData = parser.parse(xmlText);
+            console.log('Parsed data structure:', Object.keys(parsedData));
+
+            // Extract unique constituencies
+            const constituencies = new Map();
+
+            // Try different possible structures
+            let members = [];
+            if (parsedData.ArrayOfConstituency && parsedData.ArrayOfConstituency.Constituency) {
+                members = parsedData.ArrayOfConstituency.Constituency;
+                console.log('Found constituencies in ArrayOfConstituency.Constituency');
+            } else if (parsedData.ArrayOfMemberOfParliament && parsedData.ArrayOfMemberOfParliament.MemberOfParliament) {
+                members = parsedData.ArrayOfMemberOfParliament.MemberOfParliament;
+                console.log('Found members in ArrayOfMemberOfParliament.MemberOfParliament');
+            } else if (parsedData.members) {
+                members = parsedData.members;
+                console.log('Found members in members');
+            } else if (parsedData.MemberOfParliament) {
+                members = Array.isArray(parsedData.MemberOfParliament) ? parsedData.MemberOfParliament : [parsedData.MemberOfParliament];
+                console.log('Found members in MemberOfParliament');
+            } else {
+                console.log('Available keys in parsed data:', Object.keys(parsedData));
+                // Try to find any array that might contain members
+                for (const key of Object.keys(parsedData)) {
+                    if (Array.isArray(parsedData[key]) && parsedData[key].length > 0) {
+                        console.log(`Found array in key '${key}' with ${parsedData[key].length} items`);
+                        if (parsedData[key][0] && (parsedData[key][0].ConstituencyName || parsedData[key][0].constituencyName || parsedData[key][0].Name)) {
+                            members = parsedData[key];
+                            console.log(`Using members from key '${key}'`);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            console.log('Number of members found:', members.length);
+            if (members.length > 0) {
+                console.log('First member structure:', Object.keys(members[0]));
+                console.log('First member data:', JSON.stringify(members[0], null, 2));
+            }
+
+            for (const member of members) {
+                const constituencyName = member.Name || member.ConstituencyName || member.constituencyName;
+                const provinceName = member.ProvinceTerritoryName || member.ConstituencyProvinceTerritoryName || member.ProvinceName || member.provinceName;
+
+                // Add member info if available
+                const currentMember = member.PersonId ? {
+                    personId: member.PersonId,
+                    firstName: member.CurrentPersonOfficialFirstName,
+                    lastName: member.CurrentPersonOfficialLastName,
+                    honorific: member.CurrentPersonShortHonorific,
+                    caucus: member.CurrentCaucusShortName
+                } : null;
+
+                if (constituencyName && provinceName) {
+                    const key = `${provinceName.toLowerCase()}-${constituencyName}`;
+                    if (!constituencies.has(key)) {
+                        constituencies.set(key, {
+                            name: constituencyName,
+                            province: provinceName.toLowerCase(),
+                            currentMember: currentMember
+                        });
+                    }
+                } else {
+                    console.log('Missing data in member:', { constituencyName, provinceName, availableKeys: Object.keys(member) });
+                }
+            }
+
+            // Convert to array format expected by buildChambers
+            const chambersArray = Array.from(constituencies.values()).map((chamber) => ({
+                name: chamber.name,
+                province: chamber.province,
+                currentMember: chamber.currentMember
+            }));
+
+            console.log(`ADMIN: XML Sync - Fetched ${chambersArray.length} unique constituencies from Parliament XML`);
+
+            return chambersArray;
+
+        } catch (error) {
+            console.error('Error syncing from Parliament XML:', error);
+            throw new Meteor.Error('sync-failed', 'Failed to sync chambers from Parliament XML');
+        }
+    },
+
+    'admin.chambers.testXmlFetch': async function () {
+        // Ensure server-side execution
+        if (!Meteor.isServer) {
+            return false;
+        }
+
+        try {
+            console.log('Testing XML fetch from Parliament...');
+            const response = await fetch('https://www.ourcommons.ca/Members/en/search/XML');
+            if (!response.ok) {
+                throw new Meteor.Error('fetch-failed', `Failed to fetch XML: ${response.status}`);
+            }
+            const xmlText = await response.text();
+            console.log('XML Response length:', xmlText.length);
+            console.log('XML Response preview (first 1000 chars):', xmlText.substring(0, 1000));
+
+            // Try to find the structure
+            const lines = xmlText.split('\n').slice(0, 20);
+            console.log('First 20 lines of XML:');
+            lines.forEach((line, i) => console.log(`${i + 1}: ${line}`));
+
+            return { success: true, length: xmlText.length, preview: xmlText.substring(0, 500) };
+
+        } catch (error) {
+            console.error('Error testing XML fetch:', error);
+            return { success: false, error: error.message };
+        }
+    },
+
+    'admin.chambers.diffReport': async function () {
+        // Ensure server-side execution
+        if (!Meteor.isServer) {
+            return false;
+        }
+
+        // Ensure the user is authorized
+        if (!this.userId) {
+            throw new Meteor.Error('not-authorized', 'You must be logged in to perform this action.');
+        }
+
+        try {
+            // Get current XML data
+            const xmlChambers = await Meteor.call('admin.chambers.syncFromParliamentXml');
+
+            // Get existing chambers
+            const existingChambers = await Chambers.findAsync({}, { fields: { code: 1, name: 1, province: 1 } }).fetch();
+
+            // Create maps for comparison
+            const xmlMap = new Map();
+            xmlChambers.forEach(chamber => {
+                const key = `${chamber.province}-${chamber.name}`;
+                xmlMap.set(key, chamber);
+            });
+
+            const existingMap = new Map();
+            existingChambers.forEach(chamber => {
+                const key = `${chamber.province}-${chamber.name}`;
+                existingMap.set(key, chamber);
+            });
+
+            // Find differences
+            const newChambers = [];
+            const removedChambers = [];
+            const updatedChambers = [];
+
+            // Check XML against existing (new chambers)
+            xmlMap.forEach((xmlChamber, key) => {
+                if (!existingMap.has(key)) {
+                    newChambers.push(xmlChamber);
+                }
+            });
+
+            // Check existing against XML (removed chambers)
+            existingMap.forEach((existingChamber, key) => {
+                if (!xmlMap.has(key)) {
+                    removedChambers.push(existingChamber);
+                }
+            });
+
+            // For now, no updates detected since we're only comparing names/provinces
+            // Could be enhanced to detect name changes if we store previous names
+
+            return {
+                totalXml: xmlChambers.length,
+                totalExisting: existingChambers.length,
+                newCount: newChambers.length,
+                removedCount: removedChambers.length,
+                updatedCount: updatedChambers.length,
+                newChambers,
+                removedChambers,
+                updatedChambers
+            };
+
+        } catch (error) {
+            console.error('Error generating diff report:', error);
+            throw new Meteor.Error('diff-failed', 'Failed to generate diff report');
+        }
     }
 
 });

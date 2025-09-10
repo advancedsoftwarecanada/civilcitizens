@@ -1,3 +1,7 @@
+/* global FlowRouter toastr */
+// Declaring intentional global references used in Meteor + Blaze environment
+// window.userManager and custom globals are provided elsewhere at runtime.
+
 FlowRouter.route('/chambers', {
     name: "chambers",
     action() {
@@ -14,8 +18,10 @@ FlowRouter.route('/chambers', {
 
 Template.chambers.onRendered(function () {
     // Attempt auto-detect nearest chamber for new users without a home chamber
+    // If user clicks manual detect button first, they can set window.__manualRidingDetect = true to skip auto attempt (optional)
     setTimeout(() => {
         try {
+            if (window.__manualRidingDetect) { return; }
             const metaFn = window.userManager && window.userManager.myUserMeta;
             const meta = metaFn ? metaFn() : null;
             // If a home chamber already set OR any chambers exist, skip geolocation
@@ -29,13 +35,53 @@ Template.chambers.onRendered(function () {
             navigator.geolocation.getCurrentPosition((pos) => {
                 const { latitude, longitude } = pos.coords;
                 console.log('User geo coords:', latitude, longitude);
-                // Fetch 11: 1 primary + up to 10 alternatives
-                Meteor.call('chambers.findNearestMany', latitude, longitude, 11, (err, list) => {
-                    if (err) { console.warn('Nearest chambers error', err); return; }
-                    if (!list || !list.length) return;
-                    console.log('Nearest chambers list (debug):', list);
-                    const primary = list[0];
-                    const alternatives = list.slice(1, 11); // up to 10 alternatives
+                
+                // First try geofencing to find exact containing riding
+                Meteor.call('chambers.findContainingPolygon', latitude, longitude, (err, primary) => {
+                    if (err) { 
+                        console.warn('Geofencing error, falling back to nearest:', err); 
+                        // Fall back to nearest method
+                        Meteor.call('chambers.findNearestMany', latitude, longitude, 11, (err2, list) => {
+                            if (err2) { console.warn('Nearest chambers error', err2); return; }
+                            if (!list || !list.length) return;
+                            handleChamberSelection(list[0], list.slice(1, 11));
+                        });
+                        return;
+                    }
+                    
+                    if (!primary) {
+                        console.warn('No primary chamber found, falling back to nearest');
+                        Meteor.call('chambers.findNearestMany', latitude, longitude, 11, (err2, list) => {
+                            if (err2) { console.warn('Nearest chambers error', err2); return; }
+                            if (!list || !list.length) return;
+                            handleChamberSelection(list[0], list.slice(1, 11));
+                        });
+                        return;
+                    }
+                    
+                    console.log('Geofenced primary chamber:', primary);
+                    
+                    // Get additional alternatives using nearest method
+                    Meteor.call('chambers.findNearestMany', latitude, longitude, 10, (err2, alternatives) => {
+                        if (err2) { 
+                            console.warn('Alternatives error:', err2);
+                            alternatives = [];
+                        }
+                        
+                        // Filter out the primary from alternatives if it's there
+                        alternatives = alternatives.filter(alt => 
+                            !(alt.province === primary.province && alt.seoUrl === primary.seoUrl)
+                        );
+                        
+                        handleChamberSelection(primary, alternatives);
+                    });
+                });
+                
+                function handleChamberSelection(primary, alternatives) {
+                    console.log('Primary chamber:', primary);
+                    console.log('Alternative chambers:', alternatives);
+                    
+                    // Auto-select the primary chamber
                     if (!$('#province_territory').val()) {
                         $('#province_territory').val(primary.province).trigger('change');
                         const start = Date.now();
@@ -48,22 +94,25 @@ Template.chambers.onRendered(function () {
                                 clearInterval(iv);
                             }
                         }, 300);
-                        toastr.info('Suggested nearest chamber: '+primary.name, 'Location Detected');
+                        
+                        const methodText = primary.method === 'geofenced' ? 'Geofenced' : 'Nearest';
+                        toastr.success(`Auto-detected: ${primary.name}`, `${methodText} Location Found`);
                     }
 
-                    if (alternatives.length) {
+                    // Show alternatives
+                    if (alternatives && alternatives.length) {
                         const container = $('#geoSuggestionContainer');
                         if (container && !container.data('filled')) {
                             let html = '<div class="small fw-bold mb-2">Not your correct riding?</div><div class="d-flex flex-wrap gap-2">';
                             alternatives.forEach((c) => {
-                                // Show name + distance for clarity
-                                html += '<button type="button" class="btn btn-outline-secondary btn-sm geo-suggestion" data-province="'+c.province+'" data-seourl="'+c.seoUrl+'" title="'+c.name+' ('+c.distanceKm+' km)">'+c.name+' <span class="text-muted">('+c.distanceKm+' km)</span></button>';
+                                const distanceText = c.distanceKm ? ` (${c.distanceKm} km)` : '';
+                                html += '<button type="button" class="btn btn-outline-secondary btn-sm geo-suggestion" data-province="'+c.province+'" data-seourl="'+c.seoUrl+'" title="'+c.name+distanceText+'">'+c.name+' <span class="text-muted">'+distanceText+'</span></button>';
                             });
                             html += '</div>';
                             container.html(html).data('filled', true);
                         }
                     }
-                });
+                }
             }, (err) => {
                 console.log('Geolocation denied or failed', err && err.message);
             }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 });

@@ -167,6 +167,151 @@ if (Meteor.isServer) {
             scored.sort((a,b)=> a.distanceKm - b.distanceKm);
             return scored.slice(0, limit);
         },
+
+        // Find chamber containing user's coordinates using Elections Canada polygons (geofencing)
+        async 'chambers.findContainingPolygon'(lat, lng) {
+            check(lat, Number);
+            check(lng, Number);
+
+            if (!this.userId) {
+                throw new Meteor.Error('not-authorized');
+            }
+
+            try {
+                // Download and cache EC geospatial data
+                const ecGeospatialData = await Meteor.call('admin.chambers.downloadECGeospatialData');
+
+                if (!ecGeospatialData || !ecGeospatialData.geoJson) {
+                    console.warn('EC geospatial data not available, falling back to nearest centroid');
+                    return await Meteor.call('chambers.findNearest', lat, lng);
+                }
+
+                const turf = await import('@turf/turf');
+                const point = turf.point([lng, lat]); // Turf expects [lng, lat]
+                console.log(`Testing point: [${lng}, ${lat}]`);
+
+                const processed = ecGeospatialData.processed || [];
+                if (!processed.length) {
+                    console.warn('No processed EC features available');
+                    return await Meteor.call('chambers.findNearest', lat, lng);
+                }
+
+                // Precompute a cheap bounding box filter in projected -> we will reproject a minimal ring just to derive bbox if necessary.
+                // Since we now reproject feature coordinates on-the-fly, we can derive bbox after reprojection per feature; for speed we keep first-hit winner.
+
+                function normalizeName(str){
+                    return str
+                        .toLowerCase()
+                        .replace(/—|–/g,'-')
+                        .replace(/[^a-z0-9\s-]/g,'')
+                        .replace(/\s+/g,'-')
+                        .replace(/-+/g,'-');
+                }
+
+                const pointNorm = { lat, lng };
+
+                // Prepare proj4 converter once (Lambert Conformal Conic NAD83 -> WGS84)
+                let projConverter = null;
+                if (ecGeospatialData.prjString) {
+                    try {
+                        const proj4 = await import('proj4');
+                        // Use stored prj string as source, WGS84 as target
+                        projConverter = proj4.default(ecGeospatialData.prjString, 'EPSG:4326');
+                    } catch (e) {
+                        console.warn('proj4 init failed, proceeding without reprojection (may break geofencing)', e.message);
+                    }
+                }
+
+                // Find which polygon contains the user's point
+                // Fast prefilter by simple bbox first
+                for (const feat of processed) {
+                    const feature = { properties: { ED_NAMEE: feat.name }, geometry: feat.geometry };
+                    if (feat.geometry && (feat.geometry.type === 'Polygon' || feat.geometry.type === 'MultiPolygon')) {
+                        try {
+                            const ridingName = feature.properties?.ED_NAMEE;
+                            if (!ridingName) continue;
+
+                            const [minLng, minLat, maxLng, maxLat] = feat.bbox;
+                            if (lng < minLng - 0.2 || lng > maxLng + 0.2 || lat < minLat - 0.2 || lat > maxLat + 0.2) {
+                                continue; // outside bbox with small padding
+                            }
+
+                            console.log(`Checking polygon (bbox pass) for: ${ridingName}`);
+                            // Reproject coordinates lazily (without mutating original) if needed
+                            const reprojGeometry = feature.geometry; // already WGS84 from preprocessing
+
+                            let isInside = false;
+                            let polygonForDistance;
+
+                            if (reprojGeometry.type === 'Polygon') {
+                                polygonForDistance = turf.polygon(reprojGeometry.coordinates);
+                                isInside = turf.booleanPointInPolygon(point, polygonForDistance);
+                            } else if (reprojGeometry.type === 'MultiPolygon') {
+                                polygonForDistance = turf.multiPolygon(reprojGeometry.coordinates);
+                                for (const polyCoords of reprojGeometry.coordinates) {
+                                    const poly = turf.polygon(polyCoords);
+                                    if (turf.booleanPointInPolygon(point, poly)) { isInside = true; break; }
+                                }
+                            }
+
+                            // Debug: check distance to the polygon
+                            const distance = turf.pointToPolygonDistance(point, polygonForDistance, {units: 'kilometers'});
+                            console.log(`Distance from point to ${ridingName} polygon: ${distance.toFixed(2)} km`);
+
+                            if (!isInside) {
+                                // Attempt slight buffer (50 meters) for edge cases
+                                const buffered = turf.buffer(point, 0.05, { units: 'kilometers'});
+                                if (reprojGeometry.type === 'Polygon') {
+                                    if (turf.booleanIntersects(buffered, polygonForDistance)) isInside = true;
+                                } else if (reprojGeometry.type === 'MultiPolygon') {
+                                    for (const polyCoords of reprojGeometry.coordinates) {
+                                        const poly = turf.polygon(polyCoords);
+                                        if (turf.booleanIntersects(buffered, poly)) { isInside = true; break; }
+                                    }
+                                }
+                                if (isInside) console.log(`Edge buffer catch: ${ridingName}`);
+                            }
+
+                            if (isInside) {
+                                console.log(`✅ FOUND: Point is inside ${ridingName} polygon!`);
+
+                                // Find the corresponding chamber in our database
+                                const seoUrl = normalizeName(ridingName);
+
+                                // Fuzzy: also try stripping trailing descriptors if any mismatch
+                                const alt = seoUrl.replace(/-(federal|district|riding)$/,'');
+
+                                // Try to find by exact name match first
+                                let chamber = await Chambers.findOneAsync({ $or: [ { name: ridingName }, { seoUrl }, { seoUrl: alt } ] });
+
+                                if (chamber) {
+                                    return {
+                                        province: chamber.province,
+                                        seoUrl: chamber.seoUrl,
+                                        name: chamber.name,
+                                        method: 'geofenced',
+                                        confidence: 'high'
+                                    };
+                                } else {
+                                    console.log(`Chamber not found in database: ${ridingName} (${seoUrl})`);
+                                }
+                            }
+                        } catch (polygonError) {
+                            console.warn(`Error processing polygon for ${feature.properties?.ED_NAMEE}:`, polygonError.message);
+                        }
+                    }
+                }
+
+                // No polygon contained the point, fall back to nearest centroid
+                console.log(`No polygon found containing point (${lat}, ${lng}), falling back to nearest centroid`);
+                return await Meteor.call('chambers.findNearest', lat, lng);
+
+            } catch (error) {
+                console.error('Error in geofencing:', error);
+                // Fall back to nearest centroid method
+                return await Meteor.call('chambers.findNearest', lat, lng);
+            }
+        },
     });
 }
 
