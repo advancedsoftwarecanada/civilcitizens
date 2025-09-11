@@ -1,6 +1,13 @@
 /* global FlowRouter toastr */
+// Type annotations / ambient declarations (for linters / TypeScript in JS mode)
+// eslint-disable-next-line no-unused-vars
+// eslint-disable-next-line no-unused-vars
+// eslint-disable-next-line no-unused-vars
 // Declaring intentional global references used in Meteor + Blaze environment
 // window.userManager and custom globals are provided elsewhere at runtime.
+/* global FlowRouter toastr BlazeLayout */
+// @ts-ignore (runtime global provided by app)
+window.userManager;
 
 FlowRouter.route('/chambers', {
     name: "chambers",
@@ -16,110 +23,30 @@ FlowRouter.route('/chambers', {
     }
 });
 
-Template.chambers.onRendered(function () {
-    // Attempt auto-detect nearest chamber for new users without a home chamber
-    // If user clicks manual detect button first, they can set window.__manualRidingDetect = true to skip auto attempt (optional)
-    setTimeout(() => {
-        try {
-            if (window.__manualRidingDetect) { return; }
-            const metaFn = window.userManager && window.userManager.myUserMeta;
-            const meta = metaFn ? metaFn() : null;
-            // If a home chamber already set OR any chambers exist, skip geolocation
-            const chamberFollows = (window.userManager && window.userManager.getData && window.userManager.getData().chamberFollows) || [];
-            if ((meta && meta.chamberHome) || chamberFollows.length > 0) {
-                return; // already set or user has chambers
-            }
-            if (!navigator.geolocation) {
-                return;
-            }
-            navigator.geolocation.getCurrentPosition((pos) => {
-                const { latitude, longitude } = pos.coords;
-                console.log('User geo coords:', latitude, longitude);
-                
-                // First try geofencing to find exact containing riding
-                Meteor.call('chambers.findContainingPolygon', latitude, longitude, (err, primary) => {
-                    if (err) { 
-                        console.warn('Geofencing error, falling back to nearest:', err); 
-                        // Fall back to nearest method
-                        Meteor.call('chambers.findNearestMany', latitude, longitude, 11, (err2, list) => {
-                            if (err2) { console.warn('Nearest chambers error', err2); return; }
-                            if (!list || !list.length) return;
-                            handleChamberSelection(list[0], list.slice(1, 11));
-                        });
-                        return;
-                    }
-                    
-                    if (!primary) {
-                        console.warn('No primary chamber found, falling back to nearest');
-                        Meteor.call('chambers.findNearestMany', latitude, longitude, 11, (err2, list) => {
-                            if (err2) { console.warn('Nearest chambers error', err2); return; }
-                            if (!list || !list.length) return;
-                            handleChamberSelection(list[0], list.slice(1, 11));
-                        });
-                        return;
-                    }
-                    
-                    console.log('Geofenced primary chamber:', primary);
-                    
-                    // Get additional alternatives using nearest method
-                    Meteor.call('chambers.findNearestMany', latitude, longitude, 10, (err2, alternatives) => {
-                        if (err2) { 
-                            console.warn('Alternatives error:', err2);
-                            alternatives = [];
-                        }
-                        
-                        // Filter out the primary from alternatives if it's there
-                        alternatives = alternatives.filter(alt => 
-                            !(alt.province === primary.province && alt.seoUrl === primary.seoUrl)
-                        );
-                        
-                        handleChamberSelection(primary, alternatives);
-                    });
-                });
-                
-                function handleChamberSelection(primary, alternatives) {
-                    console.log('Primary chamber:', primary);
-                    console.log('Alternative chambers:', alternatives);
-                    
-                    // Auto-select the primary chamber
-                    if (!$('#province_territory').val()) {
-                        $('#province_territory').val(primary.province).trigger('change');
-                        const start = Date.now();
-                        const iv = setInterval(() => {
-                            const ready = $('#chamber_select option').length > 1;
-                            if (ready) {
-                                $('#chamber_select').val(primary.seoUrl).trigger('change');
-                                clearInterval(iv);
-                            } else if (Date.now() - start > 8000) {
-                                clearInterval(iv);
-                            }
-                        }, 300);
-                        
-                        const methodText = primary.method === 'geofenced' ? 'Geofenced' : 'Nearest';
-                        toastr.success(`Auto-detected: ${primary.name}`, `${methodText} Location Found`);
-                    }
+// Overlay helper functions (overlay markup is now static in the template)
+// @ts-ignore (expose overlay show helper globally)
+window.__showGeoOverlay = function(msg){
+    const ov=document.getElementById('geoDetectScreenOverlay');
+    if(!ov) return;
+    if(msg){ const m=document.getElementById('geoDetectOverlayMsg'); if(m) m.textContent=msg; }
+    ov.style.transition='opacity .25s ease';
+    ov.style.display='flex';
+    ov.style.visibility='visible';
+    ov.style.pointerEvents='auto';
+    ov.style.opacity='1';
+    document.documentElement.style.overflow='hidden';
+};
+// @ts-ignore (expose overlay hide helper globally)
+window.__hideGeoOverlay = function(){
+    const ov=document.getElementById('geoDetectScreenOverlay');
+    if(!ov) return;
+    ov.style.opacity='0';
+    ov.style.pointerEvents='none';
+    setTimeout(()=>{ if(ov.style.opacity==='0'){ ov.style.visibility='hidden'; document.documentElement.style.overflow=''; } },250);
+};
 
-                    // Show alternatives
-                    if (alternatives && alternatives.length) {
-                        const container = $('#geoSuggestionContainer');
-                        if (container && !container.data('filled')) {
-                            let html = '<div class="small fw-bold mb-2">Not your correct riding?</div><div class="d-flex flex-wrap gap-2">';
-                            alternatives.forEach((c) => {
-                                const distanceText = c.distanceKm ? ` (${c.distanceKm} km)` : '';
-                                html += '<button type="button" class="btn btn-outline-secondary btn-sm geo-suggestion" data-province="'+c.province+'" data-seourl="'+c.seoUrl+'" title="'+c.name+distanceText+'">'+c.name+' <span class="text-muted">'+distanceText+'</span></button>';
-                            });
-                            html += '</div>';
-                            container.html(html).data('filled', true);
-                        }
-                    }
-                }
-            }, (err) => {
-                console.log('Geolocation denied or failed', err && err.message);
-            }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 });
-        } catch(e) {
-            console.warn('Geolocation setup failed', e);
-        }
-    }, 600); // slight delay to allow DOM & select2 init script
+Template.chambers.onRendered(function () {
+    // No automatic geolocation; overlay already present in DOM.
 });
 
 Template.chambers.events({
@@ -235,6 +162,81 @@ Template.chambers.events({
             }
         }, 300);
         toastr.info('Selected suggested riding', 'Updated');
+    }
+    ,
+    'click #btnAutoDetectRiding': function(event){
+        event.preventDefault();
+        const $btn = $('#btnAutoDetectRiding');
+        const $status = $('#geoDetectStatus');
+        if ($btn.prop('disabled')) return;
+        if (!navigator.geolocation){
+            $status.text('Not supported');
+            return;
+        }
+    function showOverlay(msg){ window.__showGeoOverlay && window.__showGeoOverlay(msg); }
+    function hideOverlay(){ window.__hideGeoOverlay && window.__hideGeoOverlay(); }
+        $btn.prop('disabled', true); $status.text('Requesting permission…');
+        showOverlay('Please wait while we detect your EDA based on your location…');
+        navigator.geolocation.getCurrentPosition((pos)=>{
+            const { latitude, longitude } = pos.coords;
+            $status.text('Locating riding…');
+            // Call geofencing first
+            Meteor.call('chambers.findContainingPolygon', latitude, longitude, (err, primary) => {
+                if (err || !primary) {
+                    // fallback to nearest many
+                    Meteor.call('chambers.findNearestMany', latitude, longitude, 11, (err2, list) => {
+                        if (err2 || !list || !list.length){ $status.text('Failed'); hideOverlay(); $btn.prop('disabled', false); return; }
+                        applySelection(list[0], list.slice(1));
+                    });
+                    return;
+                }
+                Meteor.call('chambers.findNearestMany', latitude, longitude, 10, (err2, alts)=>{
+                    if (err2) alts = [];
+                    alts = (alts||[]).filter(a=>!(a.province===primary.province && a.seoUrl===primary.seoUrl));
+                    applySelection(primary, alts);
+                });
+            });
+            function applySelection(primary, alternatives){
+                if(primary){
+                    if(!$('#province_territory').val()){
+                        $('#province_territory').val(primary.province).trigger('change');
+                        const start=Date.now();
+                        const iv=setInterval(()=>{
+                            const ready=$('#chamber_select option').length>1;
+                            if(ready){ $('#chamber_select').val(primary.seoUrl).trigger('change'); clearInterval(iv); }
+                            else if(Date.now()-start>8000){ clearInterval(iv); }
+                        },300);
+                    } else {
+                        if($('#province_territory').val()!==primary.province){
+                            $('#province_territory').val(primary.province).trigger('change');
+                            const start=Date.now();
+                            const iv=setInterval(()=>{
+                                const opt=$('#chamber_select option[value="'+primary.seoUrl+'"]').length;
+                                if(opt){ $('#chamber_select').val(primary.seoUrl).trigger('change'); clearInterval(iv);} else if(Date.now()-start>8000){ clearInterval(iv);} },300);
+                        } else {
+                            $('#chamber_select').val(primary.seoUrl).trigger('change');
+                        }
+                    }
+                    toastr.success('Auto-detected: '+primary.name, (primary.method==='geofenced'?'Geofenced':'Nearest')+' Location');
+                }
+                if(alternatives && alternatives.length){
+                    const container=$('#geoSuggestionContainer');
+                    container.empty().data('filled', false);
+                    let html='<div class="small fw-bold mb-2">Not your correct riding?</div><div class="d-flex flex-wrap gap-2">';
+                    alternatives.forEach(c=>{ const distanceText=c.distanceKm?' ('+c.distanceKm+' km)':''; html+='<button type="button" class="btn btn-outline-secondary btn-sm geo-suggestion" data-province="'+c.province+'" data-seourl="'+c.seoUrl+'" title="'+c.name+distanceText+'">'+c.name+' <span class="text-muted">'+distanceText+'</span></button>'; });
+                    html+='</div>';
+                    container.html(html).data('filled', true);
+                }
+                $status.text('Done');
+                setTimeout(()=>{ if($status.text()==='Done'){ $status.text(''); } }, 2500);
+                hideOverlay();
+                $btn.prop('disabled', false);
+            }
+        }, (err)=>{
+            $status.text(err && err.code===1 ? 'Permission denied' : 'Location failed');
+            hideOverlay();
+            $btn.prop('disabled', false);
+        }, { enableHighAccuracy:false, timeout:10000, maximumAge:600000 });
     }
 
 
