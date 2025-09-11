@@ -199,3 +199,11 @@ table {
   outline: 2px solid rgba(255,255,255,0.5);
   outline-offset: 2px;
 }
+
+/* Ensure comment body text is black in post view */
+.comments-area .single-comment-area .title-area p,
+.comments-area .single-comment-area .title-area p.mdtxt,
+.comments-area .single-comment-area p.mdtxt,
+.comments-area .single-comment-area p {
+  color: #000 !important;
+}

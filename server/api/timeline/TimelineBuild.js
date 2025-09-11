@@ -116,13 +116,14 @@ export default class TimelineBuild {
                         const authorMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
                         return {
                             ...post,
+                            commentCount: typeof post.commentCount === 'number' ? post.commentCount : 0,
                             author: {
                                 userName: authorMeta?.userName || 'Unknown User',
                                 avatarUrl: authorMeta?.avatarUrl || null,
                                 coverUrl: authorMeta?.coverUrl || null,
                             },
-                            images: post.images || [], // Include images array
-                            attachments: post.attachments || null, // Include attachments
+                            images: post.images || [],
+                            attachments: post.attachments || null,
                         };
                     })
                 );
@@ -156,13 +157,14 @@ export default class TimelineBuild {
                         const userMeta = await UserMeta.findOneAsync({ ownerUserId: post.authorId });
                         return {
                             ...post,
+                            commentCount: typeof post.commentCount === 'number' ? post.commentCount : 0,
                             author: {
                                 userName: userMeta?.userName || 'Unknown User',
                                 avatarUrl: userMeta?.avatarUrl || null,
                                 coverUrl: userMeta?.coverUrl || null,
                             },
-                            images: post.images || [], // Include images array
-                            attachments: post.attachments || null, // Include attachments
+                            images: post.images || [],
+                            attachments: post.attachments || null,
                         };
                     })
                 );
@@ -198,6 +200,7 @@ export default class TimelineBuild {
                     const authorMeta = targetMeta; // same user
                     return {
                         ...post,
+                        commentCount: typeof post.commentCount === 'number' ? post.commentCount : 0,
                         author: {
                             userName: authorMeta?.userName || 'Unknown User',
                             avatarUrl: authorMeta?.avatarUrl || null,

@@ -32,8 +32,8 @@ WebApp.connectHandlers.use('/api/comments', async (req, res) => {
 
       await Comments.insertAsync(newComment);
 
-      // Update the post's comment count
-      await Posts.updateAsync({ _id: postId }, { $inc: { comment_count: 1 } });
+  // Update the post's comment count (use canonical field commentCount)
+  await Posts.updateAsync({ _id: postId }, { $inc: { commentCount: 1 } });
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, comment: newComment }));

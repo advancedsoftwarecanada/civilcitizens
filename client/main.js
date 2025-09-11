@@ -402,23 +402,38 @@ Template.registerHelper('niceName', function (text) {
   return text.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 });
 
-// Time Ago helper
+// Time Ago helper with appended long date (e.g., "2h ago - September 10th 2025")
 Template.registerHelper('timeAgo', function (timestamp) {
   if (!timestamp) return '';
 
   const now = Date.now();
   const time = typeof timestamp === 'number' ? timestamp : new Date(timestamp).getTime();
+  if (isNaN(time)) return '';
   const diff = now - time;
 
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
 
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
+  function ordinal(n){
+    const s=['th','st','nd','rd'];
+    const v=n%100;
+    return n+(s[(v-20)%10]||s[v]||s[0]);
+  }
+  const dateObj = new Date(time);
+  const month = dateObj.toLocaleString(undefined,{month:'long'});
+  const day = ordinal(dateObj.getDate());
+  const year = dateObj.getFullYear();
+  const longDate = `${month} ${day} ${year}`;
 
-  // For older posts, show the actual date
-  return new Date(time).toLocaleDateString();
+  let rel;
+  if (minutes < 1) rel = 'Just now';
+  else if (minutes < 60) rel = `${minutes} minute${minutes===1?'':'s'} ago`;
+  else if (hours < 24) rel = `${hours} hour${hours===1?'':'s'} ago`;
+  else if (days < 7) rel = `${days} day${days===1?'':'s'} ago`;
+  else {
+    // Older than a week: show date without relative prefix
+    return longDate;
+  }
+  return `${rel} - ${longDate}`;
 });

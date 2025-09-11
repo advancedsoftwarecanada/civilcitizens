@@ -71,6 +71,26 @@ Template.post.helpers({
   post() {
     return Template.instance().post.get();
   },
+  displayCommentCount() {
+    const post = Template.instance().post.get();
+    if (!post) return 0;
+    if (typeof post.commentCount === 'number') return post.commentCount;
+    if (typeof post.comment_count === 'number') return post.comment_count; // legacy fallback
+    return 0;
+  },
+  currentUserAvatar() {
+    // Prefer userManager meta if available
+    try {
+      if (window.userManager) {
+        const meta = window.userManager.getData().meta || {};
+        if (meta.avatarUrl) return meta.avatarUrl;
+      }
+    } catch(e) {}
+    const user = Meteor.user && Meteor.user();
+    if (user && user.profile && user.profile.avatarUrl) return user.profile.avatarUrl;
+    // Fallback placeholder
+    return '/assets/theme/profile/avatar-1.png';
+  },
   isAd(post) {
     return post.ad === true;
   },
@@ -164,6 +184,14 @@ Template.post.events({
           },
         };
         post.comments.unshift(newComment);
+        if (typeof post.commentCount === 'number') {
+          post.commentCount += 1;
+        } else if (typeof post.comment_count === 'number') {
+          // Legacy field sync if present
+          post.comment_count += 1;
+        } else {
+          post.commentCount = post.comments.length;
+        }
         instance.post.set(post);
       }
     });
