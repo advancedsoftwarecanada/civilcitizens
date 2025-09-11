@@ -1,3 +1,5 @@
+/* global Meteor FlowRouter toastr userManager BlazeLayout HTTP Template */
+
 FlowRouter.route('/post/', {
   name: "post",
   action(params) {
@@ -155,6 +157,7 @@ Template.post.events({
     const comment = commentInput.value.trim();
     const postId = instance.post.get()?._id;
     const userId = Meteor.userId();
+    // @ts-ignore
     const userMeta = userManager.getData().meta || {}; // `getData()` is reactive
 
     if (!comment) {
@@ -294,6 +297,12 @@ Template.post.events({
     event.currentTarget.textContent = 'Saving...';
 
   // Editing disabled
+  },
+  'keydown input[name="comment"]'(event, instance) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      $(event.target).closest('form').submit();
+    }
   }
 });
 
@@ -491,7 +500,7 @@ function showGalleryImage(index) {
 
   // Load new image
   const imgElement = mainImage;
-  imgElement.src = currentGalleryImages[index].url;
+  /** @type {HTMLImageElement} */ (imgElement).src = currentGalleryImages[index].url;
 
   imgElement.onload = () => {
     loading.style.display = 'none';

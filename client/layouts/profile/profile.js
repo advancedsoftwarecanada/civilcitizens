@@ -67,5 +67,26 @@ Template.profile.events({
     },
     'input #userName'(event) {
         event.target.value = event.target.value;
+    },
+    'click #btnLogout'(event) {
+        event.preventDefault();
+        const btn = event.currentTarget;
+        if (btn.dataset.loading === '1') return;
+        btn.dataset.loading = '1';
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = 'Logging out…';
+        btn.disabled = true;
+
+        Meteor.logout(err => {
+            if (err) {
+                console.error('Logout error:', err);
+                if (window.toastr) toastr.error('Logout failed, try again.');
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.dataset.loading = '0';
+                return;
+            }
+            FlowRouter.go('/');
+        });
     }
 });
