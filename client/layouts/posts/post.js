@@ -118,6 +118,11 @@ Template.post.helpers({
       return post.attachments;
     }
     return null;
+  },
+
+  isAuthor(post) {
+    const currentUserId = Meteor.userId();
+    return currentUserId && post.authorId === currentUserId;
   }
 
 });
@@ -208,6 +213,102 @@ Template.post.events({
         console.log('Closing modal (ESC key)');
       }
     }
+  },
+
+  'click .edit-post-btn'(event, instance) {
+    event.preventDefault();
+    const postId = event.currentTarget.dataset.postId;
+    const post = instance.post.get();
+
+    if (!post || post._id !== postId) return;
+    // Redirect to unified submit/edit page with query param
+    if (window.FlowRouter) {
+      window.FlowRouter.go('/submit?id=' + postId);
+    }
+  },
+
+  'click .delete-post-btn'(event, instance) {
+    event.preventDefault();
+    const postId = event.currentTarget.dataset.postId;
+    const post = instance.post.get();
+
+    if (!post || post._id !== postId) return;
+
+    // Show confirmation dialog
+    if (confirm('Are you sure you want to delete this post? This action cannot be undone.')) {
+      Meteor.call('posts.delete', postId, (error, result) => {
+        if (error) {
+          console.error('Error deleting post:', error);
+          if (window.toastr) window.toastr.error('Failed to delete post.', 'Error');
+        } else {
+          if (window.toastr) window.toastr.success('Post deleted.', 'Success');
+          // Redirect to home
+          if (window.FlowRouter) window.FlowRouter.go('/');
+        }
+      });
+    }
+  },
+
+  'click #saveEditPostBtn'(event, instance) {
+    event.preventDefault();
+    const form = document.getElementById('editPostForm');
+    const postId = form ? form.dataset.postId : null;
+    const titleInput = document.getElementById('editPostTitle');
+    const bodyInput = document.getElementById('editPostBody');
+
+    const title = titleInput ? titleInput.value.trim() : '';
+    const body = bodyInput ? bodyInput.value.trim() : '';
+
+    if (!body) {
+      if (window.toastr) window.toastr.error('Post content cannot be empty.', 'Validation Error');
+      return;
+    }
+
+    // Disable button during save
+    event.currentTarget.disabled = true;
+    event.currentTarget.textContent = 'Saving...';
+
+    Meteor.call('posts.update', postId, {
+      title: title || null,
+      body: body
+    }, (error, result) => {
+      event.currentTarget.disabled = false;
+      event.currentTarget.textContent = 'Save Changes';
+
+      if (error) {
+        console.error('Error updating post:', error);
+        if (window.toastr) window.toastr.error('Failed to update post.', 'Error');
+      } else {
+        if (window.toastr) window.toastr.success('Post updated successfully.', 'Success');
+
+        // Close modal
+        const modalElement = document.getElementById('editPostModal');
+        if (modalElement && window.bootstrap) {
+          const modal = window.bootstrap.Modal.getInstance(modalElement);
+          if (modal) modal.hide();
+        }
+
+        // Refresh the post data
+        if (window.FlowRouter && instance && instance.post) {
+          // If title was updated, the SEO URL might have changed, so redirect
+          const currentPost = instance.post.get();
+          const newSeoUrl = result && result.seoUrl ? result.seoUrl : currentPost.seoUrl;
+          if (newSeoUrl !== currentPost.seoUrl) {
+            window.FlowRouter.go('/post/' + newSeoUrl);
+          } else {
+            // Just refresh the data
+            const seoUrl = window.FlowRouter.getParam('seo_url');
+            if (window.HTTP && window.Meteor && window.Meteor.settings) {
+              window.HTTP.get(window.Meteor.settings.public.ROOT_URL + `/api/post?seo_url=${seoUrl}`, (error, response) => {
+                if (!error && response.data && instance.post) {
+                  instance.post.set(response.data);
+                }
+              });
+            }
+          }
+        }
+      }
+    });
   }
 });
 

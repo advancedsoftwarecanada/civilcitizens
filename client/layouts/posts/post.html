@@ -29,7 +29,16 @@
                 </div>
               </div>
               {{#unless isAd this}}
-
+                {{#if isAuthor this}}
+                  <div class="post-actions d-flex gap-2">
+                    <button class="btn btn-outline-secondary btn-sm edit-post-btn" data-post-id="{{_id}}">
+                      <i class="material-symbols-outlined">edit</i> Edit
+                    </button>
+                    <button class="btn btn-outline-danger btn-sm delete-post-btn" data-post-id="{{_id}}">
+                      <i class="material-symbols-outlined">delete</i> Delete
+                    </button>
+                  </div>
+                {{/if}}
               {{/unless}}
             </div>
             <div class="py-4 post-content">
@@ -195,5 +204,33 @@
 
       </div>
     {{/with}}
+
+    <!-- Edit Post Modal -->
+    <div class="modal fade" id="editPostModal" tabindex="-1" aria-labelledby="editPostModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="editPostModalLabel">Edit Post</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <form id="editPostForm">
+              <div class="mb-3">
+                <label for="editPostTitle" class="form-label">Title (optional)</label>
+                <input type="text" class="form-control" id="editPostTitle" placeholder="Enter post title">
+              </div>
+              <div class="mb-3">
+                <label for="editPostBody" class="form-label">Content</label>
+                <textarea class="form-control" id="editPostBody" rows="6" placeholder="Write your post content here..."></textarea>
+              </div>
+            </form>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-primary" id="saveEditPostBtn">Save Changes</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
