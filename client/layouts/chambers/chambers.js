@@ -233,7 +233,29 @@ Template.chambers.events({
                 $btn.prop('disabled', false);
             }
         }, (err)=>{
-            $status.text(err && err.code===1 ? 'Permission denied' : 'Location failed');
+            if (err && err.code === 1) {
+                // Permission denied
+                if (navigator.permissions && navigator.permissions.query) {
+                    navigator.permissions.query({name: 'geolocation'}).then(result => {
+                        if (result.state === 'denied') {
+                            $status.html('Permission denied. <a href="#" id="geoHelpLink">How to enable?</a>');
+                            $('#geoHelpLink').on('click', e => {
+                                e.preventDefault();
+                                // @ts-ignore
+                                toastr.info('Go to browser settings > Site permissions > Location > Allow', 'Enable Location', {timeOut: 10000});
+                            });
+                        } else {
+                            $status.text('Permission denied');
+                        }
+                    }).catch(() => {
+                        $status.text('Permission denied');
+                    });
+                } else {
+                    $status.text('Permission denied');
+                }
+            } else {
+                $status.text('Location failed');
+            }
             hideOverlay();
             $btn.prop('disabled', false);
         }, { enableHighAccuracy:false, timeout:10000, maximumAge:600000 });
