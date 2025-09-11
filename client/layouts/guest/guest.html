@@ -114,8 +114,60 @@
       </div>
     </section>
 
-    <!-- CTA -->
-    <section class="cta-section text-dark py-5">
+    <!-- Local Marketplace -->
+    <section id="marketplace" class="py-5 bg-white">
+      <div class="container">
+        <div class="text-center mb-5">
+          <h2 class="display-6 fw-bold text-dark">Local Marketplace</h2>
+          <p class="lead text-muted">Shop your Chamber—keep money in the riding. No dropshipping. No big-box ads.</p>
+        </div>
+
+        <div class="market-grid">
+          <!-- Shop Local Businesses -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-store fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">Shop Local Businesses</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>Verified businesses inside your EDA</li>
+                <li><i class="fas fa-check text-success me-2"></i>Pickup or local delivery only</li>
+                <li><i class="fas fa-check text-success me-2"></i>Keep dollars circulating locally</li>
+              </ul>
+              <div class="text-center mt-4">
+                <button class="btn btn-outline-primary-cc btn-lg" data-bs-toggle="modal" data-bs-target="#loginModal">Browse Marketplace</button>
+              </div>
+            </div>
+          </article>
+
+          <!-- Buy & Sell Used Goods -->
+          <article class="benefit-card card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="text-center mb-3"><i class="fas fa-handshake fa-3x text-primary-cc"></i></div>
+              <h3 class="h5 fw-bold text-center">Buy &amp; Sell with Neighbours</h3>
+              <ul class="list-unstyled">
+                <li><i class="fas fa-check text-success me-2"></i>In-app chat, meet up locally</li>
+                <li><i class="fas fa-check text-success me-2"></i>Anti-dropship checks, real photos</li>
+                <li><i class="fas fa-check text-success me-2"></i>Safety tips &amp; easy reporting</li>
+              </ul>
+              <div class="text-center mt-4">
+                <button class="btn btn-outline-primary-cc btn-lg" data-bs-toggle="modal" data-bs-target="#loginModal">List an Item</button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <p class="text-center text-muted small mt-4 mb-0">
+          <i class="fas fa-shield-alt me-1"></i>
+          Local-only policy: no dropshipping, no big-box store ads, pickup/delivery within your EDA.
+        </p>
+      </div>
+    </section>
+
+
+  </div>
+
+      <!-- CTA -->
+    <section class="cta-section text-dark py-5 mt-4">
       <div class="container text-center">
         <h2 class="display-6 fw-bold mb-3">Start Building Your Chamber of Citizens</h2>
         <p class="lead mb-4">Stay informed. Solve problems together. Keep politics civil.</p>
@@ -125,7 +177,6 @@
         </div>
       </div>
     </section>
-  </div>
 
   <style>
     .btn-primary-cc{ background:#D52B1E; border-color:#D52B1E; color:#fff; }
@@ -136,17 +187,20 @@
 
     .hero-section{ background:#FFFFFF; min-height:68vh; display:flex; align-items:center; }
     .benefit-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
+    .market-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
     .benefit-card{ transition:transform .3s ease, box-shadow .3s ease; background:rgba(255,255,255,.95); backdrop-filter:blur(10px); }
     .benefit-card:hover{ transform:translateY(-5px); box-shadow:0 10px 25px rgba(0,0,0,.15)!important; }
 
     @media (max-width: 767px){
       .benefit-grid{ grid-template-columns:1fr!important; }
+      .market-grid{ grid-template-columns:1fr!important; }
       #guestLogo{ max-width:220px!important; margin-bottom:1rem; padding:20px; }
     }
 
     /* 3 columns on lg+ for 6 cards */
     @media (min-width: 992px){
       .benefit-grid{ grid-template-columns: repeat(3, 1fr); }
+      .market-grid{ grid-template-columns: repeat(2, 1fr); } /* keep marketplace at 2-up on desktop */
     }
 
     .main-content{ padding:0!important; }
