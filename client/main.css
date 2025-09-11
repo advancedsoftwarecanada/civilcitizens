@@ -145,3 +145,57 @@ table {
   color: #333;
   line-height: 1.6;
 }
+
+/* Fancy Delete Button */
+.fancy-delete-btn {
+  background: linear-gradient(135deg, #ff4d4f 0%, #d9363e 100%);
+  color: #fff !important;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 24px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 0.25s ease, transform 0.15s ease, box-shadow 0.25s ease;
+}
+
+.fancy-delete-btn .icon-wrapper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+}
+
+.fancy-delete-btn:hover {
+  background: linear-gradient(135deg, #ff5f61 0%, #e0464e 100%);
+  box-shadow: 0 4px 10px rgba(217,54,62,0.4);
+  transform: translateY(-2px);
+}
+
+.fancy-delete-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.fancy-delete-btn .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.fancy-delete-btn .label {
+  letter-spacing: 0.5px;
+}
+
+.fancy-delete-btn:focus {
+  outline: 2px solid rgba(255,255,255,0.5);
+  outline-offset: 2px;
+}

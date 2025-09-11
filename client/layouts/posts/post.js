@@ -221,10 +221,7 @@ Template.post.events({
     const post = instance.post.get();
 
     if (!post || post._id !== postId) return;
-    // Redirect to unified submit/edit page with query param
-    if (window.FlowRouter) {
-      window.FlowRouter.go('/submit?id=' + postId);
-    }
+  // Editing disabled for now
   },
 
   'click .delete-post-btn'(event, instance) {
@@ -268,47 +265,7 @@ Template.post.events({
     event.currentTarget.disabled = true;
     event.currentTarget.textContent = 'Saving...';
 
-    Meteor.call('posts.update', postId, {
-      title: title || null,
-      body: body
-    }, (error, result) => {
-      event.currentTarget.disabled = false;
-      event.currentTarget.textContent = 'Save Changes';
-
-      if (error) {
-        console.error('Error updating post:', error);
-        if (window.toastr) window.toastr.error('Failed to update post.', 'Error');
-      } else {
-        if (window.toastr) window.toastr.success('Post updated successfully.', 'Success');
-
-        // Close modal
-        const modalElement = document.getElementById('editPostModal');
-        if (modalElement && window.bootstrap) {
-          const modal = window.bootstrap.Modal.getInstance(modalElement);
-          if (modal) modal.hide();
-        }
-
-        // Refresh the post data
-        if (window.FlowRouter && instance && instance.post) {
-          // If title was updated, the SEO URL might have changed, so redirect
-          const currentPost = instance.post.get();
-          const newSeoUrl = result && result.seoUrl ? result.seoUrl : currentPost.seoUrl;
-          if (newSeoUrl !== currentPost.seoUrl) {
-            window.FlowRouter.go('/post/' + newSeoUrl);
-          } else {
-            // Just refresh the data
-            const seoUrl = window.FlowRouter.getParam('seo_url');
-            if (window.HTTP && window.Meteor && window.Meteor.settings) {
-              window.HTTP.get(window.Meteor.settings.public.ROOT_URL + `/api/post?seo_url=${seoUrl}`, (error, response) => {
-                if (!error && response.data && instance.post) {
-                  instance.post.set(response.data);
-                }
-              });
-            }
-          }
-        }
-      }
-    });
+  // Editing disabled
   }
 });
 
