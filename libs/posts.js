@@ -143,8 +143,8 @@ if (Meteor.isServer) {
       }
     },
 
-    // Delete a post (only by the author or admin)
-    'posts.delete': async function (postId) {
+  // Delete a post (only by the author; optional admin override if Roles available)
+  'posts.delete': async function (postId) {
       check(postId, String);
 
       if (!this.userId) {
@@ -155,13 +155,18 @@ if (Meteor.isServer) {
       if (!post) {
         throw new Meteor.Error('not-found', 'Post not found.');
       }
-
-      if (post.author !== this.userId && !Roles.userIsInRole(this.userId, 'admin')) {
+      // Ownership consistency: posts store authorId (not author) elsewhere; fall back to post.author for legacy data
+      const ownerId = post.authorId || post.author;
+      let isAdmin = false;
+      if (typeof Roles !== 'undefined' && Roles && Roles.userIsInRole) {
+        try { isAdmin = !!Roles.userIsInRole(this.userId, 'admin'); } catch(e) { isAdmin = false; }
+      }
+      if (ownerId !== this.userId && !isAdmin) {
         throw new Meteor.Error('not-authorized', 'You can only delete your own posts.');
       }
 
       try {
-        await Posts.removeAsync({ _id: postId });
+  await Posts.removeAsync({ _id: postId });
         console.log('Post deleted successfully:', postId);
         return { status: 'success', message: 'Post deleted successfully.' };
       } catch (error) {
@@ -187,6 +192,20 @@ if (Meteor.isServer) {
       if (post.authorId !== this.userId) {
         throw new Meteor.Error('not-authorized', 'You can only update your own posts.');
       }
+
+      // If title is being updated, regenerate SEO URL
+      if (updateData.title !== undefined) {
+        let seoUrl;
+        if (updateData.title && updateData.title.trim()) {
+          seoUrl = `${updateData.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
+        } else {
+          seoUrl = `post-${Date.now()}`;
+        }
+        updateData.seoUrl = seoUrl;
+      }
+
+      // Add last modified timestamp
+      updateData.lastModifiedAt = new Date().getTime();
 
       try {
         await Posts.updateAsync({ _id: postId }, { $set: updateData });

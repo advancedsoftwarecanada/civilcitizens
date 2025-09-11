@@ -36,16 +36,39 @@ Meteor.methods({
   const shpUrl = shpUrlToUse;
   console.log(`ADMIN: Downloading SHP file from: ${shpUrl}`);
 
-      const response = await fetch(shpUrl);
-      if (!response.ok) {
-        throw new Meteor.Error('download-failed', `Failed to download SHP: ${response.status}`);
+      let response;
+      try {
+        response = await fetch(shpUrl);
+      } catch (netErr) {
+        console.error('ADMIN: Network fetch failed for SHP URL:', shpUrl, netErr);
+        throw new Meteor.Error('download-failed', `Network error downloading SHP: ${netErr.message}`);
+      }
+      if (!response || !response.ok) {
+        console.error('ADMIN: Non-OK HTTP response fetching SHP:', response && response.status, response && response.statusText);
+        throw new Meteor.Error('download-failed', `Failed to download SHP: ${response && response.status}`);
       }
 
-      const shpZipBuffer = await response.arrayBuffer();
+      let shpZipBuffer;
+      try {
+        shpZipBuffer = await response.arrayBuffer();
+      } catch (bufErr) {
+        console.error('ADMIN: Failed reading response body into buffer', bufErr);
+        throw new Meteor.Error('download-failed', 'Failed to read SHP ZIP response body');
+      }
       console.log(`ADMIN: Downloaded ${shpZipBuffer.byteLength} bytes of SHP ZIP data`);
 
       // Unzip the SHP files using unzipper
-      const unzipper = await import('unzipper');
+      let unzipper;
+      try {
+        unzipper = await import('unzipper');
+      } catch (e) {
+        if (e && e.code === 'MODULE_NOT_FOUND') {
+          console.error('ADMIN: Missing dependency "unzipper". Ensure production ran meteor npm install after updating package.json.');
+        } else {
+          console.error('ADMIN: Failed dynamic import for unzipper:', e);
+        }
+        throw new Meteor.Error('module-missing', 'Dependency unzipper not available on server');
+      }
       const buffer = Buffer.from(shpZipBuffer);
       const directory = await unzipper.Open.buffer(buffer);
 
@@ -70,8 +93,24 @@ Meteor.methods({
       }
 
       // Parse shapefile to GeoJSON
-      const { read } = await import('shapefile');
-      const geoJson = await read(shpBuffer, dbfBuffer);
+      let read;
+      try {
+        ({ read } = await import('shapefile'));
+      } catch (e) {
+        if (e && e.code === 'MODULE_NOT_FOUND') {
+          console.error('ADMIN: Missing dependency "shapefile". Run meteor npm install.');
+          throw new Meteor.Error('module-missing', 'Dependency shapefile not available on server');
+        }
+        console.error('ADMIN: Failed dynamic import for shapefile:', e);
+        throw new Meteor.Error('module-missing', 'Failed importing shapefile module');
+      }
+      let geoJson;
+      try {
+        geoJson = await read(shpBuffer, dbfBuffer);
+      } catch(parseErr) {
+        console.error('ADMIN: Shapefile parse error:', parseErr);
+        throw new Meteor.Error('parse-failed', 'Failed parsing shapefile to GeoJSON');
+      }
 
       console.log(`ADMIN: Parsed ${geoJson.features.length} features from SHP`);
       console.log('First feature properties:', geoJson.features[0].properties);
@@ -84,11 +123,25 @@ Meteor.methods({
       }
 
       // ---------------- Option C Processing (Precompute) ----------------
-      const proj4 = await import('proj4');
+      let proj4;
+      try {
+        proj4 = await import('proj4');
+      } catch (e) {
+        if (e && e.code === 'MODULE_NOT_FOUND') {
+          console.error('ADMIN: Missing dependency "proj4". Run meteor npm install.');
+        } else {
+          console.error('ADMIN: Failed dynamic import for proj4:', e);
+        }
+        // Continue without projection if missing
+      }
       let converter = null;
       try {
         if (prjString) {
-          converter = proj4.default(prjString, 'EPSG:4326');
+          if (proj4 && proj4.default) {
+            converter = proj4.default(prjString, 'EPSG:4326');
+          } else {
+            console.warn('Projection library not available; proceeding without reprojection');
+          }
         }
       } catch (e) {
         console.warn('Projection init failed, geometries will remain unconverted (geofencing may fail):', e.message);
@@ -188,7 +241,12 @@ Meteor.methods({
       return global.EC_GEO_CACHE;
 
     } catch (error) {
-      console.error('Error downloading EC geospatial data:', error);
+      // Preserve earlier Meteor.Errors to aid client handling
+      if (error instanceof Meteor.Error) {
+        console.error('Error (Meteor.Error) in EC geospatial pipeline:', error.error, error.reason);
+        throw error;
+      }
+      console.error('Unhandled error downloading EC geospatial data:', error && error.message, error);
       throw new Meteor.Error('download-failed', 'Failed to download Elections Canada geospatial data');
     }
   },

@@ -71,6 +71,26 @@ Template.post.helpers({
   post() {
     return Template.instance().post.get();
   },
+  displayCommentCount() {
+    const post = Template.instance().post.get();
+    if (!post) return 0;
+    if (typeof post.commentCount === 'number') return post.commentCount;
+    if (typeof post.comment_count === 'number') return post.comment_count; // legacy fallback
+    return 0;
+  },
+  currentUserAvatar() {
+    // Prefer userManager meta if available
+    try {
+      if (window.userManager) {
+        const meta = window.userManager.getData().meta || {};
+        if (meta.avatarUrl) return meta.avatarUrl;
+      }
+    } catch(e) {}
+    const user = Meteor.user && Meteor.user();
+    if (user && user.profile && user.profile.avatarUrl) return user.profile.avatarUrl;
+    // Fallback placeholder
+    return '/assets/theme/profile/avatar-1.png';
+  },
   isAd(post) {
     return post.ad === true;
   },
@@ -118,6 +138,11 @@ Template.post.helpers({
       return post.attachments;
     }
     return null;
+  },
+
+  isAuthor(post) {
+    const currentUserId = Meteor.userId();
+    return currentUserId && post.authorId === currentUserId;
   }
 
 });
@@ -159,6 +184,14 @@ Template.post.events({
           },
         };
         post.comments.unshift(newComment);
+        if (typeof post.commentCount === 'number') {
+          post.commentCount += 1;
+        } else if (typeof post.comment_count === 'number') {
+          // Legacy field sync if present
+          post.comment_count += 1;
+        } else {
+          post.commentCount = post.comments.length;
+        }
         instance.post.set(post);
       }
     });
@@ -208,6 +241,59 @@ Template.post.events({
         console.log('Closing modal (ESC key)');
       }
     }
+  },
+
+  'click .edit-post-btn'(event, instance) {
+    event.preventDefault();
+    const postId = event.currentTarget.dataset.postId;
+    const post = instance.post.get();
+
+    if (!post || post._id !== postId) return;
+  // Editing disabled for now
+  },
+
+  'click .delete-post-btn'(event, instance) {
+    event.preventDefault();
+    const postId = event.currentTarget.dataset.postId;
+    const post = instance.post.get();
+
+    if (!post || post._id !== postId) return;
+
+    // Show confirmation dialog
+    if (confirm('Are you sure you want to delete this post? This action cannot be undone.')) {
+      Meteor.call('posts.delete', postId, (error, result) => {
+        if (error) {
+          console.error('Error deleting post:', error);
+          if (window.toastr) window.toastr.error('Failed to delete post.', 'Error');
+        } else {
+          if (window.toastr) window.toastr.success('Post deleted.', 'Success');
+          // Redirect to home
+          if (window.FlowRouter) window.FlowRouter.go('/');
+        }
+      });
+    }
+  },
+
+  'click #saveEditPostBtn'(event, instance) {
+    event.preventDefault();
+    const form = document.getElementById('editPostForm');
+    const postId = form ? form.dataset.postId : null;
+    const titleInput = document.getElementById('editPostTitle');
+    const bodyInput = document.getElementById('editPostBody');
+
+    const title = titleInput ? titleInput.value.trim() : '';
+    const body = bodyInput ? bodyInput.value.trim() : '';
+
+    if (!body) {
+      if (window.toastr) window.toastr.error('Post content cannot be empty.', 'Validation Error');
+      return;
+    }
+
+    // Disable button during save
+    event.currentTarget.disabled = true;
+    event.currentTarget.textContent = 'Saving...';
+
+  // Editing disabled
   }
 });
 
