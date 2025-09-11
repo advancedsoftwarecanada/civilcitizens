@@ -182,7 +182,9 @@
               <div class="single-comment-area mb-2">
                 <div class="parent-comment d-flex gap-2 gap-sm-4">
                   <div class="avatar-item d-center align-items-baseline">
-                    <img class="avatar-img avatar-size" src="{{author.avatarUrl}}" alt="avatar">
+                    <a href="/u/{{author.userName}}" class="comment-avatar-link" title="View @{{author.userName}}'s profile">
+                      <img class="avatar-img avatar-size" src="{{author.avatarUrl}}" alt="@{{author.userName}} avatar">
+                    </a>
                   </div>
                   <div class="info-item">
                     <div class="top-area px-4 py-3 d-flex gap-3 align-items-start justify-content-between">
