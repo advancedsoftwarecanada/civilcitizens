@@ -11,9 +11,10 @@
           <div class="col-lg-6 text-center text-lg-start">
             <h1 class="display-5 fw-bold mb-3">Chambers of Citizens</h1>
             <p class="lead mb-4">
-              Every Canadian lives in an <strong>Electoral District Association (EDA)</strong>. Civil turns that into value: a place to
-              <strong>stay up to date on EDA news</strong>, see what your MP said today in plain English, and work with neighbours and local
-              businesses to get things done — one Chamber for real conversations and real impact.
+              Every Canadian lives in an <strong>Electoral District Association (EDA)</strong>.
+              <br/><br/>Civil turns that fact into action by
+              forming a <strong>Chamber of Citizens</strong> for your riding — a real local forum where <strong>citizens, MPs, city
+              councils, and local businesses</strong> talk openly and get things done, grounded by @Civil AI’s plain-English, cited facts.
             </p>
             <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center justify-content-lg-start">
               <button class="btn btn-lg btn-primary-cc" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
@@ -114,6 +115,89 @@
       </div>
     </section>
 
+    <!-- NEW: Three Pillars (Hansard, Hiring AI, Verification) -->
+    <section id="pillars" class="py-5" style="background: linear-gradient(180deg,#FFFFFF 0%, #F8FAFC 60%, #FFFFFF 100%);">
+      <div class="container">
+        <div class="text-center mb-5">
+          <h2 class="display-6 fw-bold text-dark">Daily Debates, Local Hiring, Real Verification</h2>
+          <p class="lead text-muted">The core of a civilized network — clear information, real opportunities, and real people.</p>
+        </div>
+
+        <div class="row g-4">
+          <!-- Hansard Summaries -->
+          <div class="col-md-6 col-xl-4">
+            <article class="benefit-card card h-100 border-0 shadow-sm">
+              <div class="card-body">
+                <div class="d-flex align-items-center gap-3 mb-3">
+                  <div class="cc-icon-box">H</div>
+                  <div>
+                    <h3 class="h5 fw-bold mb-0">Plain-English MP Debates</h3>
+                    <span class="badge rounded-pill cc-badge">Hansard → daily summaries</span>
+                  </div>
+                </div>
+                <p class="text-muted mb-3">We split the official record by MP and riding. Each Chamber gets clear bullets with links.</p>
+                <ul class="list-unstyled mb-0">
+                  <li><i class="fas fa-check text-success me-2"></i>Title: <em>Debate: MP — Date — Riding</em></li>
+                  <li><i class="fas fa-check text-success me-2"></i>3–5 bullets + bill references</li>
+                  <li><i class="fas fa-check text-success me-2"></i>Link to the original transcript</li>
+                </ul>
+              </div>
+            </article>
+          </div>
+
+          <!-- Civil AI Hiring -->
+          <div class="col-md-6 col-xl-4">
+            <article class="benefit-card card h-100 border-0 shadow-sm">
+              <div class="card-body">
+                <div class="d-flex align-items-center gap-3 mb-3">
+                  <div class="cc-icon-box">AI</div>
+                  <div>
+                    <h3 class="h5 fw-bold mb-0">Civil AI — Local Hiring</h3>
+                    <span class="badge rounded-pill cc-badge">Automatic matching</span>
+                  </div>
+                </div>
+                <p class="text-muted mb-3">Post a job and Civil AI finds, ranks, and surfaces the top local candidates — even if they never “apply.”</p>
+                <ul class="list-unstyled">
+                  <li><i class="fas fa-check text-success me-2"></i>No inbox flood — ranked shortlists only</li>
+                  <li><i class="fas fa-check text-success me-2"></i>Real-time matching across verified profiles</li>
+                  <li><i class="fas fa-check text-success me-2"></i>One-click invite to interview</li>
+                  <li><i class="fas fa-circle text-secondary me-2"></i><small class="text-muted">Private by default; employers see relevant matches only</small></li>
+                </ul>
+                <div class="mt-3 d-flex gap-2">
+                  <button class="btn btn-primary-cc btn-sm" data-bs-toggle="modal" data-bs-target="#loginModal">Post a Job</button>
+                  <button class="btn btn-outline-primary-cc btn-sm" data-bs-toggle="modal" data-bs-target="#loginModal">Find Work</button>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <!-- Civil ID Verification -->
+          <div class="col-md-6 col-xl-4">
+            <article class="benefit-card card h-100 border-0 shadow-sm">
+              <div class="card-body">
+                <div class="d-flex align-items-center gap-3 mb-3">
+                  <div class="cc-icon-box">ID</div>
+                  <div>
+                    <h3 class="h5 fw-bold mb-0">Civil ID — Real People</h3>
+                    <span class="badge rounded-pill cc-badge">Trust &amp; safety</span>
+                  </div>
+                </div>
+                <p class="text-muted mb-3">A civilized network needs real people and real companies.</p>
+                <ul class="list-unstyled">
+                  <li><i class="fas fa-check text-success me-2"></i>Citizens: verify with government photo ID</li>
+                  <li><i class="fas fa-check text-success me-2"></i>Businesses: upload <em>Certificate of Incorporation</em> / registration</li>
+                  <li><i class="fas fa-check text-success me-2"></i>Verified badges across posts, marketplace, and hiring</li>
+                </ul>
+                <div class="mt-3">
+                  <button class="btn btn-outline-primary-cc btn-sm" data-bs-toggle="modal" data-bs-target="#loginModal">Start Verification</button>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Local Marketplace -->
     <section id="marketplace" class="py-5 bg-white">
       <div class="container">
@@ -163,49 +247,63 @@
       </div>
     </section>
 
-
   </div>
 
-      <!-- CTA -->
-    <section class="cta-section text-dark py-5 mt-4">
-      <div class="container text-center">
-        <h2 class="display-6 fw-bold mb-3">Start Building Your Chamber of Citizens</h2>
-        <p class="lead mb-4">Stay informed. Solve problems together. Keep politics civil.</p>
-        <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center">
-          <button class="btn btn-lg btn-primary-cc" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
-          <button class="btn btn-lg btn-outline-primary-cc" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
-        </div>
+  <!-- CTA -->
+  <section class="cta-section text-dark py-5 mt-4">
+    <div class="container text-center">
+      <h2 class="display-6 fw-bold mb-3">Start Building Your Chamber of Citizens</h2>
+      <p class="lead mb-4">Stay informed. Solve problems together. Keep politics civil.</p>
+      <div class="d-flex flex-column flex-sm-row gap-3 justify-content-center">
+        <button class="btn btn-lg btn-primary-cc" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
+        <button class="btn btn-lg btn-outline-primary-cc" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
       </div>
-    </section>
+    </div>
+  </section>
 
   <style>
-    .btn-primary-cc{ background:#D52B1E; border-color:#D52B1E; color:#fff; }
-    .btn-primary-cc:hover, .btn-primary-cc:focus{ background:#b0261a; border-color:#b0261a; color:#fff; }
-    .btn-outline-primary-cc{ color:#D52B1E; border-color:#D52B1E; background:transparent; }
-    .btn-outline-primary-cc:hover, .btn-outline-primary-cc:focus{ background:#D52B1E; border-color:#D52B1E; color:#fff; }
-    .text-primary-cc{ color:#D52B1E!important; }
+    /* Unified palette (fixes “wonky” colors) */
+    :root{
+      --cc-primary:#D52B1E;      /* brand red */
+      --cc-primary-700:#b0261a;  /* hover/dark */
+      --cc-text:#0f172a;         /* slate-900 */
+      --cc-muted:#475569;        /* slate-600 */
+      --cc-border:#e2e8f0;       /* slate-200 */
+      --cc-surface:#f8fafc;
+      --cc-shadow:0 8px 24px rgba(2,6,23,.08);
+      --cc-shadow-lg:0 12px 32px rgba(2,6,23,.12);
+      --cc-radius:16px;
+    }
 
-    .hero-section{ background:#FFFFFF; min-height:68vh; display:flex; align-items:center; }
+    .btn-primary-cc{ background:var(--cc-primary); border-color:var(--cc-primary); color:#fff; }
+    .btn-primary-cc:hover, .btn-primary-cc:focus{ background:var(--cc-primary-700); border-color:var(--cc-primary-700); color:#fff; }
+    .btn-outline-primary-cc{ color:var(--cc-primary); border-color:var(--cc-primary); background:transparent; }
+    .btn-outline-primary-cc:hover, .btn-outline-primary-cc:focus{ background:var(--cc-primary); border-color:var(--cc-primary); color:#fff; }
+    .text-primary-cc{ color:var(--cc-primary)!important; }
+
+    .hero-section{ background:#FFFFFF; min-height:68vh; display:flex; align-items:center; color:var(--cc-text); }
     .benefit-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
     .market-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
-    .benefit-card{ transition:transform .3s ease, box-shadow .3s ease; background:rgba(255,255,255,.95); backdrop-filter:blur(10px); }
-    .benefit-card:hover{ transform:translateY(-5px); box-shadow:0 10px 25px rgba(0,0,0,.15)!important; }
+    .benefit-card{ transition:transform .2s ease, box-shadow .2s ease; background:#fff; border-radius:var(--cc-radius); box-shadow:var(--cc-shadow); border:1px solid var(--cc-border); }
+    .benefit-card:hover{ transform:translateY(-3px); box-shadow:var(--cc-shadow-lg)!important; }
+    .cc-icon-box{
+      width:44px;height:44px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;
+      background: rgba(213,43,30,.10); color:var(--cc-primary); font-weight:800;
+    }
+    .cc-badge{ background:rgba(14,165,233,.12); color:#0ea5e9; border:1px solid rgba(14,165,233,.35); }
 
     @media (max-width: 767px){
       .benefit-grid{ grid-template-columns:1fr!important; }
       .market-grid{ grid-template-columns:1fr!important; }
       #guestLogo{ max-width:220px!important; margin-bottom:1rem; padding:20px; }
     }
-
-    /* 3 columns on lg+ for 6 cards */
     @media (min-width: 992px){
       .benefit-grid{ grid-template-columns: repeat(3, 1fr); }
-      .market-grid{ grid-template-columns: repeat(2, 1fr); } /* keep marketplace at 2-up on desktop */
+      .market-grid{ grid-template-columns: repeat(2, 1fr); }
     }
 
     .main-content{ padding:0!important; }
-
-    li { margin-bottom: 20px; border-top: 1px solid #eee; padding-top: 10px; }
+    li { margin-bottom: 14px; }
   </style>
 
   <script>

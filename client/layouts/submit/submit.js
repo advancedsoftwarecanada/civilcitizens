@@ -400,7 +400,12 @@ Template.submit.events({
             } else {
               Session.set('draftPostId', null);
             }
-            FlowRouter.go('/'); // Redirect to home or another page after submission
+            // Redirect to the updated post page using seoUrl if available
+            if (result.seoUrl) {
+              FlowRouter.go('/post/' + result.seoUrl);
+            } else {
+              FlowRouter.go('/');
+            }
           } else {
             toastr.error(result.error || 'Error updating the post.', 'Submit Error');
           }
@@ -436,7 +441,17 @@ Template.submit.events({
             if (window.userManager) {
               window.userManager.ensureDraftPost();
             }
-            FlowRouter.go('/'); // Redirect to home or another page after submission
+            // Redirect to the new post page using seoUrl if available
+            if (result.seoUrl) {
+              FlowRouter.go('/post/' + result.seoUrl);
+            } else if (result.postId) {
+              // Fallback: fetch post to get seoUrl then redirect
+              HTTP.get(Meteor.settings.public.ROOT_URL + '/api/post', { params: { seo_url: '' } }, () => {
+                FlowRouter.go('/');
+              });
+            } else {
+              FlowRouter.go('/');
+            }
           } else {
             toastr.error(result.error || 'Error submitting the post.', 'Submit Error');
           }

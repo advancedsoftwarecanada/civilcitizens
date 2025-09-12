@@ -205,9 +205,9 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
       console.log('✅ Topic post inserted with ID:', postId);
     }
 
-    console.log('📤 Sending success response with postId:', postId);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'success', message: 'Post submitted successfully.', postId }));
+  console.log('📤 Sending success response with postId:', postId);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'success', message: 'Post submitted successfully.', postId, seoUrl }));
 
   } catch (error) {
     console.error('Error submitting post:', error);
@@ -262,10 +262,10 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
       return;
     }
 
-    await Posts.updateAsync({ _id: postId }, { $set: updateData });
+  await Posts.updateAsync({ _id: postId }, { $set: updateData });
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'success', message: 'Post updated successfully.' }));
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'success', message: 'Post updated successfully.', seoUrl: post.seoUrl }));
 
   } catch (error) {
     console.error('Error updating post:', error);
