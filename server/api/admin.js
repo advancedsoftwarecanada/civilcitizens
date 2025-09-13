@@ -105,6 +105,7 @@ WebApp.connectHandlers.use('/api/admin', async (req, res) => {
       onlyMissing: body.onlyMissing !== undefined ? !!body.onlyMissing : true,
       limit: Number.isFinite(body.limit) ? body.limit : 1000,
       delayMs: Number.isFinite(body.delayMs) ? body.delayMs : 500,
+      userId: authedUserId || null,
     };
 
     // Call the shared task directly; we've already authorized above

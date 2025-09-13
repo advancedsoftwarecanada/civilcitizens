@@ -706,9 +706,17 @@ if (Meteor.isServer) {
     // Expose under a global namespace to avoid import hassles in Meteor load order
     global.AdminChambers = global.AdminChambers || {};
     global.AdminChambers.scrapeMemberContactsTask = async function scrapeMemberContactsTask(options = {}) {
-        const { limit = 1000, onlyMissing = false, delayMs = 300 } = options || {};
+        const { limit = 1000, onlyMissing = false, delayMs = 300, userId = null } = options || {};
 
         const { JSDOM } = require('jsdom');
+    const fs = require('fs-extra');
+    const path = require('path');
+    const gm = require('gm');
+    const { Random } = require('meteor/random');
+        const filesPath = Meteor.settings.public.filesPath;
+        const cdnPath = Meteor.settings.public.cdnPath;
+        const disk = 'disk1';
+        const { ApiFiles } = require('/libs/apiFiles.js');
 
         function toSlug(str) {
             if (!str) return '';
@@ -773,9 +781,129 @@ if (Meteor.isServer) {
             return { websites, emails, phones };
         }
 
+        function extractOverview(html) {
+            const dom = new JSDOM(html);
+            const doc = dom.window.document;
+            const out = {};
+
+            try {
+                const container = doc.querySelector('[id^="mp-profile-person-id-"]') || doc.querySelector('.ce-mip-mp-profile-container') || doc;
+                // personId from container id
+                const idAttr = container && container.getAttribute('id');
+                if (idAttr) {
+                    const m = idAttr.match(/mp-profile-person-id-(\d+)/);
+                    if (m) out.personId = parseInt(m[1], 10);
+                }
+                // caucus
+                const caucEl = container.querySelector('.mip-mp-profile-caucus');
+                if (caucEl && caucEl.textContent) out.caucus = caucEl.textContent.trim();
+
+                // Map dt/dd pairs in the overview dl
+                const dts = Array.from(container.querySelectorAll('dt'));
+                for (const dt of dts) {
+                    const label = (dt.textContent || '').trim().toLowerCase();
+                    const dd = dt.nextElementSibling;
+                    const value = dd ? (dd.textContent || '').trim() : '';
+                    if (!value) continue;
+                    if (label.startsWith('preferred language')) out.preferredLanguage = value.replace(/\s+/g, ' ').trim();
+                    if (label.startsWith('province')) out.provinceFull = value.replace(/\s+/g, ' ').trim();
+                    if (label.startsWith('political affiliation') && !out.caucus) out.caucus = value;
+                    if (label.startsWith('constituency')) {
+                        const a = dd.querySelector('a[href]');
+                        if (a) {
+                            out.constituencyName = (a.textContent || '').trim();
+                            const href = a.getAttribute('href') || '';
+                            const m2 = href.match(/\((\d+)\)/); // e.g., /Members/en/constituencies/essex(1080)
+                            if (m2) out.constituencyId = parseInt(m2[1], 10);
+                        } else {
+                            out.constituencyName = value;
+                        }
+                    }
+                }
+
+                // photo
+                const img = container.querySelector('img.ce-mip-mp-picture');
+                if (img) {
+                    const src = img.getAttribute('src') || '';
+                    if (src) out.photoUrl = src.startsWith('http') ? src : `https://www.ourcommons.ca${src}`;
+                }
+            } catch (_) {}
+            return out;
+        }
+
+        async function cachePhotoToCDN(photoUrl, meta = {}) {
+            if (!photoUrl) return null;
+            try {
+                const resp = await fetch(photoUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CivilCitizensBot/1.0)' } });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const buf = Buffer.from(await resp.arrayBuffer());
+                const ct = resp.headers.get('content-type') || '';
+                let extGuess = 'jpg';
+                if (/image\/png/i.test(ct)) extGuess = 'png';
+                else if (/image\/webp/i.test(ct)) extGuess = 'webp';
+                else if (/image\/jpe?g/i.test(ct)) extGuess = 'jpg';
+                else {
+                    try {
+                        const u = new URL(photoUrl, 'https://www.ourcommons.ca');
+                        const extFromUrl = path.extname(u.pathname).replace('.', '').toLowerCase();
+                        if (['png','jpg','jpeg','webp'].includes(extFromUrl)) extGuess = extFromUrl === 'jpeg' ? 'jpg' : extFromUrl;
+                    } catch (_) {}
+                }
+                const id = Random.id();
+                const outPath = path.join(filesPath, 'uploads', disk, `${id}.${extGuess}`);
+                await fs.ensureDir(path.dirname(outPath));
+
+                // Basic optimization: write and then re-save via gm for consistency
+                await fs.writeFile(outPath, buf);
+                await new Promise((resolve, reject) => {
+                    gm(outPath).quality(80).autoOrient().noProfile().strip().resize(1500).interlace('Line').write(outPath, (err) => err ? reject(err) : resolve());
+                });
+
+                const fileUrl = `${cdnPath}/uploads/${disk}/${id}.${extGuess}`;
+                const safe = (s) => (s || '').toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+                const baseName = [safe(meta.firstName), safe(meta.lastName), meta.personId || 'mp', id].filter(Boolean).join('-');
+                const fileDoc = {
+                    _id: id,
+                    name: meta.name || `${baseName}.${extGuess}`,
+                    size: buf.length,
+                    type: resp.headers.get('content-type') || `image/${extGuess}`,
+                    ext: extGuess,
+                    userId: meta.userId || null,
+                    meta,
+                    createdAt: new Date(),
+                    url: fileUrl,
+                    filePath: `/uploads/${disk}/${id}.${extGuess}`,
+                    uploadedAt: new Date(),
+                    processing: false,
+                    disk,
+                    file_reference_id: id,
+                };
+                await ApiFiles.insertAsync(fileDoc);
+                return { id, url: fileUrl };
+            } catch (e) {
+                console.error('Cache photo failed:', e && (e.reason || e.message) || e);
+                return null;
+            }
+        }
+
         // Build query: iterate chambers with a currentMember having a personId
+        // When onlyMissing=true, include any record missing any of our target fields to backfill
         const query = onlyMissing
-            ? { 'currentMember.personId': { $exists: true }, $or: [ { 'currentMember.websites': { $exists: false } }, { 'currentMember.websites': { $size: 0 } } ] }
+            ? {
+                'currentMember.personId': { $exists: true },
+                $or: [
+                    { 'currentMember.websites': { $exists: false } },
+                    { 'currentMember.websites': { $size: 0 } },
+                    { 'currentMember.emails': { $exists: false } },
+                    { 'currentMember.phones': { $exists: false } },
+                    { 'currentMember.caucus': { $exists: false } },
+                    { 'currentMember.photoUrl': { $exists: false } },
+                    { 'currentMember.profileUrl': { $exists: false } },
+                    { 'currentMember.constituencyId': { $exists: false } },
+                    { 'currentMember.constituencyName': { $exists: false } },
+                    { 'currentMember.provinceFull': { $exists: false } },
+                ]
+            }
             : { 'currentMember.personId': { $exists: true } };
 
         const list = await Chambers.find(query, { fields: { currentMember: 1, province: 1, seoUrl: 1 } }).fetchAsync();
@@ -800,6 +928,7 @@ if (Meteor.isServer) {
             try {
                 const html = await fetchHtml(url);
                 const info = extractContacts(html);
+                const meta = extractOverview(html);
 
                 const setUpdate = {
                     'currentMember.source': 'parliament-xml+scrape',
@@ -808,6 +937,20 @@ if (Meteor.isServer) {
                 if (info.websites.length) setUpdate['currentMember.websites'] = info.websites;
                 if (info.emails.length) setUpdate['currentMember.emails'] = info.emails;
                 if (info.phones.length) setUpdate['currentMember.phones'] = info.phones;
+                if (meta.caucus) setUpdate['currentMember.caucus'] = meta.caucus;
+                if (meta.preferredLanguage) setUpdate['currentMember.preferredLanguage'] = meta.preferredLanguage;
+                if (meta.photoUrl) {
+                    setUpdate['currentMember.photoUrl'] = meta.photoUrl;
+                    // Cache to CDN and store cdn url
+                    const cached = await cachePhotoToCDN(meta.photoUrl, { type: 'memberPhoto', userId, personId: pid, firstName: first, lastName: last });
+                    if (cached && cached.url) setUpdate['currentMember.photoCdnUrl'] = cached.url;
+                }
+                if (meta.constituencyId) setUpdate['currentMember.constituencyId'] = meta.constituencyId;
+                if (meta.personId && !cm.personId) setUpdate['currentMember.personId'] = meta.personId;
+                if (meta.constituencyName) setUpdate['currentMember.constituencyName'] = meta.constituencyName;
+                if (meta.provinceFull) setUpdate['currentMember.provinceFull'] = meta.provinceFull;
+                // Always persist the profile URL used for scraping
+                setUpdate['currentMember.profileUrl'] = url.replace(/#contact$/, '');
 
                 if (Object.keys(setUpdate).length > 2) {
                     await Chambers.updateAsync({ _id: chamber._id }, { $set: setUpdate });
@@ -815,13 +958,16 @@ if (Meteor.isServer) {
                 }
 
                 if (examples.length < 5) {
-                    examples.push({ url, ...info });
+                    examples.push({ url, contacts: info, overview: meta });
                 }
             } catch (e) {
                 errors.push({ chamberId: chamber._id, url, reason: e.reason || e.message || String(e) });
             }
 
             await new Promise(r => setTimeout(r, delayMs));
+            if (processed % 25 === 0) {
+                try { console.log(`[Scrape] Progress processed=${processed} updated=${updated} errors=${errors.length}`); } catch (_) {}
+            }
         }
 
         return { success: true, processed, updated, errorsCount: errors.length, errors, examples };
