@@ -70,8 +70,8 @@ Template.submit.onRendered(function() {
     if (province && chamber) {
       $('#postChamber').append(`<option value="${province}/${chamber}">${province}/${chamber}</option>`);
       $('#postChamber').val(`${province}/${chamber}`);
-  // Default jurisdiction for chamber posts is federal for now
-  $('#postJurisdiction').val('federal');
+  // Default jurisdiction should be citizen (even when posting in a chamber)
+  $('#postJurisdiction').val('citizen');
     } else {
       $('#postChamber').val('self');
   // Default jurisdiction for self/topic is citizen
