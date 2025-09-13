@@ -22,6 +22,8 @@ export default class TimelineBuild {
         try {
 
             let enrichedPosts = [];
+            const sortParam = (options && options.sort) || 'latest';
+            const govParam = (options && options.gov) || 'federal';
 
             // If there is a user id
 
@@ -73,9 +75,10 @@ export default class TimelineBuild {
                 console.log("User home chamber:", userHomeChamber);
                 console.log("Followed chambers:", followedChamberIds);
 
-                // Fetch user's own posts (self posts - like blog posts, visible to all)
+                // Fetch user's own posts (self posts)
+                const mySelfQuery = { authorId: userId, type: "self", draft: false };
                 const mySelfPosts = await Posts.find(
-                    { authorId: userId, type: "self", draft: false },
+                    mySelfQuery,
                     { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
                 ).fetch();
 
@@ -97,6 +100,13 @@ export default class TimelineBuild {
                 // Merge all posts and remove duplicates
                 const seenPosts = new Set();
                 let allPosts = [...mySelfPosts, ...homeChamberPosts, ...followedChamberPosts];
+                // Apply jurisdiction filter for HOME when requested
+                if (govParam && govParam !== 'all') {
+                    allPosts = allPosts.filter(p => {
+                        if (govParam === 'citizen') return p.jurisdiction === 'citizen' || p.type === 'self';
+                        return p.jurisdiction === govParam;
+                    });
+                }
 
                 let uniquePosts = allPosts
                     .filter(post => {
@@ -105,7 +115,15 @@ export default class TimelineBuild {
                         seenPosts.add(post._id);
                         return true;
                     })
-                    .sort((a, b) => b.createdAt - a.createdAt) // Sort by newest first
+                    .sort((a, b) => {
+                        if (sortParam === 'hot') {
+                            const as = (a.commentCount || 0) + (a.score || 0);
+                            const bs = (b.commentCount || 0) + (b.score || 0);
+                            if (bs !== as) return bs - as;
+                            return b.createdAt - a.createdAt;
+                        }
+                        return b.createdAt - a.createdAt;
+                    }) // Sort by selected mode
                     .slice(0, limit); // Ensure max limit posts
 
                 console.log(`Timeline built: ${uniquePosts.length} posts (${mySelfPosts.length} self, ${homeChamberPosts.length} home, ${followedChamberPosts.length} followed)`);
@@ -138,13 +156,29 @@ export default class TimelineBuild {
             if( buildType === "chamber" ) {
                 console.log(">>>>>> BUILDING CHAMBER NEWS FEED FOR:", searchProvince, "/", searchChamber, "<<<<<<<");
 
-                const posts = await Posts.find({
+                // Build base query
+                const query = {
                     province: searchProvince,
                     chamber: searchChamber,
                     type: 'chamber',
                     draft: false
-                }, {
-                    sort: { createdAt: -1 },
+                };
+                // Apply jurisdiction filter based on govParam
+                if (govParam === 'all') {
+                    // no-op, fetch all chamber posts
+                } else if (govParam === 'federal') {
+                    query.jurisdiction = 'federal';
+                } else if (govParam === 'provincial') {
+                    query.jurisdiction = 'provincial';
+                } else if (govParam === 'municipal') {
+                    query.jurisdiction = 'municipal';
+                } else if (govParam === 'citizen') {
+                    // Chamber view: currently citizen posts are not linked to a chamber collection; show none
+                    query._id = { $in: [] };
+                }
+
+                const posts = await Posts.find(query, {
+                    sort: sortParam === 'hot' ? { commentCount: -1, createdAt: -1 } : { createdAt: -1 },
                     skip: offset,
                     limit: limit
                 }).fetch();

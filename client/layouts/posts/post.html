@@ -15,15 +15,15 @@
                       @{{niceName author.userName}}
                     </a>
                   </h6>
-                  {{#if isAd this}}
+                    {{#if isAd this}}
                     <span class="mdtxt status">Sponsored Advertisement</span>
                   {{else}}
                     {{#if postType 'self'}}
-                      <span class="mdtxt status">Self</span>
+                      <span class="mdtxt status">{{jurisdictionLabel this}}</span>
                     {{else if postType 'chamber'}}
-                      <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong></span>
+                      <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong> • {{jurisdictionLabel this}}</span>
                     {{else}}
-                      <span class="mdtxt status">Topic</span>
+                      <span class="mdtxt status">{{jurisdictionLabel this}}</span>
                     {{/if}}
                     <span class="mdtxt time-ago">• {{timeAgo createdAt}}</span>
                   {{/if}}

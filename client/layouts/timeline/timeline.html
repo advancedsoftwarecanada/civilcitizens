@@ -24,7 +24,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div class="btn-item d-center gap-3">
+                            <div class="right-col d-flex flex-column align-items-end gap-3">
                               {{#if isHomeChamber}}
                                 <div class="cmn-btn d-center gap-1">
                                   ⭐ Home Chamber
@@ -42,26 +42,123 @@
                                   </div>
                                 {{/if}}
                               {{/if}}
-                              <a href="/submit/c/{{province}}/{{chamber}}" class="cmn-btn d-center gap-1">
-                                <i class="material-symbols-outlined mat-icon fs-4"> send </i>
-                                Create Post
-                              </a>
+                              
                             </div>
                         </div>
                         <div class="page-details">
-                            <ul class="nav mt-5 pt-4 flex-wrap gap-2 tab-area">
-                                <li class="nav-item" role="presentation">
-                                    <a href="/c/{{province}}/{{chamber}}" class="nav-link d-center active">Newest</a>
-                                </li>
-                                <!--
-                                <li class="nav-item" role="presentation">
-                                  <a href="/c/{{province}}/{{chamber}}/businesses" class="nav-link d-center">Businesses</a>
-                                </li>
-                                <li class="nav-item" role="presentation">
-                                    <a href="/c/{{province}}/{{chamber}}/events" class="nav-link d-center">Events</a>
-                                </li>
-                                -->
-                            </ul>
+                            <div class="tab-toolbar d-flex align-items-center justify-content-between flex-wrap gap-2 mt-5 pt-4">
+                <ul class="nav flex-wrap gap-2 tab-area m-0">
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-sort {{activeTab 'sort' 'latest'}}" data-sort="latest">Latest</a>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-sort {{activeTab 'sort' 'hot'}}" data-sort="hot">Hot</a>
+                  </li>
+                  <li class="nav-item d-none d-md-block" aria-hidden="true"><span class="text-muted mx-2">|</span></li>
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-gov {{activeTab 'gov' 'all'}}" data-gov="all">All</a>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-gov {{activeTab 'gov' 'federal'}}" data-gov="federal">Federal</a>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-gov {{activeTab 'gov' 'provincial'}}" data-gov="provincial">Provincial</a>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-gov {{activeTab 'gov' 'municipal'}}" data-gov="municipal">Municipal</a>
+                  </li>
+                  <li class="nav-item" role="presentation">
+                    <a href="#" class="nav-link d-center tab-gov {{activeTab 'gov' 'citizen'}}" data-gov="citizen">Citizen</a>
+                  </li>
+                </ul>
+                              <!-- no MP chip in toolbar; use theme-styled panel below -->
+                            </div>
+                            {{#if isGov 'federal'}}
+                              {{#if currentMember}}
+                                <!-- Mobile compact card -->
+                                <div class="mp-card d-lg-none d-flex align-items-center gap-3 mt-3 p-3 p-sm-3">
+                                  <img class="mp-photo" src="{{mpPhoto this}}" alt="Member photo">
+                                  <div class="flex-grow-1">
+                                    <div class="small text-muted">Member of Parliament</div>
+                                    <div class="d-flex align-items-center gap-2">
+                                      <div class="h6 m-0">{{currentMember.firstName}} {{currentMember.lastName}}</div>
+                                      {{#if currentMember.caucus}}
+                                        <span class="party-badge {{partyClass currentMember.caucus}}">{{currentMember.caucus}}</span>
+                                      {{/if}}
+                                    </div>
+                  <div class="links small mt-1 d-flex gap-2">
+                                      {{#if currentMember.profileUrl}}
+                    <a href="{{currentMember.profileUrl}}" target="_blank" rel="noopener" class="mini-btn">OurCommons</a>
+                                      {{/if}}
+                                      {{#if currentMember.websites}}
+                    <a href="{{mpWebsite this}}" target="_blank" rel="noopener" class="mini-btn">Website</a>
+                                      {{/if}}
+                                      {{#if currentMember.emails}}
+                    <a href="mailto:{{mpEmail this}}" class="mini-btn">Email</a>
+                                      {{/if}}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <!-- Desktop theme-styled panel -->
+                                <div class="single-box p-3 p-sm-4 d-none d-lg-block" style="margin-top:12px;">
+                                  <div class="head-area text-start">
+                                    <h6>Member of Parliament</h6>
+                                    <p class="mdtxt mt-2">Your current federal representative for this chamber.</p>
+                                  </div>
+                                  <ul class="d-grid gap-3 mt-3">
+                                    <li class="d-center gap-3 justify-content-between">
+                                      <div class="info-area d-flex align-items-center gap-3">
+                                        <img src="{{mpPhoto this}}" alt="MP photo" style="width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid #e9ecef;">
+                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                          <span class="mdtxt fw-semibold">{{currentMember.firstName}} {{currentMember.lastName}}</span>
+                                          {{#if currentMember.caucus}}
+                                            <span class="party-badge {{partyClass currentMember.caucus}}">{{currentMember.caucus}}</span>
+                                          {{/if}}
+                                        </div>
+                                      </div>
+                                      <div class="input-item d-center text-start">
+                                        <div class="d-flex align-items-center gap-2 small">
+                                          {{#if currentMember.profileUrl}}
+                                            <a href="{{currentMember.profileUrl}}" target="_blank" rel="noopener" class="mini-btn">OurCommons</a>
+                                          {{/if}}
+                                          {{#if currentMember.websites}}
+                                            <a href="{{mpWebsite this}}" target="_blank" rel="noopener" class="mini-btn">Website</a>
+                                          {{/if}}
+                                          {{#if currentMember.emails}}
+                                            <a href="mailto:{{mpEmail this}}" class="mini-btn">Email</a>
+                                          {{/if}}
+                                        </div>
+                                      </div>
+                                    </li>
+                                  </ul>
+                                </div>
+                              {{/if}}
+                            {{/if}}
+                            {{#if isGov 'provincial'}}
+                              <div class="mp-card d-flex align-items-center gap-3 mt-4 p-3 p-sm-3" style="background:#fff;border:1px dashed #e3e6ea;border-radius:12px">
+                                <div class="flex-grow-1">
+                                  <div class="small text-muted">Provincial representative</div>
+                                  <div class="mdtxt">Coming soon — we’ll show your MPP/MLA info here.</div>
+                                </div>
+                              </div>
+                            {{/if}}
+                            {{#if isGov 'municipal'}}
+                              <div class="mp-card d-flex align-items-center gap-3 mt-4 p-3 p-sm-3" style="background:#fff;border:1px dashed #e3e6ea;border-radius:12px">
+                                <div class="flex-grow-1">
+                                  <div class="small text-muted">Municipal representatives</div>
+                                  <div class="mdtxt">Coming soon — we’ll list your mayor and council here.</div>
+                                </div>
+                              </div>
+                            {{/if}}
+                            {{#if isGov 'citizen'}}
+                              <div class="mp-card d-flex align-items-center gap-3 mt-4 p-3 p-sm-3" style="background:#fff;border:1px dashed #e3e6ea;border-radius:12px">
+                                <div class="flex-grow-1">
+                                  <div class="small text-muted">Citizen posts</div>
+                                  <div class="mdtxt">Coming soon — citizen posts scoped to your chamber.</div>
+                                </div>
+                              </div>
+                            {{/if}}
                         </div>
                     </div>
                 </div>
@@ -98,11 +195,11 @@
                       <span class="mdtxt status">Sponsored Advertisement</span>
                     {{else}}
                       {{#if postType 'self'}}
-                        <span class="mdtxt status">Self</span>
+                        <span class="mdtxt status">{{jurisdictionLabel this}}</span>
                       {{else if postType 'chamber'}}
-                        <span class="mdtxt status"><a href="/c/{{this.province}}/{{this.chamber}}" style="color: inherit; text-decoration: none;"><strong class="province-uppercase">{{this.province}}</strong> / <strong>{{niceName this.chamber}}</strong></a></span>
+                        <span class="mdtxt status"><a href="/c/{{this.province}}/{{this.chamber}}" style="color: inherit; text-decoration: none;"><strong class="province-uppercase">{{this.province}}</strong> / <strong>{{niceName this.chamber}}</strong></a> • {{jurisdictionLabel this}}</span>
                       {{else}}
-                        <span class="mdtxt status">Topic</span>
+                        <span class="mdtxt status">{{jurisdictionLabel this}}</span>
                       {{/if}}
                       <span class="mdtxt time-ago">• {{timeAgo this.createdAt}}</span>
                     {{/if}}
@@ -131,10 +228,20 @@
                     <div class="post-img" data-post-url="/post/{{../seoUrl}}">
                       {{#if ../isAd}}
                         <a href="{{../url}}" onclick="window.open('{{../url}}'); return false;">
-                          <img src="{{url}}" class="w-100" alt="image">
+                          <img src="{{url}}" class="w-100" alt="image"
+                               onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                          <div class="image-error" style="display:none; padding: 16px; text-align:center; background:#f8f9fa; border-radius: 12px; color:#666;">
+                            <i class="material-symbols-outlined" style="font-size: 32px; opacity: 0.5;">image_not_supported</i>
+                            <small>{{url}}</small>
+                          </div>
                         </a>
                       {{else}}
-                        <img src="{{url}}" class="w-100" alt="image">
+                        <img src="{{url}}" class="w-100" alt="image"
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                        <div class="image-error" style="display:none; padding: 16px; text-align:center; background:#f8f9fa; border-radius: 12px; color:#666;">
+                          <i class="material-symbols-outlined" style="font-size: 32px; opacity: 0.5;">image_not_supported</i>
+                          <small>{{url}}</small>
+                        </div>
                       {{/if}}
                     </div>
                   {{/each}}

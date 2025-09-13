@@ -1,3 +1,6 @@
+/* global Chambers */
+// @ts-nocheck
+/* global Chambers, Meteor */
 Meteor.methods({
     'admin.chambers.fetchChambersJson': async function () {
 
@@ -536,7 +539,7 @@ Meteor.methods({
             const xmlChambers = await Meteor.call('admin.chambers.syncFromParliamentXml');
 
             // Get existing chambers
-            const existingChambers = await Chambers.findAsync({}, { fields: { code: 1, name: 1, province: 1 } }).fetch();
+            const existingChambers = await Chambers.find({}, { fields: { code: 1, name: 1, province: 1 } }).fetchAsync();
 
             // Create maps for comparison
             const xmlMap = new Map();
@@ -590,4 +593,404 @@ Meteor.methods({
         }
     }
 
+});
+
+// Extend admin chambers methods with a fetch/update for federal members
+Meteor.methods({
+    'admin.chambers.fetchFederalMembers': async function () {
+        // Ensure server-side execution
+        if (!Meteor.isServer) {
+            return false;
+        }
+
+        // Ensure the user is authorized
+        if (!this.userId) {
+            throw new Meteor.Error('not-authorized', 'You must be logged in to perform this action.');
+        }
+
+        // Map human-readable province to our stored province codes
+        const provinceCodes = {
+            "newfoundland and labrador": "nl",
+            "prince edward island": "pe",
+            "nova scotia": "ns",
+            "new brunswick": "nb",
+            "quebec": "qc",
+            "ontario": "on",
+            "manitoba": "mb",
+            "saskatchewan": "sk",
+            "alberta": "ab",
+            "british columbia": "bc",
+            "yukon": "yt",
+            "northwest territories": "nt",
+            "nunavut": "nu",
+        };
+
+    function slugifyName(name) {
+            if (!name) return '';
+            return String(name)
+                .toLowerCase()
+                .replace(/—/g, '-')              // em-dash to hyphen
+        .replace(/[^\w\s-]/g, '')       // strip punctuation except hyphen
+                .replace(/\s+/g, '-')            // spaces to hyphen
+                .replace(/-+/g, '-');             // collapse hyphens
+        }
+
+        try {
+            // Pull current constituencies + members from Parliament XML helper
+            const xmlChambers = await Meteor.call('admin.chambers.syncFromParliamentXml');
+            let matched = 0;
+            let updated = 0;
+            const notFound = [];
+
+            for (const item of xmlChambers) {
+                const provinceReadable = (item.province || '').toLowerCase();
+                const provinceCode = provinceCodes[provinceReadable];
+                const seoUrl = slugifyName(item.name);
+
+                if (!provinceCode || !seoUrl) {
+                    notFound.push({ name: item.name, province: item.province, reason: 'missing-province-or-slug' });
+                    continue;
+                }
+
+                const existing = await Chambers.findOneAsync({ province: provinceCode, seoUrl });
+                if (!existing) {
+                    notFound.push({ name: item.name, province: item.province, key: `${provinceCode}/${seoUrl}` });
+                    continue;
+                }
+                matched++;
+
+                const setFields = {
+                    lastCheckedAt: new Date().getTime(),
+                    // Persist the current member record as-is from XML for now
+                    currentMember: item.currentMember ? {
+                        ...item.currentMember,
+                        source: 'parliament-xml',
+                        updatedAt: new Date().getTime(),
+                    } : null,
+                };
+
+                // Only update if changed or missing
+                const needsUpdate = !!item.currentMember && JSON.stringify(existing.currentMember || {}) !== JSON.stringify(item.currentMember || {});
+                if (needsUpdate || !existing.currentMember) {
+                    await Chambers.updateAsync({ _id: existing._id }, { $set: setFields });
+                    updated++;
+                } else {
+                    // Still bump lastCheckedAt for bookkeeping
+                    await Chambers.updateAsync({ _id: existing._id }, { $set: { lastCheckedAt: setFields.lastCheckedAt } });
+                }
+
+                // Small delay to keep the event loop cooperative
+                await new Promise(r => setTimeout(r, 5));
+            }
+
+            return {
+                success: true,
+                totalXml: xmlChambers.length,
+                matched,
+                updated,
+                notFoundCount: notFound.length,
+                notFound,
+                message: `Processed ${xmlChambers.length} XML entries; matched ${matched}, updated ${updated}.`
+            };
+
+        } catch (error) {
+            console.error('Error fetching federal members:', error);
+            throw new Meteor.Error('fetch-members-failed', error.message || 'Failed to fetch federal members');
+        }
+    }
+});
+
+// Add scraper to pull contact info from member profile pages on ourcommons.ca
+// Shared server task (callable from both Meteor method and REST API)
+if (Meteor.isServer) {
+    // Expose under a global namespace to avoid import hassles in Meteor load order
+    global.AdminChambers = global.AdminChambers || {};
+    global.AdminChambers.scrapeMemberContactsTask = async function scrapeMemberContactsTask(options = {}) {
+        const { limit = 1000, onlyMissing = false, delayMs = 300, userId = null } = options || {};
+
+        const { JSDOM } = require('jsdom');
+    const fs = require('fs-extra');
+    const path = require('path');
+    const gm = require('gm');
+    const { Random } = require('meteor/random');
+        const filesPath = Meteor.settings.public.filesPath;
+        const cdnPath = Meteor.settings.public.cdnPath;
+        const disk = 'disk1';
+        const { ApiFiles } = require('/libs/apiFiles.js');
+
+        function toSlug(str) {
+            if (!str) return '';
+            return String(str)
+                .normalize('NFD')
+                .replace(/\p{Diacritic}/gu, '')
+                .toLowerCase()
+                .replace(/[^a-z0-9\s-]/g, '')
+                .trim()
+                .replace(/\s+/g, '-')
+                .replace(/-+/g, '-');
+        }
+
+        function uniq(arr) {
+            return Array.from(new Set(arr.filter(Boolean)));
+        }
+
+        async function fetchHtml(url) {
+            let resp;
+            try {
+                resp = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (compatible; CivilCitizensBot/1.0)'
+                    }
+                });
+            } catch (e) {
+                throw new Meteor.Error('network-failed', e.message || 'Network error');
+            }
+            if (!resp.ok) {
+                throw new Meteor.Error('http-error', `Status ${resp.status}`);
+            }
+            return await resp.text();
+        }
+
+        function extractContacts(html) {
+            const dom = new JSDOM(html);
+            const doc = dom.window.document;
+
+            // Prefer the contact section; fall back to scanning whole doc
+            const root = doc.querySelector('#contact') || doc.querySelector('section#contact') || doc;
+
+            const anchors = Array.from(root.querySelectorAll('a[href]'));
+            const websites = uniq(
+                anchors
+                    .map(a => a.getAttribute('href'))
+                    .filter(href => href && href.startsWith('http'))
+                    .filter(href => !/ourcommons\.ca/i.test(href))
+            );
+            const emails = uniq(
+                anchors
+                    .map(a => a.getAttribute('href'))
+                    .filter(href => href && href.startsWith('mailto:'))
+                    .map(href => href.replace(/^mailto:/i, ''))
+            );
+            const phones = uniq(
+                anchors
+                    .map(a => a.getAttribute('href'))
+                    .filter(href => href && href.startsWith('tel:'))
+                    .map(href => href.replace(/^tel:/i, ''))
+            );
+
+            return { websites, emails, phones };
+        }
+
+        function extractOverview(html) {
+            const dom = new JSDOM(html);
+            const doc = dom.window.document;
+            const out = {};
+
+            try {
+                const container = doc.querySelector('[id^="mp-profile-person-id-"]') || doc.querySelector('.ce-mip-mp-profile-container') || doc;
+                // personId from container id
+                const idAttr = container && container.getAttribute('id');
+                if (idAttr) {
+                    const m = idAttr.match(/mp-profile-person-id-(\d+)/);
+                    if (m) out.personId = parseInt(m[1], 10);
+                }
+                // caucus
+                const caucEl = container.querySelector('.mip-mp-profile-caucus');
+                if (caucEl && caucEl.textContent) out.caucus = caucEl.textContent.trim();
+
+                // Map dt/dd pairs in the overview dl
+                const dts = Array.from(container.querySelectorAll('dt'));
+                for (const dt of dts) {
+                    const label = (dt.textContent || '').trim().toLowerCase();
+                    const dd = dt.nextElementSibling;
+                    const value = dd ? (dd.textContent || '').trim() : '';
+                    if (!value) continue;
+                    if (label.startsWith('preferred language')) out.preferredLanguage = value.replace(/\s+/g, ' ').trim();
+                    if (label.startsWith('province')) out.provinceFull = value.replace(/\s+/g, ' ').trim();
+                    if (label.startsWith('political affiliation') && !out.caucus) out.caucus = value;
+                    if (label.startsWith('constituency')) {
+                        const a = dd.querySelector('a[href]');
+                        if (a) {
+                            out.constituencyName = (a.textContent || '').trim();
+                            const href = a.getAttribute('href') || '';
+                            const m2 = href.match(/\((\d+)\)/); // e.g., /Members/en/constituencies/essex(1080)
+                            if (m2) out.constituencyId = parseInt(m2[1], 10);
+                        } else {
+                            out.constituencyName = value;
+                        }
+                    }
+                }
+
+                // photo
+                const img = container.querySelector('img.ce-mip-mp-picture');
+                if (img) {
+                    const src = img.getAttribute('src') || '';
+                    if (src) out.photoUrl = src.startsWith('http') ? src : `https://www.ourcommons.ca${src}`;
+                }
+            } catch (_) {}
+            return out;
+        }
+
+        async function cachePhotoToCDN(photoUrl, meta = {}) {
+            if (!photoUrl) return null;
+            try {
+                const resp = await fetch(photoUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CivilCitizensBot/1.0)' } });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const buf = Buffer.from(await resp.arrayBuffer());
+                const ct = resp.headers.get('content-type') || '';
+                let extGuess = 'jpg';
+                if (/image\/png/i.test(ct)) extGuess = 'png';
+                else if (/image\/webp/i.test(ct)) extGuess = 'webp';
+                else if (/image\/jpe?g/i.test(ct)) extGuess = 'jpg';
+                else {
+                    try {
+                        const u = new URL(photoUrl, 'https://www.ourcommons.ca');
+                        const extFromUrl = path.extname(u.pathname).replace('.', '').toLowerCase();
+                        if (['png','jpg','jpeg','webp'].includes(extFromUrl)) extGuess = extFromUrl === 'jpeg' ? 'jpg' : extFromUrl;
+                    } catch (_) {}
+                }
+                const id = Random.id();
+                const outPath = path.join(filesPath, 'uploads', disk, `${id}.${extGuess}`);
+                await fs.ensureDir(path.dirname(outPath));
+
+                // Basic optimization: write and then re-save via gm for consistency
+                await fs.writeFile(outPath, buf);
+                await new Promise((resolve, reject) => {
+                    gm(outPath).quality(80).autoOrient().noProfile().strip().resize(1500).interlace('Line').write(outPath, (err) => err ? reject(err) : resolve());
+                });
+
+                const fileUrl = `${cdnPath}/uploads/${disk}/${id}.${extGuess}`;
+                const safe = (s) => (s || '').toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g,'-').replace(/^-|-$/g,'');
+                const baseName = [safe(meta.firstName), safe(meta.lastName), meta.personId || 'mp', id].filter(Boolean).join('-');
+                const fileDoc = {
+                    _id: id,
+                    name: meta.name || `${baseName}.${extGuess}`,
+                    size: buf.length,
+                    type: resp.headers.get('content-type') || `image/${extGuess}`,
+                    ext: extGuess,
+                    userId: meta.userId || null,
+                    meta,
+                    createdAt: new Date(),
+                    url: fileUrl,
+                    filePath: `/uploads/${disk}/${id}.${extGuess}`,
+                    uploadedAt: new Date(),
+                    processing: false,
+                    disk,
+                    file_reference_id: id,
+                };
+                await ApiFiles.insertAsync(fileDoc);
+                return { id, url: fileUrl };
+            } catch (e) {
+                console.error('Cache photo failed:', e && (e.reason || e.message) || e);
+                return null;
+            }
+        }
+
+        // Build query: iterate chambers with a currentMember having a personId
+        // When onlyMissing=true, include any record missing any of our target fields to backfill
+        const query = onlyMissing
+            ? {
+                'currentMember.personId': { $exists: true },
+                $or: [
+                    { 'currentMember.websites': { $exists: false } },
+                    { 'currentMember.websites': { $size: 0 } },
+                    { 'currentMember.emails': { $exists: false } },
+                    { 'currentMember.phones': { $exists: false } },
+                    { 'currentMember.caucus': { $exists: false } },
+                    { 'currentMember.photoUrl': { $exists: false } },
+                    { 'currentMember.profileUrl': { $exists: false } },
+                    { 'currentMember.constituencyId': { $exists: false } },
+                    { 'currentMember.constituencyName': { $exists: false } },
+                    { 'currentMember.provinceFull': { $exists: false } },
+                ]
+            }
+            : { 'currentMember.personId': { $exists: true } };
+
+        const list = await Chambers.find(query, { fields: { currentMember: 1, province: 1, seoUrl: 1 } }).fetchAsync();
+        let processed = 0;
+        let updated = 0;
+        const errors = [];
+        const examples = [];
+
+        for (const chamber of list) {
+            if (processed >= limit) break;
+            processed++;
+
+            const cm = chamber.currentMember || {};
+            const pid = cm.personId;
+            const first = cm.firstName || '';
+            const last = cm.lastName || '';
+            if (!pid || !first || !last) continue;
+
+            const slug = `${toSlug(first)}-${toSlug(last)}`.replace(/-+/g, '-');
+            const url = `https://www.ourcommons.ca/Members/en/${slug}(${pid})#contact`;
+
+            try {
+                const html = await fetchHtml(url);
+                const info = extractContacts(html);
+                const meta = extractOverview(html);
+
+                const setUpdate = {
+                    'currentMember.source': 'parliament-xml+scrape',
+                    'currentMember.updatedAt': new Date().getTime(),
+                };
+                if (info.websites.length) setUpdate['currentMember.websites'] = info.websites;
+                if (info.emails.length) setUpdate['currentMember.emails'] = info.emails;
+                if (info.phones.length) setUpdate['currentMember.phones'] = info.phones;
+                if (meta.caucus) setUpdate['currentMember.caucus'] = meta.caucus;
+                if (meta.preferredLanguage) setUpdate['currentMember.preferredLanguage'] = meta.preferredLanguage;
+                if (meta.photoUrl) {
+                    setUpdate['currentMember.photoUrl'] = meta.photoUrl;
+                    // Cache to CDN and store cdn url
+                    const cached = await cachePhotoToCDN(meta.photoUrl, { type: 'memberPhoto', userId, personId: pid, firstName: first, lastName: last });
+                    if (cached && cached.url) setUpdate['currentMember.photoCdnUrl'] = cached.url;
+                }
+                if (meta.constituencyId) setUpdate['currentMember.constituencyId'] = meta.constituencyId;
+                if (meta.personId && !cm.personId) setUpdate['currentMember.personId'] = meta.personId;
+                if (meta.constituencyName) setUpdate['currentMember.constituencyName'] = meta.constituencyName;
+                if (meta.provinceFull) setUpdate['currentMember.provinceFull'] = meta.provinceFull;
+                // Always persist the profile URL used for scraping
+                setUpdate['currentMember.profileUrl'] = url.replace(/#contact$/, '');
+
+                if (Object.keys(setUpdate).length > 2) {
+                    await Chambers.updateAsync({ _id: chamber._id }, { $set: setUpdate });
+                    updated++;
+                }
+
+                if (examples.length < 5) {
+                    examples.push({ url, contacts: info, overview: meta });
+                }
+            } catch (e) {
+                errors.push({ chamberId: chamber._id, url, reason: e.reason || e.message || String(e) });
+            }
+
+            await new Promise(r => setTimeout(r, delayMs));
+            if (processed % 25 === 0) {
+                try { console.log(`[Scrape] Progress processed=${processed} updated=${updated} errors=${errors.length}`); } catch (_) {}
+            }
+        }
+
+        return { success: true, processed, updated, errorsCount: errors.length, errors, examples };
+    };
+}
+
+Meteor.methods({
+    'admin.chambers.scrapeMemberContacts': async function (options = {}) {
+        if (!Meteor.isServer) return false;
+        if (!this.userId) {
+            throw new Meteor.Error('not-authorized', 'You must be logged in to perform this action.');
+        }
+        // Optional: enforce admin role when called as a method (keeps parity with REST auth)
+        try {
+            const meta = await UserMeta.findOneAsync({ ownerUserId: this.userId });
+            if (!meta || meta.admin !== true) {
+                throw new Meteor.Error('not-authorized', 'Admin privileges required.');
+            }
+        } catch (e) {
+            if (e instanceof Meteor.Error) throw e;
+            throw new Meteor.Error('not-authorized', 'Admin privileges required.');
+        }
+
+        return await global.AdminChambers.scrapeMemberContactsTask(options);
+    }
 });

@@ -15,6 +15,22 @@
         </select>
       </div>
 
+      <!-- Post Options (Jurisdiction + NSFW) -->
+      <div class="post-options mt-2">
+        <label for="postJurisdiction" class="dropdown-label">Post type</label>
+        <select id="postJurisdiction" class="dropdown-select">
+          <option value="citizen">Citizen</option>
+          <option value="municipal">Municipal</option>
+          <option value="provincial">Provincial</option>
+          <option value="federal">Federal</option>
+        </select>
+        <div class="form-check mt-2">
+          <label class="form-check-label" for="postNsfw">
+            <input type="checkbox" id="postNsfw" class="form-check-input" /> NSFW
+          </label>
+        </div>
+      </div>
+
       <button id="addTitleBtn" class="add-title-btn">Add Title</button>
 
       <!-- Attachment Tray -->
@@ -93,6 +109,7 @@
 
       <!-- Summernote Editor -->
       <div id="summernote" class="editor mt-3"></div>
+      
       <script>
         $(document).ready(function () {
           const initializeSummernote = setInterval(() => {
@@ -596,6 +613,20 @@
 
       .add-title-btn:hover {
         background: #f0f0f0;
+      }
+
+      /* Post Options */
+      .post-options .form-check-label {
+        font-size: 14px;
+        color: #333;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .post-options .form-check-input {
+        width: 16px;
+        height: 16px;
+        margin: 0;
       }
     </style>
 
