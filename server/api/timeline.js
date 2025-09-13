@@ -23,7 +23,7 @@ export const TimelineInstance = new Timeline();
 TimelineInstance.log('Timeline instance created');
 
 WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
-  const { type, uid, province, chamber, offset = 0, limit = 10 } = req.query;
+  const { type, uid, province, chamber, offset = 0, limit = 10, sort = 'latest', gov = 'federal' } = req.query;
   const userId = uid;
 
   // Detect the timeline type
@@ -36,11 +36,11 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
     // Fetch posts based on timeline type
     switch (detectedTimelineType.type) {
       case 'home':
-        posts = await TimelineInstance.timelineBuild.build("home", userId, null, null, parseInt(offset), parseInt(limit));
+        posts = await TimelineInstance.timelineBuild.build("home", userId, null, null, parseInt(offset), parseInt(limit), { sort, gov });
         break;
 
       case 'chamber':
-        posts = await TimelineInstance.timelineBuild.build("chamber", userId, province, chamber, parseInt(offset), parseInt(limit));
+        posts = await TimelineInstance.timelineBuild.build("chamber", userId, province, chamber, parseInt(offset), parseInt(limit), { sort, gov });
         break;
 
       case 'user': {
@@ -50,7 +50,7 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
           const m = req.query.path.match(/^\/u\/([^\/?#]+)/);
           if (m) username = m[1];
         }
-        posts = await TimelineInstance.timelineBuild.build("user", userId, null, null, parseInt(offset), parseInt(limit), { username });
+  posts = await TimelineInstance.timelineBuild.build("user", userId, null, null, parseInt(offset), parseInt(limit), { username, sort, gov });
         break;
       }
 
@@ -59,23 +59,32 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
         break;
     }
 
-    // Insert a random ad into the posts (only for first page)
-    if (parseInt(offset) === 0) {
+    const intOffset = parseInt(offset);
+    const intLimit = parseInt(limit);
+
+    // Insert a random ad into the posts (only for first page), but compute hasMore/offset based on real posts
+    let adInserted = false;
+    if (intOffset === 0) {
       const { randomAd, randomPosition } = TimelineInstance.timelineAds.generateAds();
       if (randomAd) {
         posts.splice(randomPosition, 0, randomAd);
+        adInserted = true;
       }
     }
 
-    // Check if there are more posts available
-    const hasMore = posts.length === parseInt(limit);
+    // hasMore is true if we returned a full page worth of REAL posts
+    const realCount = adInserted ? Math.max(0, posts.length - 1) : posts.length;
+    const hasMore = realCount === intLimit;
+
+    // Next offset should advance by number of REAL posts delivered
+    const nextOffset = intOffset + realCount;
 
     // Respond with the timeline
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       posts: posts,
       hasMore: hasMore,
-      offset: parseInt(offset) + posts.length
+      offset: nextOffset
     }));
 
   } catch (error) {

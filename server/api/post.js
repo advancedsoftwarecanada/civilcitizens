@@ -1,3 +1,4 @@
+// @ts-nocheck
 console.log('🚀 API POST ENDPOINTS LOADING...');
 
 // Global declarations for Meteor collections and WebApp
@@ -5,6 +6,7 @@ console.log('🚀 API POST ENDPOINTS LOADING...');
 
 // Add body parser middleware for JSON parsing
 import bodyParser from 'body-parser';
+import { ApiFiles } from '/libs/apiFiles.js';
 import { WebApp } from 'meteor/webapp';
 WebApp.connectHandlers.use(bodyParser.json({ limit: '10mb' })); // Add size limit
 
@@ -112,8 +114,8 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
 
     const userId = user._id;
 
-    // Get the parsed body from body-parser
-    const thePostJson = req.body;
+  // Get the parsed body from body-parser
+  const thePostJson = req.body;
     console.log('📝 SERVER - Received post data from body-parser:', thePostJson);
     console.log('📝 SERVER - Post type:', thePostJson.type);
     console.log('📝 SERVER - Post chamber:', thePostJson.chamber);
@@ -138,7 +140,7 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
       seoUrl = `post-${Date.now()}`;
     }
 
-    // Prepare post data
+  // Prepare post data
     const postData = {
       title: thePostJson.title || null,
       body: thePostJson.body || null,
@@ -151,13 +153,32 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
       createdAt: new Date().getTime(),
       seoUrl: seoUrl,
       draft: thePostJson.draft || false,
+      nsfw: !!thePostJson.nsfw,
     };
 
     // Handle attachments
     if (thePostJson.attachments) {
       const att = thePostJson.attachments;
       if (att.type === 'images') {
-        postData.images = att.fileIds;
+        // Support both { fileIds: [...] } and { uploads: [{ fileId }] }
+        const ids = Array.isArray(att.fileIds)
+          ? att.fileIds
+          : (Array.isArray(att.uploads) ? att.uploads.map(u => u && u.fileId).filter(Boolean) : []);
+        if (ids.length) {
+          try {
+            const files = await ApiFiles.find({ _id: { $in: ids } }).fetchAsync();
+            const cdn = Meteor.settings.public && Meteor.settings.public.cdnPath;
+            postData.images = ids
+              .map(id => {
+                const f = files.find(x => x && x._id === id) || {};
+                const url = f.url || (cdn && f.filePath ? `${cdn}${f.filePath}` : null);
+                return url ? { id, url } : null;
+              })
+              .filter(Boolean);
+          } catch (e) {
+            console.warn('Could not resolve image file IDs to URLs:', e && e.message);
+          }
+        }
       } else if (att.type === 'video') {
         postData.video = att.fileId;
       } else if (att.type === 'link') {
@@ -179,6 +200,7 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
 
     // SELF POST
     if (thePostJson.type === "self") {
+      postData.jurisdiction = thePostJson.jurisdiction || 'citizen';
       console.log('💾 Inserting self post into database...');
       postId = await Posts.insertAsync(postData);
       console.log('✅ Self post inserted with ID:', postId);
@@ -188,6 +210,8 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
     if (thePostJson.type === "chamber") {
       postData.chamber = thePostJson.chamber;
       postData.province = thePostJson.province;
+  // Current chambers are federal EDAs; allow override but default to federal
+  postData.jurisdiction = thePostJson.jurisdiction || 'federal';
       console.log('💾 SERVER - Inserting chamber post into database...');
       console.log('💾 SERVER - Chamber data:', { chamber: postData.chamber, province: postData.province });
       postId = await Posts.insertAsync(postData);
@@ -200,6 +224,7 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
     // TOPIC
     if (thePostJson.type === "topic") {
       postData.topic = thePostJson.topic;
+      postData.jurisdiction = thePostJson.jurisdiction || 'citizen';
       console.log('💾 Inserting topic post into database...');
       postId = await Posts.insertAsync(postData);
       console.log('✅ Topic post inserted with ID:', postId);
@@ -247,7 +272,7 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
     const userId = user._id;
 
     // Get the parsed body from body-parser
-    const { postId, ...updateData } = req.body;
+  const { postId, ...updateData } = req.body;
 
     const post = await Posts.findOneAsync({ _id: postId });
     if (!post) {
@@ -262,7 +287,46 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
       return;
     }
 
-  await Posts.updateAsync({ _id: postId }, { $set: updateData });
+  // Ensure jurisdiction is set if moving from draft to published or fields changed
+  if (updateData && (updateData.draft === false || updateData.type || updateData.province || typeof updateData.jurisdiction !== 'undefined' || typeof updateData.nsfw !== 'undefined' || updateData.attachments)) {
+    const set = { ...updateData };
+    // Normalize image attachments if present
+    if (set.attachments && set.attachments.type === 'images') {
+      const ids = Array.isArray(set.attachments.fileIds)
+        ? set.attachments.fileIds
+        : (Array.isArray(set.attachments.uploads) ? set.attachments.uploads.map(u => u && u.fileId).filter(Boolean) : []);
+      if (ids.length) {
+        try {
+          const files = await ApiFiles.find({ _id: { $in: ids } }).fetchAsync();
+          const cdn = Meteor.settings.public && Meteor.settings.public.cdnPath;
+          set.images = ids
+            .map(id => {
+              const f = files.find(x => x && x._id === id) || {};
+              const url = f.url || (cdn && f.filePath ? `${cdn}${f.filePath}` : null);
+              return url ? { id, url } : null;
+            })
+            .filter(Boolean);
+          delete set.attachments; // store normalized 'images' on post
+        } catch (e) {
+          console.warn('Could not resolve update image IDs to URLs:', e && e.message);
+        }
+      }
+    }
+    if (!post.jurisdiction) {
+      if (set.type === 'chamber' || post.type === 'chamber') {
+        const prov = (set.province || post.province || '').toLowerCase();
+        set.jurisdiction = (prov === 'ca' || prov === '') ? 'federal' : 'provincial';
+      } else {
+        set.jurisdiction = 'citizen';
+      }
+    }
+    if (typeof set.nsfw !== 'undefined') {
+      set.nsfw = !!set.nsfw;
+    }
+    await Posts.updateAsync({ _id: postId }, { $set: set });
+  } else {
+    await Posts.updateAsync({ _id: postId }, { $set: updateData });
+  }
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'success', message: 'Post updated successfully.', seoUrl: post.seoUrl }));

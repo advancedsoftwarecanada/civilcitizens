@@ -437,3 +437,11 @@ Template.registerHelper('timeAgo', function (timestamp) {
   }
   return `${rel} - ${longDate}`;
 });
+
+// Determine Submit button href based on current route context
+Template.registerHelper('submitHref', function () {
+  const province = FlowRouter.getParam('province');
+  const chamber = FlowRouter.getParam('chamber');
+  if (province && chamber) return `/submit/c/${province}/${chamber}`;
+  return '/submit';
+});

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* global Meteor FlowRouter toastr userManager BlazeLayout HTTP Template */
 
 FlowRouter.route('/post/', {
@@ -72,6 +73,15 @@ Template.post.onDestroyed(function() {
 Template.post.helpers({
   post() {
     return Template.instance().post.get();
+  },
+  jurisdictionLabel(post) {
+    const p = post || Template.instance().post.get() || {};
+    let j = p && p.jurisdiction ? String(p.jurisdiction).toLowerCase() : '';
+    if (!j) {
+      if (p && (p.type === 'self' || p.type === 'topic')) j = 'citizen';
+      else if (p && p.type === 'chamber') j = 'federal';
+    }
+    return j ? j.charAt(0).toUpperCase() + j.slice(1) : 'Citizen';
   },
   displayCommentCount() {
     const post = Template.instance().post.get();

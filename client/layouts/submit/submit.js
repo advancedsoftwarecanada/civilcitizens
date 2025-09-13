@@ -1,4 +1,4 @@
-
+// @ts-nocheck
 const postTypeVar = new ReactiveVar(null);
 const provinceVar = new ReactiveVar(null);
 const chamberVar = new ReactiveVar(null);
@@ -70,8 +70,12 @@ Template.submit.onRendered(function() {
     if (province && chamber) {
       $('#postChamber').append(`<option value="${province}/${chamber}">${province}/${chamber}</option>`);
       $('#postChamber').val(`${province}/${chamber}`);
+  // Default jurisdiction for chamber posts is federal for now
+  $('#postJurisdiction').val('federal');
     } else {
       $('#postChamber').val('self');
+  // Default jurisdiction for self/topic is citizen
+  $('#postJurisdiction').val('citizen');
     }
   });
 
@@ -292,6 +296,10 @@ Template.submit.events({
       topic = postChamber;
     }
 
+    // Jurisdiction dropdown and NSFW flag
+    const jurisdiction = ($('#postJurisdiction').val() || 'citizen').toLowerCase();
+    const nsfw = $('#postNsfw').is(':checked') === true;
+
     let postJson = {
       type: postType,
       title: postTitle,
@@ -299,6 +307,8 @@ Template.submit.events({
       chamber: chamber,
       province: province,
       topic: topic,
+      jurisdiction: jurisdiction,
+      nsfw: nsfw,
     };
 
     console.log('📤 SUBMIT POST - Post JSON being sent:', postJson);
@@ -370,7 +380,7 @@ Template.submit.events({
       if (postId) {
         // Use API call instead of Meteor.call
         const token = localStorage.getItem('Meteor.loginToken');
-        fetch('/api/posts/update', {
+    fetch('/api/posts/update', {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -385,6 +395,8 @@ Template.submit.events({
             chamber: postJson.chamber,
             province: postJson.province,
             topic: postJson.topic,
+      jurisdiction: postJson.jurisdiction,
+      nsfw: postJson.nsfw,
             draft: false
           }),
         })
@@ -416,7 +428,7 @@ Template.submit.events({
       } else {
         // Use API call instead of Meteor.call
         const token = localStorage.getItem('Meteor.loginToken');
-        fetch('/api/posts/submit', {
+    fetch('/api/posts/submit', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -430,6 +442,8 @@ Template.submit.events({
             chamber: postJson.chamber,
             province: postJson.province,
             topic: postJson.topic,
+      jurisdiction: postJson.jurisdiction,
+      nsfw: postJson.nsfw,
             draft: false
           }),
         })
