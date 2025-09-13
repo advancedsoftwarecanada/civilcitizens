@@ -290,6 +290,11 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
   // Ensure jurisdiction is set if moving from draft to published or fields changed
   if (updateData && (updateData.draft === false || updateData.type || updateData.province || typeof updateData.jurisdiction !== 'undefined' || typeof updateData.nsfw !== 'undefined' || updateData.attachments)) {
     const set = { ...updateData };
+    // If this update publishes a draft, reset createdAt to the publish time
+    const isPublishing = (post && post.draft === true && updateData.draft === false);
+    if (isPublishing) {
+      set.createdAt = Date.now();
+    }
     // Normalize image attachments if present
     if (set.attachments && set.attachments.type === 'images') {
       const ids = Array.isArray(set.attachments.fileIds)
@@ -323,7 +328,7 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
     if (typeof set.nsfw !== 'undefined') {
       set.nsfw = !!set.nsfw;
     }
-    await Posts.updateAsync({ _id: postId }, { $set: set });
+  await Posts.updateAsync({ _id: postId }, { $set: set });
   } else {
     await Posts.updateAsync({ _id: postId }, { $set: updateData });
   }
