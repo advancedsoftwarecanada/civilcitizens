@@ -255,3 +255,24 @@ table {
   overflow: hidden;
   white-space: normal;
 }
+
+/* ========== Guest CTA (left rail) ========== */
+.cta-join-btn {
+  background: linear-gradient(135deg, #e03131 0%, #c92a2a 100%) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 12px !important;
+  padding: 12px 14px !important;
+  font-weight: 700 !important;
+  text-align: center !important;
+  box-shadow: 0 4px 10px rgba(201, 42, 42, 0.35) !important;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease !important;
+}
+.cta-join-btn:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 6px 14px rgba(201, 42, 42, 0.45) !important;
+  text-decoration: none !important;
+}
+.cta-join-btn:active {
+  transform: translateY(1px);
+}

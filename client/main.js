@@ -30,55 +30,26 @@ Meteor.startup(() => {
     const isConnected = Meteor.status().connected;
 
     if (!isLoggedIn) {
-      // Don't immediately redirect - check if this is a false positive
+      // Do not redirect—allow viewing public pages even if logged out or temporarily offline.
       if (hasLoginToken && isConnected && !logoutDetected) {
-        console.log('User appears logged out but token exists - waiting to confirm...');
-        console.log('Current Meteor.userId():', Meteor.userId());
-        console.log('Login token length:', localStorage.getItem('Meteor.loginToken')?.length);
-
-        // Set a timeout to check again in 3 seconds
+        // Soft wait to avoid flicker when session is restoring
         if (logoutTimeout) clearTimeout(logoutTimeout);
         logoutTimeout = setTimeout(() => {
           const stillLoggedOut = !Meteor.user();
           const stillHasToken = !!localStorage.getItem('Meteor.loginToken');
           const stillConnected = Meteor.status().connected;
-
-          console.log(
-            'Timeout check - still logged out:',
-            stillLoggedOut,
-            'still has token:',
-            stillHasToken,
-            'still connected:',
-            stillConnected
-          );
-
-          if (stillLoggedOut && stillHasToken && stillConnected) {
-            console.log('Confirmed logout after timeout - redirecting to home');
-            logoutDetected = true;
-            // Reset initialization flags when user logs out
-            initializationStarted = false;
-            initializationCompleted = false;
-            window['userDataReady'] = false;
-            FlowRouter.go('/');
-          } else if (!stillLoggedOut) {
-            console.log('False logout detected - user recovered');
-          } else {
-            console.log('Logout condition not met - keeping user logged in');
-          }
+          console.log('Timeout check (no redirect):', { stillLoggedOut, stillHasToken, stillConnected });
+          // Keep state; no route changes
         }, 3000);
-        return; // Don't redirect yet
+        return;
       } else if (!hasLoginToken || !isConnected) {
-        console.log('User is not logged in. Redirecting to home...');
-        console.log('Login token in localStorage:', hasLoginToken);
-        console.log('Meteor.userId():', Meteor.userId());
-        console.log('Connection status:', isConnected);
+        console.log('User not logged in or offline; staying on current page.');
         logoutDetected = true;
-        // Reset initialization flags when user logs out
+        // Reset initialization flags; do not navigate away
         initializationStarted = false;
         initializationCompleted = false;
         window['userDataReady'] = false;
-        FlowRouter.go('/');
-        return; // Exit early if not logged in
+        return;
       }
     } else {
       // User is logged in - clear any pending logout timeout
@@ -123,19 +94,23 @@ Meteor.startup(() => {
 FlowRouter.route('/', {
   name: 'home',
   action() {
-    if (Meteor.userId()) {
+    if (!Meteor.userId()) {
+      // Guest landing page
+      BlazeLayout.render('CivilApp_0', { main: 'guest' });
+      return;
+    }
+    // Logged-in timeline with soft wait for user data
+    const renderNow = () => BlazeLayout.render('CivilApp_3', { main: 'timeline' });
+    if (Meteor.userId() && !window['userDataReady']) {
       const checkUserDataReady = setInterval(() => {
         if (window['userDataReady']) {
           clearInterval(checkUserDataReady);
-          BlazeLayout.render('CivilApp_3', {
-            main: 'timeline',
-          });
+          renderNow();
         }
       }, 100);
+      setTimeout(() => { try { clearInterval(checkUserDataReady); } catch(e){} renderNow(); }, 1500);
     } else {
-      BlazeLayout.render('CivilApp_0', {
-        main: 'guest',
-      });
+      renderNow();
     }
   },
 });

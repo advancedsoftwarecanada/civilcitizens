@@ -91,7 +91,40 @@
                 </ul>
             </div>
         {{else}}
+                        <div class="profile-sidebar cus-scrollbar p-5">
+                <div class="single-box p-4" style="background:#fff;border:1px solid #e9ecef;border-radius:12px;">
+                    <div class="text-area text-start">
+                                                {{#if isViewingChamber}}
+                                                    <h5 class="mb-2">Welcome to Civil — {{niceName chamber}}’s Chamber of Citizens</h5>
+                                                {{else}}
+                                                    <h5 class="mb-2">Welcome to Civil</h5>
+                                                {{/if}}
+                                                <p class="mdtxt mb-4">A verified local network where real residents and businesses get things done.</p>
 
+                        <hr class="my-4">
+
+                        <h6 class="mb-2">Why join?</h6>
+                                                <ul class="mdtxt" style="padding-left: 1.25rem;">
+                                                        <li>✅ Post, comment, and vote in your Chamber of Citizens</li>
+                                                        <li>✅ Get member prices from verified local businesses</li>
+                                                        <li>✅ Find jobs (or hire) faster in your area</li>
+                                                        <li>✅ Receive a monthly digest made for your riding</li>
+                        </ul>
+
+                        <div class="mt-4">
+                                                        <div class="mdtxt mb-2">Ready to take part?</div>
+                                                        <a href="/?src=guest_sidebar&utm_source=guest_panel&utm_medium=web&utm_campaign=onboarding&utm_content=variant_a" class="cmn-btn d-center gap-1 w-100 cta-join-btn" aria-label="Discover Civil">
+                                                            🍁 Discover Civil
+                                                        </a>
+                                                        <div class="tiny-trust text-muted mt-3" style="font-size:12px;">
+                                                            Reading is open.
+                                                            <br />
+                                                            Posting &amp; voting require verification.
+                                                        </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         {{/if}}
     </div>
 </template>

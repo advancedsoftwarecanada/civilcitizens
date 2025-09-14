@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* global Meteor, Tracker, ReactiveVar, Session, FlowRouter, BlazeLayout, Template, $, toastr, indexedDB, localStorage, window */
 
 class UserManager {
@@ -263,6 +264,11 @@ class UserManager {
     
     async handleUpvoteClick(event) {
         console.log('Upvote clicked');
+        const token = localStorage.getItem('Meteor.loginToken');
+        if (!token) {
+            try { toastr && toastr.info('Please log in to vote.'); } catch(e){}
+            return;
+        }
         const postId = $(event.target).closest('[data-post-id]').data('post-id');
         console.log("POST ID: " + postId);
         const success = await this.voteHttp(postId, 'upvote');
@@ -273,6 +279,11 @@ class UserManager {
 
     async handleDownvoteClick(event) {
         console.log('Downvote clicked');
+        const token = localStorage.getItem('Meteor.loginToken');
+        if (!token) {
+            try { toastr && toastr.info('Please log in to vote.'); } catch(e){}
+            return;
+        }
         const postId = $(event.target).closest('[data-post-id]').data('post-id');
         const success = await this.voteHttp(postId, 'downvote');
         if (success) {
@@ -399,8 +410,11 @@ class UserManager {
     }
 
     updateVoteClasses() {
-        const votes = this.getVotes();
-        votes.forEach((vote) => {
+        const votes = this.getVotes() || {};
+        const list = Array.isArray(votes)
+            ? votes
+            : Object.keys(votes).map((postId) => ({ postId, vote: votes[postId] }));
+        list.forEach((vote) => {
             // console.log(vote);
             const postElement = $(`[data-post-id="${vote.postId}"]`);
             if (postElement.length) {
@@ -564,6 +578,11 @@ class UserManager {
         this.saveToStorage();
     }
     async handleFollowClick(event) {
+        const token = localStorage.getItem('Meteor.loginToken');
+        if (!token) {
+            try { toastr && toastr.info('Please log in to follow chambers.'); } catch(e){}
+            return;
+        }
         const province = FlowRouter.getParam('province');
         const chamber = FlowRouter.getParam('chamber');
 
@@ -581,11 +600,11 @@ class UserManager {
         try {
             this._requestsInFlight[key] = true;
 
-            const response = await fetch('/api/events', {
+        const response = await fetch('/api/events', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${localStorage.getItem('Meteor.loginToken')}`,
+            Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({ 
                     action: 'follow', 
@@ -619,7 +638,11 @@ class UserManager {
     }
 
     async handleUnfollowClick(event) {
-        const userId = Meteor.userId();
+        const token = localStorage.getItem('Meteor.loginToken');
+        if (!token) {
+            try { toastr && toastr.info('Please log in to modify follows.'); } catch(e){}
+            return;
+        }
         const province = FlowRouter.getParam('province');
         const chamber = FlowRouter.getParam('chamber');
 
@@ -634,11 +657,11 @@ class UserManager {
         try {
             this._requestsInFlight[key] = true;
 
-            const response = await fetch('/api/events', {
+        const response = await fetch('/api/events', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${localStorage.getItem('Meteor.loginToken')}`,
+            Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({ 
                     action: 'unfollow', 

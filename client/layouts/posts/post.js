@@ -12,14 +12,18 @@ FlowRouter.route('/post/', {
 FlowRouter.route('/post/:seo_url', {
   name: "post",
   action(params) {
-      const checkUserDataReady = setInterval(() => {
-        if (window.userDataReady) {
+      const renderNow = () => BlazeLayout.render('CivilApp_3', { main: 'post' });
+      if (Meteor.userId() && !window.userDataReady) {
+        const checkUserDataReady = setInterval(() => {
+          if (window.userDataReady) {
             clearInterval(checkUserDataReady);
-            BlazeLayout.render('CivilApp_3', {
-                main: 'post',
-            });
-        }
-    }, 100);
+            renderNow();
+          }
+        }, 100);
+        setTimeout(() => { try { clearInterval(checkUserDataReady); } catch(e){} renderNow(); }, 1500);
+      } else {
+        renderNow();
+      }
     console.log('SEO URL:', params.seo_url);
   }
 });
@@ -30,7 +34,7 @@ Template.post.onCreated(function () {
 
   this.autorun(() => {
     const seoUrl = FlowRouter.getParam('seo_url');
-    HTTP.get(Meteor.settings.public.ROOT_URL+`/api/post?seo_url=${seoUrl}`, (error, response) => {
+  HTTP.get(`/api/post?seo_url=${seoUrl}`, (error, response) => {
       if (error) {
         console.error('Error fetching post:', error);
       } else {
@@ -167,6 +171,7 @@ Template.post.events({
     const comment = commentInput.value.trim();
     const postId = instance.post.get()?._id;
     const userId = Meteor.userId();
+  const token = localStorage.getItem && localStorage.getItem('Meteor.loginToken');
     // @ts-ignore
     const userMeta = userManager.getData().meta || {}; // `getData()` is reactive
 
@@ -175,7 +180,13 @@ Template.post.events({
       return;
     }
 
-    HTTP.post(Meteor.settings.public.ROOT_URL + '/api/comments', {
+    if (!userId || !token) {
+      toastr.info('Please log in to comment.');
+      return;
+    }
+
+    HTTP.post('/api/comments', {
+      headers: { Authorization: `Bearer ${token}` },
       data: { postId, userId, comment }
     }, (error, response) => {
       if (error) {
