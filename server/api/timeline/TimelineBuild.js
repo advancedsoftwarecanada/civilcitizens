@@ -76,7 +76,7 @@ export default class TimelineBuild {
                 console.log("Followed chambers:", followedChamberIds);
 
                 // Fetch user's own posts (self posts)
-                const mySelfQuery = { authorId: userId, type: "self", draft: false };
+                const mySelfQuery = { authorId: userId, type: "self", draft: { $ne: true } };
                 const mySelfPosts = await Posts.find(
                     mySelfQuery,
                     { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
@@ -86,14 +86,14 @@ export default class TimelineBuild {
                 let homeChamberPosts = [];
                 if (userHomeChamber) {
                     homeChamberPosts = await Posts.find(
-                        { province: userMeta?.province, chamber: userHomeChamber, type: 'chamber', draft: false },
+                        { province: userMeta?.province, chamber: userHomeChamber, type: 'chamber', draft: { $ne: true } },
                         { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
                     ).fetch();
                 }
 
                 // Fetch posts from all followed Chambers
                 const followedChamberPosts = await Posts.find(
-                    { chamber: { $in: followedChamberIds }, type: 'chamber', draft: false },
+                    { chamber: { $in: followedChamberIds }, type: 'chamber', draft: { $ne: true } },
                     { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
                 ).fetch();
 
@@ -161,7 +161,7 @@ export default class TimelineBuild {
                     province: searchProvince,
                     chamber: searchChamber,
                     type: 'chamber',
-                    draft: false
+                    draft: { $ne: true }
                 };
                 // Apply jurisdiction filter based on govParam
                 if (govParam === 'all') {
@@ -224,7 +224,7 @@ export default class TimelineBuild {
                                    metas.slice().sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0))[0] ||
                                    metas[0];
 
-                const posts = await Posts.find({ authorId: targetMeta.ownerUserId, draft: false }, {
+                const posts = await Posts.find({ authorId: targetMeta.ownerUserId, draft: { $ne: true } }, {
                     sort: { createdAt: -1 },
                     skip: offset,
                     limit: limit,

@@ -5,19 +5,19 @@ const targetUserVar = new ReactiveVar(null);
 FlowRouter.route('/u/:username', {
   name: 'userTimeline',
   action() {
-    if (Meteor.userId()) {
+    const renderNow = () => BlazeLayout.render('CivilApp_3', { main: 'userTimeline' });
+    // If logged in and app needs user data, wait briefly; otherwise render immediately
+    if (Meteor.userId() && !window.userDataReady) {
       const checkUserDataReady = setInterval(() => {
         if (window.userDataReady) {
           clearInterval(checkUserDataReady);
-          BlazeLayout.render('CivilApp_3', {
-            main: 'userTimeline',
-          });
+          renderNow();
         }
       }, 100);
+      // Safety timeout: render anyway after 1.5s
+      setTimeout(() => { try { clearInterval(checkUserDataReady); } catch(e){} renderNow(); }, 1500);
     } else {
-      BlazeLayout.render('CivilApp_0', {
-        main: 'guest',
-      });
+      renderNow();
     }
   },
 });
@@ -42,7 +42,7 @@ Template.userTimeline.onCreated(function () {
     const token = (typeof Accounts !== 'undefined' && Accounts._storedLoginToken && Accounts._storedLoginToken()) || null;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     HTTP.get(
-      `${Meteor.settings.public.ROOT_URL}/api/user/by-username?username=${encodeURIComponent(username)}`,
+      `/api/user/by-username?username=${encodeURIComponent(username)}`,
       { headers },
       (err, res) => {
       if (err) {
@@ -57,7 +57,7 @@ Template.userTimeline.onCreated(function () {
           });
         }
       } else {
-        const data = res.data || {};
+  const data = res && res.data ? res.data : {};
         const current = targetUserVar.get() || {};
         const myMeta = (window && window.userManager && typeof window.userManager.getData === 'function') ? (window.userManager.getData().meta || {}) : {};
         const isSelf = myMeta && myMeta.userName && typeof username === 'string' && (myMeta.userName.toLowerCase() === username.toLowerCase());
@@ -78,13 +78,13 @@ Template.userTimeline.onCreated(function () {
     if (append && !this.hasMore.get()) return;
 
     this.isLoading.set(true);
-    const userId = Meteor.userId();
+  const userId = Meteor.userId() || '';
     const path = FlowRouter.current().path;
     const username = FlowRouter.getParam('username');
     const offset = append ? this.currentOffset.get() : 0;
     const limit = 10;
 
-  const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?uid=${userId}&path=${encodeURIComponent(path)}&username=${encodeURIComponent(username)}&offset=${offset}&limit=${limit}`;
+  const apiUrl = `/api/timeline?uid=${userId}&path=${encodeURIComponent(path)}&username=${encodeURIComponent(username)}&offset=${offset}&limit=${limit}`;
 
   // Include Authorization header if available (harmless for public endpoints)
   const token = (typeof Accounts !== 'undefined' && Accounts._storedLoginToken && Accounts._storedLoginToken()) || null;
@@ -149,8 +149,8 @@ Template.userTimeline.helpers({
     const username = FlowRouter.getParam('username');
     const isSelf = myMeta && myMeta.userName && typeof username === 'string' && (myMeta.userName.toLowerCase() === username.toLowerCase());
     return {
-      // Always show a handle: prefer API value, then route param
-      userName: meta.userName || username || '',
+      // Always display the route handle to match the URL
+      userName: username || meta.userName || '',
       avatarUrl: (isSelf && myMeta.avatarUrl) ? myMeta.avatarUrl : (meta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png'),
       coverUrl: (isSelf && myMeta.coverUrl) ? myMeta.coverUrl : (meta.coverUrl || '/theme/assets/images/fancy-wallpaper.jpg'),
     };
