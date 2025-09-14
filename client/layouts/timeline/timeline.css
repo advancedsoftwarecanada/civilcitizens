@@ -60,18 +60,30 @@ main {
   margin: 0.5rem 0 !important;
   list-style-position: outside !important;
 }
+/* Force markers even if a theme resets them */
 .timeline-page .post-content ul,
 .timeline-page .post-item ul,
 .timeline-page .description ul,
-.timeline-page .truncate-in-timeline ul { list-style: disc !important; }
+.timeline-page .truncate-in-timeline ul { list-style-type: disc !important; list-style: disc outside !important; }
 .timeline-page .post-content ol,
 .timeline-page .post-item ol,
 .timeline-page .description ol,
-.timeline-page .truncate-in-timeline ol { list-style: decimal !important; }
+.timeline-page .truncate-in-timeline ol { list-style-type: decimal !important; list-style: decimal outside !important; }
 .timeline-page .post-content li,
 .timeline-page .post-item li,
 .timeline-page .description li,
-.timeline-page .truncate-in-timeline li { margin: 0.2rem 0; }
+.timeline-page .truncate-in-timeline li {
+  margin: 0.2rem 0;
+  display: list-item !important;
+  list-style: inherit !important;
+}
+/* Nested lists keep bullets/numbers */
+.timeline-page .description ul ul,
+.timeline-page .description ul ol,
+.timeline-page .description ol ul,
+.timeline-page .description ol ol {
+  padding-left: 1.25rem !important;
+}
 
 .read-more-btn {
   background: none;

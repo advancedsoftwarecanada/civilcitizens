@@ -12,20 +12,17 @@ const thisChamber = new ReactiveVar(null);
 FlowRouter.route('/c/:province/:chamber', {
   name: "home",
   action() {
-      if (Meteor.userId()) {
-
+      const renderNow = () => BlazeLayout.render('CivilApp_3', { main: 'timeline' });
+      if (Meteor.userId() && !window.userDataReady) {
         const checkUserDataReady = setInterval(() => {
           if (window.userDataReady) {
-              clearInterval(checkUserDataReady);
-              BlazeLayout.render('CivilApp_3', {
-                  main: 'timeline',
-              });
+            clearInterval(checkUserDataReady);
+            renderNow();
           }
-      }, 100);
+        }, 100);
+        setTimeout(() => { try { clearInterval(checkUserDataReady); } catch(e){} renderNow(); }, 1500);
       } else {
-          BlazeLayout.render('CivilApp_0', {
-              main: 'guest',
-          });
+        renderNow();
       }
   }
 });
@@ -60,7 +57,8 @@ Template.timeline.onCreated(function () {
   const limit = 10; // Load 10 posts at a time
   const sort = this.sortTab.get();
   const gov = this.govTab.get();
-  const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/timeline?uid=${userId}&path=${path}&province=${province}&chamber=${chamber}&offset=${offset}&limit=${limit}&sort=${sort}&gov=${gov}`;
+  // Use relative URL so it works for guests and across environments
+  const apiUrl = `/api/timeline?uid=${userId || ''}&path=${encodeURIComponent(path)}&province=${province || ''}&chamber=${chamber || ''}&offset=${offset}&limit=${limit}&sort=${sort}&gov=${gov}`;
 
     // Debounce rapid calls within 100ms window
     if (this._loadDebounce) clearTimeout(this._loadDebounce);
@@ -100,12 +98,9 @@ Template.timeline.onCreated(function () {
 
   // Reload when route/path changes (home <-> chamber, or between chambers)
   this.autorun(() => {
-    const userId = Meteor.userId();
     const province = FlowRouter.getParam('province');
     const chamber = FlowRouter.getParam('chamber');
     const path = FlowRouter.current().path;
-
-    if (!userId) return;
 
     if (this.lastPath !== path) {
       this.lastPath = path;
@@ -193,7 +188,7 @@ Template.timeline.onRendered(function () {
       const chamber = FlowRouter.getParam('chamber');
 
       if (province && chamber) {
-        const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/chamber?province=${province}&chamber=${chamber}`;
+        const apiUrl = `/api/chamber?province=${province}&chamber=${chamber}`;
         HTTP.get(apiUrl, (error, response) => {
           if (error) {
             console.error('Error fetching chamber:', error);
