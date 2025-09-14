@@ -23,7 +23,7 @@ export const TimelineInstance = new Timeline();
 TimelineInstance.log('Timeline instance created');
 
 WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
-  const { type, uid, province, chamber, offset = 0, limit = 10, sort = 'latest', gov = 'federal' } = req.query;
+  const { type, uid, province, chamber, offset = 0, limit = 10, sort = 'latest', gov = 'all' } = req.query;
   const userId = uid;
 
   // Detect the timeline type

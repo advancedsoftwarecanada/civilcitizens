@@ -233,3 +233,25 @@ table {
   background: #eef1f5;
   box-shadow: 0 0 0 rgba(0,0,0,0);
 }
+
+/* Character counters */
+.char-counter {
+  font-size: 12px;
+  color: #888;
+  text-align: right;
+  margin-top: 4px;
+}
+.char-counter.over {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+/* Truncate long post bodies on timeline only */
+.truncate-in-timeline {
+  display: -webkit-box;
+  line-clamp: 10; /* standard */
+  -webkit-line-clamp: 10; /* ~10 lines */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+}

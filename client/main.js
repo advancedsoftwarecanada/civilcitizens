@@ -397,6 +397,17 @@ Template.registerHelper('cdn', function () {
   return Meteor.settings.public.cdnPath;
 });
 
+// Global: jurisdiction label for posts (so all templates can use it)
+Template.registerHelper('jurisdictionLabel', function (post) {
+  const p = post || this || {};
+  let j = (p && p.jurisdiction) ? String(p.jurisdiction).toLowerCase() : '';
+  if (!j) {
+    if (p && (p.type === 'self' || p.type === 'topic')) j = 'citizen';
+    else if (p && p.type === 'chamber') j = 'federal';
+  }
+  return j ? j.charAt(0).toUpperCase() + j.slice(1) : 'Citizen';
+});
+
 // Nice Name (some-title-like-this) -> Some Title Like This
 Template.registerHelper('niceName', function (text) {
   return text.replace(/-/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());

@@ -264,6 +264,19 @@ Template.submit.events({
     const postTitle = $('#postTitle').length ? ($('#postTitle').val() || '').trim() : null;
     const summernoteContent = $('#summernote').summernote('code');
     const postBody = summernoteContent ? summernoteContent.trim() : '';
+
+    // Client-side limits
+    const TITLE_MAX = 300;
+    const BODY_MAX = 40000; // count plaintext characters
+    if (postTitle && postTitle.length > TITLE_MAX) {
+      toastr.error('Title is too long. Max 300 characters.');
+      return;
+    }
+    const plainBody = $('<div>').html(postBody).text();
+    if (plainBody.length > BODY_MAX) {
+      toastr.error('Post body is too long. Max 40,000 characters.');
+      return;
+    }
     const postChamber = $('#postChamber').val();
 
     // Determine post type and context from dropdown selection
@@ -354,7 +367,7 @@ Template.submit.events({
     }
 
     // Validate inputs
-    if (!postBody && !hasAttachment) {
+  if (!postBody && !hasAttachment) {
       toastr.error('Please enter a body or add an attachment.', 'Validation Error');
       return;
     }

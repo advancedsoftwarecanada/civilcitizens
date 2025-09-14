@@ -142,8 +142,8 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
 
   // Prepare post data
     const postData = {
-      title: thePostJson.title || null,
-      body: thePostJson.body || null,
+  title: thePostJson.title || null,
+  body: thePostJson.body || null,
       type: thePostJson.type,
       authorId: userId,
       voteCount: 0,
@@ -155,6 +155,24 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
       draft: thePostJson.draft || false,
       nsfw: !!thePostJson.nsfw,
     };
+
+    // Server-side validation: length limits
+    const TITLE_MAX = 300;
+    const BODY_MAX = 40000;
+    if (postData.title && String(postData.title).length > TITLE_MAX) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Title too long (max ${TITLE_MAX})` }));
+      return;
+    }
+    if (postData.body) {
+      // Count plaintext characters for body
+      const plain = String(postData.body).replace(/<[^>]*>/g, '');
+      if (plain.length > BODY_MAX) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Body too long (max ${BODY_MAX})` }));
+        return;
+      }
+    }
 
     // Handle attachments
     if (thePostJson.attachments) {
@@ -290,6 +308,27 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
   // Ensure jurisdiction is set if moving from draft to published or fields changed
   if (updateData && (updateData.draft === false || updateData.type || updateData.province || typeof updateData.jurisdiction !== 'undefined' || typeof updateData.nsfw !== 'undefined' || updateData.attachments)) {
     const set = { ...updateData };
+    // Validate lengths if title/body provided
+    const TITLE_MAX = 300;
+    const BODY_MAX = 40000;
+    if (typeof set.title === 'string' && set.title.length > TITLE_MAX) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Title too long (max ${TITLE_MAX})` }));
+      return;
+    }
+    if (typeof set.body === 'string') {
+      const plain = set.body.replace(/<[^>]*>/g, '');
+      if (plain.length > BODY_MAX) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Body too long (max ${BODY_MAX})` }));
+        return;
+      }
+    }
+    // If this update publishes a draft, reset createdAt to the publish time
+    const isPublishing = (post && post.draft === true && updateData.draft === false);
+    if (isPublishing) {
+      set.createdAt = Date.now();
+    }
     // Normalize image attachments if present
     if (set.attachments && set.attachments.type === 'images') {
       const ids = Array.isArray(set.attachments.fileIds)
@@ -323,7 +362,7 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
     if (typeof set.nsfw !== 'undefined') {
       set.nsfw = !!set.nsfw;
     }
-    await Posts.updateAsync({ _id: postId }, { $set: set });
+  await Posts.updateAsync({ _id: postId }, { $set: set });
   } else {
     await Posts.updateAsync({ _id: postId }, { $set: updateData });
   }
