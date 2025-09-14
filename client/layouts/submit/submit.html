@@ -39,14 +39,8 @@
         <button class="attachment-btn btn" id="addImageBtn" title="Add Image">
           <i class="fa fa-image"></i>
         </button>
-        <button class="attachment-btn btn" id="addVideoBtn" title="Add Video">
-          <i class="fa fa-video"></i>
-        </button>
         <button class="attachment-btn btn" id="addLinkBtn" title="Add Link">
           <i class="fa fa-link"></i>
-        </button>
-        <button class="attachment-btn btn" id="addPollBtn" title="Add Poll">
-          <i class="fa fa-chart-bar"></i>
         </button>
       </div>
 
@@ -61,14 +55,7 @@
         <div id="imagePreview" class="file-list"></div>
       </div>
 
-      <div id="videoAttachment" class="attachment-area" style="display: none;">
-        <label for="postVideo" class="upload-label">
-          <input type="file" id="postVideo" class="fileUploader" accept=".mp4, .avi, .mov">
-          <div class="upload-box">
-            <span class="upload-text">Click or drag and drop to upload a video</span>
-          </div>
-        </label>
-      </div>
+      
 
       <div id="linkAttachment" class="attachment-area" style="display: none;">
         <input type="url" id="postLink" placeholder="Enter URL to preview" class="link-input">
@@ -94,17 +81,7 @@
         </div>
       </div>
 
-      <div id="pollAttachment" class="attachment-area" style="display: none;">
-        <div class="poll-options">
-          <input type="text" placeholder="Option 1" class="poll-option">
-          <input type="text" placeholder="Option 2" class="poll-option">
-          <button id="addPollOption" class="add-option-btn">Add Option</button>
-        </div>
-        <div class="poll-settings">
-          <label>Duration: <input type="number" id="pollDuration" value="1" min="1"> days</label>
-          <label><input type="checkbox" id="allowMulti"> Allow multiple selections</label>
-        </div>
-      </div>
+      
 
 
 
@@ -214,19 +191,17 @@
           // Attachment Buttons
           $('.attachment-btn').click(function() {
             const type = $(this).attr('id').replace('add', '').replace('Btn', '').toLowerCase();
+            if (type === 'video' || type === 'poll') {
+              toastr.info('Video and polls are currently disabled.');
+              return;
+            }
             $('.attachment-area').hide();
             $('.attachment-btn').removeClass('active');
             $(this).addClass('active');
             $('#' + type + 'Attachment').show();
           });
 
-          // Poll Add Option
-          $('#addPollOption').click(function() {
-            const options = $('.poll-option').length;
-            if (options < 4) {
-              $('.poll-options').append('<input type="text" placeholder="Option ' + (options + 1) + '" class="poll-option">');
-            }
-          });
+          // Polls disabled
 
           // Link Preview Functionality
           window.linkPreviewData = null;
