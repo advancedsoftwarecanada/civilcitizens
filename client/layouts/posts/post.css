@@ -488,3 +488,9 @@
     display: none; /* Hide thumbnails on very small screens */
   }
 }
+
+/* Ensure single post page content isn't truncated by timeline styles */
+.post-page .post-content {
+  max-height: none !important;
+  overflow: visible;
+}

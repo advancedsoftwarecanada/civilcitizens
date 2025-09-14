@@ -41,7 +41,7 @@ main {
 
 
 
-.post-content {
+.timeline-page .post-content {
   max-height: 33vh;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -56,7 +56,7 @@ main {
   margin-top: 10px;
 }
 
-.post-content {
+.timeline-page .post-content {
   max-height: 33vh;
   overflow: hidden;
   text-overflow: ellipsis;
