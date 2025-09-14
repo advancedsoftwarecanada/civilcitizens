@@ -118,10 +118,12 @@
             console.log("SUMMERNOTE CHECKING");
             if (typeof $.fn.summernote !== 'undefined') {
               clearInterval(initializeSummernote);
+              let isCleaningImages = false;
               $('#summernote').summernote({
                 placeholder: 'Write something!',
                 tabsize: 2,
                 height: 300,
+                disableDragAndDrop: true, // prevent drag & drop uploads
                 toolbar: [
                   ['font', ['bold', 'italic', 'underline', 'clear']],
                   ['para', ['ul', 'ol', 'paragraph']],
@@ -132,7 +134,45 @@
                 popover: {
                   image: []
                 },
-                tooltip: false
+                tooltip: false,
+                callbacks: {
+                  onImageUpload: function(files) {
+                    // Block any attempt to upload/insert images
+                    toastr.warning('Image uploads are disabled right now.');
+                  },
+                  onPaste: function(e) {
+                    // Block pasting images
+                    const ev = e.originalEvent || e;
+                    const items = ev && ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : [];
+                    for (let i = 0; i < items.length; i++) {
+                      const it = items[i];
+                      if (it && it.type && it.type.indexOf('image') !== -1) {
+                        e.preventDefault();
+                        toastr.warning('Pasting images is disabled.');
+                        return false;
+                      }
+                    }
+                  },
+                  onChange: function(contents) {
+                    // As a safety net, strip any <img> tags that may have been inserted
+                    if (isCleaningImages) return;
+                    if (contents && contents.indexOf('<img') !== -1) {
+                      isCleaningImages = true;
+                      const $dom = $('<div>').html(contents);
+                      if ($dom.find('img').length) {
+                        $dom.find('img').remove();
+                        // Defer to avoid recursive sync calls
+                        setTimeout(() => {
+                          $('#summernote').summernote('code', $dom.html());
+                          toastr.warning('Images removed from editor content.');
+                          isCleaningImages = false;
+                        }, 0);
+                      } else {
+                        isCleaningImages = false;
+                      }
+                    }
+                  }
+                }
               });
               console.log('Summernote initialized successfully!');
 
@@ -370,6 +410,27 @@
         padding: 8px;
         min-height: 200px;
         margin-bottom: 8px;
+      }
+      /* Normalize list styles inside Summernote to avoid conflicting resets */
+      .note-editor .note-editable ul,
+      .note-editor .note-editable ol {
+        padding-left: 1.25rem; /* show bullets/numbers properly */
+        margin: 0.5rem 0 0.5rem 0;
+        list-style-position: outside;
+      }
+      .note-editor .note-editable ul {
+        list-style: disc;
+      }
+      .note-editor .note-editable ol {
+        list-style: decimal;
+      }
+      .note-editor .note-editable li {
+        margin: 0.2rem 0;
+      }
+      /* Respect text alignment set by toolbar */
+      .note-editor .note-editable [style*="text-align:"] {
+        display: block;
+        width: 100%;
       }
 
       /* Upload Area */

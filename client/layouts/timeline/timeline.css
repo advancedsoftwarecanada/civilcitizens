@@ -47,6 +47,32 @@ main {
   text-overflow: ellipsis;
 }
 
+/* Show bullets/numbers inside rendered post body on the timeline */
+.timeline-page .post-content ul,
+.timeline-page .post-content ol,
+.timeline-page .post-item ul,
+.timeline-page .post-item ol,
+.timeline-page .description ul,
+.timeline-page .description ol,
+.timeline-page .truncate-in-timeline ul,
+.timeline-page .truncate-in-timeline ol {
+  padding-left: 1.25rem !important;
+  margin: 0.5rem 0 !important;
+  list-style-position: outside !important;
+}
+.timeline-page .post-content ul,
+.timeline-page .post-item ul,
+.timeline-page .description ul,
+.timeline-page .truncate-in-timeline ul { list-style: disc !important; }
+.timeline-page .post-content ol,
+.timeline-page .post-item ol,
+.timeline-page .description ol,
+.timeline-page .truncate-in-timeline ol { list-style: decimal !important; }
+.timeline-page .post-content li,
+.timeline-page .post-item li,
+.timeline-page .description li,
+.timeline-page .truncate-in-timeline li { margin: 0.2rem 0; }
+
 .read-more-btn {
   background: none;
   border: none;

@@ -494,3 +494,14 @@
   max-height: none !important;
   overflow: visible;
 }
+
+/* Show bullets/numbers inside rendered post body on the single post page */
+.post-page .post-content ul,
+.post-page .post-content ol {
+  padding-left: 1.25rem !important;
+  margin: 0.5rem 0 !important;
+  list-style-position: outside !important;
+}
+.post-page .post-content ul { list-style: disc !important; }
+.post-page .post-content ol { list-style: decimal !important; }
+.post-page .post-content li { margin: 0.2rem 0; }
