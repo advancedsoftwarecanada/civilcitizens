@@ -28,6 +28,8 @@ Template.userTimeline.onCreated(function () {
   this.hasMore = new ReactiveVar(true);
   this.currentOffset = new ReactiveVar(0);
   this._lastUsername = null; // track last loaded username to avoid loops
+  this._followState = new ReactiveVar({ isFollowing: false, loading: false, targetUserId: null });
+  this._counts = new ReactiveVar({ followers: 0, following: 0 });
 
   // Defaults used by UI; keep here for comparison so we can overwrite placeholders
   const DEFAULT_AVATAR_URL = 'https://civilcitizens.ca/theme/assets/images/avatar-1.png';
@@ -69,6 +71,58 @@ Template.userTimeline.onCreated(function () {
           bio: data.bio || current.bio || (isSelf ? (myMeta.bio || '') : ''),
         };
         targetUserVar.set(merged);
+        // Store target userId for follow actions
+        const tId = data.userId || null;
+        const state = this._followState.get() || {};
+        this._followState.set({ ...state, targetUserId: tId });
+
+        // Seed isFollowing from UserManager cache while we also fetch from server
+        try {
+          const cached = (window && window.userManager && typeof window.userManager.isFollowingUser === 'function')
+            ? window.userManager.isFollowingUser({ userId: tId, userName: username }) : false;
+          if (cached) {
+            const prior = this._followState.get() || {};
+            this._followState.set({ ...prior, isFollowing: true });
+          }
+        } catch(_){}
+
+        // Seed counts immediately from response if present
+        const f0 = (typeof data.followersCount === 'number') ? data.followersCount : null;
+        const g0 = (typeof data.followingCount === 'number') ? data.followingCount : null;
+        if (f0 !== null || g0 !== null) {
+          const prev = this._counts.get() || {};
+          this._counts.set({ followers: f0 ?? prev.followers ?? 0, following: g0 ?? prev.following ?? 0 });
+        }
+
+        // Load isFollowing + counts
+        Tracker.nonreactive(() => {
+          const token = (typeof Accounts !== 'undefined' && Accounts._storedLoginToken && Accounts._storedLoginToken()) || null;
+          const headers = token ? { Authorization: `Bearer ${token}` } : {};
+          // is-following
+          HTTP.get(`/api/user-follows/is-following?username=${encodeURIComponent(username)}`, { headers }, (e1, r1) => {
+            const isFollowing = !e1 && r1 && r1.data && r1.data.isFollowing === true;
+            const prior = this._followState.get() || {};
+            this._followState.set({ ...prior, isFollowing });
+            // counts (public)
+            HTTP.get(`/api/user-follows/counts?username=${encodeURIComponent(username)}`, {}, (e2, r2) => {
+              const followers = (!e2 && r2 && r2.data && typeof r2.data.followers === 'number') ? r2.data.followers : undefined;
+              const following = (!e2 && r2 && r2.data && typeof r2.data.following === 'number') ? r2.data.following : undefined;
+              const prev = this._counts.get() || {};
+              this._counts.set({ followers: followers ?? prev.followers ?? 0, following: following ?? prev.following ?? 0 });
+              // Periodic refresh of counts (15s) while on page
+              if (!this._countsInterval) {
+                this._countsInterval = setInterval(() => {
+                  HTTP.get(`/api/user-follows/counts?username=${encodeURIComponent(FlowRouter.getParam('username') || '')}`, {}, (e3, r3) => {
+                    const f1 = (!e3 && r3 && r3.data && typeof r3.data.followers === 'number') ? r3.data.followers : undefined;
+                    const f2 = (!e3 && r3 && r3.data && typeof r3.data.following === 'number') ? r3.data.following : undefined;
+                    const prev2 = this._counts.get() || {};
+                    this._counts.set({ followers: f1 ?? prev2.followers ?? 0, following: f2 ?? prev2.following ?? 0 });
+                  });
+                }, 15000);
+              }
+            });
+          });
+        });
       }
     }
     );
@@ -145,6 +199,13 @@ Template.userTimeline.onCreated(function () {
   });
 });
 
+Template.userTimeline.onDestroyed(function () {
+  if (this._countsInterval) {
+    try { clearInterval(this._countsInterval); } catch(_){}
+    this._countsInterval = null;
+  }
+});
+
 Template.userTimeline.helpers({
   targetUser() {
     const meta = targetUserVar.get() || {};
@@ -162,4 +223,71 @@ Template.userTimeline.helpers({
   posts() {
     return Template.instance().posts.get();
   },
+  isFollowing() {
+    return Template.instance()._followState.get()?.isFollowing === true;
+  },
+  showFollowButton() {
+    const meta = (window && window.userManager && typeof window.userManager.getData === 'function') ? (window.userManager.getData().meta || {}) : {};
+    const username = FlowRouter.getParam('username');
+    return !(meta && meta.userName && username && (String(meta.userName).toLowerCase() === String(username).toLowerCase()));
+  },
+  followButtonLabel() {
+    const st = Template.instance()._followState.get() || {};
+    return st.isFollowing ? 'Following' : 'Follow';
+  },
+  followersCount() {
+    return (Template.instance()._counts.get() || {}).followers || 0;
+  },
+  followingCount() {
+    return (Template.instance()._counts.get() || {}).following || 0;
+  },
+});
+
+Template.userTimeline.events({
+  'click #followActionBtn'(e, tpl) {
+    e.preventDefault();
+    const st = tpl._followState.get() || {};
+    const targetUserId = st.targetUserId || null;
+    if (!targetUserId) return;
+    if (st.loading) return;
+    const token = localStorage.getItem('Meteor.loginToken');
+    const isFollowing = !!st.isFollowing;
+    tpl._followState.set({ ...st, loading: true });
+    const url = isFollowing ? '/api/user-follows/unfollow' : '/api/user-follows/follow';
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ targetUserId }),
+    }).then(async (resp) => {
+      const ok = resp.ok; let json = null; try { json = await resp.json(); } catch(_){}
+      if (!ok) throw new Error((json && (json.error || json.message)) || 'Request failed');
+  // toggle state
+  const nowFollowing = !isFollowing;
+      const prev = tpl._followState.get() || {};
+      tpl._followState.set({ ...prev, isFollowing: nowFollowing, loading: false });
+      // update cache
+      try {
+        if (window && window.userManager) {
+          if (nowFollowing) window.userManager.addFollowingUser({ userId: targetUserId, userName: FlowRouter.getParam('username') });
+          else window.userManager.removeFollowingUser(targetUserId);
+        }
+      } catch(_){}
+      // refresh counts immediately
+      HTTP.get(`/api/user-follows/counts?username=${encodeURIComponent(FlowRouter.getParam('username') || '')}`, {}, (e2, r2) => {
+        const followers = (!e2 && r2 && r2.data && typeof r2.data.followers === 'number') ? r2.data.followers : undefined;
+        const following = (!e2 && r2 && r2.data && typeof r2.data.following === 'number') ? r2.data.following : undefined;
+        const prev = tpl._counts.get() || {};
+        tpl._counts.set({ followers: followers ?? prev.followers ?? 0, following: following ?? prev.following ?? 0 });
+      });
+      // button label updates via helper
+    }).catch((err) => {
+      console.error('Follow/unfollow error', err);
+      const prev = tpl._followState.get() || {};
+      tpl._followState.set({ ...prev, loading: false });
+      if (window.toastr) toastr.error(err?.message || 'Action failed');
+    });
+  }
 });

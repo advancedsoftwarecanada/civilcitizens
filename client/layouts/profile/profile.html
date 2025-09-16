@@ -48,6 +48,16 @@
                     <form class="text-center d-grid gap-4">
                         <div class="single-box p-3 p-sm-5">
                             <div class="col-sm-12">
+                                <div class="d-flex flex-wrap align-items-center gap-3 mb-4">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="mdtxt">Home Chamber:</span>
+                                        <strong>{{profileHomeChamber}}</strong>
+                                    </div>
+                                    <div class="ms-auto d-flex align-items-center gap-3">
+                                        <a class="mini-btn" href="/u/{{myUserMeta.userName}}/followers">Followers: <strong id="profileFollowersCount">{{profileFollowersCount}}</strong></a>
+                                        <a class="mini-btn" href="/u/{{myUserMeta.userName}}/following">Following: <strong id="profileFollowingCount">{{profileFollowingCount}}</strong></a>
+                                    </div>
+                                </div>
                                 <div class="single-input text-start">
                                     <label for="userName">userName</label>
                                     <div class="input-area second">

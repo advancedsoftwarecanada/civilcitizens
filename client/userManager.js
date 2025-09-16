@@ -6,7 +6,7 @@ class UserManager {
         this.dbName = 'UserManagerDB';
         this.storeName = 'userManagerData';
         this.db = null;
-    this.data = { chambers: {}, votes: {}, bookmarks: [], chamberFollows: [] }; // Default structure
+    this.data = { chambers: {}, votes: {}, bookmarks: [], chamberFollows: [], userFollowing: [] }; // Default structure
         this.reactiveData = new Tracker.Dependency(); // Add a Tracker dependency
         this.isDataReady = false;
         this.thisChamber = new ReactiveVar(null); // Add a reactive variable for the current chamber
@@ -82,6 +82,32 @@ class UserManager {
     getData() {
         this.reactiveData.depend(); // Register dependency
         return this.data;
+    }
+
+    // Convenience: check if current user follows a specific userId or username
+    isFollowingUser({ userId = null, userName = null }) {
+        const list = this.data.userFollowing || [];
+        if (userId) return list.some(u => u.userId === userId);
+        if (userName) return list.some(u => (u.userName || '').toLowerCase() === String(userName).toLowerCase());
+        return false;
+    }
+
+    // Update following cache after an action
+    addFollowingUser(entry) {
+        const list = this.data.userFollowing || [];
+        const exists = list.some(u => u.userId === entry.userId);
+        if (!exists) {
+            this.data.userFollowing = [...list, entry];
+            this.saveToStorage();
+            this.reactiveData.changed();
+        }
+    }
+    removeFollowingUser(userId) {
+        const list = this.data.userFollowing || [];
+        const next = list.filter(u => u.userId !== userId);
+        this.data.userFollowing = next;
+        this.saveToStorage();
+        this.reactiveData.changed();
     }
 
     async loadFromStorage() {
