@@ -1,0 +1,46 @@
+<template name="followList">
+  <div id="templateMain" class="col-lg-6">
+    <div class="row cus-mar friend-request">
+      <div class="col-xl-12">
+        <div class="single-box text-start p-5">
+          <div class="title-area mb-3 d-flex align-items-center justify-content-between">
+            <h6>{{title}}</h6>
+            <a class="mini-btn" href="/u/{{username}}">@{{username}}</a>
+          </div>
+          {{#if hasUsers}}
+            <div class="table-responsive">
+              <table class="table m-0">
+                <tbody>
+                  {{#each users}}
+                  <tr>
+                    <th scope="row">
+                      <div class="d-flex gap-3 align-items-center">
+                        <div class="avatar-item">
+                          <img class="avatar-img avatar-size" src="{{avatarUrl}}" alt="avatar">
+                        </div>
+                        <a href="/u/{{userName}}" class="text-area">
+                          <p class="m-0">@{{userName}}</p>
+                        </a>
+                      </div>
+                    </th>
+                    <td></td>
+                    <td>
+                      <div class="btn-area d-flex justify-content-end gap-3">
+                        <a href="/u/{{userName}}"><button class="cmn-btn">View</button></a>
+                      </div>
+                    </td>
+                  </tr>
+                  {{/each}}
+                </tbody>
+              </table>
+            </div>
+          {{else}}
+            <div class="text-center py-5">
+              <p class="m-0">No users to show yet.</p>
+            </div>
+          {{/if}}
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

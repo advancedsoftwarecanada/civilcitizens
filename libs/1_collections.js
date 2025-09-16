@@ -26,6 +26,16 @@ if (Meteor.isServer) {
     ChamberFollows.rawCollection().createIndex({ chamberId: 1 });
 }
 
+// User-to-user follows
+UserFollows = new Mongo.Collection('UserFollows');
+if (Meteor.isServer) {
+    // Fast lookups by follower and by target
+    UserFollows.rawCollection().createIndex({ followerId: 1 });
+    UserFollows.rawCollection().createIndex({ targetUserId: 1 });
+    // Prevent duplicate follows
+    UserFollows.rawCollection().createIndex({ followerId: 1, targetUserId: 1 }, { unique: true });
+}
+
 // Files collection (ostrio:files)
 if (Meteor.isServer) {
     Files = new FilesCollection({

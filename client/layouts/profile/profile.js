@@ -151,6 +151,23 @@ Template.profile.onRendered(function () {
             clearInterval(timer);
         }
     }, 100);
+
+    // Fetch follower/following counts periodically while on profile
+    const updateCounts = async () => {
+        try {
+            const meta = (window.userManager && typeof window.userManager.getData === 'function') ? (window.userManager.getData().meta || {}) : {};
+            const userName = meta.userName;
+            if (!userName) return;
+            const resp = await fetch(`/api/user-follows/counts?username=${encodeURIComponent(userName)}`);
+            if (!resp.ok) return;
+            const json = await resp.json();
+            self.$('#profileFollowersCount').text(json.followers || 0);
+            self.$('#profileFollowingCount').text(json.following || 0);
+        } catch (e) { /* ignore */ }
+    };
+    // Initial and periodic refresh
+    setTimeout(updateCounts, 200);
+    this._countsInterval = setInterval(updateCounts, 15000);
 });
 
 
@@ -285,4 +302,20 @@ Template.profile.events({
             FlowRouter.go('/');
         });
     }
+});
+
+// Template helpers for profile header counts and home chamber
+Template.profile.helpers({
+    profileHomeChamber() {
+        // Derive from userManager's chamberFollows (home: true)
+        const chambers = (window.userManager && typeof window.userManager.getData === 'function')
+            ? (window.userManager.getData().chamberFollows || [])
+            : [];
+        const home = chambers.find(c => c.home === true);
+        if (!home) return 'Not set';
+        try { return (home.province ? home.province.toUpperCase() : '') + ' / ' + Template.instance().parentTemplate?.().niceName?.(home.chamber) || home.chamber; }
+        catch { return (home.province ? home.province.toUpperCase() : '') + ' / ' + home.chamber; }
+    },
+    profileFollowersCount() { return 0; },
+    profileFollowingCount() { return 0; },
 });

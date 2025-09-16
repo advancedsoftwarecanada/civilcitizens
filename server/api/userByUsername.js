@@ -56,10 +56,13 @@ WebApp.connectHandlers.use('/api/user/by-username', async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
+      userId: meta.ownerUserId || null,
       userName: meta.userName,
       avatarUrl,
       coverUrl,
       bio: meta.bio || '',
+      followersCount: typeof meta.followersCount === 'number' ? meta.followersCount : 0,
+      followingCount: typeof meta.followingCount === 'number' ? meta.followingCount : 0,
     }));
   } catch (e) {
     console.error('Error in /api/user/by-username:', e);

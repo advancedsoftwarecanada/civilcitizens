@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* global WebApp, UserMeta, ChamberFollows, Votes, Accounts */
+/* global WebApp, UserMeta, ChamberFollows, Votes, Accounts, UserFollows */
 
 WebApp.connectHandlers.use('/api/user', async (req, res, next) => {
     // Allow subpaths like /api/user/update-bio to pass through to the next handler,
@@ -48,8 +48,8 @@ WebApp.connectHandlers.use('/api/user', async (req, res, next) => {
         let returnUserMeta = {};
 
         // Fetch user metadata
-        const userMeta = await UserMeta.findOneAsync({ ownerUserId: userId });
-        returnUserMeta.meta = userMeta || {};
+    const userMeta = await UserMeta.findOneAsync({ ownerUserId: userId });
+    returnUserMeta.meta = userMeta || {};
 
         // Fetch user's followed chambers
         const userChamberFollows = await ChamberFollows.find({ userId: userId }).fetch();
@@ -58,6 +58,20 @@ WebApp.connectHandlers.use('/api/user', async (req, res, next) => {
         // Fetch user's most recent 100 votes
         const userVotes = await Votes.find({ userId: userId }, { limit: 100, sort: { createdAt: -1 } }).fetch();
         returnUserMeta.votes = userVotes || [];
+
+        // Fetch user's following list (ids + usernames) for client caching
+        try {
+            const followingDocs = await UserFollows.find({ followerId: userId }, { fields: { targetUserId: 1 } }).fetchAsync();
+            const followingIds = (followingDocs || []).map(d => d.targetUserId);
+            let followingUsers = [];
+            if (followingIds.length) {
+                const metas = await UserMeta.find({ ownerUserId: { $in: followingIds } }, { fields: { ownerUserId: 1, userName: 1 } }).fetchAsync();
+                followingUsers = metas.map(m => ({ userId: m.ownerUserId, userName: m.userName }));
+            }
+            returnUserMeta.userFollowing = followingUsers;
+        } catch (e) {
+            returnUserMeta.userFollowing = [];
+        }
 
         // Respond with the combined user metadata
         res.writeHead(200, { 'Content-Type': 'application/json' });
