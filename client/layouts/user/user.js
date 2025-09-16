@@ -54,6 +54,7 @@ Template.userTimeline.onCreated(function () {
             userName: username,
             avatarUrl: 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
             coverUrl: '/theme/assets/images/fancy-wallpaper.jpg',
+            bio: '',
           });
         }
       } else {
@@ -65,6 +66,7 @@ Template.userTimeline.onCreated(function () {
           userName: data.userName || current.userName || username,
           avatarUrl: data.avatarUrl || current.avatarUrl || (isSelf ? (myMeta.avatarUrl || null) : null) || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
           coverUrl: data.coverUrl || current.coverUrl || (isSelf ? (myMeta.coverUrl || null) : null) || '/theme/assets/images/fancy-wallpaper.jpg',
+          bio: data.bio || current.bio || (isSelf ? (myMeta.bio || '') : ''),
         };
         targetUserVar.set(merged);
       }
@@ -114,6 +116,7 @@ Template.userTimeline.onCreated(function () {
           userName: currentMeta.userName || firstAuthor.userName || FlowRouter.getParam('username') || '',
           avatarUrl: currentMeta.avatarUrl || firstAuthor.avatarUrl || DEFAULT_AVATAR_URL,
           coverUrl: currentMeta.coverUrl || firstAuthor.coverUrl || DEFAULT_COVER_URL,
+          bio: currentMeta.bio || '',
         };
   // Improve if existing missing/placeholder OR differs and firstAuthor has a value
   const betterAvatar = firstAuthor.avatarUrl && firstAuthor.avatarUrl !== currentMeta.avatarUrl;
@@ -153,6 +156,7 @@ Template.userTimeline.helpers({
       userName: username || meta.userName || '',
       avatarUrl: (isSelf && myMeta.avatarUrl) ? myMeta.avatarUrl : (meta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png'),
       coverUrl: (isSelf && myMeta.coverUrl) ? myMeta.coverUrl : (meta.coverUrl || '/theme/assets/images/fancy-wallpaper.jpg'),
+      bio: (isSelf && myMeta.bio) ? myMeta.bio : (meta.bio || ''),
     };
   },
   posts() {

@@ -1,4 +1,11 @@
-WebApp.connectHandlers.use('/api/user', async (req, res) => {
+// @ts-nocheck
+/* global WebApp, UserMeta, ChamberFollows, Votes, Accounts */
+
+WebApp.connectHandlers.use('/api/user', async (req, res, next) => {
+    // Allow subpaths like /api/user/update-bio to pass through to the next handler
+    if (req.url && req.url !== '/' && req.url !== '') {
+        return next();
+    }
     try {
         // Extract the Authorization header
         const authHeader = req.headers['authorization'];
@@ -41,6 +48,85 @@ WebApp.connectHandlers.use('/api/user', async (req, res) => {
         res.end(JSON.stringify(returnUserMeta));
     } catch (error) {
         console.error('Error processing /api/user:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Internal server error.' }));
+    }
+});
+
+// Helper: parse JSON body if not already parsed by body-parser
+async function parseJsonBody(req) {
+    return await new Promise((resolve) => {
+        try {
+            let data = '';
+            req.on('data', (chunk) => { data += chunk; });
+            req.on('end', () => {
+                try { resolve(JSON.parse(data || '{}')); }
+                catch { resolve({}); }
+            });
+        } catch (e) {
+            resolve({});
+        }
+    });
+}
+
+// PUT /api/user/update-bio - Update user bio
+WebApp.connectHandlers.use('/api/user/update-bio', async (req, res) => {
+    if (req.method !== 'PUT') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed.' }));
+        return;
+    }
+
+    try {
+        // Extract the Authorization header
+        const authHeader = req.headers['authorization'];
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Unauthorized: Missing or invalid token.' }));
+            return;
+        }
+
+        // Extract and validate the token
+        const token = authHeader.replace('Bearer ', '');
+        const hashedToken = Accounts._hashLoginToken(token);
+        const user = await Meteor.users.findOneAsync({ 'services.resume.loginTokens.hashedToken': hashedToken });
+
+        if (!user) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Unauthorized: Invalid token.' }));
+            return;
+        }
+
+        const userId = user._id;
+
+        // Get the parsed body (supports both body-parser and manual parse)
+        let body = req.body;
+        if (!body || (typeof body === 'object' && Object.keys(body).length === 0)) {
+            body = await parseJsonBody(req);
+        }
+        const bio = (body && typeof body.bio === 'string') ? body.bio : '';
+
+        // Validate bio length
+        const BIO_MAX = 10000;
+        const plainBio = bio ? bio.replace(/<[^>]*>/g, '') : '';
+        if (plainBio.length > BIO_MAX) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Bio too long (max ${BIO_MAX} characters)` }));
+            return;
+        }
+
+        // Update UserMeta
+        await UserMeta.updateAsync(
+            { ownerUserId: userId },
+            { $set: { bio: bio || '' } },
+            { upsert: true }
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'success', message: 'Bio updated successfully.' }));
+
+    } catch (error) {
+        console.error('Error updating bio:', error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Internal server error.' }));
     }

@@ -24,6 +24,58 @@ form.disabled {
     width:100% !important;
 }
 
+/* Small counter used by editors (bio, submit) */
+.char-counter { font-size: 12px; color: #888; text-align: right; margin-bottom: 14px; }
+.char-counter.over { color: #c0392b; font-weight: 600; }
+
+/* Summernote Editor container (shared for submit and profile) */
+.editor {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 200px;
+  margin-bottom: 8px;
+  background: #fff;
+}
+
+/* Match editor look across pages */
+.note-editor.note-frame {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+.note-toolbar {
+  background: #f8f9fa;
+  border-bottom: 1px solid #ddd;
+}
+.note-statusbar {
+  border-top: 1px solid #ddd;
+}
+.note-editor .note-editable {
+  background: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #333;
+}
+/* Normalize list and alignment styles within editable area (same as submit) */
+.note-editor .note-editable ul,
+.note-editor .note-editable ol {
+  padding-left: 1.25rem;
+  margin: 0.5rem 0;
+  list-style-position: outside;
+}
+.note-editor .note-editable ul { list-style: disc; }
+.note-editor .note-editable ol { list-style: decimal; }
+.note-editor .note-editable li { margin: 0.2rem 0; }
+.note-editor .note-editable [style*="text-align:"] { display: block; width: 100%; }
+
+/* User bio display styles */
+.user-bio {
+  text-align: initial; /* do not center by default */
+  line-height: 1.5;
+  color: #333;
+}
+.user-bio p { margin: 0.5rem 0; }
+.user-bio ul, .user-bio ol { padding-left: 1.25rem; }
+
 /* General Table Styling */
 .note-editor table {
     width: 100%; /* Full width within the editor */

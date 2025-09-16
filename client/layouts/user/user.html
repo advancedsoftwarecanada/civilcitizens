@@ -23,6 +23,16 @@
       </div>
     </div>
 
+    {{#if targetUser.bio}}
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="single-box p-3">
+          <div class="bio-content user-bio">{{{targetUser.bio}}}</div>
+        </div>
+      </div>
+    </div>
+    {{/if}}
+
     {{> timelinePosts posts=posts}}
   </div>
 </template>

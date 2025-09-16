@@ -72,10 +72,17 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="col-sm-12 mt-4">
-                                    <div class="btn-area text-end">
-                                        <button class="cmn-btn" type="submit">Save Changes</button>
-                                    </div>
+                        </div>
+                            <div class="col-sm-12 mt-4">
+                                <div class="single-input text-start">
+                                    <label for="bio">Bio</label>
+                                    <div id="bioEditor" class="editor mt-3"></div>
+                                    <div id="bioCounter" class="char-counter">0/10000</div>
+                                </div>
+                            </div>
+                            <div class="col-sm-12 mt-4">
+                                <div class="btn-area text-end">
+                                    <button class="cmn-btn" type="submit">Save Changes</button>
                                 </div>
                             </div>
                         </div>
@@ -98,4 +105,92 @@
 
     </div>
 
+            <script>
+            $(document).ready(function () {
+                const initializeSummernote = setInterval(() => {
+                        if (typeof $.fn.summernote !== 'undefined' && $('#bioEditor').length > 0) {
+                        clearInterval(initializeSummernote);
+                            // Prevent double init if Blaze onRendered already initialized
+                            if ($('#bioEditor').next('.note-editor').length) { return; }
+                        let isCleaningImages = false;
+                        $('#bioEditor').summernote({
+                            placeholder: 'Tell us about yourself...',
+                            tabsize: 2,
+                            height: 200,
+                            disableDragAndDrop: true,
+                            toolbar: [
+                                ['font', ['bold', 'italic', 'underline', 'clear']],
+                                ['para', ['ul', 'ol', 'paragraph']],
+                                ['table', ['table']],
+                                ['insert', ['link']],
+                                ['view', ['undo', 'redo']]
+                            ],
+                            popover: {
+                                image: []
+                            },
+                            tooltip: false,
+                            callbacks: {
+                                onImageUpload: function(files) {
+                                    toastr.warning('Image uploads are disabled for bio.');
+                                },
+                                onPaste: function(e) {
+                                    const ev = e.originalEvent || e;
+                                    const items = ev && ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : [];
+                                    for (let i = 0; i < items.length; i++) {
+                                        const it = items[i];
+                                        if (it && it.type && it.type.indexOf('image') !== -1) {
+                                            e.preventDefault();
+                                            toastr.warning('Pasting images is disabled for bio.');
+                                            return false;
+                                        }
+                                    }
+                                },
+                                onChange: function(contents) {
+                                    if (isCleaningImages) return;
+                                    if (contents && contents.indexOf('<img') !== -1) {
+                                        isCleaningImages = true;
+                                        const $dom = $('<div>').html(contents);
+                                        if ($dom.find('img').length) {
+                                            $dom.find('img').remove();
+                                            setTimeout(() => {
+                                                $('#bioEditor').summernote('code', $dom.html());
+                                                toastr.warning('Images removed from bio content.');
+                                                isCleaningImages = false;
+                                            }, 0);
+                                        } else {
+                                            isCleaningImages = false;
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                                        // Set initial content from userManager meta if available
+                                        try {
+                                            if (window.userManager && typeof window.userManager.getData === 'function') {
+                                                const meta = window.userManager.getData().meta || {};
+                                                if (meta.bio) {
+                                                    $('#bioEditor').summernote('code', meta.bio);
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.warn('Unable to set initial bio content:', e);
+                                        }
+                        // Char counter
+                        const BIO_MAX = 10000;
+                        const updateBioCounter = () => {
+                            const html = $('#bioEditor').summernote('code') || '';
+                            const text = $('<div>').html(html).text();
+                            const len = text.length;
+                            const $c = $('#bioCounter');
+                            $c.text(Math.min(len, BIO_MAX) + '/' + BIO_MAX);
+                            $c.toggleClass('over', len > BIO_MAX);
+                        };
+                        $('#bioEditor').on('summernote.change', updateBioCounter);
+                        $('#bioEditor').on('summernote.keyup', updateBioCounter);
+                        $('#bioEditor').on('summernote.paste', () => setTimeout(updateBioCounter, 0));
+                        updateBioCounter();
+                    }
+                }, 10);
+            });
+        </script>
 </template>
