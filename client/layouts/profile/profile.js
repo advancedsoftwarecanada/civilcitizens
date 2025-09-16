@@ -17,8 +17,8 @@ FlowRouter.route('/profile', {
     }
 });
 
-// Rendered
-Template.profile.onRendered = function() {
+// Single onRendered: initialize editor and handle late userManager readiness
+Template.profile.onRendered(function () {
     console.log('Profile template rendered, initializing Summernote...');
 
     // Use a reliable initialization method similar to submit page
@@ -37,94 +37,95 @@ Template.profile.onRendered = function() {
         const myMeta = (hasUserMgr && typeof window.userManager.getData === 'function') ? (window.userManager.getData().meta || {}) : {};
         console.log('User meta:', myMeta);
 
-        if ($bioEditor.length > 0) {
-                // Avoid double-initialization if already transformed by Summernote
-                if ($bioEditor.next('.note-editor').length) {
-                    console.log('Bio editor already initialized; skipping.');
-                    return;
-                }
-                let isCleaningImages = false;
-                $bioEditor.summernote({
-                    placeholder: 'Tell us about yourself...',
-                    tabsize: 2,
-                    height: 200,
-                    disableDragAndDrop: true,
-                    toolbar: [
-                        ['font', ['bold', 'italic', 'underline', 'clear']],
-                        ['para', ['ul', 'ol', 'paragraph']],
-                        ['table', ['table']],
-                        ['insert', ['link']],
-                        ['view', ['undo', 'redo']]
-                    ],
-                    popover: {
-                        image: []
+        // Avoid double-initialization if already transformed by Summernote
+        if ($bioEditor.next('.note-editor').length) {
+            console.log('Bio editor already initialized; skipping.');
+        } else {
+            let isCleaningImages = false;
+            $bioEditor.summernote({
+                placeholder: 'Tell us about yourself...',
+                tabsize: 2,
+                height: 200,
+                disableDragAndDrop: true,
+                toolbar: [
+                    ['font', ['bold', 'italic', 'underline', 'clear']],
+                    ['para', ['ul', 'ol', 'paragraph']],
+                    ['table', ['table']],
+                    ['insert', ['link']],
+                    ['view', ['undo', 'redo']]
+                ],
+                popover: { image: [] },
+                tooltip: false,
+                callbacks: {
+                    onImageUpload: function(files) {
+                        toastr.warning('Image uploads are disabled for bio.');
                     },
-                    tooltip: false,
-                    callbacks: {
-                        onImageUpload: function(files) {
-                            toastr.warning('Image uploads are disabled for bio.');
-                        },
-                        onPaste: function(e) {
-                            const ev = e.originalEvent || e;
-                            const items = ev && ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : [];
-                            for (let i = 0; i < items.length; i++) {
-                                const it = items[i];
-                                if (it && it.type && it.type.indexOf('image') !== -1) {
-                                    e.preventDefault();
-                                    toastr.warning('Pasting images is disabled for bio.');
-                                    return false;
-                                }
+                    onPaste: function(e) {
+                        const ev = e.originalEvent || e;
+                        const items = ev && ev.clipboardData && ev.clipboardData.items ? ev.clipboardData.items : [];
+                        for (let i = 0; i < items.length; i++) {
+                            const it = items[i];
+                            if (it && it.type && it.type.indexOf('image') !== -1) {
+                                e.preventDefault();
+                                toastr.warning('Pasting images is disabled for bio.');
+                                return false;
                             }
-                        },
-                        onChange: function(contents) {
-                            if (isCleaningImages) return;
-                            if (contents && contents.indexOf('<img') !== -1) {
-                                isCleaningImages = true;
-                                const $dom = $('<div>').html(contents);
-                                if ($dom.find('img').length) {
-                                    $dom.find('img').remove();
-                                    setTimeout(() => {
-                                        $('#bioEditor').summernote('code', $dom.html());
-                                        toastr.warning('Images removed from bio content.');
-                                        isCleaningImages = false;
-                                    }, 0);
-                                } else {
+                        }
+                    },
+                    onChange: function(contents) {
+                        if (isCleaningImages) return;
+                        if (contents && contents.indexOf('<img') !== -1) {
+                            isCleaningImages = true;
+                            const $dom = $('<div>').html(contents);
+                            if ($dom.find('img').length) {
+                                $dom.find('img').remove();
+                                setTimeout(() => {
+                                    $('#bioEditor').summernote('code', $dom.html());
+                                    toastr.warning('Images removed from bio content.');
                                     isCleaningImages = false;
-                                }
+                                }, 0);
+                            } else {
+                                isCleaningImages = false;
                             }
                         }
                     }
-                });
-                console.log('Summernote initialized successfully');
-
-                // Set initial content
-                if (myMeta.bio) {
-                    console.log('Setting initial bio content:', myMeta.bio);
-                    $bioEditor.summernote('code', myMeta.bio);
                 }
+            });
+            console.log('Summernote initialized successfully');
 
-                // Bio char counter
-                const BIO_MAX = 10000;
-                const updateBioCounter = () => {
-                    const html = $bioEditor.summernote('code') || '';
-                    const text = $('<div>').html(html).text();
-                    const len = text.length;
-                    const $c = $('#bioCounter');
-                    $c.text(Math.min(len, BIO_MAX) + '/' + BIO_MAX);
-                    $c.toggleClass('over', len > BIO_MAX);
-                };
-                $bioEditor.on('summernote.change', updateBioCounter);
-                $bioEditor.on('summernote.keyup', updateBioCounter);
-                $bioEditor.on('summernote.paste', () => setTimeout(updateBioCounter, 0));
-                updateBioCounter();
+            // Set initial content
+            if (myMeta.bio) {
+                console.log('Setting initial bio content:', myMeta.bio);
+                $bioEditor.summernote('code', myMeta.bio);
+            }
 
-                console.log('Bio editor setup complete');
+            // Bio char counter
+            const BIO_MAX = 10000;
+            const updateBioCounter = () => {
+                const html = $bioEditor.summernote('code') || '';
+                const text = $('<div>').html(html).text();
+                const len = text.length;
+                const $c = $('#bioCounter');
+                $c.text(Math.min(len, BIO_MAX) + '/' + BIO_MAX);
+                $c.toggleClass('over', len > BIO_MAX);
+            };
+            $bioEditor.on('summernote.change', updateBioCounter);
+            $bioEditor.on('summernote.keyup', updateBioCounter);
+            $bioEditor.on('summernote.paste', () => setTimeout(updateBioCounter, 0));
+            updateBioCounter();
+
+            console.log('Bio editor setup complete');
+            // Ensure toolbar reflects active state similar to /submit by focusing the editor
+            setTimeout(() => {
+                try {
+                    $bioEditor.summernote('enable');
+                    $bioEditor.summernote('focus');
+                } catch (e) { /* ignore */ }
+            }, 50);
         }
     }, 10); // Check every 10ms like the submit page
-};
 
-// After-render autorun to populate bio once userManager is ready (handles refresh before cache ready)
-Template.profile.onRendered(function () {
+    // After-render autorun to populate bio once userManager is ready (handles refresh before cache ready)
     const self = this;
     let tries = 0;
     const maxTries = 300; // ~30s

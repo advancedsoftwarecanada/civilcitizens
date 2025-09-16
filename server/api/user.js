@@ -2,8 +2,11 @@
 /* global WebApp, UserMeta, ChamberFollows, Votes, Accounts */
 
 WebApp.connectHandlers.use('/api/user', async (req, res, next) => {
-    // Allow subpaths like /api/user/update-bio to pass through to the next handler
-    if (req.url && req.url !== '/' && req.url !== '') {
+    // Allow subpaths like /api/user/update-bio to pass through to the next handler,
+    // but handle /api/user with or without query params here (e.g., /api/user?id=...)
+    const url = req.url || '';
+    const pathname = (url.split('?')[0]) || '';
+    if (pathname && pathname !== '/' && pathname !== '') {
         return next();
     }
     try {
@@ -26,7 +29,20 @@ WebApp.connectHandlers.use('/api/user', async (req, res, next) => {
             return;
         }
 
-        const userId = user._id;
+        // If a specific id is provided via query string, prefer that; otherwise use auth user
+        let userId = user._id;
+        try {
+            const query = (req.url && req.url.includes('?')) ? req.url.split('?')[1] : '';
+            if (query) {
+                const params = new URLSearchParams(query);
+                const qId = params.get('id');
+                if (qId && typeof qId === 'string') {
+                    userId = qId;
+                }
+            }
+        } catch (e) {
+            // ignore parsing errors, fall back to auth user
+        }
 
         // Initialize the return object
         let returnUserMeta = {};

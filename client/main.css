@@ -111,6 +111,37 @@ form.disabled {
     color: #333;
   }
 
+/* Summernote visual parity overrides (load-order safe)
+   The Summernote CSS is linked in the footer after this file, so we
+   strengthen key rules with !important to keep a consistent look across routes. */
+.note-toolbar {
+  background: #f8f9fa !important;
+  border-bottom: 1px solid #ddd !important;
+}
+.note-editor.note-frame {
+  border: 1px solid #ccc !important;
+  border-radius: 4px !important;
+}
+.note-statusbar {
+  border-top: 1px solid #ddd !important;
+}
+.note-editor .note-editable {
+  background: #fff !important;
+  color: #333 !important;
+}
+.note-btn-group .note-btn {
+  border-color: rgba(0, 0, 0, 0.2) !important;
+  font-size: 13px !important;
+  padding: 0.28rem 0.65rem !important;
+}
+
+/* Fix: Theme sets white icon color for any .btn-group buttons inside .single-box.
+   Ensure Summernote toolbar icons follow button text color instead. */
+.note-toolbar .note-btn i,
+.main-content .single-box .note-toolbar .note-btn i {
+  color: inherit !important;
+}
+
 
 
 h1 {
