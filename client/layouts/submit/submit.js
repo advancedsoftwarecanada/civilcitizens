@@ -93,8 +93,7 @@ Template.submit.onRendered(function() {
 });
 
 let stagedFiles = {
-  images: [],
-  video: null
+  images: []
 };
 
 console.log("stagedFiles initialized:", stagedFiles);
@@ -186,75 +185,6 @@ Template.submit.events({
     });
   },
 
-  'change #postVideo'(event) {
-    const file = event.target.files[0];
-    if (file) {
-      const postId = window.userManager ? window.userManager.getDraftPostId() : Session.get('draftPostId');
-      if (!postId) {
-        toastr.error('Draft post not ready yet.');
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('type', 'postVideo');
-      formData.append('postId', postId);
-      formData.append('timeCreated', Date.now().toString());
-      formData.append('timeAgo', new Date().toISOString());
-
-      // Use Fetch API instead of XMLHttpRequest to avoid Meteor connection issues
-      const token = localStorage.getItem('Meteor.loginToken');
-      console.log("Submit video upload starting - token exists:", !!token, "user logged in:", !!Meteor.userId());
-      fetch('/api/files/upload', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-        body: formData,
-      })
-      .then(response => {
-        console.log("UPLOAD END - Submit form video upload, response status:", response.status);
-        console.log("User still logged in after submit video upload:", !!Meteor.userId());
-        if (response.ok) {
-          return response.json();
-        } else {
-          throw new Error('Upload failed');
-        }
-      })
-      .then(result => {
-        console.log("Video upload response:", result);
-        if (result.status === 'success') {
-          $('#videoAttachment .file-status').text('Uploaded');
-          stagedFiles.video = { fileId: result.fileId };
-          console.log("stagedFiles updated after video upload:", stagedFiles);
-          console.log("Video upload completed successfully, fileId:", result.fileId);
-        } else {
-          toastr.error('Error uploading video: ' + result.error);
-        }
-      })
-      .catch(error => {
-        console.error('Upload error:', error);
-        toastr.error('Error uploading video.');
-      });
-
-      stagedFiles.video = { fileId: null };
-
-      $('#videoAttachment .upload-box').hide();
-      const item = $(`
-        <div class="file-item">
-          <div class="file-info">
-            <div class="file-name">${file.name}</div>
-            <div class="file-status">Uploading...</div>
-          </div>
-          <div class="upload-progress">
-            <div class="upload-progress-bar"></div>
-          </div>
-        </div>
-      `);
-      $('#videoAttachment').append(item);
-    }
-  },
-
   'click #savePost'(event) {
     console.log('POST button clicked - event handler fired');
     console.log('Event details:', event);
@@ -331,17 +261,12 @@ Template.submit.events({
     const visibleAttachment = $('.attachment-area:visible');
     let hasAttachment = false;
 
-    if (visibleAttachment.length > 0) {
+  if (visibleAttachment.length > 0) {
       const attachmentId = visibleAttachment.attr('id');
       if (attachmentId === 'imageAttachment') {
         if (stagedFiles.images.length > 0) {
           hasAttachment = true;
           postJson.attachments = { type: 'images', uploads: stagedFiles.images };
-        }
-      } else if (attachmentId === 'videoAttachment') {
-        if (stagedFiles.video) {
-          hasAttachment = true;
-          postJson.attachments = { type: 'video', upload: stagedFiles.video };
         }
       } else if (attachmentId === 'linkAttachment') {
         const url = $('#postLink').val().trim();
@@ -355,14 +280,6 @@ Template.submit.events({
             preview: linkPreviewData
           };
         }
-      } else if (attachmentId === 'pollAttachment') {
-        const options = $('.poll-option').map(function() { return $(this).val().trim(); }).get().filter(val => val);
-        const duration = $('#pollDuration').val();
-        const allowMulti = $('#allowMulti').is(':checked');
-        if (options.length >= 2) {
-          hasAttachment = true;
-          postJson.attachments = { type: 'poll', options: options, duration: duration, allowMulti: allowMulti };
-        }
       }
     }
 
@@ -372,15 +289,12 @@ Template.submit.events({
       return;
     }
 
-    // For file uploads, check if they're still uploading
-    if (postJson.attachments && (postJson.attachments.type === 'images' || postJson.attachments.type === 'video')) {
-      const uploads = postJson.attachments.type === 'images' ? postJson.attachments.uploads : [postJson.attachments.upload];
-
-      // Check if any uploads are still in progress (no fileId means still uploading)
+    // For file uploads, check if images are still uploading
+    if (postJson.attachments && postJson.attachments.type === 'images') {
+      const uploads = postJson.attachments.uploads || [];
       const hasIncompleteUploads = uploads.some(upload => !upload.fileId);
-
       if (hasIncompleteUploads) {
-        toastr.warning('Please wait for file uploads to complete before submitting.', 'Upload In Progress');
+        toastr.warning('Please wait for image uploads to complete before submitting.', 'Upload In Progress');
         return;
       }
     }

@@ -59,6 +59,7 @@ WebApp.connectHandlers.use('/api/user/by-username', async (req, res) => {
       userName: meta.userName,
       avatarUrl,
       coverUrl,
+      bio: meta.bio || '',
     }));
   } catch (e) {
     console.error('Error in /api/user/by-username:', e);

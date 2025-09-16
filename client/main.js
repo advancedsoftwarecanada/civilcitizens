@@ -302,6 +302,7 @@ Template.registerHelper('myUserMeta', function () {
     userName: userMeta.userName || '',
   avatarUrl: userMeta.avatarUrl || 'https://civilcitizens.ca/theme/assets/images/avatar-1.png',
   coverUrl: userMeta.coverUrl || '/theme/assets/images/fancy-wallpaper.jpg',
+  bio: userMeta.bio || '',
   };
 });
 

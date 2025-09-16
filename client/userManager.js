@@ -174,7 +174,8 @@ class UserManager {
                 throw new Error('No login token found.');
             }
 
-            const apiUrl = `${Meteor.settings.public.ROOT_URL}/api/user?id=${user._id}`;
+            // Prefer relative URL to avoid mismatches with ROOT_URL and ensure same-origin cookies/headers
+            const apiUrl = `/api/user?id=${user._id}`;
             const response = await fetch(apiUrl, {
                 method: 'GET',
                 headers: {
