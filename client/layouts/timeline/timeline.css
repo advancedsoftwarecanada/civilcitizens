@@ -399,3 +399,13 @@ main {
   margin: 0;
   font-size: 16px;
 }
+
+/* Make links in timeline content red for visibility */
+.timeline-page .description a {
+  color: #d63333;
+  text-decoration: none;
+}
+.timeline-page .description a:hover,
+.timeline-page .description a:focus {
+  text-decoration: underline;
+}

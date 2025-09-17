@@ -460,6 +460,93 @@ class UserManager {
         });
     }
 
+    // =============
+    //
+    // CONTENT NORMALIZATION (Hashtags/URLs)
+    //
+    // =============
+    // Convert URLs and hashtags in plain text to anchor tags. Used by linkifyHtml() on text nodes only.
+    linkifyText(text) {
+        if (!text || typeof text !== 'string') return text;
+        // URLs
+        let out = text.replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<)]+)/gi, (m, pre, url) => {
+            const href = url.startsWith('http') ? url : `http://${url}`;
+            return `${pre}<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
+        });
+        // Hashtags -> normalize to lowercase for route
+        out = out.replace(/(^|[^\w&])#([A-Za-z0-9][A-Za-z0-9_\-]*)/g, (m, pre, tag) => {
+            const safe = tag.replace(/[^A-Za-z0-9_\-]/g, '');
+            const lower = safe.toLowerCase();
+            return `${pre}<a href="/t/${lower}">#${lower}</a>`;
+        });
+        return out;
+    }
+
+    // Safely walk an HTML fragment and linkify only text nodes (preserves existing <a> tags)
+    linkifyHtml(html) {
+        if (!html || typeof html !== 'string') return html;
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = html;
+            const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+                acceptNode: (node) => {
+                    if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+                    if (node.parentElement && node.parentElement.closest('a')) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            const nodes = [];
+            let n;
+            while ((n = walker.nextNode())) nodes.push(n);
+            nodes.forEach(node => {
+                const htmlFrag = this.linkifyText(node.nodeValue);
+                if (htmlFrag !== node.nodeValue) {
+                    const span = document.createElement('span');
+                    span.innerHTML = htmlFrag;
+                    node.parentNode.replaceChild(span, node);
+                }
+            });
+
+            // Specific fallback for a "Topic Tags:" line with <strong> label then tags
+            Array.from(container.querySelectorAll('p')).forEach(p => {
+                const raw = (p.textContent || '').trim();
+                if (!/^topic\s*tags\s*:/i.test(raw)) return;
+                if (p.querySelector('a')) return; // already linked
+                const m = p.innerHTML.match(/^(\s*<strong[^>]*>\s*Topic\s*Tags:\s*<\/strong>)([\s\S]*)$/i);
+                if (!m) return;
+                const head = m[1];
+                const tail = m[2] || '';
+                const linkedTail = tail.replace(/(^|[^\w&])#([A-Za-z0-9][A-Za-z0-9_\-]*)/g, (mm, pre, tag) => {
+                    const safe = String(tag).replace(/[^A-Za-z0-9_\-]/g, '');
+                    const lower = safe.toLowerCase();
+                    return `${pre}<a href="/t/${lower}">#${lower}</a>`;
+                });
+                p.innerHTML = `${head}${linkedTail}`;
+            });
+
+            return container.innerHTML;
+        } catch (e) {
+            console.error('linkifyHtml error:', e);
+            return html; // fall back to original
+        }
+    }
+
+    // Normalize a single post object by linkifying its body HTML
+    normalizePost(post) {
+        if (!post || typeof post !== 'object') return post;
+        const next = { ...post };
+        if (typeof next.body === 'string' && next.body) {
+            next.body = this.linkifyHtml(next.body);
+        }
+        return next;
+    }
+
+    // Normalize an array of posts
+    normalizePosts(posts) {
+        if (!Array.isArray(posts)) return posts || [];
+        return posts.map(p => this.normalizePost(p));
+    }
+
 
 
     // =============

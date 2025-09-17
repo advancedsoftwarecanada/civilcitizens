@@ -40,7 +40,16 @@ Template.post.onCreated(function () {
       } else {
         console.log('Post data received:', response.data);
         console.log('Post images:', response.data.images);
-        this.post.set(response.data);
+        // Normalize post body (hashtags/URLs) at data level for consistency
+        try {
+          const normalized = (window.userManager && window.userManager.normalizePost)
+            ? window.userManager.normalizePost(response.data)
+            : response.data;
+          this.post.set(normalized);
+        } catch(e) {
+          console.error('Normalization error (post page):', e);
+          this.post.set(response.data);
+        }
       }
     });
   });
@@ -65,6 +74,8 @@ Template.post.onRendered(function() {
 
   // Add listeners when template is rendered
   this.addGalleryEventListeners();
+
+  // No DOM linkifier needed; normalization happens when data is fetched
 });
 
 Template.post.onDestroyed(function() {

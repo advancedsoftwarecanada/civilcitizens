@@ -77,12 +77,19 @@ Template.timeline.onCreated(function () {
       if (append) {
         // Append new posts to existing ones
         const currentPosts = this.posts.get();
-        this.posts.set([...currentPosts, ...data.posts]);
+          const normalized = userManager.normalizePosts(data.posts || []);
+          this.posts.set([...currentPosts, ...normalized]);
         this.currentOffset.set(data.offset);
         this.hasMore.set(data.hasMore);
+        Meteor.defer(() => {
+          // Re-run enhancements for newly appended nodes
+          const event = new Event('posts-appended');
+          window.dispatchEvent(event);
+        });
       } else {
         // Replace posts for initial load
-        this.posts.set(data.posts);
+          const normalized = userManager.normalizePosts(data.posts || []);
+          this.posts.set(normalized);
         this.currentOffset.set(data.offset);
         this.hasMore.set(data.hasMore);
         this.initialLoad.set(false);
@@ -149,6 +156,20 @@ Template.timeline.onRendered(function () {
   // Attach scroll listener
   $(window).on('scroll.timeline', this.throttledScrollHandler);
 
+  // When posts are appended, enhance DOM again
+  window.addEventListener('posts-appended', () => {
+    Meteor.defer(() => {
+      // Reuse same logic as initial enhance
+      const enhance = () => {
+        document.querySelectorAll('.timeline-page .description').forEach(el => {
+          // simple idempotency: avoid double-wrapping existing links by not changing existing anchors
+          // We just rerun autoLink through the helper already attached via autorun
+        });
+      };
+      enhance();
+    });
+  });
+
   // Reload when tabs change
   this.autorun(() => {
     const s = this.sortTab.get();
@@ -170,15 +191,59 @@ Template.timeline.onRendered(function () {
     this.loadPosts(false);
   });
 
-  this.autorun(() => {
-    this.posts.get(); // Re-run when posts change
-    Meteor.defer(() => {
-      document.querySelectorAll('.post-content').forEach(postContent => {
-        if (postContent.scrollHeight > postContent.clientHeight) {
-          postContent.nextElementSibling.style.display = 'block'; // Show "Read More" button
-        }
+  const enhanceTimelineDom = () => {
+    // 1) Show Read More button when content overflows
+    document.querySelectorAll('.post-content, .truncate-in-timeline').forEach(postContent => {
+      if (postContent.scrollHeight > postContent.clientHeight) {
+        const btn = postContent.nextElementSibling;
+        if (btn && btn.classList.contains('read-more-btn')) btn.style.display = 'block';
+      }
+    });
+    // 2) Make the whole card clickable, but let inner <a> links work normally
+    document.querySelectorAll('.post-card-link').forEach(card => {
+      // avoid stacking multiple listeners on re-renders
+      if (card.__boundClick) return;
+      card.__boundClick = true;
+      card.addEventListener('click', (e) => {
+        // If a child anchor was clicked, do nothing
+        if (e.target.closest('a')) return;
+        const url = card.getAttribute('data-post-url');
+        if (url) FlowRouter.go(url);
       });
     });
+  };
+
+  this.autorun(() => {
+    this.posts.get(); // Re-run when posts change
+    Meteor.defer(() => { enhanceTimelineDom(); });
+  });
+
+  // Enable Read More toggle behavior
+  $(document).off('click.timelineReadMore').on('click.timelineReadMore', '.read-more-btn', function(e) {
+    e.preventDefault();
+    const btn = e.currentTarget;
+    // Try sibling first (timeline template use)
+    let content = btn.previousElementSibling;
+    if (content && !content.classList.contains('truncate-in-timeline')) {
+      // For cases where structure differs, search within the same card
+      content = btn.closest('.post-single-box')?.querySelector('.truncate-in-timeline');
+    }
+    if (!content) return;
+    const expanded = content.classList.toggle('expanded');
+    if (expanded) {
+      content.style.display = 'block';
+      content.style.webkitLineClamp = 'unset';
+      content.style.lineClamp = 'unset';
+      content.style.maxHeight = 'none';
+      btn.textContent = 'Show Less';
+    } else {
+      // Re-apply truncation
+      content.style.removeProperty('display');
+      content.style.removeProperty('webkit-line-clamp');
+      content.style.removeProperty('line-clamp');
+      content.style.removeProperty('max-height');
+      btn.textContent = 'Read More';
+    }
   });
 
 

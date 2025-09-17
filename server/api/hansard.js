@@ -245,10 +245,23 @@ function getInterventionText(iv) {
 
 function getOpenAiConfig() {
   const s = (Meteor.settings && Meteor.settings.private) || {};
+  const provider = (s.openAiProvider || process.env.OPENAI_PROVIDER || '').toString().toLowerCase();
+  const isGrok = provider === 'grok' || /\bx\.ai|api\.x\.ai\b/i.test(String(s.openAiEndpoint || process.env.OPENAI_AZURE_ENDPOINT || ''));
+  // Provider-specific defaults
+  const endpoint = isGrok
+    ? (s.openAiEndpoint || process.env.GROK_ENDPOINT || process.env.XAI_ENDPOINT || 'https://api.x.ai/v1/chat/completions')
+    : (s.openAiEndpoint || process.env.OPENAI_AZURE_ENDPOINT || '');
+  const apiKey = isGrok
+    ? (s.openaiApiKey || process.env.GROK_API_KEY || process.env.XAI_API_KEY || process.env.XAI_TOKEN || '')
+    : (s.openaiApiKey || process.env.OPENAI_AZURE_API_KEY || '');
+  const model = isGrok
+    ? (s.openAiModel || process.env.GROK_MODEL || 'grok-2')
+    : (s.openAiModel || 'gpt-4o-2024-08-06');
   return {
-    endpoint: s.openAiEndpoint || process.env.OPENAI_AZURE_ENDPOINT || '',
-    apiKey: s.openaiApiKey || process.env.OPENAI_AZURE_API_KEY || '',
-    model: s.openAiModel || 'gpt-4o-2024-08-06',
+    provider: isGrok ? 'grok' : 'azure',
+    endpoint,
+    apiKey,
+    model,
     maxTokens: Math.max(512, Math.min(4096, Number(s.openAiMaxTokens) || 1024)),
     // Behavior defaults: always try AI; allow opt-out via settings if explicitly set to false
     replaceBodyWithSummary: s.openAiReplaceBodyWithSummary !== false, // default true
@@ -370,16 +383,18 @@ function renderSummaryHtml(data, opts = {}) {
   }
 }
 
-async function requestOpenAiSummary(messages, { endpoint, apiKey, model, maxTokens }) {
+async function requestOpenAiSummary(messages, { endpoint, apiKey, model, maxTokens, provider }) {
   if (!endpoint || !apiKey) throw new Error('OpenAI endpoint/apiKey missing');
   // Use Meteor HTTP to align with existing code and Azure header pattern
   const response = await new Promise((resolve, reject) => {
+    const isGrok = provider === 'grok' || /\bapi\.x\.ai\b/i.test(String(endpoint));
+    const headers = isGrok
+      ? { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+      : { 'api-key': apiKey, 'Content-Type': 'application/json' };
+    const data = { model, messages, max_tokens: maxTokens };
     HTTP.post(endpoint, {
-      headers: {
-        'api-key': apiKey,
-        'Content-Type': 'application/json',
-      },
-      data: { model, messages, max_tokens: maxTokens },
+      headers,
+      data,
       timeout: 30000,
     }, (error, result) => {
       if (error) return reject(error);
