@@ -133,6 +133,7 @@ Template.timeline.onRendered(function () {
 
   // Scroll detection for lazy loading
   this.scrollHandler = () => {
+    // Fallback window scroll detector
     const scrollTop = $(window).scrollTop();
     const windowHeight = $(window).height();
     const documentHeight = $(document).height();
@@ -140,7 +141,7 @@ Template.timeline.onRendered(function () {
 
     // Load more posts when user scrolls to 80% of the page
     if (scrollPercentage > 0.8 && !this.isLoading.get() && this.hasMore.get()) {
-      console.log('Loading more posts...');
+      console.log('[timeline] Fallback scroll: near bottom, loading more...');
       this.loadPosts(true);
     }
   };
@@ -158,6 +159,31 @@ Template.timeline.onRendered(function () {
 
   // Attach scroll listener
   $(window).on('scroll.timeline', this.throttledScrollHandler);
+
+  // IntersectionObserver-based sentinel (more reliable than window scroll in nested layouts)
+  try {
+    const sentinel = document.getElementById('scrollSentinel');
+    if (sentinel && 'IntersectionObserver' in window) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            if (!this.isLoading.get() && this.hasMore.get()) {
+              console.log('[timeline] Sentinel intersected, loading more...');
+              this.loadPosts(true);
+            } else {
+              console.log('[timeline] Sentinel intersected, but either loading or no more posts.', {
+                loading: this.isLoading.get(), hasMore: this.hasMore.get()
+              });
+            }
+          }
+        });
+      }, { root: null, rootMargin: '200px 0px', threshold: 0 });
+      observer.observe(sentinel);
+      this._infiniteObserver = observer;
+    }
+  } catch (e) {
+    console.warn('IntersectionObserver setup failed:', e);
+  }
 
   // When posts are appended, enhance DOM again
   window.addEventListener('posts-appended', () => {
@@ -276,6 +302,10 @@ Template.timeline.onDestroyed(function() {
   // Clean up scroll event listener
   if (this.throttledScrollHandler) {
     $(window).off('scroll.timeline', this.throttledScrollHandler);
+  }
+  if (this._infiniteObserver) {
+    try { this._infiniteObserver.disconnect(); } catch(_) {}
+    this._infiniteObserver = null;
   }
 });
 

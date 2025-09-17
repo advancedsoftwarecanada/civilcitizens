@@ -202,6 +202,30 @@ Template.userTimeline.onCreated(function () {
 });
 
 Template.userTimeline.onRendered(function() {
+  // IntersectionObserver for infinite scrolling on user timeline
+  try {
+    const sentinel = document.getElementById('userScrollSentinel');
+    if (sentinel && 'IntersectionObserver' in window) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            if (!this.isLoading.get() && this.hasMore.get()) {
+              console.log('[userTimeline] Sentinel intersected, loading more...');
+              this.loadPosts(true);
+            } else {
+              console.log('[userTimeline] Sentinel intersected, but either loading or no more posts.', {
+                loading: this.isLoading.get(), hasMore: this.hasMore.get()
+              });
+            }
+          }
+        });
+      }, { root: null, rootMargin: '200px 0px', threshold: 0 });
+      observer.observe(sentinel);
+      this._userInfiniteObserver = observer;
+    }
+  } catch (e) {
+    console.warn('User timeline IntersectionObserver setup failed:', e);
+  }
   const enhanceUserTimelineDom = () => {
     // 1) Read More button when content overflows
     document.querySelectorAll('.post-content, .truncate-in-timeline').forEach(postContent => {
@@ -263,6 +287,10 @@ Template.userTimeline.onDestroyed(function () {
   if (this._countsInterval) {
     try { clearInterval(this._countsInterval); } catch(_){}
     this._countsInterval = null;
+  if (this._userInfiniteObserver) {
+    try { this._userInfiniteObserver.disconnect(); } catch(_) {}
+    this._userInfiniteObserver = null;
+  }
   }
 });
 

@@ -33,8 +33,8 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
   try {
     let posts = [];
 
-    // Fetch posts based on timeline type
-    switch (detectedTimelineType.type) {
+  // Fetch posts based on timeline type
+  switch (detectedTimelineType.type) {
       case 'home':
         posts = await TimelineInstance.timelineBuild.build("home", userId, null, null, parseInt(offset), parseInt(limit), { sort, gov });
         break;
@@ -56,6 +56,12 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
 
       default:
         console.warn(`Unsupported timeline type: ${detectedTimelineType.type}`);
+        // Fallback to home to avoid blocking UI on unknown types
+        try {
+          posts = await TimelineInstance.timelineBuild.build("home", userId, null, null, parseInt(offset), parseInt(limit), { sort, gov });
+        } catch (e) {
+          console.warn('Home fallback failed:', e?.message || e);
+        }
         break;
     }
 
@@ -72,9 +78,9 @@ WebApp.connectHandlers.use('/api/timeline', async (req, res) => {
       }
     }
 
-    // hasMore is true if we returned a full page worth of REAL posts
-    const realCount = adInserted ? Math.max(0, posts.length - 1) : posts.length;
-    const hasMore = realCount === intLimit;
+  // More permissive pagination: keep loading while server returns any real posts
+  const realCount = adInserted ? Math.max(0, posts.length - 1) : posts.length;
+  const hasMore = realCount > 0;
 
     // Next offset should advance by number of REAL posts delivered
     const nextOffset = intOffset + realCount;
