@@ -597,6 +597,80 @@ async function processScrape(scrape) {
   let parsed;
   parsed = parser.parse(scrape.data);
 
+  // Extract a source date from the XML feed, e.g., <ExtractedItem Name="Date">Monday, September 15, 2025</ExtractedItem>
+  function extractHansardFeedDate(root) {
+    if (!root || typeof root !== 'object') return null;
+    const monthMap = {
+      // English
+      january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+      july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+      // French
+      janvier: 0, fevrier: 1, février: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+      juillet: 6, aout: 7, août: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11, décembre: 11,
+    };
+    const tryBuildDateUTC = (y, m, d) => {
+      const Y = Number(y), D = Number(d), M = Number(m);
+      if (!Y || !D || isNaN(M) || M < 0 || M > 11) return null;
+      // Noon UTC to avoid TZ shifting to previous/next day
+      return new Date(Date.UTC(Y, M, D, 12, 0, 0, 0));
+    };
+    const tryParse = (s) => {
+      if (!s || typeof s !== 'string') return null;
+      let str = s.trim();
+      // Drop weekday if present, e.g., "Monday, September 15, 2025"
+      str = str.replace(/^[A-Za-zÀ-ÿ]+,\s*/, '');
+      // Try native Date first
+      const d1 = new Date(str);
+      if (!isNaN(d1.getTime())) {
+        return new Date(Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate(), 12, 0, 0, 0));
+      }
+      // Try EN: Month D, YYYY
+      let m = str.match(/^([A-Za-zÀ-ÿ]+)\s+(\d{1,2}),\s*(\d{4})$/);
+      if (m) {
+        const mon = monthMap[m[1].toLowerCase()] ?? null;
+        return tryBuildDateUTC(m[3], mon, m[2]);
+      }
+      // Try FR: D Month YYYY
+      m = str.match(/^(\d{1,2})\s+([A-Za-zÀ-ÿ]+)\s+(\d{4})$/);
+      if (m) {
+        const mon = monthMap[m[2].toLowerCase()] ?? null;
+        return tryBuildDateUTC(m[3], mon, m[1]);
+      }
+      return null;
+    };
+    let found = null;
+    (function walk(o) {
+      if (found) return;
+      if (!o || typeof o !== 'object') return;
+      for (const k of Object.keys(o)) {
+        if (found) return;
+        const v = o[k];
+        if (k.toLowerCase() === 'extracteditem' && v) {
+          const arr = Array.isArray(v) ? v : [v];
+          for (const it of arr) {
+            if (!it || typeof it !== 'object') continue;
+            const name = (it['@_Name'] || it['@_name'] || it.Name || '').toString().toLowerCase();
+            if (name === 'date') {
+              const val = (typeof it === 'string') ? it : (it['#text'] || it.Text || it.Value || '');
+              const d = tryParse(String(val));
+              if (d) { found = d; break; }
+            }
+          }
+        } else if (/^(date|publicationdate|pubdate)$/i.test(k) && (typeof v === 'string' || (v && typeof v['#text'] === 'string'))) {
+          const val = (typeof v === 'string') ? v : v['#text'];
+          const d = tryParse(String(val));
+          if (d) { found = d; return; }
+        }
+        if (v && typeof v === 'object') walk(v);
+      }
+    })(root);
+    return found;
+  }
+
+  const feedDate = extractHansardFeedDate(parsed);
+  const baseCreatedAtMs = feedDate ? feedDate.getTime() : Date.now();
+  let createdSeq = 0; // to preserve chronological order within the feed day
+
   function findInterventions(root) {
     if (!root || typeof root !== 'object') return [];
     const candidates = [];
@@ -678,11 +752,11 @@ async function processScrape(scrape) {
         commentCount: 0,
         bookmarkCount: 0,
         shareCount: 0,
-        createdAt: Date.now(),
+        createdAt: baseCreatedAtMs + (createdSeq++),
         seoUrl: `${normalizeText(title).replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-')}-${Date.now()}`,
         tags: ['hansard', speakerName].filter(Boolean),
         hansardKey: key,
-        hansardMeta: { ...ctx, speaker: speakerName, party: affiliation, riding, mappedBy: 'strict' },
+        hansardMeta: { ...ctx, speaker: speakerName, party: affiliation, riding, mappedBy: 'strict', feedDateUtc: feedDate ? feedDate.toISOString() : null, createdAtSource: feedDate ? 'feed' : 'now' },
       };
 
       try {
@@ -1084,11 +1158,11 @@ WebApp.connectHandlers.use('/api/admin/hansard/create-posts', async (req, res) =
         commentCount: 0,
         bookmarkCount: 0,
         shareCount: 0,
-        createdAt: Date.now(),
+        createdAt: baseCreatedAtMs + (createdSeq++),
         seoUrl: `${normalizeText(title).replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').replace(/-+/g,'-')}-${Date.now()}`,
         tags: ['hansard', speakerName].filter(Boolean),
         hansardKey: key,
-        hansardMeta: { ...ctx, speaker: [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim() || sp.name || 'MP', party: sp.party || sp.caucus || '', riding, mappedBy },
+        hansardMeta: { ...ctx, speaker: [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim() || sp.name || 'MP', party: sp.party || sp.caucus || '', riding, mappedBy, feedDateUtc: feedDate ? feedDate.toISOString() : null, createdAtSource: feedDate ? 'feed' : 'now' },
       };
 
       try {

@@ -1,6 +1,7 @@
 // @ts-nocheck
 /* global Template, ReactiveVar, FlowRouter, BlazeLayout, HTTP, $, Meteor, Session */
-import userManager from "../../userManager.js";
+// Use the global instance created in client/main.js
+const userManager = (typeof window !== 'undefined' && window.userManager) ? window.userManager : null;
 
 // Reactive variable for thisChamber
 const thisChamber = new ReactiveVar(null);
@@ -77,7 +78,8 @@ Template.timeline.onCreated(function () {
       if (append) {
         // Append new posts to existing ones
         const currentPosts = this.posts.get();
-          const normalized = userManager.normalizePosts(data.posts || []);
+          const mgr = (typeof window !== 'undefined' && window.userManager && typeof window.userManager.normalizePosts === 'function') ? window.userManager : null;
+          const normalized = mgr ? mgr.normalizePosts(data.posts || []) : (data.posts || []);
           this.posts.set([...currentPosts, ...normalized]);
         this.currentOffset.set(data.offset);
         this.hasMore.set(data.hasMore);
@@ -88,7 +90,8 @@ Template.timeline.onCreated(function () {
         });
       } else {
         // Replace posts for initial load
-          const normalized = userManager.normalizePosts(data.posts || []);
+          const mgr = (typeof window !== 'undefined' && window.userManager && typeof window.userManager.normalizePosts === 'function') ? window.userManager : null;
+          const normalized = mgr ? mgr.normalizePosts(data.posts || []) : (data.posts || []);
           this.posts.set(normalized);
         this.currentOffset.set(data.offset);
         this.hasMore.set(data.hasMore);
@@ -377,7 +380,8 @@ Template.timeline.helpers({
   },
 
   currentChamber() {
-    return userManager.currentChamber.get();
+    // Use the reactive var defined in this file
+    return thisChamber.get();
   }
 });
 
