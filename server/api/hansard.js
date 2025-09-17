@@ -3,6 +3,7 @@
 
 const { WebApp } = require('meteor/webapp');
 const { Accounts } = require('meteor/accounts-base');
+const { HTTP } = require('meteor/http');
 
 // Reuse admin token logic similar to server/api/admin.js
 function getAdminToken() {
@@ -54,6 +55,52 @@ function normalizeText(str) {
 function normalizeConstituency(str) {
   // Normalize riding names for matching
   return normalizeText(str).replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, ' ').replace(/ /g, '-');
+}
+
+// Remove accents but keep case; drop non-alphanumerics for hashtag safety
+function stripAccentsKeepCase(str) {
+  if (!str) return '';
+  return String(str)
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .replace(/[^A-Za-z0-9\s-]/g, '')
+    .trim();
+}
+
+function hashtagForMp(firstName, lastName) {
+  const f = stripAccentsKeepCase(firstName || '').replace(/[^A-Za-z0-9]/g, '');
+  const l = stripAccentsKeepCase(lastName || '').replace(/[^A-Za-z0-9]/g, '');
+  return `#Mp${f}${l}`;
+}
+
+function mapPartyFull(partyRaw) {
+  const p = (partyRaw || '').trim();
+  const q = p.toLowerCase();
+  if (!p) return 'None';
+  if (/\b(bq|bloc)\b/.test(q) || /québécois|quebecois/.test(q)) return 'Bloc Québécois (BQ)';
+  if (/\b(cpc|conservative)\b/.test(q)) return 'Conservative Party of Canada (CPC)';
+  if (/\b(lpc|lib\.?|liberal)\b/.test(q)) return 'Liberal Party of Canada (LPC)';
+  if (/\b(ndp|new democratic)\b/.test(q)) return 'New Democratic Party (NDP)';
+  if (/\bgreen\b/.test(q)) return 'Green Party of Canada (Green)';
+  if (/\b(ind|independent)\b/.test(q)) return 'Independent (Ind.)';
+  return p;
+}
+
+// Try to parse Parl-Session and Sitting from a standard Hansard URL path like
+// /Content/House/451/Debates/021/HAN021-E.XML
+function deriveParlSessAndSittingFromUrl(url) {
+  try {
+    const u = String(url || '');
+    // Match 3-digit ParlSess like 451 where 45=Parliament, 1=Session
+    const m = u.match(/\/House\/(\d{3})\/Debates\/(\d{3})\//i);
+    if (!m) return { parlSess: '', sitting: '' };
+    const code = m[1];
+    const parl = code.slice(0, 2).replace(/^0+/, '') || code.slice(0, 2);
+    const sess = code.slice(2);
+    const sitting = m[2];
+    return { parlSess: `${parl}-${sess}`, sitting };
+  } catch {
+    return { parlSess: '', sitting: '' };
+  }
 }
 
 async function buildChamberIndex() {
@@ -190,6 +237,217 @@ function getInterventionText(iv) {
     }
   })(iv);
   return result.trim();
+}
+
+// =========================
+// AI Summarization Helpers
+// =========================
+
+function getOpenAiConfig() {
+  const s = (Meteor.settings && Meteor.settings.private) || {};
+  return {
+    endpoint: s.openAiEndpoint || process.env.OPENAI_AZURE_ENDPOINT || '',
+    apiKey: s.openaiApiKey || process.env.OPENAI_AZURE_API_KEY || '',
+    model: s.openAiModel || 'gpt-4o-2024-08-06',
+    maxTokens: Math.max(512, Math.min(4096, Number(s.openAiMaxTokens) || 1024)),
+    // Behavior defaults: always try AI; allow opt-out via settings if explicitly set to false
+    replaceBodyWithSummary: s.openAiReplaceBodyWithSummary !== false, // default true
+    inline: s.openAiInline !== false, // default true (attempt inline summary before insert)
+    log: s.openAiLog !== false // default true for visibility
+  };
+}
+
+function buildSummaryPrompt({ fullNameAccent, firstName, lastName, hashtag, party, riding, provinceCode, roleDefault, bodyText, sourceParlSess, sourceSitting, sourceInterventionId, sourceLink }) {
+  const partyFull = mapPartyFull(party);
+  const prov = (provinceCode || '').toString().toUpperCase();
+  const intro = [
+    'Summarize the Canadian House of Commons intervention for everyday citizens. Use Schema v1.1. Neutral, factual, concise.',
+    `Begin Summary with ${hashtag} then 1–2 sentences naming ${fullNameAccent} and the core point.`,
+  ].join(' ');
+
+  const schema = 'Return ONLY JSON with these keys exactly: { "Summary", "Party Alignment", "Riding", "Role", "Topic Tags", "Stance / Ask", "Bill / Motion / Program", "Impact on Citizens", "Notable Quote", "Party Alignment Analysis", "Party Alignment Index", "Source" }';
+
+  const fieldRules = [
+    '- Summary: Start with the provided hashtag, then 1–2 neutral sentences naming the MP with accents and the core point.',
+    '- Party Alignment: Use full party name plus abbreviation, e.g., "Bloc Québécois (BQ)".',
+    '- Riding: "Name, PROV" (province code).',
+    '- Role: One of: MP | Minister | Parliamentary Secretary | Shadow Critic. Default to MP unless text clearly indicates otherwise.',
+    '- Topic Tags: ≤3 from a fixed civic set (e.g., Citizenship, Rights, Justice, Immigration, Economy, Health, Environment).',
+    '- Stance / Ask: One of Support | Oppose | Criticize | Propose | Question, plus a short “re: X”.',
+    '- Bill / Motion / Program: "Bill C-###" if present (patterns: "Bill C-\\d+" or "projet de loi C-\\d+"), else "None".',
+    '- Impact on Citizens: ≤2 bullets with practical effects. Include any crucial numbers within the bullet text when directly tied to citizen impact.',
+    '- Notable Quote: ≤20 words, safest succinct line.',
+    '- Party Alignment Analysis: 1 short sentence on how the member’s remarks align or diverge from their party’s known stance (if clear in text). If unclear, "None".',
+    '- Party Alignment Index: A single value "X/10" where 0 = fully not aligned and 10 = strongly aligned. If unclear, use "N/A".',
+    '- Source: "{Parl-Session}, Sitting {NNN}, Intervention ID {ID}, {link}".'
+  ].join('\n');
+
+  const metadata = [
+    'Metadata (authoritative for those fields even if not in text):',
+    `- MP Name: ${fullNameAccent}`,
+    `- Hashtag: ${hashtag}`,
+    `- Party Alignment: ${partyFull}`,
+    `- Riding: ${riding || 'None'}, ${prov || 'None'}`,
+    `- Default Role: ${roleDefault || 'MP'}`,
+    `- Source: ${sourceParlSess || 'None'}, Sitting ${sourceSitting || '???'}, Intervention ID ${sourceInterventionId || '???'}, ${sourceLink || 'None'}`,
+  ].join('\n');
+
+  const heuristics = [
+    'Extraction Heuristics:',
+    '- Party mapping: map BQ, CPC, Lib., LPC, NDP, Bloc, Green, Ind. to full names + abbreviations as above.',
+    '- Bill detection: look for “Bill C-#” or “projet de loi C-#”.',
+    '- Do not fabricate numbers; only include those present in the text and tie them to Impact when relevant.',
+    "- If a field isn’t present, write 'None'. No guessing.",
+  ].join('\n');
+
+  const guardrails = [
+    'Hallucination Guardrails:',
+    "- Don’t infer motives, timelines, or costs not in text.",
+    '- Quote numbers exactly; if ranges appear, keep the range.',
+    '- Keep tone neutral; avoid labels or sarcasm.',
+    'Use Canadian spellings.'
+  ].join('\n');
+
+  const content = `---------------\n\n${bodyText}`;
+  const user = [intro, schema, fieldRules, metadata, heuristics, guardrails, content].join('\n\n');
+  return user;
+}
+
+function renderSummaryHtml(data, opts = {}) {
+  try {
+    const get = (k) => (data && (data[k] != null)) ? data[k] : '';
+    const asList = (val) => Array.isArray(val) ? val : (val ? String(val).split(/[\n;]+/).map(x=>x.trim()).filter(Boolean) : []);
+    const esc = (s) => String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const bullets = (arr) => arr && arr.length ? `<ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>` : '<p>None</p>';
+    const impacts = asList(get('Impact on Citizens'));
+    const tagsArr = (() => {
+      const v = get('Topic Tags');
+      if (Array.isArray(v)) return v;
+      const s = String(v || '');
+      return s.split(/[\n;,]+/).map(x => x.trim()).filter(Boolean);
+    })();
+    const tags = tagsArr.length ? tagsArr.map(t => {
+      const clean = String(t).replace(/^#+/, '').trim();
+      return clean ? `#${clean.replace(/\s+/g, '')}` : '';
+    }).filter(Boolean).join(' ') : '';
+    const toParagraphs = (txt) => {
+      const raw = String(txt || '').replace(/\r\n/g, '\n');
+      const chunks = raw.split(/\n{2,}|\r?\n\s*\r?\n/).map(x => x.trim()).filter(Boolean);
+      if (!chunks.length && raw.trim()) return `<p>${esc(raw.trim())}</p>`;
+      return chunks.map(p => `<p>${esc(p)}</p>`).join('\n');
+    };
+    const parts = [
+      `<p><strong>Summary:</strong> ${esc(get('Summary'))}</p>`,
+      '<hr />',
+      `<p><strong>Party Alignment:</strong> ${esc(get('Party Alignment'))}</p>`,
+      `<p><strong>Riding:</strong> ${esc(get('Riding'))}</p>`,
+      `<p><strong>Role:</strong> ${esc(get('Role'))}</p>`,
+      `<p><strong>Topic Tags:</strong> ${esc(tags || 'None')}</p>`,
+      `<p><strong>Stance / Ask:</strong> ${esc(get('Stance / Ask') || 'None')}</p>`,
+      `<p><strong>Bill / Motion / Program:</strong> ${esc(get('Bill / Motion / Program') || 'None')}</p>`,
+      `<div><strong>Impact on Citizens:</strong> ${impacts.length ? '' : 'None'}${impacts.length ? bullets(impacts) : ''}</div>`,
+      `<p><strong>Notable Quote:</strong> “${esc(get('Notable Quote') || 'None')}”</p>`,
+      (() => {
+        const ana = get('Party Alignment Analysis');
+        const idx = get('Party Alignment Index');
+        const hasAna = ana && String(ana).trim().length;
+        const hasIdx = idx && String(idx).trim().length;
+        if (!hasAna && !hasIdx) return '';
+        return `<p><strong>Party Alignment Analysis:</strong> ${hasAna ? esc(ana) : 'None'}${hasIdx ? ` &nbsp; | &nbsp; <strong>Party Alignment Index:</strong> ${esc(idx)}` : ''}</p>`;
+      })(),
+      `<p><strong>Source:</strong> ${esc(get('Source') || '')}</p>`
+    ];
+  // Visual separators for Summernote: add a separator before the transcript section
+  parts.push('<hr />');
+    // Optional Full Transcript block
+    if (opts && opts.transcript) {
+      parts.push(`<p><strong>Full Transcript:</strong></p>`);
+      parts.push(toParagraphs(opts.transcript));
+    }
+    return parts.join('\n');
+  } catch (e) {
+    return '';
+  }
+}
+
+async function requestOpenAiSummary(messages, { endpoint, apiKey, model, maxTokens }) {
+  if (!endpoint || !apiKey) throw new Error('OpenAI endpoint/apiKey missing');
+  // Use Meteor HTTP to align with existing code and Azure header pattern
+  const response = await new Promise((resolve, reject) => {
+    HTTP.post(endpoint, {
+      headers: {
+        'api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      data: { model, messages, max_tokens: maxTokens },
+      timeout: 30000,
+    }, (error, result) => {
+      if (error) return reject(error);
+      resolve(result);
+    });
+  });
+  const choice = response && response.data && response.data.choices && response.data.choices[0];
+  const content = (choice && choice.message && choice.message.content) || '';
+  const cleaned = String(content).replace(/```json|```/g, '').trim();
+  try {
+    const json = JSON.parse(cleaned);
+    return { ok: true, data: json, raw: cleaned, model, usage: response.data.usage || null };
+  } catch (e) {
+    return { ok: false, error: 'json-parse-failed', raw: cleaned };
+  }
+}
+
+function maybeQueueSummary({ postId, post, speakerName, party, riding, role, source }) {
+  try {
+    const cfg = getOpenAiConfig();
+    // Skip background if inline summary already exists on this post object
+    if (post && post.aiSummary && post.aiSummary.inline) {
+      if (cfg.log) console.log('[Hansard][AI] Skipping background summary: inline already performed for post', postId);
+      return;
+    }
+    if (!cfg.endpoint || !cfg.apiKey) { if (cfg.log) console.warn('[Hansard][AI] Skipping summary: missing endpoint/apiKey'); return; }
+    const plain = extractPlain(post.body || '');
+    if (!plain || plain.length < 40) { if (cfg.log) console.log('[Hansard][AI] Skipping summary: body too short'); return; }
+  const fullNameAccent = speakerName || 'None';
+  const parts = (fullNameAccent || '').trim().split(/\s+/);
+  const firstName = parts[0] || '';
+  const lastName = parts.slice(1).join(' ') || '';
+  const hashtag = hashtagForMp(firstName, lastName);
+  const m = (source || '').match(/^(\d+)-(\d+),\s*Sitting\s*(\d+),\s*Intervention ID\s*(\S+)/i);
+  const sourceParlSess = m ? `${m[1]}-${m[2]}` : '';
+  const sourceSitting = m ? String(m[3]).padStart(3, '0') : '';
+  const sourceInterventionId = m ? m[4] : '';
+  const sourceLink = (post && post.hansardMeta && post.hansardMeta.sourceUrl) ? post.hansardMeta.sourceUrl : '';
+  const provinceCode = (post && post.province) ? String(post.province).toUpperCase() : '';
+  const prompt = buildSummaryPrompt({ fullNameAccent, firstName, lastName, hashtag, party, riding, provinceCode, roleDefault: role || 'MP', bodyText: plain, sourceParlSess, sourceSitting, sourceInterventionId, sourceLink });
+    const messages = [
+      { role: 'system', content: 'You are a neutral Canadian civic assistant. Keep summaries concise, factual, and helpful to everyday citizens.' },
+      { role: 'user', content: prompt },
+    ];
+    // Fire-and-forget to avoid blocking ingestion
+    setTimeout(async () => {
+      try {
+        if (cfg.log) console.log('[Hansard][AI] Requesting summary for post', postId);
+        const result = await requestOpenAiSummary(messages, cfg);
+        if (result && result.ok) {
+          const set = { aiSummary: { createdAt: Date.now(), model: cfg.model, data: result.data } };
+          if (cfg.replaceBodyWithSummary) {
+            const transcript = (post && post.hansardMeta && post.hansardMeta.transcript) ? post.hansardMeta.transcript : extractPlain(post.body || '');
+            const html = renderSummaryHtml(result.data, { transcript });
+            if (html && html.length > 0) set.body = html;
+          }
+          await Posts.updateAsync({ _id: postId }, { $set: set });
+          if (cfg.log) console.log('[Hansard][AI] Summary stored for post', postId);
+        } else {
+          await Posts.updateAsync({ _id: postId }, { $set: { aiSummaryError: { createdAt: Date.now(), error: result.error || 'unknown', raw: result.raw || null } } });
+          if (cfg.log) console.warn('[Hansard][AI] Summary failed for post', postId, result && result.error);
+        }
+      } catch (e) {
+        try { await Posts.updateAsync({ _id: postId }, { $set: { aiSummaryError: { createdAt: Date.now(), error: e.message || String(e) } } }); } catch(_) {}
+        if (cfg.log) console.error('[Hansard][AI] Error summarizing post', postId, e && e.message);
+      }
+    }, 0);
+  } catch (_) {}
 }
 
 // Parse PersonSpeaking.Affiliation text like: "Firstname Lastname (Riding Name, PARTY)"
@@ -349,6 +607,8 @@ async function processScrape(scrape) {
   const errors = [];
   let mapByRiding = 0, mapByMember = 0, unmapped = 0;
   const unmappedSamples = [];
+  const skipReasons = { tooShort: 0, noChamber: 0, duplicate: 0, other: 0 };
+  const skipSamples = [];
 
   // use top-level parseSpeakerFromIntervention + matchesStrict
 
@@ -381,12 +641,12 @@ async function processScrape(scrape) {
         if (unmappedSamples.length < 10) unmappedSamples.push({ speakerName, riding, ctx });
       }
 
-      const text = getInterventionText(iv);
+    const text = getInterventionText(iv);
 
   const plain = extractPlain(text);
-  if (!plain || plain.length < 10) { skipped++; continue; }
+  if (!plain || plain.length < 10) { skipped++; skipReasons.tooShort++; if (skipSamples.length < 15) skipSamples.push({ reason: 'tooShort', speakerName, riding, ctx }); continue; }
   // Strict mode: create posts only if chamber is confidently matched
-  if (!chamber) { skipped++; continue; }
+  if (!chamber) { skipped++; skipReasons.noChamber++; if (skipSamples.length < 15) skipSamples.push({ reason: 'noChamber', speakerName, riding, ctx }); continue; }
 
       const key = dedupeKeyFromContext(ctx);
       const title = `${speakerName} in the House — ${riding || 'Unknown Riding'}`.trim();
@@ -395,7 +655,7 @@ async function processScrape(scrape) {
         title,
         body: text,
         type: 'chamber',
-  chamber: chamber.seoUrl,
+        chamber: chamber.seoUrl,
         province: chamber && chamber.province || 'ca',
         jurisdiction: 'federal',
         authorId: author.id || null,
@@ -411,14 +671,71 @@ async function processScrape(scrape) {
       };
 
       try {
-        await Posts.insertAsync(post);
+        // Always attempt inline summarize (blocking) and replace body before insert when possible
+        const cfg = getOpenAiConfig();
+        if (cfg.inline) {
+          if (!cfg.endpoint || !cfg.apiKey) {
+            if (cfg.log) console.warn('[Hansard][AI] Inline summary skipped: missing endpoint/apiKey');
+          } else {
+          try {
+            const role = 'MP';
+            const urlFallback = deriveParlSessAndSittingFromUrl(scrape && scrape.sourceUrl);
+            const parl = ctx.ParliamentNumber || ctx.Parliament || (urlFallback.parlSess.split('-')[0]) || '?';
+            const sess = ctx.SessionNumber || ctx.Session || (urlFallback.parlSess.split('-')[1]) || '?';
+            const sit = ctx.SittingNumber || ctx.Sitting || urlFallback.sitting || '?';
+            const ivId = ctx.InterventionId || ctx.InterventionID || ctx.Guid || '?';
+            const sourceParlSess = `${parl}-${sess}`;
+            const sourceSitting = String(sit).padStart(3, '0');
+            const sourceInterventionId = ivId;
+            const sourceLink = (scrape && scrape.sourceUrl) ? String(scrape.sourceUrl) : '';
+            const parts = (speakerName || '').trim().split(/\s+/);
+            const firstName = parts[0] || '';
+            const lastName = parts.slice(1).join(' ') || '';
+            const hashtag = hashtagForMp(firstName, lastName);
+            const provinceCode = (chamber && chamber.province) ? String(chamber.province).toUpperCase() : '';
+            const prompt = buildSummaryPrompt({ fullNameAccent: speakerName, firstName, lastName, hashtag, party: affiliation, riding, provinceCode, roleDefault: role, bodyText: plain, sourceParlSess, sourceSitting, sourceInterventionId, sourceLink });
+            const messages = [
+              { role: 'system', content: 'You are a neutral Canadian civic assistant. Keep summaries concise, factual, and helpful to everyday citizens.' },
+              { role: 'user', content: prompt },
+            ];
+            if (cfg.log) console.log('[Hansard][AI] Inline summary request for', speakerName, '—', riding);
+            const result = await requestOpenAiSummary(messages, cfg);
+            if (result && result.ok) {
+              const html = renderSummaryHtml(result.data, { transcript: plain });
+              if (html) {
+                post.hansardOriginalBody = post.body; // audit trail
+                post.body = html;
+                post.aiSummary = { createdAt: Date.now(), model: cfg.model, data: result.data, inline: true };
+                post.hansardMeta = post.hansardMeta || { ...ctx };
+              }
+            } else if (cfg.log) {
+              console.warn('[Hansard][AI] Inline summary failed, using original body:', result && result.error);
+            }
+          } catch (e) {
+            console.warn('[Hansard][AI] Inline summary error, using original body:', e && e.message);
+          }
+          }
+        }
+
+        const newId = await Posts.insertAsync(post);
         created++;
         if (chamber && chamber._id) await Chambers.updateAsync({ _id: chamber._id }, { $inc: { 'stats.posts': 1 } });
+        // Queue AI summary (non-blocking)
+  const role = 'MP';
+  const source = (function(){ const fb=deriveParlSessAndSittingFromUrl(scrape&&scrape.sourceUrl); const parl=(ctx.ParliamentNumber||ctx.Parliament|| (fb.parlSess.split('-')[0]||'?')); const sess=(ctx.SessionNumber||ctx.Session||(fb.parlSess.split('-')[1]||'?')); const sit=(ctx.SittingNumber||ctx.Sitting||fb.sitting||'?'); const ivId=ctx.InterventionId||ctx.InterventionID||ctx.Guid||'?'; return `${parl}-${sess}, Sitting ${String(sit).padStart(3,'0')}, Intervention ID ${ivId}`; })();
+  // Attach sourceUrl to hansardMeta for background pass
+  post.hansardMeta.sourceUrl = (scrape && scrape.sourceUrl) ? String(scrape.sourceUrl) : '';
+  // Attach plaintext transcript for background replacement usage
+  if (!post.hansardMeta.transcript) {
+    try { post.hansardMeta.transcript = extractPlain(text); } catch(_) { post.hansardMeta.transcript = plain; }
+  }
+        maybeQueueSummary({ postId: newId, post, speakerName, party: affiliation, riding, role, source });
       } catch (e) {
         if (e && (e.code === 11000 || /duplicate key/i.test(e.message))) {
-          skipped++;
+          skipped++; skipReasons.duplicate++;
         } else {
           errors.push({ reason: e.message || String(e) });
+          skipReasons.other++; if (skipSamples.length < 15) skipSamples.push({ reason: 'error', speakerName, riding, ctx, error: e && e.message });
         }
       }
     } catch (e) {
@@ -433,7 +750,9 @@ async function processScrape(scrape) {
     mapping: { byRiding: mapByRiding, byMember: mapByMember, unmapped, unmappedSamples },
     author: (await resolveCivilAuthorUser()),
     errorsCount: errors.length,
-    errorsSample: errors.slice(0, 5)
+    errorsSample: errors.slice(0, 5),
+    skipReasons,
+    skipSamples
   };
 }
 
@@ -526,7 +845,14 @@ WebApp.connectHandlers.use('/api/admin/hansard/process', async (req, res) => {
   if (!scrape || !scrape.data) return writeJson(res, 404, { error: 'scrape not found' });
   try {
     const result = await processScrape(scrape);
-    try { console.log('[Hansard] /process result', { interventions: result.interventions, created: result.created, skipped: result.skipped }); } catch(_) {}
+    try {
+      console.log('[Hansard] /process result', { interventions: result.interventions, created: result.created, skipped: result.skipped });
+      console.log('[Hansard] /process mapping', result.mapping);
+      console.log('[Hansard] /process skipReasons', result.skipReasons);
+      if (result.skipSamples && result.skipSamples.length) {
+        console.log('[Hansard] /process skipSamples (first 5)', result.skipSamples.slice(0, 5));
+      }
+    } catch(_) {}
     return writeJson(res, 200, { status: 'ok', ...result });
   } catch (e) {
     try { console.error('[Hansard] /process failed', e); } catch(_) {}
@@ -751,9 +1077,63 @@ WebApp.connectHandlers.use('/api/admin/hansard/create-posts', async (req, res) =
       };
 
       try {
-        await Posts.insertAsync(post);
+        // Attempt inline AI summary before insert, same as processScrape
+        const cfg = getOpenAiConfig();
+        if (cfg.inline) {
+          if (!cfg.endpoint || !cfg.apiKey) {
+            if (cfg.log) console.warn('[Hansard][AI] Inline summary skipped (create-posts): missing endpoint/apiKey');
+          } else {
+            try {
+              const role = 'MP';
+              const urlFallback = deriveParlSessAndSittingFromUrl(scrape && scrape.sourceUrl);
+              const parl = ctx.ParliamentNumber || ctx.Parliament || (urlFallback.parlSess.split('-')[0]) || '?';
+              const sess = ctx.SessionNumber || ctx.Session || (urlFallback.parlSess.split('-')[1]) || '?';
+              const sit = ctx.SittingNumber || ctx.Sitting || urlFallback.sitting || '?';
+              const ivId = ctx.InterventionId || ctx.InterventionID || ctx.Guid || '?';
+              const sourceParlSess = `${parl}-${sess}`;
+              const sourceSitting = String(sit).padStart(3, '0');
+              const sourceInterventionId = ivId;
+              const sourceLink = (scrape && scrape.sourceUrl) ? String(scrape.sourceUrl) : '';
+              const parts = (speakerName || '').trim().split(/\s+/);
+              const firstName = parts[0] || '';
+              const lastName = parts.slice(1).join(' ') || '';
+              const hashtag = hashtagForMp(firstName, lastName);
+              const provinceCode = (chamber && chamber.province) ? String(chamber.province).toUpperCase() : '';
+              const prompt = buildSummaryPrompt({ fullNameAccent: speakerName, firstName, lastName, hashtag, party: sp.party || sp.caucus || '', riding, provinceCode, roleDefault: role, bodyText: plain, sourceParlSess, sourceSitting, sourceInterventionId, sourceLink });
+              const messages = [
+                { role: 'system', content: 'You are a neutral Canadian civic assistant. Keep summaries concise, factual, and helpful to everyday citizens.' },
+                { role: 'user', content: prompt },
+              ];
+              if (cfg.log) console.log('[Hansard][AI] Inline summary request (create-posts) for', speakerName, '—', riding);
+              const result = await requestOpenAiSummary(messages, cfg);
+              if (result && result.ok) {
+                const html = renderSummaryHtml(result.data, { transcript: plain });
+                if (html) {
+                  post.hansardOriginalBody = post.body; // audit trail
+                  post.body = html;
+                  post.aiSummary = { createdAt: Date.now(), model: cfg.model, data: result.data, inline: true };
+                  post.hansardMeta = post.hansardMeta || { ...ctx };
+                  post.hansardMeta.transcript = plain;
+                }
+              } else if (cfg.log) {
+                console.warn('[Hansard][AI] Inline summary failed (create-posts), using original body:', result && result.error);
+              }
+            } catch (e) {
+              console.warn('[Hansard][AI] Inline summary error (create-posts), using original body:', e && e.message);
+            }
+          }
+        }
+        const newId = await Posts.insertAsync(post);
         created++;
         if (chamber && chamber._id) await Chambers.updateAsync({ _id: chamber._id }, { $inc: { 'stats.posts': 1 } });
+        // Queue AI summary (non-blocking)
+  const role = 'MP';
+  const source = (function(){ const fb=deriveParlSessAndSittingFromUrl(scrape&&scrape.sourceUrl); const parl=(ctx.ParliamentNumber||ctx.Parliament|| (fb.parlSess.split('-')[0]||'?')); const sess=(ctx.SessionNumber||ctx.Session||(fb.parlSess.split('-')[1]||'?')); const sit=(ctx.SittingNumber||ctx.Sitting||fb.sitting||'?'); const ivId=ctx.InterventionId||ctx.InterventionID||ctx.Guid||'?'; return `${parl}-${sess}, Sitting ${String(sit).padStart(3,'0')}, Intervention ID ${ivId}`; })();
+        const _speakerName = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim() || sp.name || 'MP';
+  post.hansardMeta = post.hansardMeta || {};
+  post.hansardMeta.sourceUrl = (scrape && scrape.sourceUrl) ? String(scrape.sourceUrl) : '';
+  if (!post.hansardMeta.transcript) { post.hansardMeta.transcript = plain; }
+        maybeQueueSummary({ postId: newId, post, speakerName: _speakerName, party: sp.party || sp.caucus || '', riding, role, source });
       } catch (e) {
         if (e && (e.code === 11000 || /duplicate key/i.test(e.message))) {
           skipped++;
