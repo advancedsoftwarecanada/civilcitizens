@@ -359,3 +359,21 @@ table {
 .cta-join-btn:active {
   transform: translateY(1px);
 }
+
+/* Followers/Following list mobile fixes */
+.friend-request .list-group .list-group-item .avatar-img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+}
+.friend-request .list-group .text-truncate p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 576px) {
+  .friend-request .list-group .list-group-item .btn-area {
+    width: 100%;
+    justify-content: flex-start !important;
+  }
+}
