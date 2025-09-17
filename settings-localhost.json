@@ -26,7 +26,14 @@
       "twilio_private": "84e98abbef8cb007f64507a43715179c",
       "mailgun_api_key": "0f2b03b4eca413366f0977f62c191763-2b755df8-5df5bce1",
       "openAiEndpoint": "https://scalarosai.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2023-03-15-preview",
-      "openaiApiKey": "AscEa4FK8q1GFjEsB8AWFiGlgFXczpIdhEbs5rBN8UADws5yWgL9JQQJ99AJACYeBjFXJ3w3AAABACOGJvNp"
+      "openaiApiKey": "AscEa4FK8q1GFjEsB8AWFiGlgFXczpIdhEbs5rBN8UADws5yWgL9JQQJ99AJACYeBjFXJ3w3AAABACOGJvNp",
+      "openAiProvider": "azure",
+      "openAiModel": "gpt-4o-mini",
+      "openAiInline": true,
+      "openAiReplaceBodyWithSummary": true,
+      "openAiRequireAi": true,
+      "openAiLog": true,
+      "openAiMaxTokens": 1024
     },
     "PORT": 3000,
     "ROOT_URL": "https://appdev.civilcitizens.ca",

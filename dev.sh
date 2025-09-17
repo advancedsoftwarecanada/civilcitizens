@@ -85,7 +85,7 @@ case $1 in
 
     echo "Building Android app for production..."
     clean_build_directory "../civil-build-android/prod"
-    meteor build ../civil-build-android/prod --server=https://civilcitizens.ca --mobile-settings settings.json
+    meteor build ../civil-build-android/prod --server=https://civilcitizens.ca --mobile-settings settings-pm2.json
     echo "Production Android app built at ../civil-build-android/prod"
 
     echo "Both development and production Android apps have been built. You can find them in:"
@@ -97,7 +97,7 @@ case $1 in
   buildserver)
     echo "Building server bundle for production..."
     clean_build_directory "../bundle_new"
-    meteor build ../bundle_new --directory --server=https://civilcitizens.ca --mobile-settings settings.json --server-only
+    meteor build ../bundle_new --directory --server=https://civilcitizens.ca --mobile-settings settings-pm2.json --server-only
     echo "Server bundle built at ../bundle_new"
     ;;
 
