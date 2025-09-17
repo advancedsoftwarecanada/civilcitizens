@@ -8,31 +8,24 @@
             <a class="mini-btn" href="/u/{{username}}">@{{username}}</a>
           </div>
           {{#if hasUsers}}
-            <div class="table-responsive">
-              <table class="table m-0">
-                <tbody>
-                  {{#each users}}
-                  <tr>
-                    <th scope="row">
-                      <div class="d-flex gap-3 align-items-center">
-                        <div class="avatar-item">
-                          <img class="avatar-img avatar-size" src="{{avatarUrl}}" alt="avatar">
-                        </div>
-                        <a href="/u/{{userName}}" class="text-area">
-                          <p class="m-0">@{{userName}}</p>
-                        </a>
-                      </div>
-                    </th>
-                    <td></td>
-                    <td>
-                      <div class="btn-area d-flex justify-content-end gap-3">
-                        <a href="/u/{{userName}}"><button class="cmn-btn">View</button></a>
-                      </div>
-                    </td>
-                  </tr>
-                  {{/each}}
-                </tbody>
-              </table>
+            <div class="list-group">
+              {{#each users}}
+              <div class="list-group-item border-0 px-0 py-3">
+                <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+                  <div class="d-flex align-items-center gap-3 min-w-0">
+                    <div class="avatar-item flex-shrink-0">
+                      <img class="avatar-img avatar-size" src="{{avatarUrl}}" alt="avatar">
+                    </div>
+                    <a href="/u/{{userName}}" class="text-truncate" style="max-width: 60vw;">
+                      <p class="m-0">@{{userName}}</p>
+                    </a>
+                  </div>
+                  <div class="btn-area d-flex justify-content-end gap-2 flex-shrink-0">
+                    <a href="/u/{{userName}}"><button class="cmn-btn">View</button></a>
+                  </div>
+                </div>
+              </div>
+              {{/each}}
             </div>
           {{else}}
             <div class="text-center py-5">
