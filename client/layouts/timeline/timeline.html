@@ -309,6 +309,9 @@
         </div>
       {{/each}}
 
+      <!-- IntersectionObserver sentinel for infinite scroll -->
+      <div id="scrollSentinel" class="py-2" aria-hidden="true"></div>
+
       <!-- Loading indicator -->
       {{#if isLoading}}
         <div class="loading-indicator text-center py-4">
