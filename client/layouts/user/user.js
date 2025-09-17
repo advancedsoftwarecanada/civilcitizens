@@ -154,9 +154,11 @@ Template.userTimeline.onCreated(function () {
       const data = response.data || {};
       if (append) {
         const current = this.posts.get();
-        this.posts.set([...(current || []), ...(data.posts || [])]);
+        const normalized = (window.userManager && window.userManager.normalizePosts) ? window.userManager.normalizePosts(data.posts || []) : (data.posts || []);
+        this.posts.set([...(current || []), ...normalized]);
       } else {
-        this.posts.set(data.posts || []);
+        const normalized = (window.userManager && window.userManager.normalizePosts) ? window.userManager.normalizePosts(data.posts || []) : (data.posts || []);
+        this.posts.set(normalized);
       }
       this.currentOffset.set(data.offset || 0);
       this.hasMore.set(!!data.hasMore);
@@ -195,6 +197,64 @@ Template.userTimeline.onCreated(function () {
       this.hasMore.set(true);
       // Prevent this autorun from depending on inner ReactiveVars in loadPosts
       Tracker.nonreactive(() => this.loadPosts(false));
+    }
+  });
+});
+
+Template.userTimeline.onRendered(function() {
+  const enhanceUserTimelineDom = () => {
+    // 1) Read More button when content overflows
+    document.querySelectorAll('.post-content, .truncate-in-timeline').forEach(postContent => {
+      if (postContent.scrollHeight > postContent.clientHeight) {
+        const btn = postContent.closest('.top-area')?.querySelector('.read-more-btn');
+        if (btn) btn.style.display = 'block';
+      }
+    });
+    // 2) Card click-through behavior
+    document.querySelectorAll('.post-card-link').forEach(card => {
+      if (card.__boundClick) return;
+      card.__boundClick = true;
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('a')) return; // let inner links work
+        const url = card.getAttribute('data-post-url');
+        if (url) FlowRouter.go(url);
+      });
+    });
+  };
+
+  // Enhance on initial render and whenever posts change
+  this.autorun(() => {
+    (this.posts && this.posts.get && this.posts.get());
+    Meteor.defer(() => enhanceUserTimelineDom());
+  });
+
+  // Enhance on posts appended (if timeline code dispatches such event)
+  window.addEventListener('posts-appended', () => {
+    Meteor.defer(() => enhanceUserTimelineDom());
+  });
+
+  // Enable Read More toggle behavior on user page
+  $(document).off('click.userTimelineReadMore').on('click.userTimelineReadMore', '.read-more-btn', function(e) {
+    e.preventDefault();
+    const btn = e.currentTarget;
+    let content = btn.previousElementSibling;
+    if (content && !content.classList.contains('truncate-in-timeline')) {
+      content = btn.closest('.post-single-box')?.querySelector('.truncate-in-timeline');
+    }
+    if (!content) return;
+    const expanded = content.classList.toggle('expanded');
+    if (expanded) {
+      content.style.display = 'block';
+      content.style.webkitLineClamp = 'unset';
+      content.style.lineClamp = 'unset';
+      content.style.maxHeight = 'none';
+      btn.textContent = 'Show Less';
+    } else {
+      content.style.removeProperty('display');
+      content.style.removeProperty('-webkit-line-clamp');
+      content.style.removeProperty('line-clamp');
+      content.style.removeProperty('max-height');
+      btn.textContent = 'Read More';
     }
   });
 });
@@ -241,6 +301,21 @@ Template.userTimeline.helpers({
   followingCount() {
     return (Template.instance()._counts.get() || {}).following || 0;
   },
+});
+
+// Helpers for the user timeline posts subtemplate
+Template.timelinePosts.helpers({
+  postType(type) {
+    const post = this;
+    if (type === 'self' && post.type === 'self') {
+      return true;
+    } else if (type === 'chamber' && post.type === 'chamber') {
+      return true;
+    } else if (type === 'topic' && post.type === 'topic') {
+      return true;
+    }
+    return false;
+  }
 });
 
 Template.userTimeline.events({

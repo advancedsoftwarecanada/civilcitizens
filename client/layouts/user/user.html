@@ -1,5 +1,5 @@
 <template name="userTimeline">
-  <div id="templateMain" class="">
+  <div id="templateMain" class="user-page">
     <div class="single-box p-0 overflow-hidden mb-5">
       <div class="col-md-12">
         <div class="upload-single cover-img position-relative">
@@ -74,19 +74,25 @@
                 <h6 class="m-0">
                   <a href="/u/{{this.author.userName}}">@{{this.author.userName}}</a>
                 </h6>
-                <span class="mdtxt status">{{jurisdictionLabel this}}</span>
+                {{#if postType 'self'}}
+                  <span class="mdtxt status">{{jurisdictionLabel this}}</span>
+                {{else if postType 'chamber'}}
+                  <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong> • {{jurisdictionLabel this}}</span>
+                {{else}}
+                  <span class="mdtxt status">{{jurisdictionLabel this}}</span>
+                {{/if}}
                 <span class="mdtxt time-ago">• {{timeAgo this.createdAt}}</span>
               </div>
             </div>
           </div>
-          <a class="hover-pointer" href="/post/{{seoUrl}}">
+          <div class="hover-pointer post-card-link" data-post-url="/post/{{seoUrl}}">
             <div class="mt-2">
               <div class="">
                 <h2 class="mdtxt">{{title}}</h2>
-                <div class="description">{{{body}}}</div>
+                <div class="description truncate-in-timeline">{{{body}}}</div>
               </div>
             </div>
-          </a>
+          </div>
           {{#if images}}
             <div class="post-images">
               {{#each images}}

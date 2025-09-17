@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* global Posts, UserMeta, ChamberFollows */
+/* global Posts, UserMeta, ChamberFollows, UserFollows */
 
 export default class TimelineBuild {
     constructor(self) {
@@ -75,11 +75,17 @@ export default class TimelineBuild {
                 console.log("User home chamber:", userHomeChamber);
                 console.log("Followed chambers:", followedChamberIds);
 
+                // Fetch users that the current user follows (user-to-user follows)
+                const follows = await UserFollows.find({ followerId: userId }).fetch();
+                const followedUserIds = follows.map(f => f.targetUserId).filter(Boolean);
+                console.log("Followed users:", followedUserIds);
+
                 // Fetch user's own posts (self posts)
                 const mySelfQuery = { authorId: userId, type: "self", draft: { $ne: true } };
+                const perBucketLimit = Math.ceil(limit / 4); // self + homeChamber + followedChambers + followedUsers
                 const mySelfPosts = await Posts.find(
                     mySelfQuery,
-                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
+                    { sort: { createdAt: -1 }, skip: offset, limit: perBucketLimit }
                 ).fetch();
 
                 // Fetch posts from user's home chamber (if they have one)
@@ -87,19 +93,33 @@ export default class TimelineBuild {
                 if (userHomeChamber) {
                     homeChamberPosts = await Posts.find(
                         { province: userMeta?.province, chamber: userHomeChamber, type: 'chamber', draft: { $ne: true } },
-                        { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
+                        { sort: { createdAt: -1 }, skip: offset, limit: perBucketLimit }
                     ).fetch();
                 }
 
                 // Fetch posts from all followed Chambers
                 const followedChamberPosts = await Posts.find(
                     { chamber: { $in: followedChamberIds }, type: 'chamber', draft: { $ne: true } },
-                    { sort: { createdAt: -1 }, skip: offset, limit: Math.ceil(limit / 3) }
+                    { sort: { createdAt: -1 }, skip: offset, limit: perBucketLimit }
                 ).fetch();
+
+                // Fetch posts from followed Users (include both 'self' and any authored chamber posts)
+                let followedUsersPosts = [];
+                if (followedUserIds.length > 0) {
+                    followedUsersPosts = await Posts.find(
+                        { authorId: { $in: followedUserIds }, draft: { $ne: true } },
+                        { sort: { createdAt: -1 }, skip: offset, limit: perBucketLimit }
+                    ).fetch();
+                }
 
                 // Merge all posts and remove duplicates
                 const seenPosts = new Set();
-                let allPosts = [...mySelfPosts, ...homeChamberPosts, ...followedChamberPosts];
+                let allPosts = [
+                    ...mySelfPosts,
+                    ...homeChamberPosts,
+                    ...followedChamberPosts,
+                    ...followedUsersPosts
+                ];
                 // Apply jurisdiction filter for HOME when requested
                 if (govParam && govParam !== 'all') {
                     allPosts = allPosts.filter(p => {
@@ -126,7 +146,7 @@ export default class TimelineBuild {
                     }) // Sort by selected mode
                     .slice(0, limit); // Ensure max limit posts
 
-                console.log(`Timeline built: ${uniquePosts.length} posts (${mySelfPosts.length} self, ${homeChamberPosts.length} home, ${followedChamberPosts.length} followed)`);
+                console.log(`Timeline built: ${uniquePosts.length} posts (${mySelfPosts.length} self, ${homeChamberPosts.length} home, ${followedChamberPosts.length} chambers-followed, ${followedUsersPosts.length} users-followed)`);
 
                 // Enrich posts with user metadata
                 enrichedPosts = await Promise.all(

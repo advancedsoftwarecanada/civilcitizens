@@ -213,14 +213,14 @@
                 {{/if}}
 
               </div>
-              <a class="hover-pointer" href="/post/{{seoUrl}}">
+              <div class="hover-pointer post-card-link" data-post-url="/post/{{seoUrl}}">
                 <div class="mt-2">
                   <div class="">
                     <h2 class="mdtxt">{{title}}</h2>
                     <div class="description truncate-in-timeline">{{{body}}}</div>
                   </div>
                 </div>
-              </a>
+              </div>
               {{#if images}}
                 <div class="post-images">
                   {{#each images}}

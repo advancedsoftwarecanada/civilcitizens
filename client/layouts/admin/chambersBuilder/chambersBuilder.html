@@ -19,11 +19,59 @@
 
                 <div class="btn btn-primary uiActionBuildChambers">Build Chambers</div>
                 <div class="btn btn-outline-secondary ms-2 uiActionScrapeMemberContacts">Scrape Member Contacts</div>
+                <div class="btn btn-outline-info ms-2 uiScrollHansard">Hansard Controls</div>
 
                 <div class="mt-3">
                     <pre id="scrapeMemberContactsResult" style="max-height: 260px; overflow: auto; background: #111; color: #ddd; padding: 12px; border-radius: 6px; margin-top: 8px;"></pre>
                 </div>
 
+            </div>
+        </div>
+
+        <hr class="my-5">
+
+        <div class="row" id="hansardPanel">
+            <div class="col">
+                <h1>Hansard Ingestion</h1>
+
+                <div class="mb-3">
+                    <label for="hansardSourceUrl" class="form-label">Source URL (latest XML feed) <small class="text-muted" id="hansardUrlNote"></small></label>
+                    <input id="hansardSourceUrl" type="text" class="form-control" placeholder="https://.../hansard.xml">
+                </div>
+                <div class="mb-3">
+                    <label for="hansardRawXml" class="form-label">Raw XML (optional)</label>
+                    <textarea id="hansardRawXml" class="form-control" rows="8" placeholder="Paste XML here if not using a URL"></textarea>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-success uiActionHansardIngest">Ingest XML</button>
+                    <button class="btn btn-warning uiActionHansardProcess">Process Last Scrape</button>
+                </div>
+                <small class="text-muted d-block mt-2">Processing requires a previously ingested scrape. The last scrapeId is kept in localStorage for convenience.</small>
+
+                <div class="mt-3">
+                    <pre id="hansardResult" style="max-height: 380px; overflow: auto; background: #0b1020; color: #d7f5ff; padding: 12px; border-radius: 6px; margin-top: 8px;"></pre>
+                </div>
+                                <div class="card mt-4">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <h5 class="mb-0">Preview & Select</h5>
+                                            <div>
+                                                <button class="btn btn-sm btn-outline-secondary uiActionHansardPreview">Refresh Preview</button>
+                                                <button class="btn btn-sm btn-outline-secondary uiActionHansardPrevPage">Prev</button>
+                                                <button class="btn btn-sm btn-outline-secondary uiActionHansardNextPage">Next</button>
+                                            </div>
+                                        </div>
+                                        <div class="mb-2 text-muted" id="hansardPreviewMeta"></div>
+                                        <div id="hansardPreviewList" style="max-height: 380px; overflow: auto; border: 1px solid #223; border-radius: 6px; padding: 8px; background: #0b1020; color: #cfe8ff;"></div>
+                                        <div class="mt-3 d-flex gap-2 align-items-end">
+                                            <div class="flex-grow-1">
+                                                <label class="form-label">Override Chamber SEO (optional, applies to selected)</label>
+                                                <input id="hansardOverrideChamber" type="text" class="form-control" placeholder="eg. york-durham">
+                                            </div>
+                                            <button class="btn btn-primary uiActionHansardCreateSelected">Create Selected</button>
+                                        </div>
+                                    </div>
+                                </div>
             </div>
         </div>
 

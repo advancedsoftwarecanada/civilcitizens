@@ -59,6 +59,7 @@ WebApp.connectHandlers.use('/api/post', async (req, res) => {
       comments: commentsWithUserMeta,
       images: post.images || [], // Explicitly include images array
       attachments: post.attachments || null, // Include attachments for link previews
+      aiSummary: post.aiSummary || null,
     };
 
     res.writeHead(200, { 'Content-Type': 'application/json' });

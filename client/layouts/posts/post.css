@@ -505,3 +505,15 @@
 .post-page .post-content ul { list-style: disc !important; }
 .post-page .post-content ol { list-style: decimal !important; }
 .post-page .post-content li { margin: 0.2rem 0; }
+
+/* (Removed AI summary card styles) */
+
+/* Make links in single post content red for visibility */
+.post-page .description a {
+  color: #d63333;
+  text-decoration: none;
+}
+.post-page .description a:hover,
+.post-page .description a:focus {
+  text-decoration: underline;
+}

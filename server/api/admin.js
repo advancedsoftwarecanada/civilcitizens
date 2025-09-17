@@ -34,7 +34,8 @@ async function readJsonBody(req) {
   });
 }
 
-WebApp.connectHandlers.use('/api/admin', async (req, res) => {
+// Narrowly mount only on the specific path to avoid intercepting other /api/admin/* routes
+WebApp.connectHandlers.use('/api/admin/scrape-member-contacts', async (req, res) => {
   // Debug: log every request hitting this handler
   try {
     const ip = req.headers['x-forwarded-for'] || (req.connection && req.connection.remoteAddress) || 'unknown-ip';
@@ -44,19 +45,11 @@ WebApp.connectHandlers.use('/api/admin', async (req, res) => {
     // ignore logging issues
   }
 
-  // Only allow POST /scrape-member-contacts
+  // Only allow POST
   if (req.method !== 'POST') {
     console.log(`[API Admin] 405 Method not allowed: ${req.method} ${req.url}`);
     res.writeHead(405, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'error', message: 'Method not allowed' }));
-    return;
-  }
-
-  const url = req.url || '';
-  if (!url.startsWith('/scrape-member-contacts')) {
-    console.log(`[API Admin] 404 Not found: ${req.method} ${req.url}`);
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'error', message: 'Not found' }));
     return;
   }
 
