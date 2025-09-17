@@ -266,7 +266,9 @@ function getOpenAiConfig() {
     // Behavior defaults: always try AI; allow opt-out via settings if explicitly set to false
     replaceBodyWithSummary: s.openAiReplaceBodyWithSummary !== false, // default true
     inline: s.openAiInline !== false, // default true (attempt inline summary before insert)
-    log: s.openAiLog !== false // default true for visibility
+    log: s.openAiLog !== false, // default true for visibility
+    // Hard requirement: if true (default), fail-fast and abort ingestion if AI is unavailable or fails
+    requireAi: s.openAiRequireAi !== false
   };
 }
 
@@ -762,47 +764,58 @@ async function processScrape(scrape) {
       try {
         // Always attempt inline summarize (blocking) and replace body before insert when possible
         const cfg = getOpenAiConfig();
+        // Enforce: do not proceed without AI summary when required
+        if (!cfg.inline && cfg.requireAi) {
+          const err = new Error('AI inline summarization disabled but required');
+          err.aiAbort = true; throw err;
+        }
         if (cfg.inline) {
           if (!cfg.endpoint || !cfg.apiKey) {
-            if (cfg.log) console.warn('[Hansard][AI] Inline summary skipped: missing endpoint/apiKey');
+            const msg = '[Hansard][AI] Inline summary skipped: missing endpoint/apiKey';
+            if (cfg.log) console.warn(msg);
+            if (cfg.requireAi) { const err = new Error('AI unavailable: missing endpoint or apiKey'); err.aiAbort = true; throw err; }
           } else {
-          try {
-            const role = 'MP';
-            const urlFallback = deriveParlSessAndSittingFromUrl(scrape && scrape.sourceUrl);
-            const parl = ctx.ParliamentNumber || ctx.Parliament || (urlFallback.parlSess.split('-')[0]) || '?';
-            const sess = ctx.SessionNumber || ctx.Session || (urlFallback.parlSess.split('-')[1]) || '?';
-            const sit = ctx.SittingNumber || ctx.Sitting || urlFallback.sitting || '?';
-            const ivId = ctx.InterventionId || ctx.InterventionID || ctx.Guid || '?';
-            const sourceParlSess = `${parl}-${sess}`;
-            const sourceSitting = String(sit).padStart(3, '0');
-            const sourceInterventionId = ivId;
-            const sourceLink = (scrape && scrape.sourceUrl) ? String(scrape.sourceUrl) : '';
-            const parts = (speakerName || '').trim().split(/\s+/);
-            const firstName = parts[0] || '';
-            const lastName = parts.slice(1).join(' ') || '';
-            const hashtag = hashtagForMp(firstName, lastName);
-            const provinceCode = (chamber && chamber.province) ? String(chamber.province).toUpperCase() : '';
-            const prompt = buildSummaryPrompt({ fullNameAccent: speakerName, firstName, lastName, hashtag, party: affiliation, riding, provinceCode, roleDefault: role, bodyText: plain, sourceParlSess, sourceSitting, sourceInterventionId, sourceLink });
-            const messages = [
-              { role: 'system', content: 'You are a neutral Canadian civic assistant. Keep summaries concise, factual, and helpful to everyday citizens.' },
-              { role: 'user', content: prompt },
-            ];
-            if (cfg.log) console.log('[Hansard][AI] Inline summary request for', speakerName, '—', riding);
-            const result = await requestOpenAiSummary(messages, cfg);
-            if (result && result.ok) {
-              const html = renderSummaryHtml(result.data, { transcript: plain });
-              if (html) {
-                post.hansardOriginalBody = post.body; // audit trail
-                post.body = html;
-                post.aiSummary = { createdAt: Date.now(), model: cfg.model, data: result.data, inline: true };
-                post.hansardMeta = post.hansardMeta || { ...ctx };
+            try {
+              const role = 'MP';
+              const urlFallback = deriveParlSessAndSittingFromUrl(scrape && scrape.sourceUrl);
+              const parl = ctx.ParliamentNumber || ctx.Parliament || (urlFallback.parlSess.split('-')[0]) || '?';
+              const sess = ctx.SessionNumber || ctx.Session || (urlFallback.parlSess.split('-')[1]) || '?';
+              const sit = ctx.SittingNumber || ctx.Sitting || urlFallback.sitting || '?';
+              const ivId = ctx.InterventionId || ctx.InterventionID || ctx.Guid || '?';
+              const sourceParlSess = `${parl}-${sess}`;
+              const sourceSitting = String(sit).padStart(3, '0');
+              const sourceInterventionId = ivId;
+              const sourceLink = (scrape && scrape.sourceUrl) ? String(scrape.sourceUrl) : '';
+              const parts = (speakerName || '').trim().split(/\s+/);
+              const firstName = parts[0] || '';
+              const lastName = parts.slice(1).join(' ') || '';
+              const hashtag = hashtagForMp(firstName, lastName);
+              const provinceCode = (chamber && chamber.province) ? String(chamber.province).toUpperCase() : '';
+              const prompt = buildSummaryPrompt({ fullNameAccent: speakerName, firstName, lastName, hashtag, party: affiliation, riding, provinceCode, roleDefault: role, bodyText: plain, sourceParlSess, sourceSitting, sourceInterventionId, sourceLink });
+              const messages = [
+                { role: 'system', content: 'You are a neutral Canadian civic assistant. Keep summaries concise, factual, and helpful to everyday citizens.' },
+                { role: 'user', content: prompt },
+              ];
+              if (cfg.log) console.log('[Hansard][AI] Inline summary request for', speakerName, '—', riding);
+              const result = await requestOpenAiSummary(messages, cfg);
+              if (result && result.ok) {
+                const html = renderSummaryHtml(result.data, { transcript: plain });
+                if (!html || html.length === 0) {
+                  if (cfg.requireAi) { const err = new Error('AI returned empty summary HTML'); err.aiAbort = true; throw err; }
+                } else {
+                  post.hansardOriginalBody = post.body; // audit trail
+                  post.body = html;
+                  post.aiSummary = { createdAt: Date.now(), model: cfg.model, data: result.data, inline: true };
+                  post.hansardMeta = post.hansardMeta || { ...ctx };
+                }
+              } else {
+                if (cfg.log) console.warn('[Hansard][AI] Inline summary failed:', result && result.error, result && result.raw);
+                if (cfg.requireAi) { const err = new Error(`AI summary failed: ${result && result.error || 'unknown'}`); err.aiAbort = true; throw err; }
               }
-            } else if (cfg.log) {
-              console.warn('[Hansard][AI] Inline summary failed, using original body:', result && result.error);
+            } catch (e) {
+              if (cfg.log) console.warn('[Hansard][AI] Inline summary error:', e && e.message);
+              if (cfg.requireAi) { const err = (e instanceof Error) ? e : new Error(String(e)); err.aiAbort = true; throw err; }
             }
-          } catch (e) {
-            console.warn('[Hansard][AI] Inline summary error, using original body:', e && e.message);
-          }
           }
         }
 
@@ -820,6 +833,7 @@ async function processScrape(scrape) {
   }
         maybeQueueSummary({ postId: newId, post, speakerName, party: affiliation, riding, role, source });
       } catch (e) {
+        if (e && e.aiAbort) { throw e; }
         if (e && (e.code === 11000 || /duplicate key/i.test(e.message))) {
           skipped++; skipReasons.duplicate++;
         } else {
@@ -828,6 +842,7 @@ async function processScrape(scrape) {
         }
       }
     } catch (e) {
+      if (e && e.aiAbort) { throw e; }
       errors.push({ reason: e.message || String(e) });
     }
   }
@@ -1171,6 +1186,7 @@ WebApp.connectHandlers.use('/api/admin/hansard/create-posts', async (req, res) =
         if (cfg.inline) {
           if (!cfg.endpoint || !cfg.apiKey) {
             if (cfg.log) console.warn('[Hansard][AI] Inline summary skipped (create-posts): missing endpoint/apiKey');
+            if (cfg.requireAi) { return writeJson(res, 502, { error: 'ai-unavailable', details: 'AI unavailable: missing endpoint or apiKey' }); }
           } else {
             try {
               const role = 'MP';
@@ -1204,11 +1220,13 @@ WebApp.connectHandlers.use('/api/admin/hansard/create-posts', async (req, res) =
                   post.hansardMeta = post.hansardMeta || { ...ctx };
                   post.hansardMeta.transcript = plain;
                 }
-              } else if (cfg.log) {
-                console.warn('[Hansard][AI] Inline summary failed (create-posts), using original body:', result && result.error);
+              } else {
+                if (cfg.log) console.warn('[Hansard][AI] Inline summary failed (create-posts):', result && result.error, result && result.raw);
+                if (cfg.requireAi) { return writeJson(res, 502, { error: 'ai-failed', details: result && result.error || 'unknown' }); }
               }
             } catch (e) {
-              console.warn('[Hansard][AI] Inline summary error (create-posts), using original body:', e && e.message);
+              console.warn('[Hansard][AI] Inline summary error (create-posts):', e && e.message);
+              if (cfg.requireAi) { return writeJson(res, 502, { error: 'ai-error', details: e && e.message }); }
             }
           }
         }
@@ -1227,10 +1245,14 @@ WebApp.connectHandlers.use('/api/admin/hansard/create-posts', async (req, res) =
         if (e && (e.code === 11000 || /duplicate key/i.test(e.message))) {
           skipped++;
         } else {
+          // If response already sent due to AI error, stop further processing
+          try { if (res.headersSent) return; } catch(_) {}
           errors.push({ key, reason: e.message || String(e) });
         }
       }
     } catch (e) {
+      // If response already sent due to AI error, stop further processing
+      try { if (res.headersSent) return; } catch(_) {}
       errors.push({ reason: e.message || String(e) });
     }
   }
