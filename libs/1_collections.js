@@ -1,6 +1,11 @@
+// @ts-nocheck
 UserMeta = new Mongo.Collection('UserMeta');
 
 Posts = new Mongo.Collection('Posts');
+if (Meteor.isServer) {
+    // Ensure fast lookup and dedupe for Hansard ingestions
+    try { Posts.rawCollection().createIndex({ hansardKey: 1 }, { unique: true, sparse: true }); } catch (_) {}
+}
 
 Votes = new Mongo.Collection('Votes');
 // If server
@@ -44,4 +49,11 @@ if (Meteor.isServer) {
         allowClientCode: true,
         debug: false,
     });
+}
+
+// Scrapes collection to store raw ingested data (e.g., Hansard XML)
+Scrapes = new Mongo.Collection('Scrapes');
+if (Meteor.isServer) {
+    try { Scrapes.rawCollection().createIndex({ type: 1, createdAt: -1 }); } catch (_) {}
+    try { Scrapes.rawCollection().createIndex({ sourceUrl: 1 }); } catch (_) {}
 }

@@ -74,7 +74,13 @@
                 <h6 class="m-0">
                   <a href="/u/{{this.author.userName}}">@{{this.author.userName}}</a>
                 </h6>
-                <span class="mdtxt status">{{jurisdictionLabel this}}</span>
+                {{#if postType 'self'}}
+                  <span class="mdtxt status">{{jurisdictionLabel this}}</span>
+                {{else if postType 'chamber'}}
+                  <span class="mdtxt status">Citizens Chamber Of <strong><a href="/c/{{this.province}}/{{this.chamber}}">{{niceName this.chamber}}</a></strong> in <strong><a style="text-transform: uppercase;" href="/c/{{this.province}}">{{niceName this.province}}</a></strong> • {{jurisdictionLabel this}}</span>
+                {{else}}
+                  <span class="mdtxt status">{{jurisdictionLabel this}}</span>
+                {{/if}}
                 <span class="mdtxt time-ago">• {{timeAgo this.createdAt}}</span>
               </div>
             </div>

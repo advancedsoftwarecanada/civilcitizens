@@ -243,6 +243,21 @@ Template.userTimeline.helpers({
   },
 });
 
+// Helpers for the user timeline posts subtemplate
+Template.timelinePosts.helpers({
+  postType(type) {
+    const post = this;
+    if (type === 'self' && post.type === 'self') {
+      return true;
+    } else if (type === 'chamber' && post.type === 'chamber') {
+      return true;
+    } else if (type === 'topic' && post.type === 'topic') {
+      return true;
+    }
+    return false;
+  }
+});
+
 Template.userTimeline.events({
   'click #followActionBtn'(e, tpl) {
     e.preventDefault();
