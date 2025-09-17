@@ -67,7 +67,7 @@ case $1 in
     echo "Building iOS App: $METEOR_ENV with AUTOUPDATE_VERSION=$AUTOUPDATE_VERSION"
     echo "ROOT_URL=$ROOT_URL"
     clean_build_directory "../civil-build-ios/prod"
-    meteor build ../civil-build-ios/prod --server https://civilcitizens.ca --mobile-settings settings.json
+    meteor build ../civil-build-ios/prod --server https://civilcitizens.ca --mobile-settings settings-pm2.json
     echo "DONE! iOS Prod App Built."
 
     echo "+-+-+-+-+-+-+-+-+-+-+-+-+-+-+"
