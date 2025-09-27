@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  handle       String   @unique
+  name         String?
+  bio          String?  @db.Text
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  posts        Post[]
+  comments     Comment[]
+  likes        Like[]
+  followers    Follow[] @relation("followers")
+  following    Follow[] @relation("following")
+}
+
+model Post {
+  id          String    @id @default(cuid())
+  authorId    String
+  author      User      @relation(fields: [authorId], references: [id])
+  body        String    @db.Text
+  mediaUrl    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  comments    Comment[]
+  likes       Like[]
+  hashtags    PostHashtag[]
+  @@index([authorId, createdAt])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+  post      Post     @relation(fields: [postId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  @@index([postId, createdAt])
+}
+
+model Like {
+  userId  String
+  postId  String
+  user    User   @relation(fields: [userId], references: [id])
+  post    Post   @relation(fields: [postId], references: [id])
+  createdAt DateTime @default(now())
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+model Follow {
+  followerId String
+  targetId   String
+  follower   User @relation("following", fields: [followerId], references: [id])
+  target     User @relation("followers", fields: [targetId], references: [id])
+  createdAt  DateTime @default(now())
+  @@id([followerId, targetId])
+  @@index([targetId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  actorId   String
+  postId    String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId, createdAt])
+}
+
+model FeedEntry {
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+  @@id([userId, postId])
+  @@index([userId, createdAt])
+}
+
+model Hashtag {
+  tag       String   @id
+  createdAt DateTime @default(now())
+  posts     PostHashtag[]
+}
+
+model PostHashtag {
+  postId String
+  tag    String
+  post   Post    @relation(fields: [postId], references: [id])
+  hash   Hashtag @relation(fields: [tag], references: [tag])
+  @@id([postId, tag])
+  @@index([tag])
+}

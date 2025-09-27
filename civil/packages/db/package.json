@@ -1,0 +1,32 @@
+{
+  "name": "@civil/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "prisma": "prisma",
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "build": "tsc -p tsconfig.json",
+    "dev": "echo 'db package has no dev server'",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "format": "prettier -w ."
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.18.0",
+    "typescript": "^5.5.4",
+    "@types/node": "^20.12.12"
+  }
+}

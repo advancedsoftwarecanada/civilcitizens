@@ -1,0 +1,5 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "editor.defaultFormatter": "vscode.typescript-language-features",
+  "editor.formatOnSave": true
+}
