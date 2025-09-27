@@ -12,7 +12,10 @@ const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
-const app = Fastify({ logger: true })
+const app = Fastify({
+  logger: true,
+  trustProxy: true, // behind Nginx/Cloudflare
+})
 
 await app.register(cors, { origin: true, credentials: true })
 await app.register(jwt, { secret: JWT_SECRET })
@@ -93,5 +96,5 @@ try {
   await app.listen({ port: PORT, host: '0.0.0.0' })
 } catch (err) {
   app.log.error(err)
-  process.exit(1)
+  ;(globalThis as any)?.process?.exit(1)
 }

@@ -5,8 +5,11 @@ services:
     profiles: [app]
     volumes:
       - ./ops/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../private/ssl_certs/origin_cert.pem:/etc/nginx/ssl/origin_cert.pem:ro
+      - ../private/ssl_certs/private_key:/etc/nginx/ssl/private_key:ro
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
     depends_on: [api]
 
   api:
@@ -19,9 +22,9 @@ services:
       - "3000:3000"
     depends_on: [postgres, redis]
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
       interval: 10s
-      timeout: 2s
+      timeout: 5s
       retries: 5
 
   worker:
@@ -39,7 +42,10 @@ services:
       dockerfile: ./apps/web/Dockerfile
     env_file: ./apps/web/.env
     environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:3000
+      # Use relative path so it works behind Nginx and Cloudflare
+      NEXT_PUBLIC_API_BASE: /api
+      # Optional base URL for absolute links (can be overridden in env)
+      NEXT_PUBLIC_BASE_URL: http://localhost
     depends_on: [api]
 
   postgres:

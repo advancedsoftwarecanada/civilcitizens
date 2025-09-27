@@ -1,0 +1,10 @@
+<svg width="512" height="128" viewBox="0 0 512 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Civil Citizens">
+  <rect width="512" height="128" rx="16" fill="#fff"/>
+  <g fill="#D52B1E">
+    <circle cx="64" cy="64" r="28"/>
+    <rect x="112" y="40" width="8" height="48" rx="4"/>
+    <rect x="128" y="40" width="8" height="48" rx="4"/>
+    <rect x="144" y="40" width="8" height="48" rx="4"/>
+  </g>
+  <text x="180" y="78" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="40" fill="#0f172a">Civil Citizens</text>
+</svg>
