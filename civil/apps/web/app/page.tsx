@@ -24,16 +24,21 @@ function IconWrap({ children }: { children: React.ReactNode }) {
 export default function Home() {
   const [showLogin, setShowLogin] = useState(false)
   const [showRegister, setShowRegister] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
   const LoginForm = React.useMemo(() => dynamic(() => import('./login/page')), [])
   const RegisterForm = React.useMemo(() => dynamic(() => import('./register/page')), [])
+  const ForgotForm = React.useMemo(() => dynamic(() => import('./forgot/page')), [])
   React.useEffect(() => {
     const openLogin = () => { setShowRegister(false); setShowLogin(true) }
     const openRegister = () => { setShowLogin(false); setShowRegister(true) }
+    const openForgot = () => { setShowLogin(false); setShowRegister(false); setShowForgot(true) }
     window.addEventListener('openLoginModal', openLogin)
     window.addEventListener('openRegisterModal', openRegister)
+    window.addEventListener('openForgotModal', openForgot)
     return () => {
       window.removeEventListener('openLoginModal', openLogin)
       window.removeEventListener('openRegisterModal', openRegister)
+      window.removeEventListener('openForgotModal', openForgot)
     }
   }, [])
   return (
@@ -49,6 +54,10 @@ export default function Home() {
         {/* @ts-ignore */}
         <RegisterForm />
       </Modal>
+      <Modal open={showForgot} onClose={() => setShowForgot(false)} title="Reset your password">
+        {/* @ts-ignore */}
+        <ForgotForm />
+      </Modal>
       {/* Hero */}
       <section className="hero-section py-12">
         <div className="container mx-auto px-4">
@@ -56,6 +65,7 @@ export default function Home() {
             <div className="text-center">
               <div className="mx-auto max-w-xs">
                 <Image src="/logo.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <div className="text-center text-sm text-slate-500 mt-2">Release: Beta 1.0</div>
               </div>
             </div>
             <div className="text-center lg:text-left">

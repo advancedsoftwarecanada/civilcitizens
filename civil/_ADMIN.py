@@ -31,6 +31,7 @@ import re
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 COMPOSE_FILE = os.path.join(ROOT, "docker-compose.yml")
+OVERRIDE_FILE = os.path.join(ROOT, "docker-compose.override.yml")
 
 PORT_API = 3000
 PORT_WEB = 3001
@@ -125,7 +126,10 @@ def ensure_infra() -> int:
         "docker",
         "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
     )
-    return run(f"docker compose -f \"{COMPOSE_FILE}\" --profile infra up -d", cwd=ROOT)
+    files = f"-f \"{COMPOSE_FILE}\""
+    if os.path.exists(OVERRIDE_FILE):
+        files += f" -f \"{OVERRIDE_FILE}\""
+    return run(f"docker compose {files} --profile infra up -d postgres redis", cwd=ROOT)
 
 
 def cmd_infra(args: argparse.Namespace) -> int:
@@ -277,6 +281,28 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_developer(args: argparse.Namespace) -> int:
+    """Start/stop the dev stack (hot reload) using docker-compose.override.yml."""
+    require_tool(
+        "docker",
+        "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
+    )
+    action = getattr(args, "action", "up") or "up"
+    files = f"-f \"{COMPOSE_FILE}\""
+    if os.path.exists(OVERRIDE_FILE):
+        files += f" -f \"{OVERRIDE_FILE}\""
+    if action == "down":
+        return run(f"docker compose {files} --profile app down", cwd=ROOT)
+    # Up: ensure infra, then bring up nginx+web+api with override (dev mode)
+    code = run(f"docker compose {files} --profile infra up -d postgres redis", cwd=ROOT)
+    if code != 0:
+        return code
+    return run(
+        f"docker compose {files} --profile infra --profile app up -d nginx web api",
+        cwd=ROOT,
+    )
+
+
 def print_help() -> None:
     print(
         (
@@ -319,6 +345,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser("status", help="Check status of running processes and services")
     ps.set_defaults(func=cmd_status)
+
+    # developer: simple alias to run dev stack with hot reload in Docker
+    pdev = sub.add_parser("developer", help="Start/stop dev stack (hot reload) using compose override")
+    pdev.add_argument("action", nargs="?", choices=["up", "down"], default="up")
+    pdev.set_defaults(func=cmd_developer)
     return p
 
 

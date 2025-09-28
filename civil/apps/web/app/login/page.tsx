@@ -1,8 +1,11 @@
+// @ts-nocheck
 "use client"
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import type { FormEvent } from 'react'
 
 export default function LoginPage() {
+  const router = useRouter()
   const [emailOrHandle, setId] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -32,15 +35,33 @@ export default function LoginPage() {
       </form>
       <div className="mt-4 text-sm">
         New here? <button className="underline" type="button" onClick={() => {
-          if (window.location.pathname.startsWith('/login')) {
-            window.location.replace('/register')
+          const inModal = !!document.querySelector('[data-cc-modal-root]')
+          if (inModal) {
+            if (window.location.pathname.startsWith('/login')) {
+              router.back()
+              setTimeout(() => window.dispatchEvent(new CustomEvent('openRegisterModal')), 0)
+            } else {
+              window.dispatchEvent(new CustomEvent('openRegisterModal'))
+            }
           } else {
-            // If in modal, open register modal and close login modal
-            const evt = new CustomEvent('openRegisterModal')
-            window.dispatchEvent(evt)
+            window.location.replace('/register')
           }
         }}>Create an account</button>
-        <div className="mt-2"><a className="underline" href="/forgot">Forgot password?</a></div>
+        <div className="mt-2">
+          <button className="underline" type="button" onClick={() => {
+            const inModal = !!document.querySelector('[data-cc-modal-root]')
+            if (inModal) {
+              if (window.location.pathname.startsWith('/login')) {
+                router.back()
+                setTimeout(() => window.dispatchEvent(new CustomEvent('openForgotModal')), 0)
+              } else {
+                window.dispatchEvent(new CustomEvent('openForgotModal'))
+              }
+            } else {
+              window.location.replace('/forgot')
+            }
+          }}>Forgot password?</button>
+        </div>
       </div>
     </div>
   )

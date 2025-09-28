@@ -1,7 +1,10 @@
+// @ts-nocheck
 "use client"
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function RegisterPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
   const [handle, setHandle] = useState('')
   const [name, setName] = useState('')
@@ -35,14 +38,33 @@ export default function RegisterPage() {
       </form>
       <div className="mt-4 text-sm">
         Already have an account? <button className="underline" type="button" onClick={() => {
-          if (window.location.pathname.startsWith('/register')) {
-            window.location.replace('/login')
+          const inModal = !!document.querySelector('[data-cc-modal-root]')
+          if (inModal) {
+            if (window.location.pathname.startsWith('/register')) {
+              router.back()
+              setTimeout(() => window.dispatchEvent(new CustomEvent('openLoginModal')), 0)
+            } else {
+              window.dispatchEvent(new CustomEvent('openLoginModal'))
+            }
           } else {
-            // If in modal, open login modal and close register modal
-            const evt = new CustomEvent('openLoginModal')
-            window.dispatchEvent(evt)
+            window.location.replace('/login')
           }
         }}>Sign in</button>
+      </div>
+      <div className="mt-2 text-sm">
+        <button className="underline" type="button" onClick={() => {
+          const inModal = !!document.querySelector('[data-cc-modal-root]')
+          if (inModal) {
+            if (window.location.pathname.startsWith('/register')) {
+              router.back()
+              setTimeout(() => window.dispatchEvent(new CustomEvent('openForgotModal')), 0)
+            } else {
+              window.dispatchEvent(new CustomEvent('openForgotModal'))
+            }
+          } else {
+            window.location.replace('/forgot')
+          }
+        }}>Forgot password?</button>
       </div>
     </div>
   )
