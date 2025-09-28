@@ -17,15 +17,18 @@
     "@fastify/cors": "^10.0.0",
     "@fastify/jwt": "^9.0.0",
   "fastify-sse-v2": "^3.1.2",
+    "bcryptjs": "^2.4.3",
     "bullmq": "^5.8.2",
     "fastify": "^5.0.0",
     "ioredis": "^5.4.1",
     "pino": "^9.3.2",
+    "@prisma/client": "^5.22.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
-    "@types/node": "^20.12.12"
+    "@types/node": "^20.12.12",
+    "@types/bcryptjs": "^2.4.6"
   }
 }

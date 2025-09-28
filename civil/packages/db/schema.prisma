@@ -14,6 +14,10 @@ model User {
   name         String?
   bio          String?  @db.Text
   avatarUrl    String?
+  passwordHash String
+  lastLoginAt  DateTime?
+  resetToken   String?   @unique
+  resetExpires DateTime?
   createdAt    DateTime @default(now())
   posts        Post[]
   comments     Comment[]

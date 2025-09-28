@@ -18,3 +18,29 @@ export const CursorQuery = z.object({
 })
 
 export const HandleParam = z.object({ handle: z.string().min(3).max(32) })
+
+// Auth
+export const RegisterInput = z.object({
+  email: z.string().email(),
+  handle: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_]+$/),
+  name: z.string().min(2).max(60).optional(),
+  password: z.string().min(8).max(72),
+})
+export type RegisterInput = z.infer<typeof RegisterInput>
+
+export const LoginInput = z.object({
+  emailOrHandle: z.string().min(3).max(254),
+  password: z.string().min(8).max(72),
+})
+export type LoginInput = z.infer<typeof LoginInput>
+
+export const ForgotPasswordInput = z.object({
+  emailOrHandle: z.string().min(3).max(254),
+})
+export type ForgotPasswordInput = z.infer<typeof ForgotPasswordInput>
+
+export const ResetPasswordInput = z.object({
+  token: z.string().min(10),
+  newPassword: z.string().min(8).max(72),
+})
+export type ResetPasswordInput = z.infer<typeof ResetPasswordInput>

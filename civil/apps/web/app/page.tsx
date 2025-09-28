@@ -1,7 +1,11 @@
+// @ts-nocheck
 "use client"
-import React from 'react'
+import * as React from 'react'
+import { useState } from 'react'
 import Image from 'next/image'
-import Link from 'next/link'
+import dynamic from 'next/dynamic'
+import Modal from './_components/Modal'
+import AutoRedirect from './_components/AutoRedirect'
 import {
   FaMapMarkedAlt,
   FaUserTie,
@@ -18,8 +22,33 @@ function IconWrap({ children }: { children: React.ReactNode }) {
 }
 
 export default function Home() {
+  const [showLogin, setShowLogin] = useState(false)
+  const [showRegister, setShowRegister] = useState(false)
+  const LoginForm = React.useMemo(() => dynamic(() => import('./login/page')), [])
+  const RegisterForm = React.useMemo(() => dynamic(() => import('./register/page')), [])
+  React.useEffect(() => {
+    const openLogin = () => { setShowRegister(false); setShowLogin(true) }
+    const openRegister = () => { setShowLogin(false); setShowRegister(true) }
+    window.addEventListener('openLoginModal', openLogin)
+    window.addEventListener('openRegisterModal', openRegister)
+    return () => {
+      window.removeEventListener('openLoginModal', openLogin)
+      window.removeEventListener('openRegisterModal', openRegister)
+    }
+  }, [])
   return (
     <main className="bg-white min-h-screen text-slate-900">
+      {/* Redirect signed-in users to /home */}
+      <AutoRedirect />
+      {/* Auth modals using shared component */}
+      <Modal open={showLogin} onClose={() => setShowLogin(false)} title="Login">
+        {/* @ts-ignore */}
+        <LoginForm />
+      </Modal>
+      <Modal open={showRegister} onClose={() => setShowRegister(false)} title="Create your account">
+        {/* @ts-ignore */}
+        <RegisterForm />
+      </Modal>
       {/* Hero */}
       <section className="hero-section py-12">
         <div className="container mx-auto px-4">
@@ -38,8 +67,8 @@ export default function Home() {
                 Civil turns that fact into action by forming a <strong>Chamber of Citizens</strong> for your riding — a real local forum where <strong>citizens, MPs, city councils, and local businesses</strong> talk openly and get things done, grounded by @Civil AI’s plain-English, cited facts.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <Link href="#register" className="btn-primary-cc">Register</Link>
-                <Link href="#login" className="btn-outline-primary-cc">Login</Link>
+                <button onClick={() => setShowRegister(true)} className="btn-primary-cc">Register</button>
+                <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc">Login</button>
               </div>
             </div>
           </div>
@@ -165,7 +194,7 @@ export default function Home() {
                     <li className="cc-li">Go deeper any time with linked sources</li>
                   </ul>
                   <div className="mt-4">
-                    <Link href="#login" className="btn-outline-primary-cc btn-sm">Stay Updated</Link>
+                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-sm">Stay Updated</button>
                   </div>
                 </div>
               </article>
@@ -181,8 +210,8 @@ export default function Home() {
                     <li className="cc-li">Lower recruiting spend, better retention from hiring nearby</li>
                   </ul>
                   <div className="mt-4 flex gap-2">
-                    <Link href="#login" className="btn-primary-cc btn-sm">Post a Job</Link>
-                    <Link href="#login" className="btn-outline-primary-cc btn-sm">Find Work</Link>
+                    <button onClick={() => setShowLogin(true)} className="btn-primary-cc btn-sm">Post a Job</button>
+                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-sm">Find Work</button>
                   </div>
                 </div>
               </article>
@@ -198,7 +227,7 @@ export default function Home() {
                     <li className="cc-li">Earn a badge that boosts replies and conversions</li>
                   </ul>
                   <div className="mt-4">
-                    <Link href="#login" className="btn-outline-primary-cc btn-sm">Get Verified</Link>
+                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-sm">Get Verified</button>
                   </div>
                 </div>
               </article>
@@ -231,7 +260,7 @@ export default function Home() {
                     <li className="cc-li">Keep dollars circulating locally</li>
                   </ul>
                   <div className="text-center mt-6">
-                    <Link href="#login" className="btn-outline-primary-cc btn-lg">Browse Marketplace</Link>
+                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-lg">Browse Marketplace</button>
                   </div>
                 </div>
               </article>
@@ -247,7 +276,7 @@ export default function Home() {
                     <li className="cc-li">Safety tips &amp; easy reporting</li>
                   </ul>
                   <div className="text-center mt-6">
-                    <Link href="#login" className="btn-outline-primary-cc btn-lg">List an Item</Link>
+                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-lg">List an Item</button>
                   </div>
                 </div>
               </article>
@@ -267,8 +296,8 @@ export default function Home() {
           <h2 className="text-3xl font-bold mb-3">Start Building Your Chamber of Citizens</h2>
           <p className="text-lg text-slate-700 mb-6">Stay informed. Solve problems together. Keep politics civil.</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="#register" className="btn-primary-cc">Register</Link>
-            <Link href="#login" className="btn-outline-primary-cc">Login</Link>
+            <button onClick={() => setShowRegister(true)} className="btn-primary-cc">Register</button>
+            <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc">Login</button>
           </div>
         </div>
       </section>
