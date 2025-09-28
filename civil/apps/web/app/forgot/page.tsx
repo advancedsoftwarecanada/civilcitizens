@@ -16,7 +16,6 @@ export default function ForgotPasswordPage() {
 
   return (
     <div className="mx-auto max-w-md p-8">
-      <h1 className="text-2xl font-bold mb-6">Forgot your password?</h1>
       <form onSubmit={onSubmit} className="space-y-4">
         <input className="w-full border rounded p-3" placeholder="Email or handle" value={emailOrHandle} onChange={(e) => setId(e.target.value)} />
         <button className="px-4 py-2 bg-black text-white rounded w-full" type="submit">Send reset link</button>

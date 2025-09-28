@@ -26,7 +26,6 @@ export default function LoginPage() {
 
   return (
     <div className="mx-auto max-w-md p-8">
-      <h1 className="text-2xl font-bold mb-6">Sign in to Civil</h1>
       <form onSubmit={onSubmit} className="space-y-4">
         <input className="w-full border rounded p-3" placeholder="Email or handle" value={emailOrHandle} onChange={(e) => setId(e.target.value)} />
         <input className="w-full border rounded p-3" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />

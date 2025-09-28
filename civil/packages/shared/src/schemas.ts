@@ -23,8 +23,12 @@ export const HandleParam = z.object({ handle: z.string().min(3).max(32) })
 export const RegisterInput = z.object({
   email: z.string().email(),
   handle: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_]+$/),
-  name: z.string().min(2).max(60).optional(),
+  firstName: z.string().min(1).max(40),
+  lastName: z.string().min(1).max(40),
   password: z.string().min(8).max(72),
+  acceptTerms: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the terms' }),
+  }),
 })
 export type RegisterInput = z.infer<typeof RegisterInput>
 
