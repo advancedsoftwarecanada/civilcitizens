@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   web:
     image: node:20-alpine
@@ -15,9 +14,9 @@ services:
     # Keep existing depends_on from base file
 
   api:
-    image: node:20-alpine
+    image: node:20-bullseye-slim
     working_dir: /app
-    command: sh -lc "corepack enable && corepack prepare pnpm@9 --activate && pnpm -w i && pnpm --filter @civil/api dev"
+    command: sh -lc "apt-get update && apt-get install -y --no-install-recommends libssl1.1 && rm -rf /var/lib/apt/lists/* && corepack enable && corepack prepare pnpm@9 --activate && pnpm -w i && pnpm --filter @civil/db generate && pnpm --filter @civil/api dev"
     volumes:
       - ./:/app
     environment:

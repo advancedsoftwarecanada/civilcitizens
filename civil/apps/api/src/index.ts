@@ -9,6 +9,7 @@ import { CreatePostInput, RegisterInput, LoginInput, ForgotPasswordInput, ResetP
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import { Prisma } from '@prisma/client'
+import { randomUUID } from 'crypto'
 
 const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
@@ -27,80 +28,18 @@ const redis = new IORedis(REDIS_URL)
 
 app.get('/health', async () => ({ ok: true }))
 
-// Ensure DB schema fields exist for auth (dev convenience)
-async function ensureSchema() {
+// Ensure all unexpected errors return clean JSON (prevents malformed bodies)
+app.setErrorHandler((err, req, reply) => {
   try {
-    await prisma.$executeRawUnsafe(`
-CREATE TABLE IF NOT EXISTS "User" (
-  id text PRIMARY KEY,
-  email text UNIQUE NOT NULL,
-  handle text UNIQUE NOT NULL,
-  name text,
-  bio text,
-  avatarUrl text,
-  passwordHash text NOT NULL,
-  lastLoginAt timestamp,
-  resetToken text UNIQUE,
-  resetExpires timestamp,
-  createdAt timestamp DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS "Post" (
-  id text PRIMARY KEY,
-  authorId text NOT NULL,
-  body text NOT NULL,
-  mediaUrl text,
-  createdAt timestamp DEFAULT now(),
-  updatedAt timestamp DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS "Comment" (
-  id text PRIMARY KEY,
-  postId text NOT NULL,
-  userId text NOT NULL,
-  body text NOT NULL,
-  createdAt timestamp DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS "Like" (
-  userId text NOT NULL,
-  postId text NOT NULL,
-  createdAt timestamp DEFAULT now(),
-  PRIMARY KEY (userId, postId)
-);
-CREATE TABLE IF NOT EXISTS "Follow" (
-  followerId text NOT NULL,
-  targetId text NOT NULL,
-  createdAt timestamp DEFAULT now(),
-  PRIMARY KEY (followerId, targetId)
-);
-CREATE TABLE IF NOT EXISTS "Hashtag" (
-  tag text PRIMARY KEY,
-  createdAt timestamp DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS "PostHashtag" (
-  postId text NOT NULL,
-  tag text NOT NULL,
-  PRIMARY KEY (postId, tag)
-);
-CREATE TABLE IF NOT EXISTS "Notification" (
-  id text PRIMARY KEY,
-  userId text NOT NULL,
-  type text NOT NULL,
-  actorId text NOT NULL,
-  postId text,
-  readAt timestamp,
-  createdAt timestamp DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS "FeedEntry" (
-  userId text NOT NULL,
-  postId text NOT NULL,
-  createdAt timestamp DEFAULT now(),
-  PRIMARY KEY (userId, postId)
-);
-`)
-  } catch (e) {
-    app.log.warn({ err: e }, 'ensureSchema skipped')
-  }
-}
-await ensureSchema()
+    req.log.error({ err }, 'uncaught')
+  } catch {}
+  const status = (err as any)?.statusCode ?? 500
+  const isClient = status >= 400 && status < 500
+  const message = isClient ? (typeof (err as any)?.message === 'string' ? (err as any).message : 'request_error') : 'internal_error'
+  if (!reply.sent) reply.code(status).send({ error: message })
+})
+
+// Prisma migrations/db push handle schema; no manual ensureSchema needed in production
 
 // Auth: register
 app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -111,7 +50,7 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
   const name = `${firstName.trim()} ${lastName.trim()}`.trim()
   const hash = await bcrypt.hash(password, 10)
   try {
-    const user = await prisma.user.create({ data: { email, handle: normalizedHandle, name, passwordHash: hash } })
+    const user = await prisma.user.create({ data: { id: randomUUID(), email, handle: normalizedHandle, name, passwordHash: hash } })
     const token = await (app as any).jwt.sign({ sub: user.id })
     return reply.send({ token, user: { id: user.id, email: user.email, handle: user.handle, name: user.name } })
   } catch (e: any) {

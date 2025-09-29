@@ -151,6 +151,7 @@ def install_deps() -> int:
 
 
 def cmd_dev_server(args: argparse.Namespace) -> int:
+    # Start only infra in Docker; run API locally with hot reload
     code = ensure_infra()
     if code != 0:
         return code
@@ -169,6 +170,7 @@ def cmd_dev_server(args: argparse.Namespace) -> int:
 
 
 def cmd_dev_client(args: argparse.Namespace) -> int:
+    # Web runs locally with hot reload; infra remains in Docker
     if args.install:
         code = install_deps()
         if code != 0:
@@ -184,6 +186,7 @@ def cmd_dev_client(args: argparse.Namespace) -> int:
 
 
 def cmd_dev_all(args: argparse.Namespace) -> int:
+    # Run infra in Docker, API & Web locally, both with hot reload
     code = ensure_infra()
     if code != 0:
         return code

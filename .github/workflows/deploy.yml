@@ -23,9 +23,13 @@ jobs:
           git fetch --all --prune
           git checkout main
           git pull --ff-only origin main
+          # Ensure infra (Postgres/Redis) is up first
+          docker compose --profile infra up -d
           # Build and restart app stack (keeps infra volumes)
           docker compose --profile app build
           docker compose --profile app up -d
+          # Optional: show status
+          docker compose ps
 
     - name: Done
       run: echo "Deployment process finished successfully."

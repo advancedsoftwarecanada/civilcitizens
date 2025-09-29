@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "concurrently -k -n prisma,api \"chokidar ../../packages/db/schema.prisma -c 'pnpm --filter @civil/db generate'\" \"tsx watch src/index.ts\"",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "lint": "eslint .",
@@ -23,12 +23,14 @@
     "ioredis": "^5.4.1",
     "pino": "^9.3.2",
     "@prisma/client": "^5.22.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "@types/node": "^20.12.12"
   },
   "devDependencies": {
+    "chokidar-cli": "^3.0.0",
+    "concurrently": "^8.2.2",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
-    "@types/node": "^20.12.12",
     "@types/bcryptjs": "^2.4.6"
   }
 }

@@ -10,7 +10,6 @@ COPY apps/api/package.json ./apps/api/package.json
 RUN pnpm -w i --frozen-lockfile || pnpm -w i
 
 FROM deps AS build
-ENV NODE_ENV=production
 COPY apps/api ./apps/api
 RUN pnpm --filter @civil/shared build \
 	&& pnpm --filter @civil/db generate \
@@ -27,4 +26,5 @@ COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/packages ../../packages
 COPY --from=build /app/apps/api/package.json ./package.json
 EXPOSE 3000
-CMD ["node", "dist/apps/api/src/index.js"]
+# Start compiled server (TS outDir places output under dist/src/index.js)
+CMD ["node", "dist/src/index.js"]

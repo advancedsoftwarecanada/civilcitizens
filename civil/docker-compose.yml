@@ -10,6 +10,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     depends_on: [api]
 
   api:
@@ -47,6 +52,11 @@ services:
       # Optional base URL for absolute links (can be overridden in env)
       NEXT_PUBLIC_BASE_URL: http://localhost
     depends_on: [api]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3001').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   postgres:
     profiles: [infra]

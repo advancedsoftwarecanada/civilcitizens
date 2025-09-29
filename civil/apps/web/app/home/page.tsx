@@ -36,6 +36,7 @@ export default function HomePage() {
       <aside className="col-span-3 hidden md:block">
         <div className="sticky top-4 space-y-2">
           <a className="block px-4 py-2 rounded hover:bg-gray-100" href="/home">Home</a>
+          <a className="block px-4 py-2 rounded hover:bg-gray-100" href="/chambers">Chambers</a>
           <a className="block px-4 py-2 rounded hover:bg-gray-100" href="#">Explore</a>
           <a className="block px-4 py-2 rounded hover:bg-gray-100" href="#">Notifications</a>
           <a className="block px-4 py-2 rounded hover:bg-gray-100" href="#">Profile</a>
