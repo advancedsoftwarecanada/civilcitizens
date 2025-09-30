@@ -98,17 +98,15 @@ export default function HomePage() {
   return (
     <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-6xl px-4">
+        <div className="mx-auto max-w-7xl px-4">
           <Sidebar me={me ?? undefined} active="home" />
         </div>
       </div>
 
-      <div className="mx-auto flex w-full max-w-6xl gap-6 px-4 py-6">
-        <aside className="hidden w-72 shrink-0 lg:block">
-          <Sidebar me={me ?? undefined} active="home" />
-        </aside>
+      <div className="mx-auto grid w-full max-w-7xl grid-cols-12 gap-6 px-4 py-6">
+        <Sidebar me={me ?? undefined} active="home" />
 
-        <main className="flex-1 space-y-6">
+        <main className="col-span-12 space-y-6 md:col-span-9 lg:col-span-6">
           <PostComposer onPostCreated={handlePostCreated} />
 
           <section className="space-y-4">
@@ -176,7 +174,7 @@ export default function HomePage() {
           </section>
         </main>
 
-        <aside className="hidden w-80 shrink-0 space-y-4 xl:block">
+        <aside className="col-span-3 hidden space-y-4 lg:block">
           <div className="rounded border bg-white p-4 shadow-sm">
             <div className="border-b pb-3 text-sm font-semibold">For you</div>
             <p className="pt-3 text-sm text-gray-500">
