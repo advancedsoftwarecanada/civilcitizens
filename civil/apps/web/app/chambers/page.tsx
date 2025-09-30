@@ -359,7 +359,7 @@ export default function ChambersPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Link
                       className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                      href={`/home?province=${encodeURIComponent(home.province)}&chamber=${encodeURIComponent(home.slug)}`}
+                      href={`/${home.province.toLowerCase()}/${home.slug.toLowerCase()}`}
                     >
                       Visit
                     </Link>
@@ -398,7 +398,7 @@ export default function ChambersPage() {
                   const chamber = follow.chamber ?? { slug: follow.chamberSlug, province: follow.province }
                   const key = `${follow.province}:${follow.chamberSlug}`
                   const provinceName = provinces.find((p) => p.code === chamber.province)?.name || chamber.province.toUpperCase()
-                  const visitHref = `/home?province=${encodeURIComponent(chamber.province)}&chamber=${encodeURIComponent(chamber.slug)}`
+                  const visitHref = `/${chamber.province.toLowerCase()}/${chamber.slug.toLowerCase()}`
                   const isUpdating = managingFollow === `${key}:home`
                   const isRemoving = managingFollow === `${key}:remove`
                   return (

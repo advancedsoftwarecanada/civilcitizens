@@ -35,12 +35,16 @@ model Post {
   title       String?
   type        String    @default("post")
   mediaUrl    String?
+  seoSlug     String?   @unique
+  provinceCode String?
+  chamberSlug  String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   comments    Comment[]
   likes       Like[]
   hashtags    PostHashtag[]
   @@index([authorId, createdAt])
+  @@index([provinceCode, chamberSlug, createdAt])
 }
 
 model Comment {

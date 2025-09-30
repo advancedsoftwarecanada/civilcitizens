@@ -15,6 +15,8 @@ import {
   FollowChamberInput,
   UnfollowChamberInput,
   UpdateProfileInput,
+  CursorQuery,
+  HandleParam,
   PROVINCES,
   getChambersByProvince,
   findChamber,
@@ -40,6 +42,102 @@ await app.register(jwt, { secret: JWT_SECRET })
 await app.register(sse as any)
 
 const redis = new IORedis(REDIS_URL)
+
+type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
+
+function slugifyText(input: string) {
+  return input
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function stripHtmlToPlainText(html: string) {
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function buildPostSlugBase(options: { handle?: string | null; title?: string | null; body: string }) {
+  const handlePart = options.handle ? slugifyText(options.handle) : ''
+  const titleSource = options.title?.trim()
+  const rawSource = titleSource && titleSource.length > 0 ? titleSource : stripHtmlToPlainText(options.body).slice(0, 120)
+  const contentPart = slugifyText(rawSource)
+  const base = [handlePart, contentPart].filter(Boolean).join('-') || 'post'
+  return base.slice(0, 140)
+}
+
+function randomSlugSuffix() {
+  return randomUUID().replace(/-/g, '').slice(0, 6)
+}
+
+async function generateUniquePostSlug(base: string, client: PrismaClientOrTx) {
+  let candidate = base
+  let attempts = 0
+  while (attempts < 10) {
+    const existing = await client.post.findUnique({ where: { seoSlug: candidate }, select: { id: true } })
+    if (!existing) return candidate
+    attempts += 1
+    candidate = `${base}-${randomSlugSuffix()}`.slice(0, 180)
+  }
+  // Fallback with UUID when collisions persist
+  return `${base}-${randomUUID().replace(/-/g, '')}`.slice(0, 200)
+}
+
+type PostWithAuthor = Prisma.PostGetPayload<{
+  include: {
+    author: true
+    _count: {
+      select: {
+        comments: true
+        likes: true
+      }
+    }
+  }
+}>
+
+function formatPost(post: PostWithAuthor) {
+  const chamber = post.provinceCode && post.chamberSlug ? findChamber(post.provinceCode, post.chamberSlug) : null
+  const provinceName = chamber ? getProvinceDisplayName(chamber.province as any) : null
+  return {
+    id: post.id,
+    seoSlug: post.seoSlug,
+    type: post.type,
+    title: post.title,
+    body: post.body,
+    mediaUrl: post.mediaUrl,
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt,
+    provinceCode: post.provinceCode,
+    chamberSlug: post.chamberSlug,
+    chamberName: chamber?.name ?? null,
+    provinceName,
+    author: {
+      id: post.author.id,
+      handle: post.author.handle,
+      name: post.author.name,
+      avatarUrl: post.author.avatarUrl,
+    },
+    counts: {
+      comments: post._count?.comments ?? 0,
+      likes: post._count?.likes ?? 0,
+    },
+  }
+}
+
+function getCanonicalPaths(post: PostWithAuthor) {
+  const slug = post.seoSlug ?? post.id
+  return {
+    user: `/u/${post.author.handle}/posts/${slug}`,
+    chamber: post.provinceCode && post.chamberSlug ? `/${post.provinceCode}/${post.chamberSlug}/posts/${slug}` : null,
+    legacy: `/post/${post.id}`,
+  }
+}
 
 app.get('/health', async () => ({ ok: true }))
 
@@ -428,32 +526,88 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
+  const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true } })
+  if (!author) return reply.code(401).send({ error: 'unauthorized' })
+
+  let provinceCode: string | null = null
+  let chamberSlug: string | null = null
+  if (parse.data.chamberProvince && parse.data.chamberSlug) {
+    const normalizedProvince = normalizeProvinceCode(parse.data.chamberProvince)
+    if (!normalizedProvince) {
+      return reply.code(400).send({ error: 'invalid_province' })
+    }
+    const chamber = findChamber(normalizedProvince, parse.data.chamberSlug)
+    if (!chamber) {
+      return reply.code(404).send({ error: 'chamber_not_found' })
+    }
+    provinceCode = chamber.province
+    chamberSlug = chamber.slug
+  }
+
   const { body, mediaUrl, hashtags, type, title } = parse.data
 
-  const result = await prisma.$transaction(async (tx: any) => {
+  const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
+
+  const created = await prisma.$transaction(async (tx) => {
+    const seoSlug = await generateUniquePostSlug(slugBase, tx)
+
     const post = await tx.post.create({
-      data: { authorId: userId, body, mediaUrl, type, title },
+      data: {
+        authorId: userId,
+        body,
+        mediaUrl,
+        type,
+        title,
+        provinceCode,
+        chamberSlug,
+        seoSlug,
+      },
+      include: {
+        author: true,
+        _count: {
+          select: {
+            comments: true,
+            likes: true,
+          },
+        },
+      },
     })
 
     if (hashtags?.length) {
-      const tags = hashtags.map((t: string) => t.replace(/^#/, ''))
-      await tx.hashtag.createMany({ data: [...new Set(tags)].map((tag) => ({ tag })) , skipDuplicates: true })
-      await tx.postHashtag.createMany({ data: [...new Set(tags)].map((tag) => ({ postId: post.id, tag })) })
+      const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))]
+      if (tags.length) {
+        await tx.hashtag.createMany({ data: tags.map((tag) => ({ tag })), skipDuplicates: true })
+        await tx.postHashtag.createMany({ data: tags.map((tag) => ({ postId: post.id, tag })) })
+      }
     }
 
     return post
   })
 
-  return reply.code(201).send(result)
+  return reply.code(201).send(formatPost(created))
 })
 
 // Get post by id
 app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) => {
   const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
   if (!params.success) return reply.code(400).send({ error: 'invalid id' })
-  const post = await prisma.post.findUnique({ where: { id: params.data.id }, include: { author: true } })
+  const post = await prisma.post.findUnique({
+    where: { id: params.data.id },
+    include: {
+      author: true,
+      _count: {
+        select: {
+          comments: true,
+          likes: true,
+        },
+      },
+    },
+  })
   if (!post) return reply.code(404).send({ error: 'not found' })
-  return post
+  return {
+    post: formatPost(post),
+    paths: getCanonicalPaths(post),
+  }
 })
 
 // List posts (newest first) with cursor pagination
@@ -464,7 +618,15 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
   const items = await prisma.post.findMany({
     take: limit + 1,
     orderBy: { createdAt: 'desc' },
-    include: { author: true, likes: true, comments: true },
+    include: {
+      author: true,
+      _count: {
+        select: {
+          comments: true,
+          likes: true,
+        },
+      },
+    },
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   })
   let nextCursor: string | undefined = undefined
@@ -472,7 +634,145 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
     const next = items.pop()!
     nextCursor = next.id
   }
-  return { items, nextCursor }
+  return { items: items.map((item) => formatPost(item)), nextCursor }
+})
+
+app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z.object({ slug: z.string().min(3).max(200) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_slug' })
+
+  const post = await prisma.post.findUnique({
+    where: { seoSlug: params.data.slug },
+    include: {
+      author: true,
+      _count: {
+        select: {
+          comments: true,
+          likes: true,
+        },
+      },
+    },
+  })
+
+  if (!post) return reply.code(404).send({ error: 'not_found' })
+
+  return {
+    post: formatPost(post),
+    paths: getCanonicalPaths(post),
+  }
+})
+
+app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = HandleParam.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+
+  const user = await prisma.user.findUnique({
+    where: { handle },
+    select: {
+      id: true,
+      handle: true,
+      name: true,
+      bio: true,
+      avatarUrl: true,
+      createdAt: true,
+    },
+  })
+
+  if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+  const query = CursorQuery.safeParse(req.query)
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const { cursor, limit } = query.data
+
+  const posts = await prisma.post.findMany({
+    where: { authorId: user.id },
+    take: limit + 1,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      author: true,
+      _count: {
+        select: {
+          comments: true,
+          likes: true,
+        },
+      },
+    },
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  })
+
+  let nextCursor: string | undefined
+  if (posts.length > limit) {
+    const next = posts.pop()!
+    nextCursor = next.id
+  }
+
+  return {
+    user,
+    items: posts.map((post) => formatPost(post)),
+    nextCursor,
+  }
+})
+
+app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z
+    .object({
+      province: z.string().min(2).max(64),
+      chamber: z.string().min(1).max(160),
+    })
+    .safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const province = normalizeProvinceCode(params.data.province)
+  if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+  const chamberRecord = findChamber(province, params.data.chamber)
+  if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
+
+  const query = CursorQuery.safeParse(req.query)
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const { cursor, limit } = query.data
+
+  const posts = await prisma.post.findMany({
+    where: {
+      provinceCode: chamberRecord.province,
+      chamberSlug: chamberRecord.slug,
+    },
+    take: limit + 1,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      author: true,
+      _count: {
+        select: {
+          comments: true,
+          likes: true,
+        },
+      },
+    },
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  })
+
+  let nextCursor: string | undefined
+  if (posts.length > limit) {
+    const next = posts.pop()!
+    nextCursor = next.id
+  }
+
+  const provinceName = getProvinceDisplayName(chamberRecord.province as any)
+
+  return {
+    chamber: {
+      provinceCode: chamberRecord.province,
+      provinceName,
+      slug: chamberRecord.slug,
+      name: chamberRecord.name,
+    },
+    items: posts.map((post) => formatPost(post)),
+    nextCursor,
+  }
 })
 
 // SSE notifications (skeleton)

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { normalizeProvinceCode } from './chambers.js'
 
 export const PostTypeEnum = z.enum(['post', 'article'])
 
@@ -14,8 +15,32 @@ export const CreatePostInput = z
     body: z.string().min(1).max(20000),
     mediaUrl: z.string().url().optional(),
     hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
+    chamberProvince: z.string().trim().min(2).max(32).optional(),
+    chamberSlug: z.string().trim().min(1).max(160).optional(),
   })
   .superRefine((data, ctx) => {
+    const hasProvince = typeof data.chamberProvince === 'string' && data.chamberProvince.trim().length > 0
+    const hasChamberSlug = typeof data.chamberSlug === 'string' && data.chamberSlug.trim().length > 0
+
+    if (hasProvince !== hasChamberSlug) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Chamber province and slug must both be provided to target a chamber',
+        path: hasProvince ? ['chamberSlug'] : ['chamberProvince'],
+      })
+    }
+
+    if (hasProvince) {
+      const normalized = normalizeProvinceCode(data.chamberProvince)
+      if (!normalized) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Province code is not recognized',
+          path: ['chamberProvince'],
+        })
+      }
+    }
+
     if (data.type === 'article') {
       if (!data.title) {
         ctx.addIssue({
