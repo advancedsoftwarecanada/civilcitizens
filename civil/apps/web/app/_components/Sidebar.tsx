@@ -21,7 +21,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { key: 'home', label: 'News Feed', href: '/home' },
   { key: 'chambers', label: 'Chambers', href: '/chambers' },
-  { key: 'profile', label: 'Profile', disabled: true },
+  { key: 'profile', label: 'Profile', href: '/profile' },
 ]
 
 function navItemClasses(activeKey: string | undefined, itemKey: string, disabled?: boolean) {

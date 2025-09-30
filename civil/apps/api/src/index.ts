@@ -14,10 +14,12 @@ import {
   SetHomeChamberInput,
   FollowChamberInput,
   UnfollowChamberInput,
+  UpdateProfileInput,
   PROVINCES,
   getChambersByProvince,
   findChamber,
   normalizeProvinceCode,
+  getProvinceDisplayName,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
@@ -329,6 +331,95 @@ app.addHook('preHandler', async (req: FastifyRequest, _reply: FastifyReply) => {
   }
 })
 
+// Profile - fetch current user profile
+app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      handle: true,
+      name: true,
+      bio: true,
+      createdAt: true,
+    },
+  })
+
+  if (!user) return reply.code(404).send({ error: 'not_found' })
+
+  const [followers, following, chambersFollowing, homeFollow] = await Promise.all([
+    prisma.follow.count({ where: { targetId: userId } }),
+    prisma.follow.count({ where: { followerId: userId } }),
+    prisma.chamberFollow.count({ where: { userId } }),
+    prisma.chamberFollow.findFirst({ where: { userId, home: true } }),
+  ])
+
+  const nameParts = (user.name ?? '').trim().split(/\s+/).filter(Boolean)
+  const firstName = nameParts[0] ?? ''
+  const lastName = nameParts.slice(1).join(' ')
+
+  let homeChamber: Record<string, any> | null = null
+  if (homeFollow) {
+    const chamber = findChamber(homeFollow.provinceCode, homeFollow.chamberSlug)
+    const provinceName = getProvinceDisplayName(homeFollow.provinceCode as any)
+    homeChamber = {
+      provinceCode: homeFollow.provinceCode,
+      provinceName,
+      chamberSlug: homeFollow.chamberSlug,
+      chamberName: chamber?.name ?? homeFollow.chamberSlug,
+    }
+  }
+
+  return reply.send({
+    user: {
+      id: user.id,
+      email: user.email,
+      handle: user.handle,
+      firstName,
+      lastName,
+      name: user.name,
+      bio: user.bio ?? '',
+      createdAt: user.createdAt,
+    },
+    stats: {
+      followers,
+      following,
+      chambersFollowing,
+    },
+    homeChamber,
+  })
+})
+
+// Profile - update current user
+app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = UpdateProfileInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const { firstName, lastName, bio } = parse.data
+  const fullName = `${firstName} ${lastName}`.trim()
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      name: fullName,
+      bio: bio?.trim() ? bio.trim() : null,
+    },
+    select: {
+      id: true,
+      name: true,
+      bio: true,
+    },
+  })
+
+  return reply.send({ ok: true, user: updated })
+})
+
 // Create post
 app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = CreatePostInput.safeParse(req.body)
@@ -337,11 +428,11 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const { body, mediaUrl, hashtags } = parse.data
+  const { body, mediaUrl, hashtags, type, title } = parse.data
 
   const result = await prisma.$transaction(async (tx: any) => {
     const post = await tx.post.create({
-      data: { authorId: userId, body, mediaUrl },
+      data: { authorId: userId, body, mediaUrl, type, title },
     })
 
     if (hashtags?.length) {

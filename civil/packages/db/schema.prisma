@@ -32,6 +32,8 @@ model Post {
   authorId    String
   author      User      @relation(fields: [authorId], references: [id])
   body        String    @db.Text
+  title       String?
+  type        String    @default("post")
   mediaUrl    String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
