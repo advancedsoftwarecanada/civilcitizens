@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 
 type SidebarProps = {
@@ -40,15 +41,22 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
   const initials = (me?.name?.trim() || me?.handle || 'C').substring(0, 1).toUpperCase()
   const avatarUrl = me?.avatarUrl || null
+  const profileHref = me?.handle ? `/u/${me.handle}` : '/profile'
 
   return (
     <aside className="col-span-3 hidden md:block">
       <div className="sticky top-4 space-y-4">
-        <div className="flex items-center gap-3 rounded-lg border bg-white p-4">
+        <Link href={profileHref} className="flex items-center gap-3 rounded-lg border bg-white p-4 transition hover:shadow-md">
           <div className="h-12 w-12 overflow-hidden rounded-full bg-gray-200">
             {avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={avatarUrl} alt={displayName} className="h-12 w-12 object-cover" />
+              <Image
+                src={avatarUrl}
+                alt={displayName}
+                width={48}
+                height={48}
+                unoptimized
+                className="h-12 w-12 object-cover"
+              />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-gray-500">
                 {initials}
@@ -59,7 +67,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
             <div className="text-sm font-semibold">{displayName}</div>
             <div className="text-xs text-gray-500">{displayHandle}</div>
           </div>
-        </div>
+        </Link>
 
         <nav className="space-y-1">
           {NAV_ITEMS.map((item) => {
@@ -77,13 +85,6 @@ export default function Sidebar({ me, active }: SidebarProps) {
             )
           })}
         </nav>
-
-        <button
-          type="button"
-          className="w-full rounded bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
-        >
-          Post
-        </button>
       </div>
     </aside>
   )

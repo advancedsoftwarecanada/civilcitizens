@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client"
 import { useRouter } from 'next/navigation'
 import Forgot from '../../../forgot/page'

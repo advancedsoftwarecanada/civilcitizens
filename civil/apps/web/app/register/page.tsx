@@ -1,172 +1,220 @@
-// @ts-nocheck
 "use client"
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import type { FormEvent } from 'react'
 import { pushToast } from '../_components/useToasts'
+import { buildHandleBase } from '@civil/shared'
+
+type FieldErrors = Record<string, string[]>
+
+type RegisterSuccess = {
+  token: string
+}
+
+type RegisterErrorResponse = {
+  error?:
+    | string
+    | {
+        fieldErrors?: FieldErrors
+      }
+  message?: string
+}
+
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+
+const triggerModalOrNavigate = (router: ReturnType<typeof useRouter>, eventName: 'openLoginModal' | 'openForgotModal', fallbackUrl: string) => {
+  const inModal = Boolean(document.querySelector('[data-cc-modal-root]'))
+  if (inModal) {
+    if (window.location.pathname.startsWith('/register')) {
+      router.back()
+      setTimeout(() => window.dispatchEvent(new CustomEvent(eventName)), 0)
+    } else {
+      window.dispatchEvent(new CustomEvent(eventName))
+    }
+  } else {
+    window.location.replace(fallbackUrl)
+  }
+}
 
 export default function RegisterPage() {
   const router = useRouter()
   const [email, setEmail] = useState('')
-  const [handle, setHandle] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [password, setPassword] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({})
-  const hasErr = (k: string) => Array.isArray(fieldErrors[k]) && fieldErrors[k].length > 0
-  const firstErr = (k: string) => (hasErr(k) ? fieldErrors[k][0] : null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
+  const previewHandle = useMemo(() => buildHandleBase(firstName, lastName), [firstName, lastName])
+
+  const hasFieldError = (key: string) => Array.isArray(fieldErrors[key]) && fieldErrors[key].length > 0
+  const firstFieldError = (key: string) => fieldErrors[key]?.[0] ?? null
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setFormError(null)
     setFieldErrors({})
-    // Client-side validation
-    const errs: Record<string, string[]> = {}
-    const h = (handle || '').replace(/^@/, '').trim()
-    if (!firstName) errs.firstName = ['First name is required']
-    if (!lastName) errs.lastName = ['Last name is required']
-    if (!h || h.length < 3 || h.length > 32 || !/^[A-Za-z0-9_]+$/.test(h)) errs.handle = ['Handle must be 3-32 chars, letters/numbers/_']
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = ['Enter a valid email']
-    if (!password || password.length < 8) errs.password = ['Password must be at least 8 characters']
-    if (!acceptTerms) errs.acceptTerms = ['You must accept the terms']
-    if (Object.keys(errs).length) {
-      setFieldErrors(errs)
-      setError('Please fix the errors and try again')
+
+    const validationErrors: FieldErrors = {}
+
+    if (!firstName.trim()) validationErrors.firstName = ['First name is required']
+    if (!lastName.trim()) validationErrors.lastName = ['Last name is required']
+    if (!email || !isValidEmail(email)) validationErrors.email = ['Enter a valid email']
+    if (!password || password.length < 8) validationErrors.password = ['Password must be at least 8 characters']
+    if (!acceptTerms) validationErrors.acceptTerms = ['You must accept the terms']
+
+    if (Object.keys(validationErrors).length > 0) {
+      setFieldErrors(validationErrors)
+      setFormError('Please fix the errors and try again')
       return
     }
+
     try {
-      const payload = { email, handle: handle.replace(/^@/, ''), firstName, lastName, password, acceptTerms }
-      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-      const data = await res.json()
-      if (!res.ok) {
-        // Map Zod error format to field messages
-        if (data?.error?.fieldErrors) {
+      const payload = {
+        email,
+        firstName,
+        lastName,
+        password,
+        acceptTerms,
+      }
+
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      const data = (await response.json()) as RegisterSuccess & RegisterErrorResponse
+
+      if (!response.ok) {
+        if (typeof data.error === 'object' && data.error?.fieldErrors) {
           setFieldErrors(data.error.fieldErrors)
-          setError('Please fix the errors and try again')
+          setFormError('Please fix the errors and try again')
           return
         }
-        const msg = typeof data?.error === 'string' ? data.error : 'Registration failed'
-        setError(msg)
+
+        const message = (typeof data.error === 'string' && data.error) || data.message || 'Registration failed'
+        setFormError(message)
+        pushToast(message, 'error')
         return
       }
+
       localStorage.setItem('token', data.token)
       window.location.href = '/home'
-    } catch (e: any) {
+    } catch (error) {
+      console.error('Registration request failed', error)
       pushToast('Unexpected error during registration. Please try again.', 'error')
-      setError('Unexpected error')
+      setFormError('Unexpected error')
     }
   }
 
   return (
     <div className="mx-auto max-w-md p-8">
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
             <input
-              className={`w-full rounded p-3 border ${hasErr('firstName') ? 'border-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/10'}`}
+              className={`w-full rounded border p-3 ${
+                hasFieldError('firstName')
+                  ? 'border-red-500 focus:ring-2 focus:ring-red-500'
+                  : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+              }`}
               placeholder="First name"
               value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              onChange={(event) => setFirstName(event.target.value)}
             />
-            {hasErr('firstName') && (
-              <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('firstName')}</div>
-            )}
+            {hasFieldError('firstName') ? (
+              <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('firstName')}</div>
+            ) : null}
           </div>
           <div>
             <input
-              className={`w-full rounded p-3 border ${hasErr('lastName') ? 'border-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/10'}`}
+              className={`w-full rounded border p-3 ${
+                hasFieldError('lastName')
+                  ? 'border-red-500 focus:ring-2 focus:ring-red-500'
+                  : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+              }`}
               placeholder="Last name"
               value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
+              onChange={(event) => setLastName(event.target.value)}
             />
-            {hasErr('lastName') && (
-              <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('lastName')}</div>
-            )}
+            {hasFieldError('lastName') ? (
+              <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('lastName')}</div>
+            ) : null}
           </div>
         </div>
-        <div>
-          <div className={`flex items-center gap-2 rounded p-0` }>
-            <span className="text-gray-500">@</span>
-            <input
-              className={`flex-1 rounded p-3 border ${hasErr('handle') ? 'border-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/10'}`}
-              placeholder="handle"
-              value={handle}
-              onChange={(e) => setHandle(e.target.value)}
-            />
-          </div>
-          {hasErr('handle') && (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('handle')}</div>
-          )}
+        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+          Your handle will be <span className="font-semibold text-gray-900">@{previewHandle}</span>. If someone already has it, we'll adjust it automatically.
         </div>
         <div>
           <input
-            className={`w-full rounded p-3 border ${hasErr('email') ? 'border-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/10'}`}
+            className={`w-full rounded border p-3 ${
+              hasFieldError('email')
+                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
+                : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+            }`}
             placeholder="Email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(event) => setEmail(event.target.value)}
           />
-          {hasErr('email') && (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('email')}</div>
-          )}
+          {hasFieldError('email') ? (
+            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('email')}</div>
+          ) : null}
         </div>
         <div>
           <input
-            className={`w-full rounded p-3 border ${hasErr('password') ? 'border-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/10'}`}
+            className={`w-full rounded border p-3 ${
+              hasFieldError('password')
+                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
+                : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+            }`}
             placeholder="Password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
           />
-          {hasErr('password') && (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('password')}</div>
-          )}
+          {hasFieldError('password') ? (
+            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div>
+          ) : null}
         </div>
         <div>
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={acceptTerms}
+              onChange={(event) => setAcceptTerms(event.target.checked)}
+            />
             <span>
-              I agree to the <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">Terms of Service</a>
-              {' '}and{' '}
-              <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+              I agree to the{' '}
+              <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">
+                Terms of Service
+              </a>{' '}
+              and{' '}
+              <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
+                Privacy Policy
+              </a>
             </span>
           </label>
-          {hasErr('acceptTerms') && (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('acceptTerms')}</div>
-          )}
+          {hasFieldError('acceptTerms') ? (
+            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div>
+          ) : null}
         </div>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-        <button className="px-4 py-2 bg-black text-white rounded w-full" type="submit">Create account</button>
+        {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
+        <button className="w-full rounded bg-black px-4 py-2 text-white" type="submit">
+          Create account
+        </button>
       </form>
       <div className="mt-4 text-sm">
-        Already have an account? <button className="underline" type="button" onClick={() => {
-          const inModal = !!document.querySelector('[data-cc-modal-root]')
-          if (inModal) {
-            if (window.location.pathname.startsWith('/register')) {
-              router.back()
-              setTimeout(() => window.dispatchEvent(new CustomEvent('openLoginModal')), 0)
-            } else {
-              window.dispatchEvent(new CustomEvent('openLoginModal'))
-            }
-          } else {
-            window.location.replace('/login')
-          }
-        }}>Sign in</button>
+        Already have an account?{' '}
+        <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'openLoginModal', '/login')}>
+          Sign in
+        </button>
       </div>
       <div className="mt-2 text-sm">
-        <button className="underline" type="button" onClick={() => {
-          const inModal = !!document.querySelector('[data-cc-modal-root]')
-          if (inModal) {
-            if (window.location.pathname.startsWith('/register')) {
-              router.back()
-              setTimeout(() => window.dispatchEvent(new CustomEvent('openForgotModal')), 0)
-            } else {
-              window.dispatchEvent(new CustomEvent('openForgotModal'))
-            }
-          } else {
-            window.location.replace('/forgot')
-          }
-        }}>Forgot password?</button>
+        <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'openForgotModal', '/forgot')}>
+          Forgot password?
+        </button>
       </div>
     </div>
   )

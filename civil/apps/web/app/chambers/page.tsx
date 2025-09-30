@@ -1,6 +1,7 @@
-// @ts-nocheck
+"use client"
 "use client"
 import { useEffect, useMemo, useState } from 'react'
+import type { ChangeEvent } from 'react'
 import Link from 'next/link'
 import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
@@ -40,13 +41,37 @@ type Me = {
   avatarUrl?: string | null
 }
 
-async function jsonOrThrow(res: Response) {
-  const data = await res.json().catch(() => null)
+type ItemsResponse<T> = {
+  items?: T[]
+}
+
+type HomeResponse = {
+  home?: Chamber | null
+}
+
+type ErrorResponse = {
+  error?: unknown
+}
+
+function getErrorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  return undefined
+}
+
+async function safeJson<T>(res: Response): Promise<T | null> {
+  if (!res.ok) return null
+  const data = (await res.json().catch(() => null)) as T | null
+  return data
+}
+
+async function jsonOrThrow<T>(res: Response): Promise<T> {
+  const data = (await res.json().catch(() => null)) as unknown
   if (!res.ok) {
-    const message = typeof data?.error === 'string' ? data.error : 'request_failed'
+    const message = getErrorMessage((data as ErrorResponse | null)?.error) ?? 'request_failed'
     throw new Error(message)
   }
-  return data
+  return data as T
 }
 
 export default function ChambersPage() {
@@ -80,28 +105,30 @@ export default function ChambersPage() {
           fetch('/api/chambers/follows', { headers: { authorization: `Bearer ${token}` } }),
         ])
 
-        const meData = await jsonOrThrow(meRes)
+        const meData = await jsonOrThrow<Me>(meRes)
         setMe(meData)
 
-        const provData = await jsonOrThrow(provRes).catch(() => ({ items: provincesFallback }))
+        let provData: ItemsResponse<Province> | null = null
+        try {
+          provData = await jsonOrThrow<ItemsResponse<Province>>(provRes)
+        } catch {
+          provData = { items: provincesFallback }
+        }
         if (Array.isArray(provData?.items) && provData.items.length) {
           setProvinces(provData.items)
         }
 
-        const followsData = followsRes.ok ? await followsRes.json() : { items: [] }
-        if (Array.isArray(followsData?.items)) {
-          setFollows(followsData.items)
-        }
+        const followsData = (await safeJson<ItemsResponse<ChamberFollow>>(followsRes)) ?? { items: [] }
+        const followItems = Array.isArray(followsData.items) ? followsData.items : []
+        setFollows(followItems)
 
-        const homeData = homeRes.ok ? await homeRes.json() : { home: null }
+        const homeData = (await safeJson<HomeResponse>(homeRes)) ?? { home: null }
         let homeChamber: Chamber | null = null
         if (homeData?.home?.slug) {
           homeChamber = homeData.home
-        } else if (Array.isArray(followsData?.items)) {
-          const fallback = followsData.items.find((item: ChamberFollow) => item.home && item.chamber)
-          if (fallback?.chamber) {
-            homeChamber = fallback.chamber
-          }
+        } else {
+          const fallback = followItems.find((item) => item.home && item.chamber)
+          if (fallback?.chamber) homeChamber = fallback.chamber
         }
 
         if (homeChamber?.slug) {
@@ -132,20 +159,17 @@ export default function ChambersPage() {
     setLoadingChambers(true)
     try {
       const res = await fetch(`/api/chambers?province=${encodeURIComponent(province)}`)
-      const data = await jsonOrThrow(res)
-      if (Array.isArray(data?.items)) {
-        setChambers(data.items)
-        if (preselect) {
-          const exists = data.items.some((c: Chamber) => c.slug === preselect)
-          if (exists) {
-            setSelectedChamber(preselect)
-          }
+      const data = await jsonOrThrow<ItemsResponse<Chamber>>(res)
+      const items = Array.isArray(data.items) ? data.items : []
+      setChambers(items)
+      if (preselect) {
+        const exists = items.some((c) => c.slug === preselect)
+        if (exists) {
+          setSelectedChamber(preselect)
         }
-      } else {
-        setChambers([])
       }
-    } catch (err: any) {
-      console.error('Failed loading chambers', err)
+    } catch (error) {
+      console.error('Failed loading chambers', error)
       pushToast('Unable to load chambers right now. Please try again later.', 'error')
       setChambers([])
     } finally {
@@ -153,7 +177,7 @@ export default function ChambersPage() {
     }
   }
 
-  const handleProvinceChange = async (evt: any) => {
+  const handleProvinceChange = async (evt: ChangeEvent<HTMLSelectElement>) => {
     const value = evt.target.value
     setSelectedProvince(value)
     setSelectedChamber('')
@@ -164,11 +188,11 @@ export default function ChambersPage() {
     }
   }
 
-  const handleChamberChange = (evt: any) => {
+  const handleChamberChange = (evt: ChangeEvent<HTMLSelectElement>) => {
     setSelectedChamber(evt.target.value)
   }
 
-  async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}) {
+  async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}): Promise<ChamberFollow[]> {
     const token = options.token ?? localStorage.getItem('token')
     if (!token) return []
     setLoadingFollows(true)
@@ -178,20 +202,20 @@ export default function ChambersPage() {
           authorization: `Bearer ${token}`,
         },
       })
-      const data = await jsonOrThrow(res)
-      const items = Array.isArray(data?.items) ? data.items : []
+      const data = await jsonOrThrow<ItemsResponse<ChamberFollow>>(res)
+      const items = Array.isArray(data.items) ? data.items : []
       setFollows(items)
       if (options.syncHome) {
-        const nextHome = items.find((item: ChamberFollow) => item.home && item.chamber)
+        const nextHome = items.find((item) => item.home && item.chamber)
         if (nextHome?.chamber) {
           setHome(nextHome.chamber)
-        } else if (!items.some((item: ChamberFollow) => item.home)) {
+        } else if (!items.some((item) => item.home)) {
           setHome(null)
         }
       }
       return items
-    } catch (err) {
-      console.error('Failed loading followed chambers', err)
+    } catch (error) {
+      console.error('Failed loading followed chambers', error)
       pushToast('Unable to load your followed chambers right now.', 'error')
       return []
     } finally {
@@ -220,8 +244,8 @@ export default function ChambersPage() {
         },
         body: JSON.stringify({ provinceCode, chamberSlug }),
       })
-      const data = await jsonOrThrow(res)
-      const nextHome = data?.home ?? { province: provinceCode, slug: chamberSlug }
+      const data = await jsonOrThrow<HomeResponse>(res)
+      const nextHome = data.home ?? { province: provinceCode, slug: chamberSlug }
       setHome(nextHome)
       setSelectedProvince(provinceCode)
       setSelectedChamber(chamberSlug)
@@ -229,9 +253,10 @@ export default function ChambersPage() {
       await refreshFollows({ token, syncHome: true })
       const message = source === 'picker' ? 'Home chamber set. Welcome home!' : 'Home chamber updated.'
       pushToast(message, 'success')
-    } catch (err: any) {
-      console.error('Failed saving home chamber', err)
-      const friendly = err?.message === 'chamber_not_found' ? 'Chamber not found. Please pick a different option.' : 'Unable to save home chamber right now.'
+    } catch (error) {
+      console.error('Failed saving home chamber', error)
+      const message = getErrorMessage(error)
+      const friendly = message === 'chamber_not_found' ? 'Chamber not found. Please pick a different option.' : 'Unable to save home chamber right now.'
       pushToast(friendly, 'error')
     } finally {
       if (source === 'picker') {
@@ -259,15 +284,16 @@ export default function ChambersPage() {
         },
         body: JSON.stringify({ provinceCode: selectedProvince, chamberSlug: selectedChamber }),
       })
-      await jsonOrThrow(res)
+      await jsonOrThrow<unknown>(res)
       await refreshFollows({ token, syncHome: true })
       pushToast('Chamber followed! You will now see updates from this riding.', 'success')
-    } catch (err: any) {
-      console.error('Failed following chamber', err)
+    } catch (error) {
+      console.error('Failed following chamber', error)
+      const message = getErrorMessage(error)
       const friendly =
-        err?.message === 'chamber_not_found'
+        message === 'chamber_not_found'
           ? 'Chamber not found. Try selecting from the list above.'
-          : err?.message === 'invalid_province'
+          : message === 'invalid_province'
             ? 'Province not recognized. Please try again.'
             : 'Unable to follow this chamber right now.'
       pushToast(friendly, 'error')
@@ -293,19 +319,20 @@ export default function ChambersPage() {
         },
         body: JSON.stringify({ provinceCode: follow.province, chamberSlug: follow.chamberSlug }),
       })
-      await jsonOrThrow(res)
+      await jsonOrThrow<unknown>(res)
       const items = await refreshFollows({ token, syncHome: true })
       pushToast('Chamber removed from your list.', 'success')
-      const homeStillExists = items.some((item: ChamberFollow) => item.home)
+      const homeStillExists = items.some((item) => item.home)
       if (!homeStillExists) {
         setHome(null)
         setSelectedProvince('')
         setSelectedChamber('')
         setChambers([])
       }
-    } catch (err: any) {
-      console.error('Failed unfollowing chamber', err)
-      const friendly = err?.message === 'not_following' ? 'You are not following that chamber.' : 'Unable to remove this chamber right now.'
+    } catch (error) {
+      console.error('Failed unfollowing chamber', error)
+      const message = getErrorMessage(error)
+      const friendly = message === 'not_following' ? 'You are not following that chamber.' : 'Unable to remove this chamber right now.'
       pushToast(friendly, 'error')
     } finally {
       setManagingFollow(null)

@@ -5,6 +5,11 @@
     "baseUrl": ".",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "paths": {
+      "@civil/shared": ["../../packages/shared/src/index.ts"],
+      "@civil/ui": ["../../packages/ui/src/index.ts"],
+      "@civil/db": ["../../packages/db/src/index.ts"]
+    },
     "lib": [
       "dom",
       "dom.iterable",

@@ -1,5 +1,6 @@
 "use client"
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
@@ -123,8 +124,14 @@ export default function HomePage() {
                     <header className="flex items-start gap-3">
                       <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
                         {p.author.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.author.avatarUrl} alt={p.author.name ?? p.author.handle} className="h-full w-full object-cover" />
+                          <Image
+                            src={p.author.avatarUrl}
+                            alt={p.author.name ?? p.author.handle}
+                            width={44}
+                            height={44}
+                            unoptimized
+                            className="h-full w-full object-cover"
+                          />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-gray-600">
                             {initialsFromUser(p.author)}

@@ -1,4 +1,3 @@
-// @ts-nocheck
 "use client"
 import { useRouter } from 'next/navigation'
 import Register from '../../../register/page'

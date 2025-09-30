@@ -1,45 +1,100 @@
-// @ts-nocheck
 "use client"
 import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { pushToast } from '../_components/useToasts'
 
-export default function ForgotPasswordPage() {
-  const [emailOrHandle, setId] = useState('')
-  const [status, setStatus] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({})
-  const [error, setError] = useState<string | null>(null)
-  const hasErr = (k: string) => Array.isArray(fieldErrors[k]) && fieldErrors[k].length > 0
-  const firstErr = (k: string) => (hasErr(k) ? fieldErrors[k][0] : null)
+type FieldErrors = Record<string, string[]>
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setStatus(null)
-    setError(null)
+type ForgotSuccessResponse = {
+  token?: string
+}
+
+type ForgotErrorResponse = {
+  error?: string | { fieldErrors?: FieldErrors }
+  message?: string
+}
+
+export default function ForgotPasswordPage() {
+  const [emailOrHandle, setEmailOrHandle] = useState('')
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const hasFieldError = (key: string) => Array.isArray(fieldErrors[key]) && fieldErrors[key].length > 0
+  const firstFieldError = (key: string) => fieldErrors[key]?.[0] ?? null
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setStatusMessage(null)
+    setFormError(null)
     setFieldErrors({})
-    const errs: Record<string, string[]> = {}
-    if (!emailOrHandle || emailOrHandle.length < 3) errs.emailOrHandle = ['Enter your email or handle']
-    if (Object.keys(errs).length) { setFieldErrors(errs); setError('Please fix the errors and try again'); return }
+
+    const errors: FieldErrors = {}
+    if (!emailOrHandle.trim() || emailOrHandle.trim().length < 3) {
+      errors.emailOrHandle = ['Enter your email or handle']
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      setFormError('Please fix the errors and try again')
+      return
+    }
+
     try {
-      const res = await fetch('/api/auth/forgot', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ emailOrHandle }) })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) setStatus(data.token ? `Reset token (dev only): ${data.token}` : 'If that account exists, you will receive a reset link.')
-      else setStatus('Request failed')
-    } catch (e) {
+      const response = await fetch('/api/auth/forgot', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ emailOrHandle: emailOrHandle.trim() }),
+      })
+
+      const data = (await response.json().catch(() => ({}))) as ForgotSuccessResponse & ForgotErrorResponse
+
+      if (response.ok) {
+        const message = data.token ? `Reset token (dev only): ${data.token}` : 'If that account exists, you will receive a reset link.'
+        setStatusMessage(message)
+        return
+      }
+
+      if (typeof data.error === 'object' && data.error?.fieldErrors) {
+        setFieldErrors(data.error.fieldErrors)
+        setFormError('Please fix the errors and try again')
+        return
+      }
+
+      const message = (typeof data.error === 'string' && data.error) || data.message || 'Request failed'
+      setStatusMessage(message)
+      pushToast(message, 'error')
+    } catch (error) {
+      console.error('Forgot password request failed', error)
       pushToast('Unexpected error. Please try again.', 'error')
+      setFormError('Unexpected error')
     }
   }
 
   return (
     <div className="mx-auto max-w-md p-8">
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <input className={`w-full rounded p-3 border ${hasErr('emailOrHandle') ? 'border-red-500 focus:ring-2 focus:ring-red-500' : 'border-gray-300 focus:ring-2 focus:ring-black/10'}`} placeholder="Email or handle" value={emailOrHandle} onChange={(e) => setId(e.target.value)} />
-          {hasErr('emailOrHandle') && <div className="mt-1 text-xs text-red-600">⚠️ {firstErr('emailOrHandle')}</div>}
+          <input
+            className={`w-full rounded border p-3 ${
+              hasFieldError('emailOrHandle')
+                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
+                : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+            }`}
+            placeholder="Email or handle"
+            value={emailOrHandle}
+            onChange={(event) => setEmailOrHandle(event.target.value)}
+          />
+          {hasFieldError('emailOrHandle') ? (
+            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div>
+          ) : null}
         </div>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
-        <button className="px-4 py-2 bg-black text-white rounded w-full" type="submit">Send reset link</button>
+        {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
+        <button className="w-full rounded bg-black px-4 py-2 text-white" type="submit">
+          Send reset link
+        </button>
       </form>
-      {status && <div className="mt-4 text-sm">{status}</div>}
+      {statusMessage ? <div className="mt-4 text-sm">{statusMessage}</div> : null}
     </div>
   )
 }

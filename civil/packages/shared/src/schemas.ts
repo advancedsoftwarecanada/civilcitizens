@@ -86,7 +86,12 @@ export const HandleParam = z.object({ handle: z.string().min(3).max(32) })
 // Auth
 export const RegisterInput = z.object({
   email: z.string().email(),
-  handle: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_]+$/),
+  handle: z
+    .string()
+    .min(3)
+    .max(32)
+    .regex(/^[a-zA-Z0-9_]+$/)
+    .optional(),
   firstName: z.string().min(1).max(40),
   lastName: z.string().min(1).max(40),
   password: z.string().min(8).max(72),
@@ -132,6 +137,42 @@ export const UnfollowChamberInput = z.object({
 })
 export type UnfollowChamberInput = z.infer<typeof UnfollowChamberInput>
 
+export const ExperienceInput = z
+  .object({
+    title: z.string().trim().min(1).max(120),
+    organization: z.string().trim().min(1).max(160),
+    location: z.string().trim().max(160).optional(),
+    startDate: z.string().datetime({ message: 'start_date_invalid' }),
+    endDate: z.string().datetime({ message: 'end_date_invalid' }).nullable().optional(),
+    current: z.boolean().default(false),
+    description: z.string().trim().max(4000).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const start = new Date(value.startDate)
+    if (Number.isNaN(start.getTime())) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'start_date_invalid', path: ['startDate'] })
+      return
+    }
+
+    if (!value.current && !value.endDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'end_date_required', path: ['endDate'] })
+      return
+    }
+
+    if (value.endDate) {
+      const end = new Date(value.endDate)
+      if (Number.isNaN(end.getTime())) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'end_date_invalid', path: ['endDate'] })
+        return
+      }
+
+      if (end.getTime() < start.getTime()) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'end_before_start', path: ['endDate'] })
+      }
+    }
+  })
+export type ExperienceInput = z.infer<typeof ExperienceInput>
+
 export const UpdateProfileInput = z.object({
   firstName: z.string().trim().min(1).max(40),
   lastName: z.string().trim().min(1).max(60),
@@ -139,5 +180,6 @@ export const UpdateProfileInput = z.object({
     .string()
     .max(10000, { message: 'Bio must be 10,000 characters or fewer' })
     .optional(),
+  experiences: z.array(ExperienceInput).max(50, { message: 'experience_limit' }).optional(),
 })
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInput>

@@ -117,6 +117,10 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const settingCode = useRef(false)
+  const initialValueRef = useRef(value)
+  initialValueRef.current = value
+  const initialDisabledRef = useRef(disabled)
+  initialDisabledRef.current = disabled
 
   const toolbar = useMemo<ToolbarGroup[]>(
     () => DEFAULT_TOOLBAR.map(([label, actions]) => [label, [...actions]]),
@@ -171,9 +175,10 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
     })
 
     $element.on('summernote.change', handleChange)
-    $element.summernote('code', value || '<p></p>')
+    const initialValue = initialValueRef.current
+    $element.summernote('code', initialValue || '<p></p>')
 
-    if (disabled) {
+    if (initialDisabledRef.current) {
       $element.summernote('disable')
     }
 

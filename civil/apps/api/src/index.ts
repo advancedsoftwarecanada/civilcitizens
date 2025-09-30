@@ -22,6 +22,7 @@ import {
   findChamber,
   normalizeProvinceCode,
   getProvinceDisplayName,
+  buildHandleBase,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
@@ -42,8 +43,58 @@ await app.register(jwt, { secret: JWT_SECRET })
 await app.register(sse as any)
 
 const redis = new IORedis(REDIS_URL)
+void redis
 
 type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
+
+function isExperienceTableMissing(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2021' || error.code === 'P2022')
+}
+
+const MAX_HANDLE_LENGTH = 32
+
+function normalizeHandleBase(base: string) {
+  return base
+    .toLowerCase()
+    .replace(/[^a-z]/g, '')
+}
+
+function trimHandleForSuffix(base: string, suffixLength: number) {
+  const normalized = normalizeHandleBase(base)
+  if (normalized.length + suffixLength <= MAX_HANDLE_LENGTH) {
+    return normalized
+  }
+  return normalized.slice(0, Math.max(0, MAX_HANDLE_LENGTH - suffixLength))
+}
+
+function generateHandleSuffix() {
+  const random = Math.floor(Math.random() * 900) + 100
+  return `${random}`
+}
+
+async function generateUniqueHandle(base: string, client: PrismaClientOrTx, excludeUserId?: string): Promise<string> {
+  const normalizedBase = normalizeHandleBase(base)
+  let candidate = normalizedBase.length >= 3 ? normalizedBase.slice(0, MAX_HANDLE_LENGTH) : 'citizen'
+  const whereFor = (handle: string) =>
+    excludeUserId
+      ? { handle, NOT: { id: excludeUserId } }
+      : { handle }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const existing = await client.user.findFirst({ where: whereFor(candidate), select: { id: true } })
+    if (!existing) {
+      return candidate
+    }
+    const suffix = generateHandleSuffix()
+    candidate = `${trimHandleForSuffix(normalizedBase, suffix.length)}${suffix}`
+    if (candidate.length < 3) {
+      candidate = `citizen${suffix}`.slice(0, MAX_HANDLE_LENGTH)
+    }
+  }
+
+  const fallbackSuffix = `${Date.now()}`.slice(-4)
+  return `${trimHandleForSuffix(normalizedBase || 'citizen', fallbackSuffix.length)}${fallbackSuffix}`.slice(0, MAX_HANDLE_LENGTH)
+}
 
 function slugifyText(input: string) {
   return input
@@ -158,12 +209,13 @@ app.setErrorHandler((err, req, reply) => {
 app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = RegisterInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { email, handle, firstName, lastName, password } = parse.data
-  const normalizedHandle = handle.replace(/^@/, '').toLowerCase()
+  const { email, firstName, lastName, password } = parse.data
   const name = `${firstName.trim()} ${lastName.trim()}`.trim()
+  const baseHandle = buildHandleBase(firstName, lastName)
+  const handle = await generateUniqueHandle(baseHandle, prisma)
   const hash = await bcrypt.hash(password, 10)
   try {
-    const user = await prisma.user.create({ data: { id: randomUUID(), email, handle: normalizedHandle, name, passwordHash: hash } })
+    const user = await prisma.user.create({ data: { id: randomUUID(), email, handle, name, passwordHash: hash } })
     const token = await (app as any).jwt.sign({ sub: user.id })
     return reply.send({ token, user: { id: user.id, email: user.email, handle: user.handle, name: user.name } })
   } catch (e: any) {
@@ -416,7 +468,7 @@ app.delete('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply)
 })
 
 // Basic auth hook (placeholder)
-app.addHook('preHandler', async (req: FastifyRequest, _reply: FastifyReply) => {
+app.addHook('preHandler', async (req: FastifyRequest) => {
   const auth = req.headers.authorization
   if (auth?.startsWith('Bearer ')) {
     try {
@@ -455,6 +507,38 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
     prisma.chamberFollow.findFirst({ where: { userId, home: true } }),
   ])
 
+  let experienceItems: Array<{
+    id: string
+    title: string
+    organization: string
+    location: string | null
+    startDate: Date
+    endDate: Date | null
+    current: boolean
+    description: string | null
+  }> = []
+
+  try {
+    const experiences = await prisma.experience.findMany({
+      where: { userId },
+      orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
+    })
+    experienceItems = experiences.map((exp) => ({
+      id: exp.id,
+      title: exp.title,
+      organization: exp.organization,
+      location: exp.location ?? null,
+      startDate: exp.startDate,
+      endDate: exp.endDate ?? null,
+      current: exp.current,
+      description: exp.description ?? null,
+    }))
+  } catch (err) {
+    if (!isExperienceTableMissing(err)) {
+      throw err
+    }
+  }
+
   const nameParts = (user.name ?? '').trim().split(/\s+/).filter(Boolean)
   const firstName = nameParts[0] ?? ''
   const lastName = nameParts.slice(1).join(' ')
@@ -481,6 +565,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       name: user.name,
       bio: user.bio ?? '',
       createdAt: user.createdAt,
+      experiences: experienceItems,
     },
     stats: {
       followers,
@@ -499,23 +584,59 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = UpdateProfileInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-  const { firstName, lastName, bio } = parse.data
+  const { firstName, lastName, bio, experiences } = parse.data
   const fullName = `${firstName} ${lastName}`.trim()
 
-  const updated = await prisma.user.update({
-    where: { id: userId },
-    data: {
-      name: fullName,
-      bio: bio?.trim() ? bio.trim() : null,
-    },
-    select: {
-      id: true,
-      name: true,
-      bio: true,
-    },
-  })
+  const normalizedExperiences = (experiences ?? []).map((exp, index) => ({
+    id: randomUUID(),
+    userId,
+    title: exp.title.trim(),
+    organization: exp.organization.trim(),
+    location: exp.location?.trim() || null,
+    startDate: new Date(exp.startDate),
+    endDate: exp.current ? null : exp.endDate ? new Date(exp.endDate) : null,
+    current: exp.current,
+    description: exp.description?.trim() ? exp.description.trim() : null,
+    position: index,
+  }))
 
-  return reply.send({ ok: true, user: updated })
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const baseHandle = buildHandleBase(firstName, lastName)
+      const handle = await generateUniqueHandle(baseHandle, tx, userId)
+
+      const updatedUser = await tx.user.update({
+        where: { id: userId },
+        data: {
+          name: fullName,
+          bio: bio?.trim() ? bio.trim() : null,
+          handle,
+        },
+        select: {
+          id: true,
+          name: true,
+          bio: true,
+          handle: true,
+        },
+      })
+
+      if (experiences) {
+        await tx.experience.deleteMany({ where: { userId } })
+        if (normalizedExperiences.length > 0) {
+          await tx.experience.createMany({ data: normalizedExperiences })
+        }
+      }
+
+      return updatedUser
+    })
+
+    return reply.send({ ok: true, user: result })
+  } catch (err) {
+    if (isExperienceTableMissing(err)) {
+      return reply.code(503).send({ error: 'experiences_not_available' })
+    }
+    throw err
+  }
 })
 
 // Create post
@@ -668,7 +789,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
   const handle = params.data.handle.replace(/^@/, '').toLowerCase()
 
-  const user = await prisma.user.findUnique({
+  const userRecord = await prisma.user.findUnique({
     where: { handle },
     select: {
       id: true,
@@ -680,7 +801,47 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     },
   })
 
-  if (!user) return reply.code(404).send({ error: 'user_not_found' })
+  if (!userRecord) return reply.code(404).send({ error: 'user_not_found' })
+
+  let experiences: Array<{
+    id: string
+    title: string
+    organization: string
+    location: string | null
+    startDate: Date
+    endDate: Date | null
+    current: boolean
+    description: string | null
+    position: number
+  }> = []
+
+  try {
+    experiences = await prisma.experience.findMany({
+      where: { userId: userRecord.id },
+      orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
+    })
+  } catch (error) {
+    if (!isExperienceTableMissing(error)) {
+      throw error
+    }
+  }
+
+  const mappedExperiences = experiences.map((exp) => ({
+    id: exp.id,
+    title: exp.title,
+    organization: exp.organization,
+    location: exp.location,
+    startDate: exp.startDate.toISOString(),
+    endDate: exp.endDate ? exp.endDate.toISOString() : null,
+    current: exp.current,
+    description: exp.description,
+    position: exp.position,
+  }))
+
+  const user = {
+    ...userRecord,
+    experiences: mappedExperiences,
+  }
 
   const query = CursorQuery.safeParse(req.query)
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })

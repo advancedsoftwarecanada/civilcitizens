@@ -1,7 +1,6 @@
-// @ts-nocheck
 "use client"
-import * as React from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import Image from 'next/image'
 import dynamic from 'next/dynamic'
 import Modal from './_components/Modal'
@@ -17,7 +16,13 @@ import {
   FaShieldAlt,
 } from 'react-icons/fa'
 
-function IconWrap({ children }: { children: React.ReactNode }) {
+type EmptyProps = Record<string, never>
+
+const LoginForm = dynamic<EmptyProps>(() => import('./login/page'), { ssr: false })
+const RegisterForm = dynamic<EmptyProps>(() => import('./register/page'), { ssr: false })
+const ForgotForm = dynamic<EmptyProps>(() => import('./forgot/page'), { ssr: false })
+
+function IconWrap({ children }: { children: ReactNode }) {
   return <div className="text-center mb-3 text-primary-cc">{children}</div>
 }
 
@@ -25,10 +30,7 @@ export default function Home() {
   const [showLogin, setShowLogin] = useState(false)
   const [showRegister, setShowRegister] = useState(false)
   const [showForgot, setShowForgot] = useState(false)
-  const LoginForm = React.useMemo(() => dynamic(() => import('./login/page')), [])
-  const RegisterForm = React.useMemo(() => dynamic(() => import('./register/page')), [])
-  const ForgotForm = React.useMemo(() => dynamic(() => import('./forgot/page')), [])
-  React.useEffect(() => {
+  useEffect(() => {
     const openLogin = () => { setShowRegister(false); setShowLogin(true) }
     const openRegister = () => { setShowLogin(false); setShowRegister(true) }
     const openForgot = () => { setShowLogin(false); setShowRegister(false); setShowForgot(true) }
@@ -47,15 +49,12 @@ export default function Home() {
       <AutoRedirect />
       {/* Auth modals using shared component */}
       <Modal open={showLogin} onClose={() => setShowLogin(false)} title="Login">
-        {/* @ts-ignore */}
         <LoginForm />
       </Modal>
       <Modal open={showRegister} onClose={() => setShowRegister(false)} title="Create your account">
-        {/* @ts-ignore */}
         <RegisterForm />
       </Modal>
       <Modal open={showForgot} onClose={() => setShowForgot(false)} title="Reset your password">
-        {/* @ts-ignore */}
         <ForgotForm />
       </Modal>
       {/* Hero */}

@@ -25,6 +25,7 @@ model User {
   followers    Follow[] @relation("followers")
   following    Follow[] @relation("following")
   chamberFollows ChamberFollow[]
+  experiences  Experience[]
 }
 
 model Post {
@@ -126,4 +127,23 @@ model PostHashtag {
   hash   Hashtag @relation(fields: [tag], references: [tag])
   @@id([postId, tag])
   @@index([tag])
+}
+
+model Experience {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  organization String
+  location    String?
+  startDate   DateTime
+  endDate     DateTime?
+  current     Boolean  @default(false)
+  description String?  @db.Text
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId, position])
+  @@index([userId, startDate])
 }

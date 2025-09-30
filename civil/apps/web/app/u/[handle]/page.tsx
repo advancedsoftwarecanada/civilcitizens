@@ -1,5 +1,6 @@
 "use client"
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../_components/Sidebar'
@@ -19,6 +20,19 @@ type UserProfile = {
   bio?: string | null
   avatarUrl?: string | null
   createdAt?: string
+  experiences?: UserExperience[]
+}
+
+type UserExperience = {
+  id: string
+  title: string
+  organization: string
+  location?: string | null
+  startDate?: string | null
+  endDate?: string | null
+  current?: boolean
+  description?: string | null
+  position?: number
 }
 
 function initialsFromUser(user: { name?: string | null; handle: string }) {
@@ -49,6 +63,22 @@ function buildChamberUrl(post: ApiPost) {
     return `/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`
   }
   return null
+}
+
+function formatDateRange(iso?: string | null) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+}
+
+function formatExperienceRange(exp: UserExperience) {
+  const start = formatDateRange(exp.startDate)
+  const end = exp.current ? 'Present' : formatDateRange(exp.endDate)
+  if (start && end) return `${start} – ${end}`
+  if (start) return start
+  if (end) return end
+  return 'Dates not provided'
 }
 
 type PageProps = {
@@ -91,8 +121,21 @@ export default function UserPostsPage({ params }: PageProps) {
         }
         return
       }
-      const data = await res.json()
-      setProfile(data.user ?? null)
+
+      const data: {
+        user?: UserProfile
+        items?: ApiPost[]
+      } = await res.json()
+
+      const userPayload = data.user
+      setProfile(
+        userPayload
+          ? {
+              ...userPayload,
+              experiences: Array.isArray(userPayload.experiences) ? userPayload.experiences : [],
+            }
+          : null,
+      )
       setPosts(Array.isArray(data.items) ? data.items : [])
     } catch (err) {
       console.error('Failed loading user posts', err)
@@ -134,12 +177,18 @@ export default function UserPostsPage({ params }: PageProps) {
         <main className="flex-1 space-y-6">
           <section className="rounded border bg-white p-6 shadow-sm">
             {profile ? (
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                 <div className="flex items-center gap-3">
                   <div className="h-14 w-14 overflow-hidden rounded-full bg-gray-200">
                     {profile.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={profile.avatarUrl} alt={profile.name ?? profile.handle} className="h-full w-full object-cover" />
+                      <Image
+                        src={profile.avatarUrl}
+                        alt={profile.name ?? profile.handle}
+                        width={56}
+                        height={56}
+                        unoptimized
+                        className="h-full w-full object-cover"
+                      />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-gray-500">
                         {initialsFromUser(profile)}
@@ -152,7 +201,6 @@ export default function UserPostsPage({ params }: PageProps) {
                     <div className="text-xs text-gray-400">Joined {formatDate(profile.createdAt)}</div>
                   </div>
                 </div>
-                {profile.bio ? <p className="max-w-xl text-sm text-gray-600">{profile.bio}</p> : null}
               </div>
             ) : loading ? (
               <div className="text-sm text-gray-500">Loading profile…</div>
@@ -162,6 +210,39 @@ export default function UserPostsPage({ params }: PageProps) {
               <div className="text-sm text-gray-500">Profile not available.</div>
             )}
           </section>
+
+          {profile?.bio ? (
+            <section className="rounded border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900">About</h2>
+              <div
+                className="prose prose-sm mt-3 max-w-none text-gray-800"
+                dangerouslySetInnerHTML={{ __html: profile.bio }}
+              />
+            </section>
+          ) : null}
+
+          {profile?.experiences && profile.experiences.length > 0 ? (
+            <section className="rounded border bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold text-gray-900">Experience</h2>
+              <ol className="mt-4 space-y-4">
+                {profile.experiences.map((exp, index) => (
+                  <li key={exp.id ?? `${exp.title}-${index}`} className="rounded border border-gray-100 p-4">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
+                      <span className="font-semibold">{exp.title}</span>
+                      {exp.organization ? <span className="text-gray-600">• {exp.organization}</span> : null}
+                    </div>
+                    {exp.location ? (
+                      <div className="mt-1 text-xs uppercase tracking-wide text-gray-500">{exp.location}</div>
+                    ) : null}
+                    <div className="mt-2 text-xs text-gray-500">{formatExperienceRange(exp)}</div>
+                    {exp.description ? (
+                      <p className="mt-3 whitespace-pre-line text-sm text-gray-700">{exp.description}</p>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          ) : null}
 
           {viewer && profile && viewer.handle === profile.handle ? (
             <PostComposer onPostCreated={handlePostCreated} />

@@ -1,5 +1,4 @@
 "use client"
-import { useEffect } from 'react'
 import { useToasts } from './useToasts'
 
 export default function Toasts() {
