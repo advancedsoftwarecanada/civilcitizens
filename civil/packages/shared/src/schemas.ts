@@ -48,3 +48,22 @@ export const ResetPasswordInput = z.object({
   newPassword: z.string().min(8).max(72),
 })
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInput>
+
+export const SetHomeChamberInput = z.object({
+  provinceCode: z.string().min(2).max(2),
+  chamberSlug: z.string().min(1).max(120),
+})
+export type SetHomeChamberInput = z.infer<typeof SetHomeChamberInput>
+
+export const FollowChamberInput = z.object({
+  provinceCode: z.string().min(2).max(2),
+  chamberSlug: z.string().min(1).max(120),
+  setAsHome: z.boolean().optional(),
+})
+export type FollowChamberInput = z.infer<typeof FollowChamberInput>
+
+export const UnfollowChamberInput = z.object({
+  provinceCode: z.string().min(2).max(2),
+  chamberSlug: z.string().min(1).max(120),
+})
+export type UnfollowChamberInput = z.infer<typeof UnfollowChamberInput>

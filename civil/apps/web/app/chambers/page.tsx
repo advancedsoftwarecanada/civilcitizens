@@ -1,0 +1,522 @@
+// @ts-nocheck
+"use client"
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import Sidebar from '../_components/Sidebar'
+import { pushToast } from '../_components/useToasts'
+
+const provincesFallback = [
+  { code: 'nl', name: 'Newfoundland and Labrador' },
+  { code: 'pe', name: 'Prince Edward Island' },
+  { code: 'ns', name: 'Nova Scotia' },
+  { code: 'nb', name: 'New Brunswick' },
+  { code: 'qc', name: 'Quebec' },
+  { code: 'on', name: 'Ontario' },
+  { code: 'mb', name: 'Manitoba' },
+  { code: 'sk', name: 'Saskatchewan' },
+  { code: 'ab', name: 'Alberta' },
+  { code: 'bc', name: 'British Columbia' },
+  { code: 'yt', name: 'Yukon' },
+  { code: 'nt', name: 'Northwest Territories' },
+  { code: 'nu', name: 'Nunavut' },
+]
+
+type Province = { code: string; name: string }
+type Chamber = { code?: number; name?: string; slug: string; province: string }
+
+type ChamberFollow = {
+  province: string
+  chamberSlug: string
+  home: boolean
+  followedAt?: string
+  chamber?: Chamber
+}
+
+type Me = {
+  id: string
+  name?: string | null
+  handle: string
+  email: string
+  avatarUrl?: string | null
+}
+
+async function jsonOrThrow(res: Response) {
+  const data = await res.json().catch(() => null)
+  if (!res.ok) {
+    const message = typeof data?.error === 'string' ? data.error : 'request_failed'
+    throw new Error(message)
+  }
+  return data
+}
+
+export default function ChambersPage() {
+  const [me, setMe] = useState<Me | null>(null)
+  const [provinces, setProvinces] = useState<Province[]>(provincesFallback)
+  const [chambers, setChambers] = useState<Chamber[]>([])
+  const [selectedProvince, setSelectedProvince] = useState('')
+  const [selectedChamber, setSelectedChamber] = useState('')
+  const [home, setHome] = useState<Chamber | null>(null)
+  const [follows, setFollows] = useState<ChamberFollow[]>([])
+  const [loadingChambers, setLoadingChambers] = useState(false)
+  const [savingHome, setSavingHome] = useState(false)
+  const [followSaving, setFollowSaving] = useState(false)
+  const [loadingFollows, setLoadingFollows] = useState(true)
+  const [managingFollow, setManagingFollow] = useState<string | null>(null)
+  const [bootstrapped, setBootstrapped] = useState(false)
+
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      window.location.href = '/login'
+      return
+    }
+
+    async function bootstrap() {
+      try {
+        const [meRes, provRes, homeRes, followsRes] = await Promise.all([
+          fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } }),
+          fetch('/api/chambers/provinces'),
+          fetch('/api/chambers/home', { headers: { authorization: `Bearer ${token}` } }),
+          fetch('/api/chambers/follows', { headers: { authorization: `Bearer ${token}` } }),
+        ])
+
+        const meData = await jsonOrThrow(meRes)
+        setMe(meData)
+
+        const provData = await jsonOrThrow(provRes).catch(() => ({ items: provincesFallback }))
+        if (Array.isArray(provData?.items) && provData.items.length) {
+          setProvinces(provData.items)
+        }
+
+        const followsData = followsRes.ok ? await followsRes.json() : { items: [] }
+        if (Array.isArray(followsData?.items)) {
+          setFollows(followsData.items)
+        }
+
+        const homeData = homeRes.ok ? await homeRes.json() : { home: null }
+        let homeChamber: Chamber | null = null
+        if (homeData?.home?.slug) {
+          homeChamber = homeData.home
+        } else if (Array.isArray(followsData?.items)) {
+          const fallback = followsData.items.find((item: ChamberFollow) => item.home && item.chamber)
+          if (fallback?.chamber) {
+            homeChamber = fallback.chamber
+          }
+        }
+
+        if (homeChamber?.slug) {
+          setHome(homeChamber)
+          setSelectedProvince(homeChamber.province)
+          setSelectedChamber(homeChamber.slug)
+          await loadChambersForProvince(homeChamber.province, homeChamber.slug)
+        }
+      } catch (err) {
+        console.error('Failed bootstrapping chambers screen', err)
+        localStorage.removeItem('token')
+        window.location.href = '/login'
+      } finally {
+        setLoadingFollows(false)
+        setBootstrapped(true)
+      }
+    }
+
+    bootstrap()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function loadChambersForProvince(province: string, preselect?: string) {
+    if (!province) {
+      setChambers([])
+      return
+    }
+    setLoadingChambers(true)
+    try {
+      const res = await fetch(`/api/chambers?province=${encodeURIComponent(province)}`)
+      const data = await jsonOrThrow(res)
+      if (Array.isArray(data?.items)) {
+        setChambers(data.items)
+        if (preselect) {
+          const exists = data.items.some((c: Chamber) => c.slug === preselect)
+          if (exists) {
+            setSelectedChamber(preselect)
+          }
+        }
+      } else {
+        setChambers([])
+      }
+    } catch (err: any) {
+      console.error('Failed loading chambers', err)
+      pushToast('Unable to load chambers right now. Please try again later.', 'error')
+      setChambers([])
+    } finally {
+      setLoadingChambers(false)
+    }
+  }
+
+  const handleProvinceChange = async (evt: any) => {
+    const value = evt.target.value
+    setSelectedProvince(value)
+    setSelectedChamber('')
+    if (value) {
+      await loadChambersForProvince(value)
+    } else {
+      setChambers([])
+    }
+  }
+
+  const handleChamberChange = (evt: any) => {
+    setSelectedChamber(evt.target.value)
+  }
+
+  async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}) {
+    const token = options.token ?? localStorage.getItem('token')
+    if (!token) return []
+    setLoadingFollows(true)
+    try {
+      const res = await fetch('/api/chambers/follows', {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const data = await jsonOrThrow(res)
+      const items = Array.isArray(data?.items) ? data.items : []
+      setFollows(items)
+      if (options.syncHome) {
+        const nextHome = items.find((item: ChamberFollow) => item.home && item.chamber)
+        if (nextHome?.chamber) {
+          setHome(nextHome.chamber)
+        } else if (!items.some((item: ChamberFollow) => item.home)) {
+          setHome(null)
+        }
+      }
+      return items
+    } catch (err) {
+      console.error('Failed loading followed chambers', err)
+      pushToast('Unable to load your followed chambers right now.', 'error')
+      return []
+    } finally {
+      setLoadingFollows(false)
+    }
+  }
+
+  async function setHomeChamber(provinceCode: string, chamberSlug: string, source: 'picker' | 'list') {
+    if (!provinceCode || !chamberSlug) return
+    const token = localStorage.getItem('token')
+    if (!token) {
+      window.location.href = '/login'
+      return
+    }
+    if (source === 'picker') {
+      setSavingHome(true)
+    } else {
+      setManagingFollow(`${provinceCode}:${chamberSlug}:home`)
+    }
+    try {
+      const res = await fetch('/api/chambers/home', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ provinceCode, chamberSlug }),
+      })
+      const data = await jsonOrThrow(res)
+      const nextHome = data?.home ?? { province: provinceCode, slug: chamberSlug }
+      setHome(nextHome)
+      setSelectedProvince(provinceCode)
+      setSelectedChamber(chamberSlug)
+      await loadChambersForProvince(provinceCode, chamberSlug)
+      await refreshFollows({ token, syncHome: true })
+      const message = source === 'picker' ? 'Home chamber set. Welcome home!' : 'Home chamber updated.'
+      pushToast(message, 'success')
+    } catch (err: any) {
+      console.error('Failed saving home chamber', err)
+      const friendly = err?.message === 'chamber_not_found' ? 'Chamber not found. Please pick a different option.' : 'Unable to save home chamber right now.'
+      pushToast(friendly, 'error')
+    } finally {
+      if (source === 'picker') {
+        setSavingHome(false)
+      } else {
+        setManagingFollow(null)
+      }
+    }
+  }
+
+  async function handleFollowSelected() {
+    if (!selectedProvince || !selectedChamber) return
+    const token = localStorage.getItem('token')
+    if (!token) {
+      window.location.href = '/login'
+      return
+    }
+    setFollowSaving(true)
+    try {
+      const res = await fetch('/api/chambers/follows', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ provinceCode: selectedProvince, chamberSlug: selectedChamber }),
+      })
+      await jsonOrThrow(res)
+      await refreshFollows({ token, syncHome: true })
+      pushToast('Chamber followed! You will now see updates from this riding.', 'success')
+    } catch (err: any) {
+      console.error('Failed following chamber', err)
+      const friendly =
+        err?.message === 'chamber_not_found'
+          ? 'Chamber not found. Try selecting from the list above.'
+          : err?.message === 'invalid_province'
+            ? 'Province not recognized. Please try again.'
+            : 'Unable to follow this chamber right now.'
+      pushToast(friendly, 'error')
+    } finally {
+      setFollowSaving(false)
+    }
+  }
+
+  async function handleUnfollow(follow: ChamberFollow) {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      window.location.href = '/login'
+      return
+    }
+    const key = `${follow.province}:${follow.chamberSlug}:remove`
+    setManagingFollow(key)
+    try {
+      const res = await fetch('/api/chambers/follows', {
+        method: 'DELETE',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ provinceCode: follow.province, chamberSlug: follow.chamberSlug }),
+      })
+      await jsonOrThrow(res)
+      const items = await refreshFollows({ token, syncHome: true })
+      pushToast('Chamber removed from your list.', 'success')
+      const homeStillExists = items.some((item: ChamberFollow) => item.home)
+      if (!homeStillExists) {
+        setHome(null)
+        setSelectedProvince('')
+        setSelectedChamber('')
+        setChambers([])
+      }
+    } catch (err: any) {
+      console.error('Failed unfollowing chamber', err)
+      const friendly = err?.message === 'not_following' ? 'You are not following that chamber.' : 'Unable to remove this chamber right now.'
+      pushToast(friendly, 'error')
+    } finally {
+      setManagingFollow(null)
+    }
+  }
+
+  const canSave = useMemo(() => {
+    if (!selectedProvince || !selectedChamber) return false
+    if (!home) return true
+    return !(home.province === selectedProvince && home.slug === selectedChamber)
+  }, [selectedProvince, selectedChamber, home])
+
+  const alreadyFollowingSelected = useMemo(() => {
+    if (!selectedProvince || !selectedChamber) return false
+    return follows.some((item) => item.province === selectedProvince && item.chamberSlug === selectedChamber)
+  }, [follows, selectedProvince, selectedChamber])
+
+  const additionalFollows = useMemo(() => follows.filter((item) => !item.home), [follows])
+
+  const homeFollow = useMemo(() => follows.find((item) => item.home), [follows])
+
+  const homeProvinceName = useMemo(() => {
+    if (!home) return ''
+    const found = provinces.find((p) => p.code === home.province)
+    return found?.name || home.province.toUpperCase()
+  }, [home, provinces])
+
+  const homeFollowKey = homeFollow ? `${homeFollow.province}:${homeFollow.chamberSlug}` : null
+  const homeRemoving = homeFollowKey ? managingFollow === `${homeFollowKey}:remove` : false
+
+  return (
+    <div className="mx-auto max-w-7xl grid grid-cols-12 gap-6 p-4">
+      <Sidebar me={me ?? undefined} active="chambers" />
+
+      <main className="col-span-12 md:col-span-6 space-y-6">
+        <section className="rounded-lg border bg-white p-5">
+          <h1 className="text-2xl font-bold">Your Chambers of Citizens</h1>
+          <p className="mt-2 text-sm text-gray-600">
+            Pick your home chamber to personalize your Civil experience. We\'ll use it to curate local news, MP updates,
+            and marketplace offers from your riding.
+          </p>
+          {home ? (
+            <div className="mt-4 rounded border bg-gray-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-gray-500">Home Chamber</div>
+                  <div className="text-lg font-semibold">{home.name}</div>
+                  <div className="text-sm text-gray-500">Province: {homeProvinceName}</div>
+                </div>
+                {homeFollow && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                      href={`/home?province=${encodeURIComponent(home.province)}&chamber=${encodeURIComponent(home.slug)}`}
+                    >
+                      Visit
+                    </Link>
+                    <button
+                      type="button"
+                      className="rounded border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleUnfollow(homeFollow)}
+                      disabled={homeRemoving}
+                    >
+                      {homeRemoving ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : bootstrapped ? (
+            <div className="mt-4 rounded border border-dashed p-4 text-sm text-gray-500">
+              You haven\'t set a home chamber yet. Choose your province and riding to get started.
+            </div>
+          ) : (
+            <div className="mt-4 text-sm text-gray-500">Loading your chamber data…</div>
+          )}
+          <div className="mt-6">
+            <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Chambers you follow</div>
+            {loadingFollows ? (
+              <div className="mt-3 text-sm text-gray-500">Loading your followed chambers…</div>
+            ) : additionalFollows.length === 0 ? (
+              <div className="mt-3 rounded border border-dashed p-4 text-sm text-gray-500">
+                {home
+                  ? 'You\'re currently following your home chamber. Explore other Chambers of Citizens below to keep an eye on more communities.'
+                  : 'You haven\'t followed any chambers yet. Choose one below to get started.'}
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {additionalFollows.map((follow) => {
+                  const chamber = follow.chamber ?? { slug: follow.chamberSlug, province: follow.province }
+                  const key = `${follow.province}:${follow.chamberSlug}`
+                  const provinceName = provinces.find((p) => p.code === chamber.province)?.name || chamber.province.toUpperCase()
+                  const visitHref = `/home?province=${encodeURIComponent(chamber.province)}&chamber=${encodeURIComponent(chamber.slug)}`
+                  const isUpdating = managingFollow === `${key}:home`
+                  const isRemoving = managingFollow === `${key}:remove`
+                  return (
+                    <div key={key} className="flex flex-col gap-2 rounded border p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-base font-semibold">{chamber.name || follow.chamberSlug.replace(/-/g, ' ')}</div>
+                        <div className="text-sm text-gray-500">Province: {provinceName}</div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+                          href={visitHref}
+                        >
+                          Visit
+                        </Link>
+                        <button
+                          type="button"
+                          className="rounded bg-black px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-400"
+                          onClick={() => setHomeChamber(chamber.province, chamber.slug, 'list')}
+                          disabled={isUpdating}
+                        >
+                          {isUpdating ? 'Setting…' : 'Set as home'}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => handleUnfollow(follow)}
+                          disabled={isRemoving}
+                        >
+                          {isRemoving ? 'Removing…' : 'Remove'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-lg border bg-white p-5">
+          <h2 className="text-xl font-semibold">{home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'}</h2>
+          <div className="mt-4 space-y-4">
+            <div>
+              <label className="text-sm font-medium text-gray-700">Province or territory</label>
+              <select
+                className="mt-1 w-full rounded border px-3 py-2"
+                value={selectedProvince}
+                onChange={handleProvinceChange}
+              >
+                <option value="">Select your province / territory</option>
+                {provinces.map((prov) => (
+                  <option key={prov.code} value={prov.code}>
+                    {prov.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-gray-700">Chamber</label>
+              <select
+                className="mt-1 w-full rounded border px-3 py-2"
+                value={selectedChamber}
+                onChange={handleChamberChange}
+                disabled={!selectedProvince || loadingChambers}
+              >
+                <option value="">{loadingChambers ? 'Loading chambers…' : 'Select your chamber'}</option>
+                {chambers.map((ch) => (
+                  <option key={ch.slug} value={ch.slug}>
+                    {ch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleFollowSelected}
+                disabled={!selectedProvince || !selectedChamber || followSaving || alreadyFollowingSelected}
+              >
+                {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this chamber'}
+              </button>
+              {!home && (
+                <button
+                  type="button"
+                  className="rounded bg-black px-4 py-2 text-white disabled:cursor-not-allowed disabled:bg-gray-400"
+                  onClick={() => setHomeChamber(selectedProvince, selectedChamber, 'picker')}
+                  disabled={!canSave || savingHome}
+                >
+                  {savingHome ? 'Saving…' : 'Set home chamber'}
+                </button>
+              )}
+              {home && !canSave && (
+                <span className="text-xs text-gray-500">This chamber is already set as your home.</span>
+              )}
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <aside className="col-span-3 hidden lg:block">
+        <div className="sticky top-4 space-y-4">
+          <div className="rounded-lg border bg-white p-4">
+            <div className="text-sm font-semibold">Need help choosing?</div>
+            <p className="mt-2 text-sm text-gray-600">
+              Your chamber matches your federal Electoral District Association (EDA). If you\'re not sure which one is yours,
+              look at your voter card or search for your MP by postal code on Elections Canada.
+            </p>
+          </div>
+          <div className="rounded-lg border bg-white p-4 text-sm text-gray-600">
+            Auto-detect and advanced geolocation will arrive in the next milestone. For now, choose manually and we\'ll tailor
+            your feed instantly.
+          </div>
+        </div>
+      </aside>
+    </div>
+  )
+}

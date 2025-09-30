@@ -5,7 +5,20 @@ import jwt from '@fastify/jwt'
 import sse from 'fastify-sse-v2'
 import { z } from 'zod'
 import { prisma } from '@civil/db'
-import { CreatePostInput, RegisterInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from '@civil/shared'
+import {
+  CreatePostInput,
+  RegisterInput,
+  LoginInput,
+  ForgotPasswordInput,
+  ResetPasswordInput,
+  SetHomeChamberInput,
+  FollowChamberInput,
+  UnfollowChamberInput,
+  PROVINCES,
+  getChambersByProvince,
+  findChamber,
+  normalizeProvinceCode,
+} from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import { Prisma } from '@prisma/client'
@@ -115,6 +128,190 @@ app.post('/auth/reset', async (req: FastifyRequest, reply: FastifyReply) => {
   if (!user) return reply.code(400).send({ error: 'invalid_or_expired' })
   const hash = await bcrypt.hash(newPassword, 10)
   await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, resetToken: null, resetExpires: null } })
+  return reply.send({ ok: true })
+})
+
+// Chambers - provinces list
+app.get('/chambers/provinces', async (_req: FastifyRequest, reply: FastifyReply) => {
+  return reply.send({ items: PROVINCES })
+})
+
+// Chambers - list within a province
+app.get('/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = z.object({ province: z.string().min(2) }).safeParse(req.query)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+  const province = normalizeProvinceCode(parse.data.province)
+  if (!province) return reply.code(404).send({ error: 'province_not_found' })
+  const chambers = getChambersByProvince(province)
+  return reply.send({ items: chambers })
+})
+
+// Chambers - get current home chamber
+app.get('/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  const follow = await prisma.chamberFollow.findFirst({ where: { userId, home: true } })
+  if (!follow) return reply.send({ home: null })
+  const chamber = findChamber(follow.provinceCode, follow.chamberSlug)
+  return reply.send({
+    home: chamber ? { ...chamber } : { province: follow.provinceCode, slug: follow.chamberSlug },
+  })
+})
+
+// Chambers - set home chamber
+app.post('/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = SetHomeChamberInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const province = normalizeProvinceCode(parse.data.provinceCode)
+  if (!province) return reply.code(400).send({ error: 'invalid_province' })
+
+  const chamber = findChamber(province, parse.data.chamberSlug)
+  if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
+
+  await prisma.$transaction(async (tx) => {
+    await tx.chamberFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
+    await tx.chamberFollow.upsert({
+      where: {
+        userId_provinceCode_chamberSlug: {
+          userId,
+          provinceCode: province,
+          chamberSlug: chamber.slug,
+        },
+      },
+      create: {
+        userId,
+        provinceCode: province,
+        chamberSlug: chamber.slug,
+        home: true,
+      },
+      update: {
+        home: true,
+        provinceCode: province,
+        chamberSlug: chamber.slug,
+      },
+    })
+  })
+
+  return reply.send({ ok: true, home: chamber })
+})
+
+// Chambers - get follows list
+app.get('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const follows = await prisma.chamberFollow.findMany({
+    where: { userId },
+    orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
+  })
+
+  const items = follows.map((follow) => {
+    const chamber = findChamber(follow.provinceCode, follow.chamberSlug)
+    return {
+      province: follow.provinceCode,
+      chamberSlug: follow.chamberSlug,
+      home: follow.home,
+      followedAt: follow.createdAt,
+      chamber,
+    }
+  })
+
+  return reply.send({ items })
+})
+
+// Chambers - follow additional chamber
+app.post('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = FollowChamberInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const province = normalizeProvinceCode(parse.data.provinceCode)
+  if (!province) return reply.code(400).send({ error: 'invalid_province' })
+
+  const chamber = findChamber(province, parse.data.chamberSlug)
+  if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
+
+  const setAsHome = parse.data.setAsHome === true
+
+  const follow = await prisma.$transaction(async (tx) => {
+    if (setAsHome) {
+      await tx.chamberFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
+    }
+
+    return tx.chamberFollow.upsert({
+      where: {
+        userId_provinceCode_chamberSlug: {
+          userId,
+          provinceCode: province,
+          chamberSlug: chamber.slug,
+        },
+      },
+      create: {
+        userId,
+        provinceCode: province,
+        chamberSlug: chamber.slug,
+        home: setAsHome,
+      },
+      update: {
+        provinceCode: province,
+        chamberSlug: chamber.slug,
+        home: setAsHome ? true : undefined,
+      },
+    })
+  })
+
+  return reply.send({
+    ok: true,
+    follow: {
+      province: follow.provinceCode,
+      chamberSlug: follow.chamberSlug,
+      home: follow.home,
+      chamber,
+    },
+  })
+})
+
+// Chambers - unfollow
+app.delete('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = UnfollowChamberInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const province = normalizeProvinceCode(parse.data.provinceCode)
+  if (!province) return reply.code(400).send({ error: 'invalid_province' })
+
+  const existing = await prisma.chamberFollow.findUnique({
+    where: {
+      userId_provinceCode_chamberSlug: {
+        userId,
+        provinceCode: province,
+        chamberSlug: parse.data.chamberSlug,
+      },
+    },
+  })
+
+  if (!existing) {
+    return reply.code(404).send({ error: 'not_following' })
+  }
+
+  await prisma.chamberFollow.delete({
+    where: {
+      userId_provinceCode_chamberSlug: {
+        userId,
+        provinceCode: province,
+        chamberSlug: parse.data.chamberSlug,
+      },
+    },
+  })
+
   return reply.send({ ok: true })
 })
 

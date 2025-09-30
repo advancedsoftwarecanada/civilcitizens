@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useState } from 'react'
+import Sidebar from '../_components/Sidebar'
 
 type User = { id: string; handle: string; name?: string | null; avatarUrl?: string | null }
 type Post = { id: string; body: string; createdAt: string; author: User }
@@ -33,16 +34,7 @@ export default function HomePage() {
   return (
     <div className="mx-auto max-w-7xl grid grid-cols-12 gap-6 p-4">
       {/* Left nav */}
-      <aside className="col-span-3 hidden md:block">
-        <div className="sticky top-4 space-y-2">
-          <a className="block px-4 py-2 rounded hover:bg-gray-100" href="/home">Home</a>
-          <a className="block px-4 py-2 rounded hover:bg-gray-100" href="/chambers">Chambers</a>
-          <a className="block px-4 py-2 rounded hover:bg-gray-100" href="#">Explore</a>
-          <a className="block px-4 py-2 rounded hover:bg-gray-100" href="#">Notifications</a>
-          <a className="block px-4 py-2 rounded hover:bg-gray-100" href="#">Profile</a>
-          <button className="mt-2 px-4 py-2 bg-black text-white rounded w-full">Post</button>
-        </div>
-      </aside>
+  <Sidebar me={me ?? undefined} active="home" />
 
       {/* Center feed */}
       <main className="col-span-12 md:col-span-6 border-x bg-white rounded md:rounded-none">
