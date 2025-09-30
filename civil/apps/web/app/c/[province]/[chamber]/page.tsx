@@ -4,7 +4,8 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../../_components/Sidebar'
-import PostComposer, { ApiPost } from '../../../_components/PostComposer'
+import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../../../_components/PostComposer'
+import type { Jurisdiction } from '@civil/shared'
 
 type Viewer = {
   id: string
@@ -49,6 +50,14 @@ function buildPostUrl(post: ApiPost) {
   return `/post/${post.id}`
 }
 
+const FILTER_OPTIONS: Array<{ value: 'all' | Jurisdiction; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'federal', label: JURISDICTION_LABELS.federal },
+  { value: 'provincial', label: JURISDICTION_LABELS.provincial },
+  { value: 'municipal', label: JURISDICTION_LABELS.municipal },
+  { value: 'citizen', label: JURISDICTION_LABELS.citizen },
+]
+
 export default function ChamberFeedPage({ params }: PageProps) {
   const provinceParam = decodeURIComponent(params.province)
   const chamberParam = decodeURIComponent(params.chamber)
@@ -58,6 +67,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -84,7 +94,8 @@ export default function ChamberFeedPage({ params }: PageProps) {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/chambers/${encodeURIComponent(provinceParam)}/${encodeURIComponent(chamberParam)}/posts`)
+      const query = activeFilter === 'all' ? '' : `?jurisdiction=${activeFilter}`
+      const res = await fetch(`/api/chambers/${encodeURIComponent(provinceParam)}/${encodeURIComponent(chamberParam)}/posts${query}`)
       if (!res.ok) {
         setError(res.status === 404 ? 'Chamber not found.' : 'Unable to load chamber posts right now.')
         return
@@ -98,7 +109,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
     } finally {
       setLoading(false)
     }
-  }, [chamberParam, provinceParam])
+  }, [activeFilter, chamberParam, provinceParam])
 
   useEffect(() => {
     loadViewer().catch(() => {
@@ -122,9 +133,12 @@ export default function ChamberFeedPage({ params }: PageProps) {
     }
   }, [chamber])
 
-  const handlePostCreated = useCallback((post: ApiPost) => {
-    setPosts((prev) => [post, ...prev])
-  }, [])
+  const handlePostCreated = useCallback(
+    (post: ApiPost) => {
+      setPosts((prev) => (activeFilter === 'all' || post.jurisdiction === activeFilter ? [post, ...prev] : prev))
+    },
+    [activeFilter],
+  )
 
   return (
     <div className="w-full">
@@ -160,6 +174,26 @@ export default function ChamberFeedPage({ params }: PageProps) {
           {viewer && chamberTarget ? (
             <PostComposer chamberTarget={chamberTarget} onPostCreated={handlePostCreated} />
           ) : null}
+
+          <div className="rounded border bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap gap-2 text-sm">
+              {FILTER_OPTIONS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  className={`rounded-full px-3 py-1 transition ${
+                    activeFilter === filter.value
+                      ? 'bg-black text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                  onClick={() => setActiveFilter(filter.value)}
+                  disabled={loading && activeFilter === filter.value}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <section className="space-y-4">
             {error ? (
@@ -197,6 +231,9 @@ export default function ChamberFeedPage({ params }: PageProps) {
                           </Link>
                           <span>@{post.author.handle}</span>
                           <span className="text-xs">• {formatDate(post.createdAt)}</span>
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                            {JURISDICTION_LABELS[post.jurisdiction]}
+                          </span>
                         </div>
                         <div className="mt-3 space-y-3 text-[15px] leading-6 text-gray-800">
                           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-500">

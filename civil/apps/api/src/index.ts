@@ -23,6 +23,7 @@ import {
   normalizeProvinceCode,
   getProvinceDisplayName,
   buildHandleBase,
+  JurisdictionEnum,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
@@ -46,6 +47,8 @@ const redis = new IORedis(REDIS_URL)
 void redis
 
 type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
+type Jurisdiction = z.infer<typeof JurisdictionEnum>
+const DEFAULT_JURISDICTION: Jurisdiction = 'citizen'
 
 function isExperienceTableMissing(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2021' || error.code === 'P2022')
@@ -164,6 +167,7 @@ function formatPost(post: PostWithAuthor) {
     mediaUrl: post.mediaUrl,
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
+  jurisdiction: post.jurisdiction,
     provinceCode: post.provinceCode,
     chamberSlug: post.chamberSlug,
     chamberName: chamber?.name ?? null,
@@ -665,9 +669,10 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
     chamberSlug = chamber.slug
   }
 
-  const { body, mediaUrl, hashtags, type, title } = parse.data
+  const { body, mediaUrl, hashtags, type, title, jurisdiction } = parse.data
 
   const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
+  const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
 
   const created = await prisma.$transaction(async (tx) => {
     const seoSlug = await generateUniquePostSlug(slugBase, tx)
@@ -682,6 +687,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
         provinceCode,
         chamberSlug,
         seoSlug,
+        jurisdiction: normalizedJurisdiction,
       },
       include: {
         author: true,
@@ -733,12 +739,23 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) => {
 
 // List posts (newest first) with cursor pagination
 app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = z.object({ cursor: z.string().optional(), limit: z.coerce.number().int().min(1).max(50).default(20) }).safeParse(req.query)
+  const parse = z
+    .object({
+      cursor: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+      jurisdiction: JurisdictionEnum.optional(),
+    })
+    .safeParse(req.query)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { cursor, limit } = parse.data
+  const { cursor, limit, jurisdiction } = parse.data
+  const where: Prisma.PostWhereInput = {}
+  if (jurisdiction) {
+    where.jurisdiction = jurisdiction
+  }
   const items = await prisma.post.findMany({
     take: limit + 1,
     orderBy: { createdAt: 'desc' },
+    where,
     include: {
       author: true,
       _count: {
@@ -843,13 +860,16 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     experiences: mappedExperiences,
   }
 
-  const query = CursorQuery.safeParse(req.query)
+  const query = CursorQuery.extend({ jurisdiction: JurisdictionEnum.optional() }).safeParse(req.query)
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-  const { cursor, limit } = query.data
+  const { cursor, limit, jurisdiction } = query.data
 
   const posts = await prisma.post.findMany({
-    where: { authorId: user.id },
+    where: {
+      authorId: user.id,
+      ...(jurisdiction ? { jurisdiction } : {}),
+    },
     take: limit + 1,
     orderBy: { createdAt: 'desc' },
     include: {
@@ -892,15 +912,16 @@ app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply:
   const chamberRecord = findChamber(province, params.data.chamber)
   if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
 
-  const query = CursorQuery.safeParse(req.query)
+  const query = CursorQuery.extend({ jurisdiction: JurisdictionEnum.optional() }).safeParse(req.query)
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-  const { cursor, limit } = query.data
+  const { cursor, limit, jurisdiction } = query.data
 
   const posts = await prisma.post.findMany({
     where: {
       provinceCode: chamberRecord.province,
       chamberSlug: chamberRecord.slug,
+      ...(jurisdiction ? { jurisdiction } : {}),
     },
     take: limit + 1,
     orderBy: { createdAt: 'desc' },

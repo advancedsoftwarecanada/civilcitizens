@@ -3,6 +3,9 @@ import { normalizeProvinceCode } from './chambers.js'
 
 export const PostTypeEnum = z.enum(['post', 'article'])
 
+export const JurisdictionEnum = z.enum(['citizen', 'municipal', 'provincial', 'federal'])
+export type Jurisdiction = z.infer<typeof JurisdictionEnum>
+
 export const CreatePostInput = z
   .object({
     type: PostTypeEnum.default('post'),
@@ -17,6 +20,7 @@ export const CreatePostInput = z
     hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
     chamberProvince: z.string().trim().min(2).max(32).optional(),
     chamberSlug: z.string().trim().min(1).max(160).optional(),
+    jurisdiction: JurisdictionEnum.optional(),
   })
   .superRefine((data, ctx) => {
     const hasProvince = typeof data.chamberProvince === 'string' && data.chamberProvince.trim().length > 0

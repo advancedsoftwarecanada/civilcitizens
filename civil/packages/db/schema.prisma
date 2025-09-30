@@ -37,6 +37,7 @@ model Post {
   type        String    @default("post")
   mediaUrl    String?
   seoSlug     String?   @unique
+  jurisdiction String    @default("citizen")
   provinceCode String?
   chamberSlug  String?
   createdAt   DateTime  @default(now())
@@ -46,6 +47,7 @@ model Post {
   hashtags    PostHashtag[]
   @@index([authorId, createdAt])
   @@index([provinceCode, chamberSlug, createdAt])
+  @@index([jurisdiction, createdAt])
 }
 
 model Comment {

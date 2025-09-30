@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
+import type { Jurisdiction } from '@civil/shared'
 
 export type PostType = 'post' | 'article'
 
@@ -15,6 +16,7 @@ export type ApiPost = {
   mediaUrl?: string | null
   createdAt: string
   updatedAt: string
+  jurisdiction: Jurisdiction
   provinceCode?: string | null
   provinceName?: string | null
   chamberSlug?: string | null
@@ -55,6 +57,20 @@ const MAX_POST_LENGTH = 5000
 const MIN_ARTICLE_TITLE_LENGTH = 3
 const MIN_ARTICLE_BODY_LENGTH = 100
 
+export const JURISDICTION_LABELS: Record<Jurisdiction, string> = {
+  citizen: 'Citizen',
+  municipal: 'Municipal',
+  provincial: 'Provincial',
+  federal: 'Federal',
+}
+
+const JURISDICTION_OPTIONS: Array<{ value: Jurisdiction; label: string }> = [
+  { value: 'citizen', label: JURISDICTION_LABELS.citizen },
+  { value: 'municipal', label: JURISDICTION_LABELS.municipal },
+  { value: 'provincial', label: JURISDICTION_LABELS.provincial },
+  { value: 'federal', label: JURISDICTION_LABELS.federal },
+]
+
 function stripHtml(html: string) {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -71,6 +87,8 @@ export default function PostComposer({
   const [articleBody, setArticleBody] = useState('<p></p>')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const defaultJurisdiction: Jurisdiction = 'citizen'
+  const [jurisdiction, setJurisdiction] = useState<Jurisdiction>(defaultJurisdiction)
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
 
@@ -91,7 +109,12 @@ export default function PostComposer({
     setArticleBody('<p></p>')
     setPostType(defaultPostType)
     setError(null)
-  }, [defaultPostType])
+    setJurisdiction(defaultJurisdiction)
+  }, [defaultJurisdiction, defaultPostType])
+
+  useEffect(() => {
+    setJurisdiction(defaultJurisdiction)
+  }, [chamberTarget, defaultJurisdiction])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -114,6 +137,8 @@ export default function PostComposer({
         payload.chamberProvince = chamberTarget.provinceCode
         payload.chamberSlug = chamberTarget.chamberSlug
       }
+
+      payload.jurisdiction = jurisdiction
 
       const res = await fetch('/api/posts', {
         method: 'POST',
@@ -153,7 +178,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [articleBody, articleTitle, canSubmit, chamberTarget, draft, onPostCreated, postType, resetComposer, submitting])
+  }, [articleBody, articleTitle, canSubmit, chamberTarget, draft, jurisdiction, onPostCreated, postType, resetComposer, submitting])
 
   return (
     <section className={clsx('rounded border bg-white p-6 shadow-sm', className)}>
@@ -196,6 +221,24 @@ export default function PostComposer({
           </button>
         </div>
       </header>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-medium text-gray-600">
+        <span className="uppercase tracking-wide text-gray-500">Tag:</span>
+        {JURISDICTION_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={clsx(
+              'rounded-full border px-3 py-1 transition',
+              jurisdiction === option.value ? 'bg-black text-white border-black' : 'border-gray-300 text-gray-600 hover:border-black/60',
+            )}
+            onClick={() => setJurisdiction(option.value)}
+            disabled={submitting}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
 
       <div className="mt-5 space-y-4">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}

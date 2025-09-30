@@ -2,9 +2,10 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
-import PostComposer, { ApiPost } from '../_components/PostComposer'
+import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../_components/PostComposer'
+import type { Jurisdiction } from '@civil/shared'
 
 type User = {
   id: string
@@ -48,21 +49,32 @@ function buildChamberUrl(post: ApiPost) {
   return null
 }
 
+const JURISDICTION_FILTERS: Array<{ value: 'all' | Jurisdiction; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'federal', label: JURISDICTION_LABELS.federal },
+  { value: 'provincial', label: JURISDICTION_LABELS.provincial },
+  { value: 'municipal', label: JURISDICTION_LABELS.municipal },
+  { value: 'citizen', label: JURISDICTION_LABELS.citizen },
+]
+
 export default function HomePage() {
   const [me, setMe] = useState<User | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
+
+  const filterQuery = useMemo(() => (activeFilter === 'all' ? '' : `?jurisdiction=${activeFilter}`), [activeFilter])
 
   const refreshPosts = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await fetch('/api/posts')
+      const response = await fetch(`/api/posts${filterQuery}`)
       const data = await response.json().catch(() => ({ items: [] }))
       setPosts(Array.isArray(data.items) ? data.items : [])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [filterQuery])
 
   useEffect(() => {
     const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -86,15 +98,20 @@ export default function HomePage() {
         localStorage.removeItem('token')
         window.location.href = '/login'
       })
+  }, [])
 
+  useEffect(() => {
     refreshPosts().catch(() => {
       /* noop */
     })
   }, [refreshPosts])
 
-  const handlePostCreated = useCallback((post: ApiPost) => {
-    setPosts((prev) => [post, ...prev])
-  }, [])
+  const handlePostCreated = useCallback(
+    (post: ApiPost) => {
+      setPosts((prev) => (activeFilter === 'all' || post.jurisdiction === activeFilter ? [post, ...prev] : prev))
+    },
+    [activeFilter],
+  )
 
   return (
     <div className="w-full">
@@ -109,6 +126,26 @@ export default function HomePage() {
 
         <main className="col-span-12 space-y-6 md:col-span-9 lg:col-span-6">
           <PostComposer onPostCreated={handlePostCreated} />
+
+          <div className="rounded border bg-white p-3 shadow-sm">
+            <div className="flex flex-wrap gap-2 text-sm">
+              {JURISDICTION_FILTERS.map((filter) => (
+                <button
+                  key={filter.value}
+                  type="button"
+                  className={`rounded-full px-3 py-1 transition ${
+                    activeFilter === filter.value
+                      ? 'bg-black text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                  onClick={() => setActiveFilter(filter.value)}
+                  disabled={loading && activeFilter === filter.value}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <section className="space-y-4">
             {posts.length === 0 ? (
@@ -145,6 +182,9 @@ export default function HomePage() {
                           </Link>
                           <span>@{p.author.handle}</span>
                           <span className="text-xs">• {formatDate(p.createdAt)}</span>
+                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                            {JURISDICTION_LABELS[p.jurisdiction]}
+                          </span>
                           {chamberUrl ? (
                             <Link href={chamberUrl} className="rounded-full border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50">
                               {p.chamberName ?? p.chamberSlug}

@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../../../../_components/Sidebar'
-import type { ApiPost } from '../../../../../_components/PostComposer'
+import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 
 type Viewer = {
   id: string
@@ -172,6 +172,9 @@ export default function ChamberPostPage({ params }: PageProps) {
                     </Link>
                     <span>@{post.author.handle}</span>
                     <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                      {JURISDICTION_LABELS[post.jurisdiction]}
+                    </span>
                     {post.provinceCode && post.chamberSlug ? (
                       <Link
                         href={`/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`}

@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../_components/Sidebar'
-import PostComposer, { ApiPost } from '../../_components/PostComposer'
+import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../../_components/PostComposer'
 
 type Viewer = {
   id: string
@@ -268,6 +268,9 @@ export default function UserPostsPage({ params }: PageProps) {
                           {post.title}
                         </Link>
                       ) : null}
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
+                        {JURISDICTION_LABELS[post.jurisdiction]}
+                      </span>
                       {chamberUrl ? (
                         <Link href={chamberUrl} className="rounded-full border border-gray-200 px-2 py-0.5 text-[10px] uppercase text-gray-500 hover:bg-gray-50">
                           {post.chamberName ?? post.chamberSlug}
