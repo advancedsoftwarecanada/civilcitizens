@@ -1,10 +1,10 @@
-import { point, polygon, multiPolygon, type Feature as TurfFeature, type Polygon as TurfPolygon, type MultiPolygon as TurfMultiPolygon, type Point as TurfPoint } from '@turf/helpers'
-// Local aliases to avoid direct dependency on 'geojson' type module during Docker builds
+import { point, polygon, multiPolygon } from '@turf/helpers'
+// Minimal local types to avoid importing from 'geojson' in Docker builds
 type GeoJsonProperties = Record<string, any>
-type Polygon = TurfPolygon
-type MultiPolygon = TurfMultiPolygon
-type GeoPoint = TurfPoint
-type Feature<G = any, P = GeoJsonProperties> = TurfFeature<G, P>
+type GeoPoint = { type: 'Point'; coordinates: [number, number] }
+type Polygon = { type: 'Polygon'; coordinates: any[] }
+type MultiPolygon = { type: 'MultiPolygon'; coordinates: any[] }
+type Feature<G = any, P = GeoJsonProperties> = { type: 'Feature'; geometry: G | null; properties: P }
 type FeatureCollection = { type: 'FeatureCollection'; features: Array<Feature<Polygon | MultiPolygon, any>> }
 import { findChamber, findChamberByCode, findChambersBySlug, slugifyChamberName, type ChamberRecord, type ProvinceCode } from '@civil/shared'
 import { createRequire } from 'module'
@@ -219,8 +219,8 @@ async function buildGeoCache(): Promise<GeoCache> {
       continue
     }
 
-  const centroidFeature = turfCentroid(turfFeature as any) as Feature<TurfPoint, GeoJsonProperties>
-  const centroidGeometry = centroidFeature.geometry as TurfPoint
+  const centroidFeature = turfCentroid(turfFeature as any) as Feature<GeoPoint, GeoJsonProperties>
+  const centroidGeometry = centroidFeature.geometry as GeoPoint
     if (!centroidGeometry || centroidGeometry.type !== 'Point') {
       continue
     }
@@ -301,8 +301,8 @@ export async function locateChamberFromPoint(lat: number, lng: number, options: 
   const targetPoint = point([lng, lat])
   const scored = features.map((pf) => {
     const centroidDistanceKm = turfDistance(targetPoint, pf.centroidPoint, { units: 'kilometers' })
-    const polygonDistanceKm = pointToPolygonDistance(targetPoint, pf.feature, { units: 'kilometers' })
-    const inside = booleanPointInPolygon(targetPoint, pf.feature)
+    const polygonDistanceKm = pointToPolygonDistance(targetPoint as any, pf.feature as any, { units: 'kilometers' })
+    const inside = booleanPointInPolygon(targetPoint as any, pf.feature as any)
     const consideredInside = inside || polygonDistanceKm <= BOUNDARY_TOLERANCE_KM
     return { feature: pf, centroidDistanceKm, polygonDistanceKm, consideredInside }
   })
