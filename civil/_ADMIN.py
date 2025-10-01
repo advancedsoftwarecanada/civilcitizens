@@ -12,6 +12,7 @@ Examples:
   python _ADMIN.py docker up
   python _ADMIN.py docker down
   python _ADMIN.py status
+    python _ADMIN.py deploy
 
 Notes:
  - Uses pnpm workspaces; run with --install once to bootstrap deps.
@@ -313,6 +314,38 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_deploy(args: argparse.Namespace) -> int:
+    """Stop all containers, pull latest repo changes, rebuild and start stack."""
+    require_tool(
+        "docker",
+        "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
+    )
+    print("\n🚀 Deploying Civil (down -> pull -> up --build) ...\n")
+    files = f"-f \"{COMPOSE_FILE}\""
+    if os.path.exists(OVERRIDE_FILE):
+        files += f" -f \"{OVERRIDE_FILE}\""
+    # 1) Stop everything
+    code = run(f"docker compose {files} --profile infra --profile app down", cwd=ROOT)
+    if code != 0:
+        print("Warning: compose down returned non-zero; continuing...")
+    # 2) Pull latest source
+    code = run("git pull --rebase --autostash", cwd=ROOT)
+    if code != 0:
+        print("Error: git pull failed. Resolve repository state and retry.")
+        return code
+    # 3) Rebuild and start full stack
+    code = run(
+        f"docker compose {files} --profile infra --profile app up -d --build",
+        cwd=ROOT,
+    )
+    if code != 0:
+        return code
+    # 4) Show status
+    print()
+    cmd_status(args)
+    return 0
+
+
 def cmd_developer(args: argparse.Namespace) -> int:
     """Start/stop the dev stack (hot reload) using docker-compose.override.yml."""
     require_tool(
@@ -343,7 +376,8 @@ def print_help() -> None:
             "  python _ADMIN.py dev [server|client|all] [--install] [--force]\n"
             "  python _ADMIN.py infra up|down\n"
             "  python _ADMIN.py docker up|down\n"
-            "  python _ADMIN.py status\n\n"
+            "  python _ADMIN.py status\n"
+            "  python _ADMIN.py deploy\n\n"
             "Notes:\n  --install runs 'pnpm i' once at the repo root.\n"
             "  --force kills anything bound to ports 3000/3001.\n"
         )
@@ -378,6 +412,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser("status", help="Check status of running processes and services")
     ps.set_defaults(func=cmd_status)
+
+    # deploy: down -> git pull -> up --build -> status
+    pdep = sub.add_parser("deploy", help="Stop containers, pull code, rebuild and start stack")
+    pdep.set_defaults(func=cmd_deploy)
 
     # developer: simple alias to run dev stack with hot reload in Docker
     pdev = sub.add_parser("developer", help="Start/stop dev stack (hot reload) using compose override")
