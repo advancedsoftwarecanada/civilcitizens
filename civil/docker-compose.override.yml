@@ -1,0 +1,35 @@
+services:
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "corepack enable && corepack prepare pnpm@9 --activate && pnpm config set store-dir /app/.pnpm-store && pnpm -w i --no-frozen-lockfile && pnpm --filter @civil/web dev -p 3001"
+    volumes:
+      - ./:/app
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE: /api
+      NEXT_TELEMETRY_DISABLED: "1"
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+    # Keep existing depends_on from base file
+
+  api:
+    image: node:20-bullseye-slim
+    working_dir: /app
+    command: sh -lc "apt-get update && apt-get install -y --no-install-recommends libssl1.1 procps && rm -rf /var/lib/apt/lists/* && corepack enable && corepack prepare pnpm@9 --activate && pnpm config set store-dir /app/.pnpm-store && pnpm -w i --no-frozen-lockfile && pnpm --filter @civil/db generate && pnpm --filter @civil/api dev"
+    volumes:
+      - ./:/app
+    environment:
+      NODE_ENV: development
+      SHELL: /bin/sh
+    # Keep existing ports and healthcheck from base file
+
+  # Uncomment if you want live-reload for worker too and have a dev script in worker
+  # worker:
+  #   image: node:20-alpine
+  #   working_dir: /app
+  #   command: sh -lc "corepack enable && corepack prepare pnpm@9 --activate && pnpm -w i && pnpm --filter @civil/worker dev"
+  #   volumes:
+  #     - ./:/app
+  #   environment:
+  #     NODE_ENV: development
