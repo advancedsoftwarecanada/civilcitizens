@@ -1,12 +1,17 @@
-/// <reference path="./types-geojson-shim.d.ts" />
-import type { GeoJsonProperties, FeatureCollection, Feature, Polygon, MultiPolygon, Point as GeoPoint } from 'geojson'
+import { point, polygon, multiPolygon, type Feature as TurfFeature, type Polygon as TurfPolygon, type MultiPolygon as TurfMultiPolygon, type Point as TurfPoint } from '@turf/helpers'
+// Local aliases to avoid direct dependency on 'geojson' type module during Docker builds
+type GeoJsonProperties = Record<string, any>
+type Polygon = TurfPolygon
+type MultiPolygon = TurfMultiPolygon
+type GeoPoint = TurfPoint
+type Feature<G = any, P = GeoJsonProperties> = TurfFeature<G, P>
+type FeatureCollection = { type: 'FeatureCollection'; features: Array<Feature<Polygon | MultiPolygon, any>> }
 import { findChamber, findChamberByCode, findChambersBySlug, slugifyChamberName, type ChamberRecord, type ProvinceCode } from '@civil/shared'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const unzipper = require('unzipper') as typeof import('unzipper')
 import { read as readShapefile } from 'shapefile'
 import proj4 from 'proj4'
-import { point, polygon, multiPolygon } from '@turf/helpers'
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon'
 import turfCentroid from '@turf/centroid'
 import turfDistance from '@turf/distance'
@@ -214,8 +219,8 @@ async function buildGeoCache(): Promise<GeoCache> {
       continue
     }
 
-    const centroidFeature = turfCentroid(turfFeature)
-    const centroidGeometry = centroidFeature.geometry
+  const centroidFeature = turfCentroid(turfFeature as any) as Feature<TurfPoint, GeoJsonProperties>
+  const centroidGeometry = centroidFeature.geometry as TurfPoint
     if (!centroidGeometry || centroidGeometry.type !== 'Point') {
       continue
     }
@@ -227,7 +232,7 @@ async function buildGeoCache(): Promise<GeoCache> {
       geometry,
       feature: turfFeature,
       centroid: { lat: centroidLat, lng: centroidLng },
-      centroidPoint: point([centroidLng, centroidLat]) as Feature<GeoPoint>,
+  centroidPoint: point([centroidLng, centroidLat]) as Feature<GeoPoint>,
       bbox,
     })
   }
