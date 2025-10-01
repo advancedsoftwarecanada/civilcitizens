@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect } from 'react'
-import { ChambersView } from '../chambers/page'
+import { ChambersView } from '../chambers/ChambersView'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../_lib/me'
 import { redirectToAuthModal } from '../_lib/authModal'
