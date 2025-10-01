@@ -21,7 +21,13 @@ services:
     build:
       context: .
       dockerfile: ./apps/api/Dockerfile
-    env_file: ./apps/api/.env
+    environment:
+      # Required: Prisma database URL (uses local Postgres service)
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/civil
+      # Point to the Redis service on the Compose network (not localhost)
+      REDIS_URL: redis://redis:6379
+      # Provide a default JWT secret; override in deployment via environment if desired
+      JWT_SECRET: ${JWT_SECRET:-dev_secret}
     ports:
       - "3000:3000"
     depends_on: [postgres, redis]
@@ -36,7 +42,10 @@ services:
     build:
       context: .
       dockerfile: ./apps/worker/Dockerfile
-    env_file: ./apps/api/.env
+    environment:
+      # Worker currently only needs Redis
+      REDIS_URL: redis://redis:6379
+      LOG_LEVEL: info
     depends_on: [redis, postgres]
 
   web:
@@ -44,7 +53,6 @@ services:
     build:
       context: .
       dockerfile: ./apps/web/Dockerfile
-    env_file: ./apps/web/.env
     environment:
       # Use relative path so it works behind Nginx and Cloudflare
       NEXT_PUBLIC_API_BASE: /api
