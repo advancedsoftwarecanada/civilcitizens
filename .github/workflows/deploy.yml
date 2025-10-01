@@ -40,7 +40,7 @@ jobs:
           # Ensure infra (Postgres/Redis) is up first using compose file in civil/
           docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile infra up -d
           # Build and restart full stack (include both profiles so worker can see redis)
-          docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile app build
+          docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile infra --profile app build
           docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile infra --profile app up -d
           # Optional: show status
           docker compose -f ~/civil-citizens/civil/docker-compose.yml ps
