@@ -55,6 +55,8 @@ jobs:
 
           echo "Stopping any existing Civil stack (down + remove-orphans) ..."
           docker compose -f "$COMPOSE_FILE" --profile infra --profile app down --remove-orphans || true
+          # Ensure we never reuse alternate ports
+          unset NGINX_HTTP_PORT NGINX_HTTPS_PORT || true
 
           echo "Checking and stopping any containers occupying ports 80/443 ..."
           PORT80_CONTAINERS=$(docker ps --filter 'publish=80' -q || true)
@@ -67,13 +69,52 @@ jobs:
             echo "No containers currently binding 80/443."
           fi
 
+          echo "Detecting host-level listeners on ports 80/443 (non-Docker) ..."
+          HTTP_IN_USE=$(ss -ltnp 2>/dev/null | awk '$4 ~ /:80$/ {print $0}' || true)
+          HTTPS_IN_USE=$(ss -ltnp 2>/dev/null | awk '$4 ~ /:443$/ {print $0}' || true)
+          if [ -n "$HTTP_IN_USE" ] && ! echo "$HTTP_IN_USE" | grep -q docker-proxy; then
+            echo "ERROR: Port 80 is in use by a non-Docker process. Please free it (e.g., stop host nginx/apache) and re-run deploy."
+            echo "$HTTP_IN_USE"
+            exit 1
+          fi
+          if [ -n "$HTTPS_IN_USE" ] && ! echo "$HTTPS_IN_USE" | grep -q docker-proxy; then
+            echo "ERROR: Port 443 is in use by a non-Docker process. Please free it and re-run deploy."
+            echo "$HTTPS_IN_USE"
+            exit 1
+          fi
+
           # Ensure infra (Postgres/Redis) is up first
           docker compose -f "$COMPOSE_FILE" --profile infra up -d
           # Build and restart full stack (include both profiles so worker can see redis)
           docker compose -f "$COMPOSE_FILE" --profile infra --profile app build --no-cache
-          docker compose -f "$COMPOSE_FILE" --profile infra --profile app up -d
+          docker compose -f "$COMPOSE_FILE" --profile infra --profile app up -d --force-recreate --remove-orphans
           # Optional: show status
           docker compose -f "$COMPOSE_FILE" ps
+
+          echo "Locating nginx container ..."
+          NGINX_CID=$(docker compose -f "$COMPOSE_FILE" ps -q nginx || true)
+          if [ -z "$NGINX_CID" ]; then
+            echo "ERROR: Could not determine nginx container ID (service 'nginx' missing?)." && exit 1
+          fi
+
+          echo "Waiting for Nginx to become healthy ($NGINX_CID) ..."
+          for i in $(seq 1 30); do
+            STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$NGINX_CID" 2>/dev/null || echo "")
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Nginx is healthy."
+              break
+            fi
+            sleep 2
+          done
+          STATUS=$(docker inspect -f '{{.State.Health.Status}}' "$NGINX_CID" 2>/dev/null || echo "")
+          if [ "$STATUS" != "healthy" ]; then
+            echo "ERROR: Nginx did not become healthy. Logs:"
+            docker logs --tail=200 "$NGINX_CID" || true
+            exit 1
+          fi
+
+          echo "Verifying port 80 is listening ..."
+          ss -ltnp | grep -E 'LISTEN.+:80\s' || (echo 'Port 80 not listening' && exit 1)
 
     - name: Done
       run: echo "Deployment process finished successfully."
