@@ -250,9 +250,32 @@ app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) => {
 app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
   try {
     const payload = await (req as any).jwtVerify()
-    const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, handle: true, name: true, avatarUrl: true } })
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, email: true, handle: true, name: true, avatarUrl: true },
+    })
     if (!user) return reply.code(401).send({ error: 'unauthorized' })
-    return user
+
+    const homeFollow = await prisma.chamberFollow.findFirst({ where: { userId: payload.sub, home: true } })
+    let homeChamber: null | {
+      provinceCode: string
+      provinceName: string
+      chamberSlug: string
+      chamberName: string
+    } = null
+
+    if (homeFollow) {
+      const chamber = findChamber(homeFollow.provinceCode, homeFollow.chamberSlug)
+      const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
+      homeChamber = {
+        provinceCode: normalizedProvince ?? homeFollow.provinceCode,
+        provinceName: normalizedProvince ? getProvinceDisplayName(normalizedProvince) : homeFollow.provinceCode.toUpperCase(),
+        chamberSlug: homeFollow.chamberSlug,
+        chamberName: chamber?.name ?? homeFollow.chamberSlug,
+      }
+    }
+
+    return reply.send({ ...user, homeChamber })
   } catch {
     return reply.code(401).send({ error: 'unauthorized' })
   }

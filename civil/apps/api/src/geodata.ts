@@ -9,6 +9,7 @@ import { point, polygon, multiPolygon } from '@turf/helpers'
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon'
 import turfCentroid from '@turf/centroid'
 import turfDistance from '@turf/distance'
+import pointToPolygonDistance from '@turf/point-to-polygon-distance'
 
 const DEFAULT_SHP_URL = 'https://elections.ca/res/cir/mapsCorner/vector/FederalElectoralDistricts_2025_SHP.zip'
 
@@ -54,6 +55,8 @@ const cache: GeoCacheHolder = {
   promise: null,
   value: null,
 }
+
+const BOUNDARY_TOLERANCE_KM = 0.05
 
 function getConfiguredShapefileUrl(): string {
   return process.env.FEDERAL_SHP_URL?.trim() || DEFAULT_SHP_URL
@@ -251,16 +254,6 @@ export async function ensureGeoCache(): Promise<GeoCache> {
   return cache.promise
 }
 
-function withinBBox(feature: ProcessedFeature, lng: number, lat: number, paddingDegrees: number) {
-  const [minLng, minLat, maxLng, maxLat] = feature.bbox
-  return (
-    lng >= minLng - paddingDegrees &&
-    lng <= maxLng + paddingDegrees &&
-    lat >= minLat - paddingDegrees &&
-    lat <= maxLat + paddingDegrees
-  )
-}
-
 function confidenceFromDistance(distanceKm: number, method: 'geofenced' | 'nearest'): 'high' | 'medium' | 'low' {
   if (method === 'geofenced') return 'high'
   if (distanceKm <= 10) return 'high'
@@ -296,42 +289,38 @@ function buildMatch(feature: ProcessedFeature, method: 'geofenced' | 'nearest', 
 export async function locateChamberFromPoint(lat: number, lng: number, options: LocateOptions = {}) {
   const { features, fetchedAt, sourceUrl, cached } = await ensureGeoCache()
   const limit = Math.max(1, Math.min(options.limit ?? 8, 25))
-  const paddingDegrees = Math.max(0, Math.min(options.paddingDegrees ?? 0.25, 5))
-
   const targetPoint = point([lng, lat])
-  let polygonHit: ProcessedFeature | null = null
+  const scored = features.map((feature) => {
+    const centroidDistanceKm = turfDistance(targetPoint, feature.centroidPoint, { units: 'kilometers' })
+    const polygonDistanceKm = pointToPolygonDistance(targetPoint, feature.feature, { units: 'kilometers' })
+    const inside = booleanPointInPolygon(targetPoint, feature.feature)
+    const consideredInside = inside || polygonDistanceKm <= BOUNDARY_TOLERANCE_KM
+    return { feature, centroidDistanceKm, polygonDistanceKm, consideredInside }
+  })
 
-  for (const feature of features) {
-    if (!withinBBox(feature, lng, lat, paddingDegrees)) continue
-    if (booleanPointInPolygon(targetPoint, feature.feature)) {
-      polygonHit = feature
-      break
-    }
-  }
+  const polygonHitEntry = scored
+    .filter((entry) => entry.consideredInside)
+    .sort((a, b) => a.polygonDistanceKm - b.polygonDistanceKm)[0] ?? null
 
-  const scored = features
-    .map((feature) => {
-  const distanceKm = turfDistance(targetPoint, feature.centroidPoint, { units: 'kilometers' })
-      return { feature, distanceKm }
-    })
-    .sort((a, b) => a.distanceKm - b.distanceKm)
+  const polygonHit = polygonHitEntry?.feature ?? null
+
+  const sortedByPolygon = [...scored].sort((a, b) => a.polygonDistanceKm - b.polygonDistanceKm)
 
   let primary: GeoMatch | null = null
   const alternatives: GeoMatch[] = []
 
-  if (polygonHit) {
-  const polygonDistance = turfDistance(targetPoint, polygonHit.centroidPoint, { units: 'kilometers' })
-    primary = buildMatch(polygonHit, 'geofenced', polygonDistance)
+  if (polygonHit && polygonHitEntry) {
+    primary = buildMatch(polygonHit, 'geofenced', polygonHitEntry.polygonDistanceKm)
   }
 
-  for (const { feature, distanceKm } of scored) {
-    if (polygonHit && feature === polygonHit) continue
+  for (const entry of sortedByPolygon) {
+    if (polygonHit && entry.feature === polygonHit) continue
     if (!primary) {
-      primary = buildMatch(feature, 'nearest', distanceKm)
+      primary = buildMatch(entry.feature, 'nearest', entry.polygonDistanceKm)
       continue
     }
     if (alternatives.length >= limit - 1) break
-    alternatives.push(buildMatch(feature, 'nearest', distanceKm))
+    alternatives.push(buildMatch(entry.feature, 'nearest', entry.polygonDistanceKm))
   }
 
   return {

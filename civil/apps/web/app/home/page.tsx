@@ -8,13 +8,7 @@ import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../_components/PostC
 import type { Jurisdiction } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
-
-type User = {
-  id: string
-  handle: string
-  name?: string | null
-  avatarUrl?: string | null
-}
+import { hasHomeChamber, type MeResponse } from '../_lib/me'
 
 function formatDate(iso: string) {
   const date = new Date(iso)
@@ -60,7 +54,7 @@ const JURISDICTION_FILTERS: Array<{ value: 'all' | Jurisdiction; label: string }
 ]
 
 export default function HomePage() {
-  const [me, setMe] = useState<User | null>(null)
+  const [me, setMe] = useState<MeResponse | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
   const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
@@ -93,9 +87,15 @@ export default function HomePage() {
       return
     }
 
-  fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
+    fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : Promise.reject('unauthorized')))
-      .then(setMe)
+      .then((data: MeResponse) => {
+        if (!hasHomeChamber(data)) {
+          window.location.replace('/welcome')
+          return
+        }
+        setMe(data)
+      })
       .catch(() => {
         localStorage.removeItem('token')
         redirectToAuthModal('login')
