@@ -10,7 +10,7 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "baseUrl": ".",
-    "types": ["node"],
+  "types": ["node", "geojson"],
     "paths": {
       "@civil/shared": ["packages/shared/src/index.ts"],
       "@civil/ui": ["packages/ui/src/index.ts"],
