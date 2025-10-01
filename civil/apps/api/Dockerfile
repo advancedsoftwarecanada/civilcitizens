@@ -4,10 +4,10 @@ WORKDIR /app
 
 FROM base AS deps
 RUN corepack enable && corepack prepare pnpm@9 --activate
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages ./packages
 COPY apps/api/package.json ./apps/api/package.json
-RUN pnpm -w i --no-frozen-lockfile
+RUN pnpm -w i --frozen-lockfile || pnpm -w i
 
 FROM deps AS build
 COPY apps/api ./apps/api
