@@ -14,5 +14,8 @@
     "prisma": "pnpm --filter @civil/db prisma",
     "migrate:dev": "pnpm --filter @civil/db prisma migrate dev",
     "format": "pnpm -r format"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.15"
   }
 }
