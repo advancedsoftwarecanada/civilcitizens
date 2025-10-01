@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "typescript": "^5.5.4",
-    "@types/node": "^20.12.12"
+    "@types/node": "^20.12.12",
+    "@types/geojson": "^7946.0.15"
   }
 }

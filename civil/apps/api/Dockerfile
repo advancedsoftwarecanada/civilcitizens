@@ -7,7 +7,7 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages ./packages
 COPY apps/api/package.json ./apps/api/package.json
-RUN pnpm -w i --frozen-lockfile || pnpm -w i
+RUN pnpm -w i --no-frozen-lockfile
 
 FROM deps AS build
 COPY apps/api ./apps/api
