@@ -141,6 +141,38 @@ export const UnfollowChamberInput = z.object({
 })
 export type UnfollowChamberInput = z.infer<typeof UnfollowChamberInput>
 
+export const ChamberGeoMatchSchema = z.object({
+  province: z.string().min(2).max(2),
+  chamberSlug: z.string().min(1).max(160),
+  chamberName: z.string().min(1).max(160),
+  method: z.enum(['geofenced', 'nearest']),
+  confidence: z.enum(['high', 'medium', 'low']).default('medium'),
+  distanceKm: z.number().nonnegative().optional(),
+})
+export type ChamberGeoMatch = z.infer<typeof ChamberGeoMatchSchema>
+
+export const ChamberGeolocateResponseSchema = z.object({
+  primary: ChamberGeoMatchSchema.nullable(),
+  alternatives: z.array(ChamberGeoMatchSchema),
+  meta: z
+    .object({
+      source: z.string().default('elections_canada'),
+      cached: z.boolean().optional(),
+      fetchedAt: z.string().optional(),
+      features: z.number().optional(),
+    })
+    .optional(),
+})
+export type ChamberGeolocateResponse = z.infer<typeof ChamberGeolocateResponseSchema>
+
+export const ChamberGeolocateInput = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  limit: z.coerce.number().int().min(1).max(25).default(8).optional(),
+  bboxPaddingDegrees: z.coerce.number().min(0).max(5).default(0.25).optional(),
+})
+export type ChamberGeolocateInput = z.infer<typeof ChamberGeolocateInput>
+
 export const ExperienceInput = z
   .object({
     title: z.string().trim().min(1).max(120),

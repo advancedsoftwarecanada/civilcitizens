@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { pushToast } from '../_components/useToasts'
+import { buildApiUrl, parseApiResponse } from '../_lib/api'
 
 type FieldErrors = Record<string, string[]>
 
@@ -41,13 +42,14 @@ export default function ForgotPasswordPage() {
     }
 
     try {
-      const response = await fetch('/api/auth/forgot', {
+      const response = await fetch(buildApiUrl('/auth/forgot'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ emailOrHandle: emailOrHandle.trim() }),
       })
 
-      const data = (await response.json().catch(() => ({}))) as ForgotSuccessResponse & ForgotErrorResponse
+      const { json, text: fallbackText } = await parseApiResponse<ForgotSuccessResponse & ForgotErrorResponse>(response)
+      const data = (json ?? {}) as ForgotSuccessResponse & ForgotErrorResponse
 
       if (response.ok) {
         const message = data.token ? `Reset token (dev only): ${data.token}` : 'If that account exists, you will receive a reset link.'
@@ -61,7 +63,11 @@ export default function ForgotPasswordPage() {
         return
       }
 
-      const message = (typeof data.error === 'string' && data.error) || data.message || 'Request failed'
+      const looksLikeHtml = typeof fallbackText === 'string' && /<[^>]+>/.test(fallbackText)
+      const sanitizedFallback = looksLikeHtml ? null : fallbackText?.trim()
+      const statusFallback = response.status >= 500 ? `Service temporarily unavailable (${response.status}). Please try again.` : null
+      const message =
+        (typeof data.error === 'string' && data.error) || data.message || sanitizedFallback || statusFallback || 'Request failed'
       setStatusMessage(message)
       pushToast(message, 'error')
     } catch (error) {

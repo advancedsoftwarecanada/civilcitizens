@@ -24,11 +24,13 @@ import {
   getProvinceDisplayName,
   buildHandleBase,
   JurisdictionEnum,
+  ChamberGeolocateInput,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import { Prisma } from '@prisma/client'
 import { randomUUID } from 'crypto'
+import { locateChamberFromPoint } from './geodata.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
@@ -469,6 +471,26 @@ app.delete('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply)
   })
 
   return reply.send({ ok: true })
+})
+
+app.post('/chambers/geolocate', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = ChamberGeolocateInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  try {
+    const { lat, lng, limit, bboxPaddingDegrees } = parse.data
+    const { primary, alternatives, meta } = await locateChamberFromPoint(lat, lng, {
+      limit: limit ?? undefined,
+      paddingDegrees: bboxPaddingDegrees ?? undefined,
+    })
+    return reply.send({ primary, alternatives, meta })
+  } catch (error) {
+    req.log.error({ err: error }, 'chamber_geolocate_failed')
+    return reply.code(500).send({ error: 'geolocation_failed' })
+  }
 })
 
 // Basic auth hook (placeholder)

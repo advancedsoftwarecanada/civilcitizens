@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
 import type { Jurisdiction } from '@civil/shared'
+import { redirectToAuthModal } from '../_lib/authModal'
+import { buildApiUrl } from '../_lib/api'
 
 export type PostType = 'post' | 'article'
 
@@ -119,7 +121,7 @@ export default function PostComposer({
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
-      window.location.href = '/login'
+      redirectToAuthModal('login')
       return
     }
     if (!canSubmit || submitting) return
@@ -140,7 +142,7 @@ export default function PostComposer({
 
       payload.jurisdiction = jurisdiction
 
-      const res = await fetch('/api/posts', {
+  const res = await fetch(buildApiUrl('/posts'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

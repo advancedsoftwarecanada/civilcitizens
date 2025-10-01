@@ -5,6 +5,8 @@ import { buildHandleBase } from '@civil/shared'
 import Sidebar from '../_components/Sidebar'
 import RichTextEditor from '../_components/RichTextEditor'
 import { pushToast } from '../_components/useToasts'
+import { redirectToAuthModal } from '../_lib/authModal'
+import { buildApiUrl } from '../_lib/api'
 
 type Viewer = {
   id: string
@@ -136,12 +138,12 @@ export default function ProfileEditPage() {
     const storedToken = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
     if (!storedToken) {
       if (typeof window !== 'undefined') {
-        window.location.href = '/login'
+        redirectToAuthModal('login')
       }
       return null
     }
     try {
-      const res = await fetch('/api/auth/me', {
+  const res = await fetch(buildApiUrl('/auth/me'), {
         headers: {
           authorization: `Bearer ${storedToken}`,
         },
@@ -149,7 +151,7 @@ export default function ProfileEditPage() {
       if (!res.ok) {
         if (typeof window !== 'undefined') {
           window.localStorage.removeItem('token')
-          window.location.href = '/login'
+          redirectToAuthModal('login')
         }
         return null
       }
@@ -162,7 +164,7 @@ export default function ProfileEditPage() {
       pushToast('Unable to verify your session. Please sign in again.', 'error', 6000)
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('token')
-        window.location.href = '/login'
+        redirectToAuthModal('login')
       }
       return null
     }
@@ -189,7 +191,7 @@ export default function ProfileEditPage() {
       setLoading(true)
       setError(null)
       try {
-        const res = await fetch('/api/profile', {
+  const res = await fetch(buildApiUrl('/profile'), {
           headers: {
             authorization: `Bearer ${authToken}`,
           },
@@ -198,7 +200,7 @@ export default function ProfileEditPage() {
           if (res.status === 401) {
             if (typeof window !== 'undefined') {
               window.localStorage.removeItem('token')
-              window.location.href = '/login'
+              redirectToAuthModal('login')
             }
             return
           }
@@ -356,7 +358,7 @@ export default function ProfileEditPage() {
 
     setSaving(true)
     try {
-      const res = await fetch('/api/profile', {
+  const res = await fetch(buildApiUrl('/profile'), {
         method: 'PUT',
         headers: {
           'content-type': 'application/json',

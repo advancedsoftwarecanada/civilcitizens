@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
 import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../_components/PostComposer'
 import type { Jurisdiction } from '@civil/shared'
+import { redirectToAuthModal } from '../_lib/authModal'
+import { buildApiUrl } from '../_lib/api'
 
 type User = {
   id: string
@@ -68,7 +70,7 @@ export default function HomePage() {
   const refreshPosts = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await fetch(`/api/posts${filterQuery}`)
+  const response = await fetch(buildApiUrl(`/posts${filterQuery}`))
       const data = await response.json().catch(() => ({ items: [] }))
       setPosts(Array.isArray(data.items) ? data.items : [])
     } finally {
@@ -87,16 +89,16 @@ export default function HomePage() {
 
     const token = localStorage.getItem('token')
     if (!token) {
-      window.location.href = '/login'
+      redirectToAuthModal('login')
       return
     }
 
-    fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } })
+  fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : Promise.reject('unauthorized')))
       .then(setMe)
       .catch(() => {
         localStorage.removeItem('token')
-        window.location.href = '/login'
+        redirectToAuthModal('login')
       })
   }, [])
 

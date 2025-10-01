@@ -1,10 +1,12 @@
 "use client"
-"use client"
 import { useEffect, useMemo, useState } from 'react'
+import type { ChamberGeoMatch, ChamberGeolocateResponse } from '@civil/shared'
 import type { ChangeEvent } from 'react'
 import Link from 'next/link'
 import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
+import { redirectToAuthModal } from '../_lib/authModal'
+import { buildApiUrl } from '../_lib/api'
 
 const provincesFallback = [
   { code: 'nl', name: 'Newfoundland and Labrador' },
@@ -88,21 +90,27 @@ export default function ChambersPage() {
   const [loadingFollows, setLoadingFollows] = useState(true)
   const [managingFollow, setManagingFollow] = useState<string | null>(null)
   const [bootstrapped, setBootstrapped] = useState(false)
+  const [geoBusy, setGeoBusy] = useState(false)
+  const [geoStatus, setGeoStatus] = useState('')
+  const [geoError, setGeoError] = useState<string | null>(null)
+  const [geoPrimary, setGeoPrimary] = useState<ChamberGeoMatch | null>(null)
+  const [geoAlternatives, setGeoAlternatives] = useState<ChamberGeoMatch[]>([])
+  const [showGeoOverlay, setShowGeoOverlay] = useState(false)
 
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (!token) {
-      window.location.href = '/login'
+      redirectToAuthModal('login')
       return
     }
 
     async function bootstrap() {
       try {
         const [meRes, provRes, homeRes, followsRes] = await Promise.all([
-          fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } }),
-          fetch('/api/chambers/provinces'),
-          fetch('/api/chambers/home', { headers: { authorization: `Bearer ${token}` } }),
-          fetch('/api/chambers/follows', { headers: { authorization: `Bearer ${token}` } }),
+            fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
+            fetch(buildApiUrl('/chambers/provinces')),
+            fetch(buildApiUrl('/chambers/home'), { headers: { authorization: `Bearer ${token}` } }),
+            fetch(buildApiUrl('/chambers/follows'), { headers: { authorization: `Bearer ${token}` } }),
         ])
 
         const meData = await jsonOrThrow<Me>(meRes)
@@ -140,7 +148,7 @@ export default function ChambersPage() {
       } catch (err) {
         console.error('Failed bootstrapping chambers screen', err)
         localStorage.removeItem('token')
-        window.location.href = '/login'
+        redirectToAuthModal('login')
       } finally {
         setLoadingFollows(false)
         setBootstrapped(true)
@@ -158,7 +166,7 @@ export default function ChambersPage() {
     }
     setLoadingChambers(true)
     try {
-      const res = await fetch(`/api/chambers?province=${encodeURIComponent(province)}`)
+        const res = await fetch(buildApiUrl(`/chambers?province=${encodeURIComponent(province)}`))
       const data = await jsonOrThrow<ItemsResponse<Chamber>>(res)
       const items = Array.isArray(data.items) ? data.items : []
       setChambers(items)
@@ -197,7 +205,7 @@ export default function ChambersPage() {
     if (!token) return []
     setLoadingFollows(true)
     try {
-      const res = await fetch('/api/chambers/follows', {
+        const res = await fetch(buildApiUrl('/chambers/follows'), {
         headers: {
           authorization: `Bearer ${token}`,
         },
@@ -223,11 +231,111 @@ export default function ChambersPage() {
     }
   }
 
+  async function applyGeolocationMatch(match: ChamberGeoMatch, reason: 'auto' | 'suggestion') {
+    try {
+      setGeoPrimary(match)
+      setSelectedProvince(match.province)
+      await loadChambersForProvince(match.province, match.chamberSlug)
+      setSelectedChamber(match.chamberSlug)
+      const contextMessage =
+        reason === 'auto'
+          ? match.method === 'geofenced'
+            ? `Matched ${match.chamberName} using Elections Canada boundaries.`
+            : `Matched ${match.chamberName}. This was the closest riding to your location.`
+          : `Switched to ${match.chamberName}.`
+      pushToast(contextMessage, 'success')
+      setGeoStatus(`Ready to continue in ${match.chamberName}.`)
+      setGeoError(null)
+    } catch (error) {
+      console.error('Failed applying geolocation match', error)
+      setGeoError('We found a riding but could not select it automatically. Please choose from the lists above.')
+      pushToast('We found a riding nearby but could not auto-select it. Pick it manually.', 'error')
+    }
+  }
+
+  function handleSuggestionSelect(match: ChamberGeoMatch) {
+    void applyGeolocationMatch(match, 'suggestion')
+  }
+
+  function handleAutoDetect() {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!navigator.geolocation) {
+      pushToast('Your browser does not support location detection. Please pick your riding manually.', 'error')
+      return
+    }
+
+    setGeoBusy(true)
+    setGeoStatus('Requesting permission…')
+    setGeoError(null)
+    setGeoAlternatives([])
+    setGeoPrimary(null)
+    setShowGeoOverlay(true)
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        setGeoStatus('Matching your riding…')
+        try {
+          const { latitude, longitude } = pos.coords
+          const res = await fetch(buildApiUrl('/chambers/geolocate'), {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ lat: latitude, lng: longitude, limit: 8 }),
+          })
+          const data = await jsonOrThrow<ChamberGeolocateResponse>(res)
+          const primary = data.primary ?? null
+          const alternatives = Array.isArray(data.alternatives) ? data.alternatives : []
+          setGeoAlternatives(alternatives)
+          if (primary) {
+            await applyGeolocationMatch(primary, 'auto')
+          } else {
+            setGeoPrimary(null)
+            setGeoStatus('We could not find an exact riding match. Please choose a suggestion below.')
+            setGeoError('We matched nearby ridings. Pick the correct one to continue.')
+          }
+        } catch (error) {
+          console.error('Geolocation lookup failed', error)
+          setGeoStatus('Unable to match your location automatically.')
+          setGeoError(getErrorMessage(error) ?? 'Unable to match your location right now. Please choose manually.')
+          pushToast('Unable to identify your riding automatically right now.', 'error')
+        } finally {
+          setGeoBusy(false)
+          setShowGeoOverlay(false)
+        }
+      },
+      (err) => {
+        console.warn('Geolocation request denied or failed', err)
+        setGeoBusy(false)
+        setShowGeoOverlay(false)
+        if (err.code === 1) {
+          setGeoStatus('Location permission was denied.')
+          setGeoError('Enable location permissions in your browser to auto-detect your riding, or select it manually.')
+          pushToast('Location permission denied. Select your riding manually.', 'error')
+        } else if (err.code === 3) {
+          setGeoStatus('Location lookup timed out.')
+          setGeoError('Try again from a spot with better reception, or pick your riding manually.')
+          pushToast('Location lookup timed out. Try again or choose manually.', 'error')
+        } else {
+          setGeoStatus('We could not retrieve your location.')
+          setGeoError('Please select your province and riding manually.')
+          pushToast('We could not retrieve your location. Select your riding manually.', 'error')
+        }
+      },
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 }
+    )
+  }
+
   async function setHomeChamber(provinceCode: string, chamberSlug: string, source: 'picker' | 'list') {
     if (!provinceCode || !chamberSlug) return
     const token = localStorage.getItem('token')
     if (!token) {
-      window.location.href = '/login'
+      redirectToAuthModal('login')
       return
     }
     if (source === 'picker') {
@@ -236,7 +344,7 @@ export default function ChambersPage() {
       setManagingFollow(`${provinceCode}:${chamberSlug}:home`)
     }
     try {
-      const res = await fetch('/api/chambers/home', {
+        const res = await fetch(buildApiUrl('/chambers/home'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -271,12 +379,12 @@ export default function ChambersPage() {
     if (!selectedProvince || !selectedChamber) return
     const token = localStorage.getItem('token')
     if (!token) {
-      window.location.href = '/login'
+      redirectToAuthModal('login')
       return
     }
     setFollowSaving(true)
     try {
-      const res = await fetch('/api/chambers/follows', {
+  const res = await fetch(buildApiUrl('/chambers/follows'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -305,13 +413,13 @@ export default function ChambersPage() {
   async function handleUnfollow(follow: ChamberFollow) {
     const token = localStorage.getItem('token')
     if (!token) {
-      window.location.href = '/login'
+      redirectToAuthModal('login')
       return
     }
     const key = `${follow.province}:${follow.chamberSlug}:remove`
     setManagingFollow(key)
     try {
-      const res = await fetch('/api/chambers/follows', {
+  const res = await fetch(buildApiUrl('/chambers/follows'), {
         method: 'DELETE',
         headers: {
           'content-type': 'application/json',
@@ -502,6 +610,55 @@ export default function ChambersPage() {
               </select>
             </div>
 
+            <div className="rounded border border-dashed px-3 py-3 text-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-semibold text-gray-700">Need a hand?</div>
+                  <div className="text-xs text-gray-500">Let us detect your riding using your current location.</div>
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={handleAutoDetect}
+                  disabled={geoBusy}
+                >
+                  {geoBusy ? 'Detecting…' : 'Use my location'}
+                </button>
+              </div>
+              {(geoStatus || geoError || geoPrimary) && (
+                <div className="mt-3 space-y-2 text-xs">
+                  {geoPrimary && (
+                    <div className="rounded bg-green-50 px-3 py-2 text-green-700">
+                      Matched <span className="font-semibold">{geoPrimary.chamberName}</span> ({geoPrimary.province.toUpperCase()})
+                      {geoPrimary.method === 'geofenced' ? ' using Elections Canada boundaries.' : ' as the closest riding to you.'}
+                    </div>
+                  )}
+                  {geoStatus && <div className="text-gray-600">{geoStatus}</div>}
+                  {geoError && <div className="text-red-500">{geoError}</div>}
+                </div>
+              )}
+              {geoAlternatives.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Other nearby ridings</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {geoAlternatives.map((match) => (
+                      <button
+                        key={`${match.province}:${match.chamberSlug}`}
+                        type="button"
+                        className="rounded border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                        onClick={() => handleSuggestionSelect(match)}
+                      >
+                        {match.chamberName}
+                        {typeof match.distanceKm === 'number' ? (
+                          <span className="ml-1 text-[11px] text-gray-500">({match.distanceKm} km)</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -539,11 +696,20 @@ export default function ChambersPage() {
             </p>
           </div>
           <div className="rounded-lg border bg-white p-4 text-sm text-gray-600">
-            Auto-detect and advanced geolocation will arrive in the next milestone. For now, choose manually and we\'ll tailor
-            your feed instantly.
+            Tap “Use my location” to let Civil auto-detect your riding, or choose manually and we\'ll tailor your feed instantly.
           </div>
         </div>
       </aside>
+      {showGeoOverlay && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm">
+          <div className="rounded-lg bg-white px-6 py-4 shadow-lg">
+            <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
+            <div className="mt-1 text-xs text-gray-500">
+              {geoStatus || 'Hang tight for a moment while we match you to the right chamber.'}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

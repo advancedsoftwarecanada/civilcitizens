@@ -4,6 +4,8 @@ import { useRouter } from 'next/navigation'
 import type { FormEvent } from 'react'
 import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
+import { redirectToAuthModal } from '../_lib/authModal'
+import { buildApiUrl, parseApiResponse } from '../_lib/api'
 
 type FieldErrors = Record<string, string[]>
 
@@ -22,7 +24,8 @@ type RegisterErrorResponse = {
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
-const triggerModalOrNavigate = (router: ReturnType<typeof useRouter>, eventName: 'openLoginModal' | 'openForgotModal', fallbackUrl: string) => {
+const triggerModalOrNavigate = (router: ReturnType<typeof useRouter>, modal: 'login' | 'forgot') => {
+  const eventName = modal === 'login' ? 'openLoginModal' : 'openForgotModal'
   const inModal = Boolean(document.querySelector('[data-cc-modal-root]'))
   if (inModal) {
     if (window.location.pathname.startsWith('/register')) {
@@ -32,7 +35,7 @@ const triggerModalOrNavigate = (router: ReturnType<typeof useRouter>, eventName:
       window.dispatchEvent(new CustomEvent(eventName))
     }
   } else {
-    window.location.replace(fallbackUrl)
+    redirectToAuthModal(modal)
   }
 }
 
@@ -79,28 +82,40 @@ export default function RegisterPage() {
         acceptTerms,
       }
 
-      const response = await fetch('/api/auth/register', {
+      const response = await fetch(buildApiUrl('/auth/register'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
       })
 
-      const data = (await response.json()) as RegisterSuccess & RegisterErrorResponse
+      const { json: data, text: fallbackText } = await parseApiResponse<RegisterSuccess & RegisterErrorResponse>(response)
+      const safeData: Partial<RegisterSuccess & RegisterErrorResponse> = data ?? {}
 
       if (!response.ok) {
-        if (typeof data.error === 'object' && data.error?.fieldErrors) {
-          setFieldErrors(data.error.fieldErrors)
+        const fieldErrorPayload = typeof safeData.error === 'object' && safeData.error && 'fieldErrors' in safeData.error ? safeData.error.fieldErrors : null
+        if (fieldErrorPayload && typeof fieldErrorPayload === 'object') {
+          setFieldErrors(fieldErrorPayload as FieldErrors)
           setFormError('Please fix the errors and try again')
           return
         }
 
-        const message = (typeof data.error === 'string' && data.error) || data.message || 'Registration failed'
+        const looksLikeHtml = typeof fallbackText === 'string' && /<[^>]+>/.test(fallbackText)
+        const sanitizedFallback = looksLikeHtml ? null : fallbackText?.trim()
+        const statusFallback = response.status >= 500 ? `Service temporarily unavailable (${response.status}). Please try again.` : null
+        const message =
+          (typeof safeData.error === 'string' && safeData.error) ||
+          (typeof safeData.message === 'string' && safeData.message) ||
+          sanitizedFallback ||
+          statusFallback ||
+          'Registration failed'
         setFormError(message)
         pushToast(message, 'error')
         return
       }
 
-      localStorage.setItem('token', data.token)
+      if (safeData && 'token' in safeData && typeof safeData.token === 'string') {
+        localStorage.setItem('token', safeData.token)
+      }
       window.location.href = '/home'
     } catch (error) {
       console.error('Registration request failed', error)
@@ -207,12 +222,12 @@ export default function RegisterPage() {
       </form>
       <div className="mt-4 text-sm">
         Already have an account?{' '}
-        <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'openLoginModal', '/login')}>
+  <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'login')}>
           Sign in
         </button>
       </div>
       <div className="mt-2 text-sm">
-        <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'openForgotModal', '/forgot')}>
+  <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'forgot')}>
           Forgot password?
         </button>
       </div>

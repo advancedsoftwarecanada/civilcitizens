@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { FormEvent } from 'react'
 import { pushToast } from '../_components/useToasts'
+import { redirectToAuthModal } from '../_lib/authModal'
+import { buildApiUrl, parseApiResponse } from '../_lib/api'
 
 type LoginSuccess = {
   token: string
@@ -49,13 +51,14 @@ export default function LoginPage() {
     }
 
     try {
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch(buildApiUrl('/auth/login'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ emailOrHandle, password }),
       })
 
-      const data = (await response.json()) as LoginSuccess & LoginErrorResponse
+      const { json, text: fallbackText } = await parseApiResponse<LoginSuccess & LoginErrorResponse>(response)
+      const data: Partial<LoginSuccess & LoginErrorResponse> = json ?? {}
 
       if (!response.ok) {
         const apiCode = typeof data.error === 'string' ? data.error : null
@@ -64,11 +67,15 @@ export default function LoginPage() {
           resolvedMessage = AUTH_ERROR_MESSAGES[apiCode]
         }
         const messageFromApi = typeof data.message === 'string' ? data.message : null
-        const finalMessage = resolvedMessage ?? messageFromApi ?? 'Login failed. Please try again.'
+        const looksLikeHtml = typeof fallbackText === 'string' && /<[^>]+>/.test(fallbackText)
+        const sanitizedFallback = looksLikeHtml ? null : fallbackText?.trim()
+        const statusFallback = response.status >= 500 ? `Service temporarily unavailable (${response.status}). Please try again.` : null
+        const finalMessage =
+          resolvedMessage ?? messageFromApi ?? sanitizedFallback ?? statusFallback ?? 'Login failed. Please try again.'
 
         if (apiCode === 'invalid_credentials') {
           pushToast(AUTH_ERROR_MESSAGES.invalid_credentials, 'error')
-        } else if (resolvedMessage || messageFromApi) {
+        } else {
           pushToast(finalMessage, 'error')
         }
 
@@ -76,7 +83,9 @@ export default function LoginPage() {
         return
       }
 
-      localStorage.setItem('token', data.token)
+      if (typeof data.token === 'string') {
+        localStorage.setItem('token', data.token)
+      }
       window.location.href = '/home'
     } catch (error) {
       console.error('Login request failed', error)
@@ -95,7 +104,7 @@ export default function LoginPage() {
         window.dispatchEvent(new CustomEvent('openRegisterModal'))
       }
     } else {
-      window.location.replace('/register')
+      redirectToAuthModal('register')
     }
   }
 
@@ -109,7 +118,7 @@ export default function LoginPage() {
         window.dispatchEvent(new CustomEvent('openForgotModal'))
       }
     } else {
-      window.location.replace('/forgot')
+      redirectToAuthModal('forgot')
     }
   }
 

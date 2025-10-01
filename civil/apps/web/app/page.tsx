@@ -5,6 +5,8 @@ import Image from 'next/image'
 import dynamic from 'next/dynamic'
 import Modal from './_components/Modal'
 import AutoRedirect from './_components/AutoRedirect'
+import { consumeQueuedAuthModal } from './_lib/authModal'
+import type { AuthModalType } from './_lib/authModal'
 import {
   FaMapMarkedAlt,
   FaUserTie,
@@ -18,9 +20,12 @@ import {
 
 type EmptyProps = Record<string, never>
 
-const LoginForm = dynamic<EmptyProps>(() => import('./login/page'), { ssr: false })
-const RegisterForm = dynamic<EmptyProps>(() => import('./register/page'), { ssr: false })
-const ForgotForm = dynamic<EmptyProps>(() => import('./forgot/page'), { ssr: false })
+// @ts-expect-error -- Next.js runtime resolves extensionless dynamic imports
+const LoginForm = dynamic<EmptyProps>(() => import('./login/page').then((mod) => mod.default), { ssr: false })
+// @ts-expect-error -- Next.js runtime resolves extensionless dynamic imports
+const RegisterForm = dynamic<EmptyProps>(() => import('./register/page').then((mod) => mod.default), { ssr: false })
+// @ts-expect-error -- Next.js runtime resolves extensionless dynamic imports
+const ForgotForm = dynamic<EmptyProps>(() => import('./forgot/page').then((mod) => mod.default), { ssr: false })
 
 function IconWrap({ children }: { children: ReactNode }) {
   return <div className="text-center mb-3 text-primary-cc">{children}</div>
@@ -42,6 +47,24 @@ export default function Home() {
       window.removeEventListener('openRegisterModal', openRegister)
       window.removeEventListener('openForgotModal', openForgot)
     }
+  }, [])
+  useEffect(() => {
+    let target: AuthModalType | null = consumeQueuedAuthModal()
+    if (!target && typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const authParam = params.get('auth')
+      if (authParam === 'login' || authParam === 'register' || authParam === 'forgot') {
+        target = authParam
+        params.delete('auth')
+        const nextQuery = params.toString()
+        const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname
+        window.history.replaceState(null, '', nextUrl)
+      }
+    }
+    if (!target) return
+    setShowLogin(target === 'login')
+    setShowRegister(target === 'register')
+    setShowForgot(target === 'forgot')
   }, [])
   return (
     <main className="bg-white min-h-screen text-slate-900">

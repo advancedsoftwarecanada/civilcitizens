@@ -428,7 +428,7 @@ const RAW_CHAMBERS: RawChamber[] = [
   { code: 62001, name: 'Nunavut', province: 'nunavut' },
 ]
 
-function slugifyChamberName(name: string) {
+export function slugifyChamberName(name: string) {
   return name
     .toLowerCase()
     .normalize('NFKD')
@@ -465,8 +465,17 @@ export const PROVINCES = (Object.keys(PROVINCE_LABELS) as ProvinceCode[]).map((c
 }))
 
 const CHAMBER_LOOKUP = new Map<string, ChamberRecord>()
+const CHAMBER_BY_CODE = new Map<number, ChamberRecord>()
+const CHAMBERS_BY_SLUG = new Map<string, ChamberRecord[]>()
 for (const chamber of CHAMBERS) {
   CHAMBER_LOOKUP.set(`${chamber.province}:${chamber.slug}`, chamber)
+  CHAMBER_BY_CODE.set(chamber.code, chamber)
+  const list = CHAMBERS_BY_SLUG.get(chamber.slug)
+  if (list) {
+    list.push(chamber)
+  } else {
+    CHAMBERS_BY_SLUG.set(chamber.slug, [chamber])
+  }
 }
 
 export function normalizeProvinceCode(input?: string | null): ProvinceCode | null {
@@ -512,4 +521,18 @@ export function findChamber(provinceInput: string, slugInput: string): ChamberRe
 
 export function getProvinceDisplayName(code: ProvinceCode): string {
   return PROVINCE_LABELS[code]
+}
+
+export function findChamberByCode(code: number | string): ChamberRecord | null {
+  if (typeof code === 'string') {
+    const parsed = Number.parseInt(code, 10)
+    if (Number.isNaN(parsed)) return null
+    return CHAMBER_BY_CODE.get(parsed) ?? null
+  }
+  return CHAMBER_BY_CODE.get(code) ?? null
+}
+
+export function findChambersBySlug(slugInput: string): ChamberRecord[] {
+  const slug = slugifyChamberName(slugInput)
+  return CHAMBERS_BY_SLUG.get(slug)?.slice() ?? []
 }
