@@ -92,7 +92,14 @@ jobs:
           docker compose -f "$COMPOSE_FILE" ps
 
           echo "Locating nginx container ..."
-          NGINX_CID=$(docker compose -f "$COMPOSE_FILE" ps -q nginx || true)
+          NGINX_CID=""
+          for cid in $(docker compose -f "$COMPOSE_FILE" ps -q || true); do
+            svc=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$cid" 2>/dev/null || echo "")
+            if [ "$svc" = "nginx" ]; then
+              NGINX_CID="$cid"
+              break
+            fi
+          done
           if [ -z "$NGINX_CID" ]; then
             echo "ERROR: Could not determine nginx container ID (service 'nginx' missing?)." && exit 1
           fi
@@ -113,8 +120,9 @@ jobs:
             exit 1
           fi
 
-          echo "Verifying port 80 is listening ..."
+          echo "Verifying ports 80 and 443 are listening ..."
           ss -ltnp | grep -E 'LISTEN.+:80\s' || (echo 'Port 80 not listening' && exit 1)
+          ss -ltnp | grep -E 'LISTEN.+:443\s' || (echo 'Port 443 not listening' && exit 1)
 
     - name: Done
       run: echo "Deployment process finished successfully."
