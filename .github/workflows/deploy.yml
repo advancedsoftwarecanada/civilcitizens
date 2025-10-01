@@ -52,6 +52,21 @@ jobs:
             exit 1
           fi
           echo "Using compose file: $COMPOSE_FILE"
+
+          echo "Stopping any existing Civil stack (down + remove-orphans) ..."
+          docker compose -f "$COMPOSE_FILE" --profile infra --profile app down --remove-orphans || true
+
+          echo "Checking and stopping any containers occupying ports 80/443 ..."
+          PORT80_CONTAINERS=$(docker ps --filter 'publish=80' -q || true)
+          PORT443_CONTAINERS=$(docker ps --filter 'publish=443' -q || true)
+          if [ -n "${PORT80_CONTAINERS}${PORT443_CONTAINERS}" ]; then
+            echo "Stopping containers on 80/443:"; echo "$PORT80_CONTAINERS" "$PORT443_CONTAINERS" | tr ' ' '\n' | sort -u
+            echo "$PORT80_CONTAINERS $PORT443_CONTAINERS" | xargs -r docker stop || true
+            echo "$PORT80_CONTAINERS $PORT443_CONTAINERS" | xargs -r docker rm || true
+          else
+            echo "No containers currently binding 80/443."
+          fi
+
           # Ensure infra (Postgres/Redis) is up first
           docker compose -f "$COMPOSE_FILE" --profile infra up -d
           # Build and restart full stack (include both profiles so worker can see redis)
