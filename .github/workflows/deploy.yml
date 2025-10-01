@@ -91,6 +91,43 @@ jobs:
           # Optional: show status
           docker compose -f "$COMPOSE_FILE" ps
 
+          echo "Locating api container ..."
+          API_CID=""
+          for cid in $(docker compose -f "$COMPOSE_FILE" ps -q || true); do
+            svc=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$cid" 2>/dev/null || echo "")
+            if [ "$svc" = "api" ]; then
+              API_CID="$cid"
+              break
+            fi
+          done
+          if [ -z "$API_CID" ]; then
+            echo "ERROR: Could not determine api container ID (service 'api' missing?)." && exit 1
+          fi
+
+          echo "Waiting for API to become healthy ($API_CID) ..."
+          for i in $(seq 1 40); do
+            ASTATE=$(docker inspect -f '{{.State.Status}}' "$API_CID" 2>/dev/null || echo "")
+            AHEALTH=$(docker inspect -f '{{.State.Health.Status}}' "$API_CID" 2>/dev/null || echo "")
+            if [ "$ASTATE" = "running" ] && [ "$AHEALTH" = "healthy" ]; then
+              echo "API is healthy."
+              break
+            fi
+            if [ "$ASTATE" = "exited" ] || [ "$AHEALTH" = "unhealthy" ]; then
+              echo "ERROR: API container state=$ASTATE health=$AHEALTH"
+              echo "--- docker ps ---"; docker ps -a
+              echo "--- api logs ---"; docker logs --tail=200 "$API_CID" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          ASTATE=$(docker inspect -f '{{.State.Status}}' "$API_CID" 2>/dev/null || echo "")
+          AHEALTH=$(docker inspect -f '{{.State.Health.Status}}' "$API_CID" 2>/dev/null || echo "")
+          if [ "$AHEALTH" != "healthy" ]; then
+            echo "ERROR: API did not become healthy in time (state=$ASTATE health=$AHEALTH)."
+            echo "--- api logs ---"; docker logs --tail=200 "$API_CID" || true
+            exit 1
+          fi
+
           echo "Locating nginx container ..."
           NGINX_CID=""
           for cid in $(docker compose -f "$COMPOSE_FILE" ps -q || true); do
