@@ -1,4 +1,4 @@
-name: Deploy Application
+name: Deploy Civil (API/Web/Worker)
 
 on:
   push:
@@ -10,11 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Debug Secrets
-      run: |
-        echo "Host: ${{ secrets.SERVER_HOST }}"
-        echo "User: ${{ secrets.SERVER_USER }}"
-
     - name: Connect to Server and Deploy
       uses: appleboy/ssh-action@master
       with:
@@ -22,14 +17,19 @@ jobs:
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
-          export NVM_DIR="$HOME/.nvm"
-          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-          nvm use v18.16.0  # Explicitly use the correct Node.js version
-          export PATH=$PATH:$NVM_DIR/versions/node/v18.16.0/bin
-          cd /home/asecc/build
-          ./stop.sh
-          ./update.sh
-          ./start.sh
+          set -euo pipefail
+          cd /home/asecc/civil-citizens/civil
+          # Pull latest code
+          git fetch --all --prune
+          git checkout main
+          git pull --ff-only origin main
+          # Ensure infra (Postgres/Redis) is up first
+          docker compose --profile infra up -d
+          # Build and restart app stack (keeps infra volumes)
+          docker compose --profile app build
+          docker compose --profile app up -d
+          # Optional: show status
+          docker compose ps
 
-    - name: Deployment Completed
+    - name: Done
       run: echo "Deployment process finished successfully."

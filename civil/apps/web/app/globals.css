@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  height: 100%;
+}
+
+:root{
+  --cc-primary:#D52B1E;
+  --cc-primary-700:#b0261a;
+  --cc-border:#e2e8f0;
+  --cc-shadow:0 8px 24px rgba(2,6,23,.08);
+  --cc-shadow-lg:0 12px 32px rgba(2,6,23,.12);
+  --cc-radius:16px;
+}
+
+.text-primary-cc{ color:var(--cc-primary); }
+.btn-primary-cc{
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:0.75rem 1.5rem; border-radius:0.375rem; font-weight:600; color:#fff;
+  background:var(--cc-primary);
+}
+.btn-primary-cc:hover{ background:var(--cc-primary-700); }
+.btn-outline-primary-cc{
+  display:inline-flex; align-items:center; justify-content:center;
+  padding:0.75rem 1.5rem; border-radius:0.375rem; font-weight:600;
+  color:var(--cc-primary); border:1px solid var(--cc-primary);
+}
+.btn-outline-primary-cc:hover{ background:var(--cc-primary); color:#fff; }
+.btn-sm{ padding:0.5rem 0.75rem; font-size:0.875rem; }
+.btn-lg{ padding:0.875rem 1.75rem; font-size:1.125rem; }
+
+.hero-section{
+  background: linear-gradient(180deg,#FFFFFF 0%,#F8F9FA 50%,#FFFFFF 100%);
+  min-height: 68vh;
+  display:flex; align-items:center;
+}
+.section-hero-banner{
+  background: linear-gradient(180deg,#FFFFFF 0%, #F1F5F9 100%);
+  border-bottom: 1px solid var(--cc-border);
+  padding: 48px 0;
+}
+.cards-slab{ background:#F1F5F9; }
+.benefit-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
+.market-grid{ display:grid; gap:2rem; grid-template-columns:repeat(2,1fr); }
+.benefit-card{
+  background:#fff; border-radius:var(--cc-radius); border:1px solid var(--cc-border);
+  box-shadow:var(--cc-shadow); transition:transform .2s ease, box-shadow .2s ease;
+}
+.benefit-card:hover{ transform:translateY(-3px); box-shadow:var(--cc-shadow-lg); }
+.cc-li{ padding-top:14px; border-top:1px solid var(--cc-border); }
+
+@media (max-width: 767px){
+  .benefit-grid{ grid-template-columns:1fr!important; }
+  .market-grid{ grid-template-columns:1fr!important; }
+}
+@media (min-width: 992px){
+  .benefit-grid{ grid-template-columns: repeat(3, 1fr); }
+  .market-grid{ grid-template-columns: repeat(2, 1fr); }
+}
