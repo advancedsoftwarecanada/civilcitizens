@@ -1,7 +1,8 @@
 declare module 'unzipper'
 
 declare module 'shapefile' {
-  import type { FeatureCollection } from 'geojson'
-
-  export function read(source: ArrayBuffer | Buffer, dbf?: ArrayBuffer | Buffer): Promise<FeatureCollection>
+  export function read(source: ArrayBuffer | Buffer, dbf?: ArrayBuffer | Buffer): Promise<{
+    type: 'FeatureCollection'
+    features: Array<{ type: 'Feature'; geometry: any; properties?: any }>
+  }>
 }
