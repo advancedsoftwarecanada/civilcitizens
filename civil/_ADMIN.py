@@ -36,15 +36,47 @@ OVERRIDE_FILE = os.path.join(ROOT, "docker-compose.override.yml")
 PORT_API = 3000
 PORT_WEB = 3001
 
+PNPM_CMD: str | None = None
+
+
+def resolve_pnpm_command() -> str:
+    global PNPM_CMD
+    if PNPM_CMD:
+        return PNPM_CMD
+    if shutil.which("pnpm"):
+        PNPM_CMD = "pnpm"
+        return PNPM_CMD
+    if shutil.which("corepack"):
+        PNPM_CMD = "corepack pnpm"
+        print("Info: pnpm not found on PATH; falling back to 'corepack pnpm'.")
+        return PNPM_CMD
+    print("Error: required tool not found on PATH: pnpm")
+    print("Hint: enable Corepack (`corepack enable`) or install pnpm globally.")
+    sys.exit(127)
+
+
+def expand_command(cmd: str) -> str:
+    stripped = cmd.lstrip()
+    if not stripped.startswith("pnpm"):
+        return cmd
+    if len(stripped) > 4 and stripped[4] not in {" ", "\t", "\n"}:
+        return cmd
+    leading = cmd[: len(cmd) - len(stripped)]
+    resolved = resolve_pnpm_command()
+    rest = stripped[4:]
+    return f"{leading}{resolved}{rest}"
+
 
 def run(cmd: str, cwd: str | None = None) -> int:
-    print(f"\n$ {cmd}")
-    return subprocess.call(cmd, cwd=cwd, shell=True)
+    expanded = expand_command(cmd)
+    print(f"\n$ {expanded}")
+    return subprocess.call(expanded, cwd=cwd, shell=True)
 
 
 def popen(cmd: str, cwd: str | None = None) -> subprocess.Popen:
-    print(f"\n$ {cmd}")
-    return subprocess.Popen(cmd, cwd=cwd, shell=True)
+    expanded = expand_command(cmd)
+    print(f"\n$ {expanded}")
+    return subprocess.Popen(expanded, cwd=cwd, shell=True)
 
 
 def require_tool(name: str, hint: str | None = None) -> None:
@@ -143,11 +175,8 @@ def cmd_infra(args: argparse.Namespace) -> int:
 
 
 def install_deps() -> int:
-    require_tool(
-        "pnpm",
-        "pnpm not found. Enable corepack and install:\n  corepack enable\n  corepack prepare pnpm@9 --activate",
-    )
-    return run("pnpm i", cwd=ROOT)
+    cmd = f"{resolve_pnpm_command()} i"
+    return run(cmd, cwd=ROOT)
 
 
 def cmd_dev_server(args: argparse.Namespace) -> int:
@@ -295,7 +324,8 @@ def cmd_developer(args: argparse.Namespace) -> int:
     if os.path.exists(OVERRIDE_FILE):
         files += f" -f \"{OVERRIDE_FILE}\""
     if action == "down":
-        return run(f"docker compose {files} --profile app down", cwd=ROOT)
+        # Stop both profiles to fully tear down dev stack
+        return run(f"docker compose {files} --profile infra --profile app down", cwd=ROOT)
     # Up: ensure infra, then bring up nginx+web+api with override (dev mode)
     code = run(f"docker compose {files} --profile infra up -d postgres redis", cwd=ROOT)
     if code != 0:

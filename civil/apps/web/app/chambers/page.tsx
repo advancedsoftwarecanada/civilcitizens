@@ -24,6 +24,8 @@ const provincesFallback = [
   { code: 'nu', name: 'Nunavut' },
 ]
 
+type ChambersPageMode = 'default' | 'welcome'
+
 type Province = { code: string; name: string }
 type Chamber = { code?: number; name?: string; slug: string; province: string }
 
@@ -76,7 +78,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return data as T
 }
 
-export default function ChambersPage() {
+export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [provinces, setProvinces] = useState<Province[]>(provincesFallback)
   const [chambers, setChambers] = useState<Chamber[]>([])
@@ -361,6 +363,11 @@ export default function ChambersPage() {
       await refreshFollows({ token, syncHome: true })
       const message = source === 'picker' ? 'Home chamber set. Welcome home!' : 'Home chamber updated.'
       pushToast(message, 'success')
+      if (mode === 'welcome') {
+        window.setTimeout(() => {
+          window.location.replace('/home')
+        }, 500)
+      }
     } catch (error) {
       console.error('Failed saving home chamber', error)
       const message = getErrorMessage(error)
@@ -471,11 +478,8 @@ export default function ChambersPage() {
   const homeFollowKey = homeFollow ? `${homeFollow.province}:${homeFollow.chamberSlug}` : null
   const homeRemoving = homeFollowKey ? managingFollow === `${homeFollowKey}:remove` : false
 
-  return (
-    <div className="mx-auto max-w-7xl grid grid-cols-12 gap-6 p-4">
-      <Sidebar me={me ?? undefined} active="chambers" />
-
-      <main className="col-span-12 md:col-span-6 space-y-6">
+  const mainContent = (
+    <main className={mode === 'welcome' ? 'w-full space-y-6' : 'col-span-12 md:col-span-6 space-y-6'}>
         <section className="rounded-lg border bg-white p-5">
           <h1 className="text-2xl font-bold">Your Chambers of Citizens</h1>
           <p className="mt-2 text-sm text-gray-600">
@@ -684,8 +688,43 @@ export default function ChambersPage() {
             </div>
           </div>
         </section>
-      </main>
+    </main>
+  )
 
+  const geoOverlay = !showGeoOverlay
+    ? null
+    : (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm">
+          <div className="rounded-lg bg-white px-6 py-4 shadow-lg">
+            <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
+            <div className="mt-1 text-xs text-gray-500">
+              {geoStatus || 'Hang tight for a moment while we match you to the right chamber.'}
+            </div>
+          </div>
+        </div>
+      )
+
+  if (mode === 'welcome') {
+    return (
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 sm:p-6 lg:p-8">
+        <div className="rounded-lg border bg-white p-6 shadow-sm">
+          <div className="text-sm font-semibold uppercase tracking-wide text-gray-500">Welcome to Civil</div>
+          <h1 className="mt-2 text-2xl font-bold text-gray-900">Set your home chamber to unlock your feed</h1>
+          <p className="mt-3 text-sm text-gray-600">
+            We personalize everything around your riding. Confirm your location below—once your home chamber is saved,
+            we\'ll take you straight to your timeline.
+          </p>
+        </div>
+        {mainContent}
+        {geoOverlay}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mx-auto grid w-full max-w-7xl grid-cols-12 gap-6 p-4">
+      <Sidebar me={me ?? undefined} active="chambers" />
+      {mainContent}
       <aside className="col-span-3 hidden lg:block">
         <div className="sticky top-4 space-y-4">
           <div className="rounded-lg border bg-white p-4">
@@ -700,16 +739,11 @@ export default function ChambersPage() {
           </div>
         </div>
       </aside>
-      {showGeoOverlay && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm">
-          <div className="rounded-lg bg-white px-6 py-4 shadow-lg">
-            <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
-            <div className="mt-1 text-xs text-gray-500">
-              {geoStatus || 'Hang tight for a moment while we match you to the right chamber.'}
-            </div>
-          </div>
-        </div>
-      )}
+      {geoOverlay}
     </div>
   )
+}
+
+export default function ChambersPage() {
+  return <ChambersView />
 }

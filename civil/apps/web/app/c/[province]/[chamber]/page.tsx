@@ -6,6 +6,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../../_components/Sidebar'
 import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../../../_components/PostComposer'
 import type { Jurisdiction } from '@civil/shared'
+import { buildApiUrl } from '../../../_lib/api'
+import { hasHomeChamber, type MeResponse } from '../../../_lib/me'
+import { redirectToAuthModal } from '../../../_lib/authModal'
 
 type Viewer = {
   id: string
@@ -79,13 +82,26 @@ export default function ChamberFeedPage({ params }: PageProps) {
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
-    if (!token) return
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
     try {
-      const res = await fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
+      const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
+      if (!res.ok) {
+        localStorage.removeItem('token')
+        redirectToAuthModal('login')
+        return
+      }
+      const data = (await res.json()) as MeResponse
+      if (!hasHomeChamber(data)) {
+        window.location.replace('/welcome')
+        return
+      }
       setViewer(data)
     } catch {
+      localStorage.removeItem('token')
+      redirectToAuthModal('login')
       /* noop */
     }
   }, [])
