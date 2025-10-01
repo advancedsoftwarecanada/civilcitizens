@@ -1,3 +1,4 @@
+/// <reference path="./types-geojson-shim.d.ts" />
 import type { GeoJsonProperties, FeatureCollection, Feature, Polygon, MultiPolygon, Point as GeoPoint } from 'geojson'
 import { findChamber, findChamberByCode, findChambersBySlug, slugifyChamberName, type ChamberRecord, type ProvinceCode } from '@civil/shared'
 import { createRequire } from 'module'
@@ -33,7 +34,7 @@ type ProcessedFeature = {
   chamber: ChamberRecord
   slug: string
   geometry: Polygon | MultiPolygon
-  feature: Feature<Polygon | MultiPolygon>
+  feature: Feature<Polygon | MultiPolygon, GeoJsonProperties>
   centroid: { lat: number; lng: number }
   centroidPoint: Feature<GeoPoint>
   bbox: [number, number, number, number]
@@ -200,7 +201,10 @@ async function buildGeoCache(): Promise<GeoCache> {
       ? ({ type: 'Polygon', coordinates: reprojectedCoordinates } as Polygon)
       : ({ type: 'MultiPolygon', coordinates: reprojectedCoordinates } as MultiPolygon)
 
-    const turfFeature = geometry.type === 'Polygon' ? polygon(geometry.coordinates) : multiPolygon(geometry.coordinates)
+    const turfFeature: Feature<Polygon | MultiPolygon, GeoJsonProperties> =
+      geometry.type === 'Polygon'
+        ? (polygon(geometry.coordinates) as unknown as Feature<Polygon, GeoJsonProperties>)
+        : (multiPolygon(geometry.coordinates) as unknown as Feature<MultiPolygon, GeoJsonProperties>)
 
     let bbox: [number, number, number, number]
     try {
@@ -290,12 +294,12 @@ export async function locateChamberFromPoint(lat: number, lng: number, options: 
   const { features, fetchedAt, sourceUrl, cached } = await ensureGeoCache()
   const limit = Math.max(1, Math.min(options.limit ?? 8, 25))
   const targetPoint = point([lng, lat])
-  const scored = features.map((feature) => {
-    const centroidDistanceKm = turfDistance(targetPoint, feature.centroidPoint, { units: 'kilometers' })
-    const polygonDistanceKm = pointToPolygonDistance(targetPoint, feature.feature, { units: 'kilometers' })
-    const inside = booleanPointInPolygon(targetPoint, feature.feature)
+  const scored = features.map((pf) => {
+    const centroidDistanceKm = turfDistance(targetPoint, pf.centroidPoint, { units: 'kilometers' })
+    const polygonDistanceKm = pointToPolygonDistance(targetPoint, pf.feature, { units: 'kilometers' })
+    const inside = booleanPointInPolygon(targetPoint, pf.feature)
     const consideredInside = inside || polygonDistanceKm <= BOUNDARY_TOLERANCE_KM
-    return { feature, centroidDistanceKm, polygonDistanceKm, consideredInside }
+    return { feature: pf, centroidDistanceKm, polygonDistanceKm, consideredInside }
   })
 
   const polygonHitEntry = scored
