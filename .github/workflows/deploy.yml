@@ -42,13 +42,23 @@ jobs:
         script: |
           set -euo pipefail
           # Files are already extracted to ~/civil-citizens/civil by the SCP step
-          # Ensure infra (Postgres/Redis) is up first using compose file in civil/
-          docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile infra up -d
+          echo "Listing target directory before deploy:"
+          ls -la "$HOME/civil-citizens/civil" || true
+          echo "Finding docker-compose.yml under $HOME/civil-citizens/civil ..."
+          COMPOSE_FILE=$(find "$HOME/civil-citizens/civil" -maxdepth 2 -type f -name 'docker-compose.yml' | head -n1 || true)
+          if [ -z "${COMPOSE_FILE:-}" ]; then
+            echo "ERROR: docker-compose.yml not found under $HOME/civil-citizens/civil"
+            echo "Tree of target dir for debugging:" && ls -laR "$HOME/civil-citizens/civil" || true
+            exit 1
+          fi
+          echo "Using compose file: $COMPOSE_FILE"
+          # Ensure infra (Postgres/Redis) is up first
+          docker compose -f "$COMPOSE_FILE" --profile infra up -d
           # Build and restart full stack (include both profiles so worker can see redis)
-          docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile infra --profile app build --no-cache
-          docker compose -f ~/civil-citizens/civil/docker-compose.yml --profile infra --profile app up -d
+          docker compose -f "$COMPOSE_FILE" --profile infra --profile app build --no-cache
+          docker compose -f "$COMPOSE_FILE" --profile infra --profile app up -d
           # Optional: show status
-          docker compose -f ~/civil-citizens/civil/docker-compose.yml ps
+          docker compose -f "$COMPOSE_FILE" ps
 
     - name: Done
       run: echo "Deployment process finished successfully."
