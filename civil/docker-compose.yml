@@ -30,14 +30,14 @@ services:
       REDIS_URL: redis://redis:6379
       # Provide a default JWT secret; override in deployment via environment if desired
       JWT_SECRET: ${JWT_SECRET:-dev_secret}
-    ports:
-      - "3000:3000"
+    # Do not publish API to host; Nginx proxies to it via internal network
     depends_on: [postgres, redis]
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   worker:
     profiles: [app]
