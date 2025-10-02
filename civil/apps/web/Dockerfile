@@ -22,6 +22,7 @@ WORKDIR /app/apps/web
 COPY --from=build /app/apps/web/.next ./.next
 COPY --from=build /app/node_modules ../../node_modules
 COPY --from=build /app/apps/web/node_modules ./node_modules
+COPY --from=build /app/apps/web/public ./public
 COPY --from=build /app/packages ../../packages
 COPY --from=build /app/apps/web/package.json ./package.json
 EXPOSE 3001
