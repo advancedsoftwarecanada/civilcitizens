@@ -26,5 +26,5 @@ COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/packages ../../packages
 COPY --from=build /app/apps/api/package.json ./package.json
 EXPOSE 3000
-# Start compiled server (TS outDir places output under dist/src/index.js)
-CMD ["node", "dist/src/index.js"]
+# Start compiled server (TypeScript outDir places output under dist/index.js)
+CMD ["node", "dist/index.js"]
