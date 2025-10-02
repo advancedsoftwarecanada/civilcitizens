@@ -426,7 +426,7 @@ export default function ProfileEditPage() {
     } finally {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('token')
-        window.location.href = '/login'
+        window.location.replace('/')
       }
     }
   }, [token])
