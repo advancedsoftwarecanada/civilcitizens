@@ -26,5 +26,7 @@ COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/packages ../../packages
 COPY --from=build /app/apps/api/package.json ./package.json
 EXPOSE 3000
-# Start compiled server (TypeScript outDir places output under dist/index.js)
-CMD ["node", "dist/index.js"]
+# Add a resilient entrypoint that tries dist/index.js then dist/src/index.js
+COPY apps/api/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+CMD ["./entrypoint.sh"]
