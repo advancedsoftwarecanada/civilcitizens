@@ -28,7 +28,7 @@ const RegisterForm = dynamic<EmptyProps>(() => import('./register/page').then((m
 const ForgotForm = dynamic<EmptyProps>(() => import('./forgot/page').then((mod) => mod.default), { ssr: false })
 
 function IconWrap({ children }: { children: ReactNode }) {
-  return <div className="text-center mb-3 text-primary-cc">{children}</div>
+  return <div className="mb-3 text-primary-cc flex flex-col items-center justify-center text-center">{children}</div>
 }
 
 export default function Home() {
@@ -122,7 +122,7 @@ export default function Home() {
             <div className="benefit-grid">
               {/* EDA */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaMapMarkedAlt size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">Electoral District Association (EDA)</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -135,7 +135,7 @@ export default function Home() {
 
               {/* MPs */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaUserTie size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">Federal & Provincial MPs</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -148,7 +148,7 @@ export default function Home() {
 
               {/* City Councils */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaCity size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">City Councils</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -161,7 +161,7 @@ export default function Home() {
 
               {/* Businesses */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaStore size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">Businesses</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -174,7 +174,7 @@ export default function Home() {
 
               {/* Citizens */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaUsers size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">Citizens</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -187,7 +187,7 @@ export default function Home() {
 
               {/* Civil AI */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaMicrochip size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">@Civil AI</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -283,7 +283,7 @@ export default function Home() {
             <div className="market-grid">
               {/* Shop Local */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaStore size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">Shop Local Businesses</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
@@ -299,7 +299,7 @@ export default function Home() {
 
               {/* Buy & Sell */}
               <article className="benefit-card">
-                <div className="p-6">
+                <div className="p-6 flex flex-col items-center">
                   <IconWrap><FaHandshake size={48} /></IconWrap>
                   <h3 className="text-lg font-bold text-center">Buy &amp; Sell with Neighbours</h3>
                   <ul className="mt-3 space-y-3 text-slate-700">
