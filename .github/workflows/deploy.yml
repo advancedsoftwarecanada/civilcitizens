@@ -77,11 +77,7 @@ jobs:
             echo "$HTTP_IN_USE"
             exit 1
           fi
-          if [ -n "$HTTPS_IN_USE" ] && ! echo "$HTTPS_IN_USE" | grep -q docker-proxy; then
-            echo "ERROR: Port 443 is in use by a non-Docker process. Please free it and re-run deploy."
-            echo "$HTTPS_IN_USE"
-            exit 1
-          fi
+          # We no longer bind 443 in HTTP-only origin mode; presence of a host process on 443 is acceptable.
 
           # Ensure infra (Postgres/Redis) is up first
           docker compose -f "$COMPOSE_FILE" --profile infra up -d
@@ -173,9 +169,8 @@ jobs:
             exit 1
           fi
 
-          echo "Verifying ports 80 and 443 are listening ..."
+          echo "Verifying port 80 is listening ..."
           ss -ltnp | grep -E 'LISTEN.+:80\s' || (echo 'Port 80 not listening' && exit 1)
-          ss -ltnp | grep -E 'LISTEN.+:443\s' || (echo 'Port 443 not listening' && exit 1)
 
     - name: Done
       run: echo "Deployment process finished successfully."
