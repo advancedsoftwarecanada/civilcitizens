@@ -130,13 +130,20 @@ jobs:
 
           echo "Locating nginx container ..."
           NGINX_CID=""
-          for cid in $(docker compose -f "$COMPOSE_FILE" ps -q || true); do
+          # Give Docker a brief moment to register containers
+          sleep 1
+          # Try via compose with explicit profiles
+          for cid in $(docker compose -f "$COMPOSE_FILE" --profile infra --profile app ps -q || true); do
             svc=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$cid" 2>/dev/null || echo "")
             if [ "$svc" = "nginx" ]; then
               NGINX_CID="$cid"
               break
             fi
           done
+          # Fallback: search by Docker labels globally if compose query fails
+          if [ -z "$NGINX_CID" ]; then
+            NGINX_CID=$(docker ps -q -f "label=com.docker.compose.service=nginx" | head -n1 || true)
+          fi
           if [ -z "$NGINX_CID" ]; then
             echo "ERROR: Could not determine nginx container ID (service 'nginx' missing?)." && exit 1
           fi
