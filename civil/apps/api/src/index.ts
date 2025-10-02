@@ -353,7 +353,7 @@ app.post('/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
   const chamber = findChamber(province, parse.data.chamberSlug)
   if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
 
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     await tx.chamberFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
     await tx.chamberFollow.upsert({
       where: {
@@ -420,7 +420,7 @@ app.post('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) =
 
   const setAsHome = parse.data.setAsHome === true
 
-  const follow = await prisma.$transaction(async (tx) => {
+  const follow = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     if (setAsHome) {
       await tx.chamberFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
     }
@@ -650,7 +650,7 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   }))
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const baseHandle = buildHandleBase(firstName, lastName)
       const handle = await generateUniqueHandle(baseHandle, tx, userId)
 
@@ -719,7 +719,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
   const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
   const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
 
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const seoSlug = await generateUniquePostSlug(slugBase, tx)
 
     const post = await tx.post.create({
@@ -817,7 +817,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
     const next = items.pop()!
     nextCursor = next.id
   }
-  return { items: items.map((item) => formatPost(item)), nextCursor }
+  return { items: items.map((item: PostWithAuthor) => formatPost(item)), nextCursor }
 })
 
 app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) => {
