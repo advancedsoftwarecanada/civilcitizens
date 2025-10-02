@@ -5,7 +5,8 @@
     "rootDir": "src",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "types": ["node", "geojson"]
+    "types": ["node", "geojson"],
+    "paths": {}
   },
   "include": ["src", "src/**/*.d.ts"]
 }
