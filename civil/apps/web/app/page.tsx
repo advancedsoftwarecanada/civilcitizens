@@ -91,12 +91,12 @@ export default function Home() {
               </div>
             </div>
             <div className="text-center lg:text-left">
-              <h1 className="text-4xl font-extrabold mb-3">Chambers of Citizens</h1>
+              <h1 className="text-4xl font-extrabold mb-3">Together We Imagine an Ideal Society</h1>
               <p className="text-lg leading-relaxed text-slate-700 mb-6">
-                Every Canadian lives in an <strong>Electoral District Association (EDA)</strong>.
+                Civil gives every Canadian the space to speak with <strong>one voice</strong> about the economy we share, the society we want, and everything that makes our country great.
                 <br className="hidden sm:block" />
                 <br className="hidden sm:block" />
-                Civil turns that fact into action by forming a <strong>Chamber of Citizens</strong> for your riding — a real local forum where <strong>citizens, MPs, city councils, and local businesses</strong> talk openly and get things done, grounded by @Civil AI’s plain-English, cited facts.
+                When neighbours, leaders, and local businesses align, we support our <strong>local economy</strong>, strengthen our communities, and succeed together.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
                 <button onClick={() => setShowRegister(true)} className="btn-primary-cc">Register</button>
@@ -109,12 +109,15 @@ export default function Home() {
 
       {/* Everyone In One Room */}
       <section id="stakeholders" className="py-0">
-        <div className="section-hero-banner">
-          <div className="container mx-auto px-4">
-            <div className="text-center">
-              <h2 className="text-3xl font-bold">Everyone In One Room</h2>
-              <p className="text-slate-600 mt-2">Six voices, one Chamber — organized by your <strong>Electoral District Association (EDA)</strong>.</p>
-            </div>
+        <div className="container mx-auto px-4 pt-10 pb-6">
+          <div className="max-w-3xl mx-auto text-center">
+            <h2 className="text-3xl font-bold mb-3">Chambers of Citizens</h2>
+            <p className="text-base sm:text-lg text-slate-700">
+              Every Canadian lives in an <strong>Electoral District Association (EDA)</strong>.
+            </p>
+            <p className="text-base sm:text-lg text-slate-700 mt-4">
+              Civil turns that fact into action by forming a <strong>Chamber of Citizens</strong> for your riding — a real local forum where <strong>citizens, MPs, city councils, and local businesses</strong> talk openly and get things done, grounded by @Civil AI’s plain-English, cited facts.
+            </p>
           </div>
         </div>
         <div className="cards-slab">
