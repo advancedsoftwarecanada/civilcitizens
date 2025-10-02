@@ -1,3 +1,6 @@
+// @ts-nocheck
+import { slugifyTitle, randomPostSuffix, composeSlug } from '/libs/utils/slug.js';
+
 console.log("Loaded: posts.js");
 
 if (Meteor.isServer) {
@@ -16,6 +19,23 @@ if (Meteor.isServer) {
       return Posts.find({ chamber }, { sort: { createdAt: -1 } });
     }
   });
+
+  const generateUniqueSeoUrl = async (title) => {
+    const rawBase = slugifyTitle(title || '');
+    const baseWithoutTrailingPost = rawBase.replace(/(?:-post)?$/, '').replace(/-+$/, '');
+    const slugBase = baseWithoutTrailingPost || (rawBase === 'post' ? '' : rawBase);
+    const maxAttempts = 5;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const candidate = composeSlug(slugBase, randomPostSuffix());
+      const existing = await Posts.findOneAsync({ seoUrl: candidate }, { fields: { _id: 1 } });
+      if (!existing) {
+        return candidate;
+      }
+    }
+
+    return composeSlug(slugBase, `post-${Date.now().toString(36)}`);
+  };
 
   Meteor.methods({
     // Submit a new post
@@ -38,12 +58,7 @@ if (Meteor.isServer) {
       }
 
       // Generate SEO URL
-      let seoUrl;
-      if (thePostJson.title && thePostJson.title.trim()) {
-        seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
-      } else {
-        seoUrl = `post-${Date.now()}`;
-      }
+      const seoUrl = await generateUniqueSeoUrl(thePostJson.title);
 
       // Prepare post data
       const postData = {
@@ -194,14 +209,8 @@ if (Meteor.isServer) {
       }
 
       // If title is being updated, regenerate SEO URL
-      if (updateData.title !== undefined) {
-        let seoUrl;
-        if (updateData.title && updateData.title.trim()) {
-          seoUrl = `${updateData.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
-        } else {
-          seoUrl = `post-${Date.now()}`;
-        }
-        updateData.seoUrl = seoUrl;
+      if (Object.prototype.hasOwnProperty.call(updateData, 'title')) {
+        updateData.seoUrl = await generateUniqueSeoUrl(updateData.title);
       }
 
       // Add last modified timestamp

@@ -76,6 +76,8 @@ function isExperienceTableMissing(error: unknown) {
 }
 
 const MAX_HANDLE_LENGTH = 32
+const POST_SLUG_BASE_LIMIT = 80
+const POST_SLUG_TOTAL_LIMIT = 200
 
 function normalizeHandleBase(base: string) {
   return base
@@ -138,13 +140,21 @@ function stripHtmlToPlainText(html: string) {
     .trim()
 }
 
+function trimSlugLength(value: string, max: number) {
+  let trimmed = value.slice(0, max)
+  trimmed = trimmed.replace(/-+/g, '-').replace(/^-+|-+$/g, '')
+  return trimmed
+}
+
 function buildPostSlugBase(options: { handle?: string | null; title?: string | null; body: string }) {
-  const handlePart = options.handle ? slugifyText(options.handle) : ''
+  const handlePart = options.handle ? slugifyText(options.handle).slice(0, 24) : ''
   const titleSource = options.title?.trim()
   const rawSource = titleSource && titleSource.length > 0 ? titleSource : stripHtmlToPlainText(options.body).slice(0, 120)
   const contentPart = slugifyText(rawSource)
-  const base = [handlePart, contentPart].filter(Boolean).join('-') || 'post'
-  return base.slice(0, 140)
+  const combined = [handlePart, contentPart].filter(Boolean).join('-') || 'post'
+  const normalized = combined.replace(/-+/g, '-')
+  const trimmed = trimSlugLength(normalized, POST_SLUG_BASE_LIMIT)
+  return trimmed || 'post'
 }
 
 function randomSlugSuffix() {
@@ -152,16 +162,20 @@ function randomSlugSuffix() {
 }
 
 async function generateUniquePostSlug(base: string, client: PrismaClientOrTx) {
-  let candidate = base
-  let attempts = 0
-  while (attempts < 10) {
+  const normalizedBase = trimSlugLength(base, POST_SLUG_BASE_LIMIT) || 'post'
+  const baseWithPost = normalizedBase.endsWith('-post') ? normalizedBase : trimSlugLength(`${normalizedBase}-post`, POST_SLUG_BASE_LIMIT)
+
+  const buildCandidate = (suffix: string) => {
+    const candidate = trimSlugLength(`${baseWithPost}-${suffix}`, POST_SLUG_TOTAL_LIMIT)
+    return candidate || `post-${suffix}`
+  }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = buildCandidate(randomSlugSuffix())
     const existing = await client.post.findUnique({ where: { seoSlug: candidate }, select: { id: true } })
     if (!existing) return candidate
-    attempts += 1
-    candidate = `${base}-${randomSlugSuffix()}`.slice(0, 180)
   }
-  // Fallback with UUID when collisions persist
-  return `${base}-${randomUUID().replace(/-/g, '')}`.slice(0, 200)
+  return buildCandidate(randomUUID().replace(/-/g, '').slice(0, 12))
 }
 
 type PostWithAuthor = Prisma.PostGetPayload<{
