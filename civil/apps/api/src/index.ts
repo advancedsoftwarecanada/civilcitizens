@@ -53,6 +53,24 @@ type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
 type Jurisdiction = z.infer<typeof JurisdictionEnum>
 const DEFAULT_JURISDICTION: Jurisdiction = 'citizen'
 
+// Local schema for API registration that always treats `handle` as optional.
+// This guards against any shared package drift where `handle` might be required.
+const RegisterInputApi = z.object({
+  email: z.string().email(),
+  handle: z
+    .string()
+    .min(3)
+    .max(32)
+    .regex(/^[a-zA-Z0-9_]+$/)
+    .optional(),
+  firstName: z.string().min(1).max(40),
+  lastName: z.string().min(1).max(40),
+  password: z.string().min(8).max(72),
+  acceptTerms: z.literal(true, {
+    errorMap: () => ({ message: 'You must accept the terms' }),
+  }),
+})
+
 function isExperienceTableMissing(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2021' || error.code === 'P2022')
 }
@@ -214,7 +232,11 @@ app.setErrorHandler((err, req, reply) => {
 
 // Auth: register
 app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = RegisterInput.safeParse(req.body)
+  // Accept both shapes: shared RegisterInput and our local variant with optional handle
+  let parse = RegisterInput.safeParse(req.body)
+  if (!parse.success) {
+    parse = RegisterInputApi.safeParse(req.body)
+  }
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
   const { email, firstName, lastName, password } = parse.data
   const name = `${firstName.trim()} ${lastName.trim()}`.trim()
