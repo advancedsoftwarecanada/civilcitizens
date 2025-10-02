@@ -145,7 +145,16 @@ jobs:
             NGINX_CID=$(docker ps -q -f "label=com.docker.compose.service=nginx" | head -n1 || true)
           fi
           if [ -z "$NGINX_CID" ]; then
-            echo "ERROR: Could not determine nginx container ID (service 'nginx' missing?)." && exit 1
+            echo "Nginx not found in running containers. Checking exited containers ..."
+            NGINX_CID=$(docker ps -aq -f "label=com.docker.compose.service=nginx" | head -n1 || true)
+            if [ -n "$NGINX_CID" ]; then
+              echo "Found exited nginx container $NGINX_CID; status:";
+              docker inspect -f '{{.State.Status}} (exitCode={{.State.ExitCode}})' "$NGINX_CID" || true
+              echo "--- nginx logs ---"; docker logs --tail=200 "$NGINX_CID" || true
+            else
+              echo "No nginx container present at all (running or exited).";
+            fi
+            exit 1
           fi
 
           echo "Waiting for Nginx to become healthy ($NGINX_CID) ..."
