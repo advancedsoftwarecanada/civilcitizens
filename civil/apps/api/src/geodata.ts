@@ -81,7 +81,7 @@ function extendBBox(coords: any, bbox?: [number, number, number, number]): [numb
   if (!Array.isArray(coords)) {
     throw new Error('Invalid coordinate structure while computing bbox')
   }
-  return coords.reduce<[number, number, number, number]>((acc, sub) => extendBBox(sub, acc), bbox ?? [Infinity, Infinity, -Infinity, -Infinity])
+  return (coords as any[]).reduce<[number, number, number, number]>((acc, sub) => extendBBox(sub, acc), bbox ?? [Infinity, Infinity, -Infinity, -Infinity])
 }
 
 function normalizeName(value: unknown): string {

@@ -4,7 +4,9 @@
     "outDir": "dist",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "declarationMap": true
   },
   "include": ["src", "schema.prisma"]
 }
