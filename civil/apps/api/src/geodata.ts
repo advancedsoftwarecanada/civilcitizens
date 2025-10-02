@@ -6,7 +6,11 @@ type Polygon = { type: 'Polygon'; coordinates: any[] }
 type MultiPolygon = { type: 'MultiPolygon'; coordinates: any[] }
 type Feature<G = any, P = GeoJsonProperties> = { type: 'Feature'; geometry: G | null; properties: P }
 type FeatureCollection = { type: 'FeatureCollection'; features: Array<Feature<Polygon | MultiPolygon, any>> }
-import { findChamber, findChamberByCode, findChambersBySlug, slugifyChamberName, type ChamberRecord, type ProvinceCode } from '@civil/shared'
+import { findChamber, findChamberByCode, findChambersBySlug, slugifyChamberName } from '@civil/shared'
+// Use local structural types to avoid cross-package type resolution issues in Docker builds
+type ProvinceCodeLocal =
+  | 'nl' | 'pe' | 'ns' | 'nb' | 'qc' | 'on' | 'mb' | 'sk' | 'ab' | 'bc' | 'yt' | 'nt' | 'nu'
+type ChamberRecordLocal = { code: number; name: string; slug: string; province: ProvinceCodeLocal }
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const unzipper = require('unzipper') as typeof import('unzipper')
@@ -19,7 +23,7 @@ import pointToPolygonDistance from '@turf/point-to-polygon-distance'
 
 const DEFAULT_SHP_URL = 'https://elections.ca/res/cir/mapsCorner/vector/FederalElectoralDistricts_2025_SHP.zip'
 
-const PROVINCE_BY_PRUID: Record<string, ProvinceCode> = {
+const PROVINCE_BY_PRUID: Record<string, ProvinceCodeLocal> = {
   '10': 'nl',
   '11': 'pe',
   '12': 'ns',
@@ -36,7 +40,7 @@ const PROVINCE_BY_PRUID: Record<string, ProvinceCode> = {
 }
 
 type ProcessedFeature = {
-  chamber: ChamberRecord
+  chamber: ChamberRecordLocal
   slug: string
   geometry: Polygon | MultiPolygon
   feature: Feature<Polygon | MultiPolygon, GeoJsonProperties>
@@ -144,7 +148,7 @@ async function fetchShapefileBuffers(sourceUrl: string) {
   return { shpBuffer, dbfBuffer, prjString: prjBuffer?.toString('utf8') ?? null }
 }
 
-function provinceFromProperties(props: GeoJsonProperties | null | undefined): ProvinceCode | null {
+function provinceFromProperties(props: GeoJsonProperties | null | undefined): ProvinceCodeLocal | null {
   if (!props) return null
   const pruidRaw = props.PRUID ?? props.PRUID_FED ?? props.PRUID_E
   if (typeof pruidRaw === 'string' || typeof pruidRaw === 'number') {
@@ -155,7 +159,7 @@ function provinceFromProperties(props: GeoJsonProperties | null | undefined): Pr
   return null
 }
 
-function resolveChamberForFeature(feature: Feature, slug: string): ChamberRecord | null {
+function resolveChamberForFeature(feature: Feature, slug: string): ChamberRecordLocal | null {
   const props = feature.properties ?? null
   const code = props ? parseNumeric(props.ED_UID ?? props.FEDUID ?? props.ED_CODE ?? props.FED_ID ?? props.EDNUMBER) : null
   if (code !== null) {
@@ -173,7 +177,7 @@ function resolveChamberForFeature(feature: Feature, slug: string): ChamberRecord
   const all = findChambersBySlug(normalizedSlug)
   if (all.length === 1) return all[0] ?? null
   if (all.length > 1 && provinceFromFeature) {
-    return all.find((entry) => entry.province === provinceFromFeature) ?? null
+    return all.find((entry: ChamberRecordLocal) => entry.province === provinceFromFeature) ?? null
   }
   return all.length > 0 ? all[0]! : null
 }
@@ -276,7 +280,7 @@ type LocateOptions = {
 }
 
 type GeoMatch = {
-  province: ProvinceCode
+  province: ProvinceCodeLocal
   chamberSlug: string
   chamberName: string
   method: 'geofenced' | 'nearest'

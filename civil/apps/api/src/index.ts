@@ -29,6 +29,7 @@ import {
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import { Prisma } from '@prisma/client'
+type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { randomUUID } from 'crypto'
 import { locateChamberFromPoint } from './geodata.js'
 
@@ -390,7 +391,7 @@ app.get('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) =>
     orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
   })
 
-  const items = follows.map((follow) => {
+  const items = follows.map((follow: { provinceCode: string; chamberSlug: string; home: boolean; createdAt: Date }) => {
     const chamber = findChamber(follow.provinceCode, follow.chamberSlug)
     return {
       province: follow.provinceCode,
@@ -572,7 +573,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       where: { userId },
       orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
     })
-    experienceItems = experiences.map((exp) => ({
+  experienceItems = experiences.map((exp: ExperienceModel) => ({
       id: exp.id,
       title: exp.title,
       organization: exp.organization,
@@ -636,7 +637,7 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   const { firstName, lastName, bio, experiences } = parse.data
   const fullName = `${firstName} ${lastName}`.trim()
 
-  const normalizedExperiences = (experiences ?? []).map((exp, index) => ({
+  const normalizedExperiences = (experiences ?? []).map((exp: { title: string; organization: string; location?: string | null; startDate: string; endDate?: string | null; current: boolean; description?: string | null }, index: number) => ({
     id: randomUUID(),
     userId,
     title: exp.title.trim(),
@@ -746,10 +747,10 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
     })
 
     if (hashtags?.length) {
-      const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))]
+  const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))] as string[]
       if (tags.length) {
-        await tx.hashtag.createMany({ data: tags.map((tag) => ({ tag })), skipDuplicates: true })
-        await tx.postHashtag.createMany({ data: tags.map((tag) => ({ postId: post.id, tag })) })
+  await tx.hashtag.createMany({ data: tags.map((tag: string) => ({ tag })), skipDuplicates: true })
+  await tx.postHashtag.createMany({ data: tags.map((tag: string) => ({ postId: post.id, tag })) })
       }
     }
 
@@ -937,7 +938,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
   return {
     user,
-    items: posts.map((post) => formatPost(post)),
+  items: posts.map((post: PostWithAuthor) => formatPost(post)),
     nextCursor,
   }
 })
@@ -997,7 +998,7 @@ app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply:
       slug: chamberRecord.slug,
       name: chamberRecord.name,
     },
-    items: posts.map((post) => formatPost(post)),
+  items: posts.map((post: PostWithAuthor) => formatPost(post)),
     nextCursor,
   }
 })
