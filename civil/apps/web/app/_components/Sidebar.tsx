@@ -26,14 +26,14 @@ const NAV_ITEMS: NavItem[] = [
 ]
 
 function navItemClasses(activeKey: string | undefined, itemKey: string, disabled?: boolean) {
-  const base = 'block rounded px-4 py-2 text-sm transition'
+  const base = 'block px-4 py-3 text-sm transition-colors'
   if (disabled) {
     return `${base} cursor-not-allowed text-gray-400`
   }
   if (activeKey === itemKey) {
-    return `${base} bg-black font-semibold text-white`
+    return `${base} bg-[var(--cc-primary)] font-semibold text-white`
   }
-  return `${base} text-gray-700 hover:bg-gray-100`
+  return `${base} text-gray-700 hover:bg-[var(--cc-primary)]/10 hover:text-[var(--cc-primary)]`
 }
 
 export default function Sidebar({ me, active }: SidebarProps) {
@@ -44,9 +44,13 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const profileHref = me?.handle ? `/u/${me.handle}` : '/profile'
 
   return (
-    <aside className="col-span-3 hidden md:block">
-      <div className="sticky top-4 space-y-4">
-        <Link href={profileHref} className="flex items-center gap-3 rounded-lg border bg-white p-4 transition hover:shadow-md">
+    <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-r lg:border-gray-200 lg:bg-white xl:w-[240px]">
+      <div className="sticky top-0 flex flex-col divide-y divide-gray-200">
+        <Link href="/home" className="flex items-center justify-center px-4 py-3 transition hover:bg-[var(--cc-primary)]/5">
+          <Image src="/logo.svg" alt="Civil Citizens" width={136} height={32} priority className="h-8 w-auto" />
+        </Link>
+
+        <Link href={profileHref} className="flex items-center gap-3 px-4 py-4 transition hover:bg-[var(--cc-primary)]/5">
           <div className="h-12 w-12 overflow-hidden rounded-full bg-gray-200">
             {avatarUrl ? (
               <Image
@@ -69,7 +73,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
           </div>
         </Link>
 
-        <nav className="space-y-1">
+        <nav className="flex flex-col divide-y divide-gray-200">
           {NAV_ITEMS.map((item) => {
             if (item.disabled || !item.href) {
               return (

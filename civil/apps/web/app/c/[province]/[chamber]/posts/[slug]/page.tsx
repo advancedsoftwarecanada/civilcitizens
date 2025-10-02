@@ -232,7 +232,7 @@ export default function ChamberPostPage({ params }: PageProps) {
               </p>
               <Link
                 href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`}
-                className="mt-3 inline-flex items-center justify-center rounded bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                className="mt-3 inline-flex items-center justify-center rounded bg-[var(--cc-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--cc-primary-700)]"
               >
                 Return to chamber
               </Link>

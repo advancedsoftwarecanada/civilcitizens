@@ -85,7 +85,7 @@ export default function ForgotPasswordPage() {
             className={`w-full rounded border p-3 ${
               hasFieldError('emailOrHandle')
                 ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
             }`}
             placeholder="Email or handle"
             value={emailOrHandle}
@@ -96,7 +96,7 @@ export default function ForgotPasswordPage() {
           ) : null}
         </div>
         {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
-        <button className="w-full rounded bg-black px-4 py-2 text-white" type="submit">
+        <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
           Send reset link
         </button>
       </form>

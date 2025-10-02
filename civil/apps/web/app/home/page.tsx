@@ -116,42 +116,42 @@ export default function HomePage() {
   )
 
   return (
-    <div className="w-full">
+  <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
         <div className="mx-auto max-w-7xl px-4">
           <Sidebar me={me ?? undefined} active="home" />
         </div>
       </div>
 
-      <div className="mx-auto grid w-full max-w-7xl grid-cols-12 gap-6 px-4 py-6">
+      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
         <Sidebar me={me ?? undefined} active="home" />
 
-        <main className="col-span-12 space-y-6 md:col-span-9 lg:col-span-6">
-          <PostComposer onPostCreated={handlePostCreated} />
+        <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">
+          <div className="border border-gray-200 bg-white">
+            <PostComposer className="border-0 px-5 py-4" onPostCreated={handlePostCreated} />
 
-          <div className="rounded border bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap gap-2 text-sm">
-              {JURISDICTION_FILTERS.map((filter) => (
-                <button
-                  key={filter.value}
-                  type="button"
-                  className={`rounded-full px-3 py-1 transition ${
-                    activeFilter === filter.value
-                      ? 'bg-black text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                  onClick={() => setActiveFilter(filter.value)}
-                  disabled={loading && activeFilter === filter.value}
-                >
-                  {filter.label}
-                </button>
-              ))}
+            <div className="border-t border-gray-200 px-5">
+              <div className="flex flex-wrap gap-4 text-sm">
+                {JURISDICTION_FILTERS.map((filter) => (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    className={`pb-2 text-sm font-semibold transition ${
+                      activeFilter === filter.value
+                        ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                        : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                    }`}
+                    onClick={() => setActiveFilter(filter.value)}
+                    disabled={loading && activeFilter === filter.value}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <section className="space-y-4">
             {posts.length === 0 ? (
-              <div className="rounded border bg-white p-6 text-center text-sm text-gray-500 shadow-sm">
+              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-gray-500">
                 {loading ? 'Loading the latest updates…' : "No updates yet. Once the community starts posting, you'll see them here."}
               </div>
             ) : (
@@ -159,7 +159,7 @@ export default function HomePage() {
                 const chamberUrl = buildChamberUrl(p)
                 const postUrl = buildPostUrl(p)
                 return (
-                  <article key={p.id} className="rounded border bg-white p-6 shadow-sm">
+                  <article key={p.id} className="border-t border-gray-200 px-5 py-4">
                     <header className="flex items-start gap-3">
                       <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
                         {p.author.avatarUrl ? (
@@ -184,18 +184,18 @@ export default function HomePage() {
                           </Link>
                           <span>@{p.author.handle}</span>
                           <span className="text-xs">• {formatDate(p.createdAt)}</span>
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                          <span className="bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
                             {JURISDICTION_LABELS[p.jurisdiction]}
                           </span>
                           {chamberUrl ? (
-                            <Link href={chamberUrl} className="rounded-full border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50">
+                            <Link href={chamberUrl} className="border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50">
                               {p.chamberName ?? p.chamberSlug}
                             </Link>
                           ) : null}
                         </div>
                         <div className="mt-3 space-y-3 text-[15px] leading-6 text-gray-800">
                           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-500">
-                            <span className="rounded-full border border-gray-300 px-2 py-0.5">
+                            <span className="border border-gray-300 px-2 py-0.5">
                               {p.type === 'article' ? 'Article' : 'Post'}
                             </span>
                             {p.type === 'article' && p.title ? (
@@ -220,15 +220,17 @@ export default function HomePage() {
                 )
               })
             )}
-          </section>
+          </div>
         </main>
 
-        <aside className="col-span-3 hidden space-y-4 lg:block">
-          <div className="rounded border bg-white p-4 shadow-sm">
-            <div className="border-b pb-3 text-sm font-semibold">For you</div>
-            <p className="pt-3 text-sm text-gray-500">
-              We&apos;ll recommend chambers and citizens to follow as this feed comes to life.
-            </p>
+        <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
+          <div className="sticky top-0 space-y-4">
+            <section className="border border-gray-200 bg-white p-4">
+              <div className="border-b pb-3 text-sm font-semibold">For you</div>
+              <p className="pt-3 text-sm text-gray-500">
+                We&apos;ll recommend chambers and citizens to follow as this feed comes to life.
+              </p>
+            </section>
           </div>
         </aside>
       </div>

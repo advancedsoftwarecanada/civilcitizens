@@ -164,15 +164,15 @@ export default function ChamberFeedPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto grid w-full max-w-7xl grid-cols-12 gap-6 px-4 py-6">
+      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
         <Sidebar me={viewer ?? undefined} active="chambers" />
 
-        <main className="col-span-12 space-y-6 md:col-span-9 lg:col-span-6">
-          <section className="rounded border bg-white p-6 shadow-sm">
+        <main className="space-y-4 lg:min-h-screen lg:px-0">
+          <section className="border border-gray-200 bg-white px-5 py-4">
             {chamber ? (
-              <div className="flex flex-col gap-3">
-                <div className="text-xs uppercase tracking-wide text-gray-500">Chamber of Citizens</div>
-                <h1 className="text-2xl font-semibold text-gray-900">{chamber.name}</h1>
+              <div className="flex flex-col gap-2">
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">Chamber of Citizens</div>
+                <h1 className="text-xl font-semibold text-gray-900">{chamber.name}</h1>
                 <div className="text-sm text-gray-600">
                   Province: {chamber.provinceName} ({chamber.provinceCode.toUpperCase()})
                 </div>
@@ -187,42 +187,42 @@ export default function ChamberFeedPage({ params }: PageProps) {
             )}
           </section>
 
-          {viewer && chamberTarget ? (
-            <PostComposer chamberTarget={chamberTarget} onPostCreated={handlePostCreated} />
-          ) : null}
+          <div className="border border-gray-200 bg-white">
+            {viewer && chamberTarget ? (
+              <PostComposer className="border-0 px-5 py-4" chamberTarget={chamberTarget} onPostCreated={handlePostCreated} />
+            ) : null}
 
-          <div className="rounded border bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap gap-2 text-sm">
-              {FILTER_OPTIONS.map((filter) => (
-                <button
-                  key={filter.value}
-                  type="button"
-                  className={`rounded-full px-3 py-1 transition ${
-                    activeFilter === filter.value
-                      ? 'bg-black text-white'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                  onClick={() => setActiveFilter(filter.value)}
-                  disabled={loading && activeFilter === filter.value}
-                >
-                  {filter.label}
-                </button>
-              ))}
+            <div className={`${viewer && chamberTarget ? 'border-t border-gray-200 ' : ''}px-5`}>
+              <div className="flex flex-wrap gap-4 text-sm">
+                {FILTER_OPTIONS.map((filter) => (
+                  <button
+                    key={filter.value}
+                    type="button"
+                    className={`pb-2 text-sm font-semibold transition ${
+                      activeFilter === filter.value
+                        ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                        : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                    }`}
+                    onClick={() => setActiveFilter(filter.value)}
+                    disabled={loading && activeFilter === filter.value}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <section className="space-y-4">
             {error ? (
-              <div className="rounded border bg-white p-6 text-center text-sm text-red-600 shadow-sm">{error}</div>
+              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-red-600">{error}</div>
             ) : posts.length === 0 ? (
-              <div className="rounded border bg-white p-6 text-center text-sm text-gray-500 shadow-sm">
+              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-gray-500">
                 {loading ? 'Loading posts…' : 'No posts in this chamber yet. Be the first to start the conversation!'}
               </div>
             ) : (
               posts.map((post) => {
                 const postUrl = buildPostUrl(post)
                 return (
-                  <article key={post.id} className="rounded border bg-white p-6 shadow-sm">
+                  <article key={post.id} className="border-t border-gray-200 px-5 py-4">
                     <header className="flex items-start gap-3">
                       <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
                         {post.author.avatarUrl ? (
@@ -247,13 +247,13 @@ export default function ChamberFeedPage({ params }: PageProps) {
                           </Link>
                           <span>@{post.author.handle}</span>
                           <span className="text-xs">• {formatDate(post.createdAt)}</span>
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                          <span className="bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
                             {JURISDICTION_LABELS[post.jurisdiction]}
                           </span>
                         </div>
                         <div className="mt-3 space-y-3 text-[15px] leading-6 text-gray-800">
                           <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-500">
-                            <span className="rounded-full border border-gray-300 px-2 py-0.5">
+                            <span className="border border-gray-300 px-2 py-0.5">
                               {post.type === 'article' ? 'Article' : 'Post'}
                             </span>
                             {post.type === 'article' && post.title ? (
@@ -278,18 +278,18 @@ export default function ChamberFeedPage({ params }: PageProps) {
                 )
               })
             )}
-          </section>
+          </div>
         </main>
 
-        <aside className="col-span-3 hidden lg:block">
-          <div className="sticky top-4 space-y-4">
-            <div className="rounded border bg-white p-4 shadow-sm">
+        <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
+          <div className="sticky top-0 space-y-4">
+            <div className="border border-gray-200 bg-white p-4">
               <div className="text-sm font-semibold text-gray-900">Stay in the loop</div>
               <p className="mt-2 text-sm text-gray-600">
                 Follow neighbouring chambers to compare conversations and keep your civic radar sharp across the region.
               </p>
             </div>
-            <div className="rounded border bg-white p-4 shadow-sm text-sm text-gray-600">
+            <div className="border border-gray-200 bg-white p-4 text-sm text-gray-600">
               We&apos;re expanding chamber insights soon&mdash;expect voter stats, MP updates, and upcoming events curated for
               your riding.
             </div>
