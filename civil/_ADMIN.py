@@ -154,14 +154,37 @@ def kill_port(port: int) -> None:
     time.sleep(0.5)
 
 
+def compose_file_args() -> str:
+    parts = [f'-f "{COMPOSE_FILE}"']
+    if os.path.exists(OVERRIDE_FILE):
+        parts.append(f'-f "{OVERRIDE_FILE}"')
+    return " ".join(parts)
+
+
+def run_prisma_db_push(compose_args: str, *, bootstrap: bool = True) -> int:
+    """Execute `prisma db push` inside the API service container."""
+    install_step = ""
+    if bootstrap:
+        install_step = (
+            "pnpm config set store-dir /app/.pnpm-store && "
+            "pnpm -w i --no-frozen-lockfile && "
+        )
+    command = (
+    f"docker compose {compose_args} --profile infra --profile app run --rm --no-deps "
+    "api sh -lc \""
+    "corepack enable && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@9 --activate && "
+    f"{install_step}"
+    "pnpm --filter @civil/db prisma db push\""
+    )
+    return run(command, cwd=ROOT)
+
+
 def ensure_infra() -> int:
     require_tool(
         "docker",
         "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
     )
-    files = f"-f \"{COMPOSE_FILE}\""
-    if os.path.exists(OVERRIDE_FILE):
-        files += f" -f \"{OVERRIDE_FILE}\""
+    files = compose_file_args()
     return run(f"docker compose {files} --profile infra up -d postgres redis", cwd=ROOT)
 
 
@@ -169,7 +192,8 @@ def cmd_infra(args: argparse.Namespace) -> int:
     if args.action == "up":
         return ensure_infra()
     elif args.action == "down":
-        return run(f"docker compose -f \"{COMPOSE_FILE}\" down", cwd=ROOT)
+        files = compose_file_args()
+        return run(f"docker compose {files} down", cwd=ROOT)
     else:
         print("Unknown infra action. Use: up | down")
         return 2
@@ -304,6 +328,10 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  Error checking Docker: {e}")
 
     print("\n💡 Quick actions:")
+    if not api_running and not web_running:
+        print("  • Bootstrap dev stack: python _ADMIN.py start")
+    else:
+        print("  • Stop dev stack:      python _ADMIN.py stop")
     if not api_running:
         print("  • Start API:   python _ADMIN.py dev server")
     if not web_running:
@@ -353,9 +381,7 @@ def cmd_developer(args: argparse.Namespace) -> int:
         "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
     )
     action = getattr(args, "action", "up") or "up"
-    files = f"-f \"{COMPOSE_FILE}\""
-    if os.path.exists(OVERRIDE_FILE):
-        files += f" -f \"{OVERRIDE_FILE}\""
+    files = compose_file_args()
     if action == "down":
         # Stop both profiles to fully tear down dev stack
         return run(f"docker compose {files} --profile infra --profile app down", cwd=ROOT)
@@ -369,10 +395,86 @@ def cmd_developer(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_start(args: argparse.Namespace) -> int:
+    """One-command bootstrap for the local dev stack (infra + dev containers)."""
+    require_tool(
+        "docker",
+        "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
+    )
+    files = compose_file_args()
+
+    if getattr(args, "clean", False):
+        run(f"docker compose {files} --profile infra --profile app down --remove-orphans", cwd=ROOT)
+
+    if not getattr(args, "skip_infra", False):
+        code = ensure_infra()
+        if code != 0:
+            return code
+    else:
+        if not getattr(args, "quiet", False):
+            print("Skipping docker infra start (--skip-infra).")
+
+    if not getattr(args, "skip_migrate", False):
+        if not getattr(args, "quiet", False):
+            print("Syncing database schema via Prisma (db push)...")
+        code = run_prisma_db_push(files, bootstrap=not getattr(args, "no_bootstrap", False))
+        if code != 0:
+            print("Prisma db push failed. Re-run with --skip-migrate to bypass.")
+            return code
+
+    services = ["api", "web"]
+    if not getattr(args, "no_nginx", False):
+        services.insert(0, "nginx")
+
+    up_cmd = f"docker compose {files} --profile infra --profile app up -d"
+    if getattr(args, "build", False):
+        up_cmd += " --build"
+    if getattr(args, "force_recreate", False):
+        up_cmd += " --force-recreate"
+    up_cmd += " " + " ".join(services)
+    code = run(up_cmd, cwd=ROOT)
+    if code != 0:
+        return code
+
+    print("\n✅ Dev stack is running.")
+    print("  API:  http://localhost:3000/health (proxied via nginx)")
+    print("  Web:  http://localhost:3001")
+    if not getattr(args, "no_nginx", False):
+        print("  Proxy: http://localhost (nginx dev proxy)")
+    print("\nUse `python _ADMIN.py stop` to tear things down, or `python _ADMIN.py status` to inspect the stack.\n")
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    require_tool(
+        "docker",
+        "Install Docker: https://docs.docker.com/get-docker/\nAfter install, reopen your shell.",
+    )
+    files = compose_file_args()
+    keep_infra = getattr(args, "keep_infra", False)
+
+    if keep_infra:
+        code = run(f"docker compose {files} stop nginx web api", cwd=ROOT)
+    else:
+        down_cmd = f"docker compose {files} --profile infra --profile app down --remove-orphans"
+        if getattr(args, "prune_volumes", False):
+            down_cmd += " -v"
+        code = run(down_cmd, cwd=ROOT)
+    if code != 0:
+        return code
+
+    if getattr(args, "kill_ports", False):
+        kill_port(PORT_API)
+        kill_port(PORT_WEB)
+    return 0
+
+
 def print_help() -> None:
     print(
         (
             "Usage:\n"
+            "  python _ADMIN.py start [--skip-infra] [--skip-migrate] [--build] [--force-recreate]\n"
+            "  python _ADMIN.py stop [--keep-infra] [--kill-ports]\n"
             "  python _ADMIN.py dev [server|client|all] [--install] [--force]\n"
             "  python _ADMIN.py infra up|down\n"
             "  python _ADMIN.py docker up|down\n"
@@ -390,6 +492,23 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     sub = p.add_subparsers(dest="command")
+
+    pstart = sub.add_parser("start", help="Bootstrap the local dev stack (Docker infra + dev containers)")
+    pstart.add_argument("--skip-infra", action="store_true", help="Skip starting Postgres/Redis (expects them to already be running)")
+    pstart.add_argument("--skip-migrate", action="store_true", help="Skip Prisma db push during startup")
+    pstart.add_argument("--no-bootstrap", action="store_true", help="Skip pnpm install step during Prisma migration helper")
+    pstart.add_argument("--build", action="store_true", help="Force docker compose --build for app services")
+    pstart.add_argument("--force-recreate", action="store_true", help="Force recreation of containers even if configuration unchanged")
+    pstart.add_argument("--no-nginx", action="store_true", help="Do not start nginx dev proxy (access services via ports 3000/3001)")
+    pstart.add_argument("--clean", action="store_true", help="Down any existing dev containers before booting")
+    pstart.add_argument("--quiet", action="store_true", help="Reduce informational logging during startup")
+    pstart.set_defaults(func=cmd_start)
+
+    pstop = sub.add_parser("stop", help="Stop the dev stack started with 'start'")
+    pstop.add_argument("--keep-infra", action="store_true", help="Leave Postgres/Redis running; only stop web/api/nginx")
+    pstop.add_argument("--kill-ports", action="store_true", help="Kill lingering local processes bound to ports 3000/3001")
+    pstop.add_argument("--prune-volumes", action="store_true", help="Also remove docker volumes when tearing down")
+    pstop.set_defaults(func=cmd_stop)
 
     pi = sub.add_parser("infra", help="Manage infra services (Postgres, Redis)")
     pi_sub = pi.add_subparsers(dest="action")
