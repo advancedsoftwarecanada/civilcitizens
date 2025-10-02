@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n prisma,api \"chokidar ../../packages/db/schema.prisma -c 'pnpm --filter @civil/db generate'\" \"tsx watch src/index.ts\"",
+  "dev": "pnpm --filter @civil/db build && pnpm --filter @civil/shared build && pnpm --filter @civil/db generate && concurrently -k -n db,shared,prisma,api \"pnpm --filter @civil/db dev\" \"pnpm --filter @civil/shared dev\" \"chokidar ../../packages/db/schema.prisma -c 'pnpm --filter @civil/db generate'\" \"tsx watch src/index.ts\"",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "lint": "eslint .",

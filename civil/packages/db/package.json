@@ -15,8 +15,8 @@
     "prisma": "prisma",
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
-    "build": "tsc -p tsconfig.json",
-    "dev": "echo 'db package has no dev server'",
+  "build": "tsc -p tsconfig.json",
+  "dev": "tsc -w -p tsconfig.json",
     "lint": "eslint .",
     "test": "vitest run",
     "format": "prettier -w ."
