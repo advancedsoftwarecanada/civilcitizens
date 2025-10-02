@@ -7,8 +7,26 @@ console.log('🚀 API POST ENDPOINTS LOADING...');
 // Add body parser middleware for JSON parsing
 import bodyParser from 'body-parser';
 import { ApiFiles } from '/libs/apiFiles.js';
+import { slugifyTitle, randomPostSuffix, composeSlug } from '/libs/utils/slug.js';
 import { WebApp } from 'meteor/webapp';
 WebApp.connectHandlers.use(bodyParser.json({ limit: '10mb' })); // Add size limit
+
+async function generateUniqueSeoUrl(title) {
+  const rawBase = slugifyTitle(title || '');
+  const baseWithoutTrailingPost = rawBase.replace(/(?:-post)?$/, '').replace(/-+$/, '');
+  const slugBase = baseWithoutTrailingPost || (rawBase === 'post' ? '' : rawBase);
+  const maxAttempts = 5;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const candidate = composeSlug(slugBase, randomPostSuffix());
+    const existing = await Posts.findOneAsync({ seoUrl: candidate }, { fields: { _id: 1 } });
+    if (!existing) {
+      return candidate;
+    }
+  }
+
+  return composeSlug(slugBase, `post-${Date.now().toString(36)}`);
+}
 
 // Very simple test endpoint to check if basic request handling works
 WebApp.connectHandlers.use('/ping', (req, res) => {
@@ -134,12 +152,7 @@ WebApp.connectHandlers.use('/api/posts/submit', async (req, res) => {
     }
 
     // Generate SEO URL
-    let seoUrl;
-    if (thePostJson.title && thePostJson.title.trim()) {
-      seoUrl = `${thePostJson.title.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Date.now()}`;
-    } else {
-      seoUrl = `post-${Date.now()}`;
-    }
+      const seoUrl = await generateUniqueSeoUrl(thePostJson.title);
 
   // Prepare post data
     const postData = {
@@ -306,8 +319,12 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
       return;
     }
 
+  let nextSeoUrl = post.seoUrl;
+
   // Ensure jurisdiction is set if moving from draft to published or fields changed
-  if (updateData && (updateData.draft === false || updateData.type || updateData.province || typeof updateData.jurisdiction !== 'undefined' || typeof updateData.nsfw !== 'undefined' || updateData.attachments)) {
+  const needsExpandedValidation = updateData && (updateData.draft === false || updateData.type || updateData.province || typeof updateData.jurisdiction !== 'undefined' || typeof updateData.nsfw !== 'undefined' || updateData.attachments);
+
+  if (needsExpandedValidation) {
     const set = { ...updateData };
     // Validate lengths if title/body provided
     const TITLE_MAX = 300;
@@ -324,6 +341,10 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
         res.end(JSON.stringify({ error: `Body too long (max ${BODY_MAX})` }));
         return;
       }
+    }
+    if (Object.prototype.hasOwnProperty.call(set, 'title')) {
+      set.seoUrl = await generateUniqueSeoUrl(set.title);
+      nextSeoUrl = set.seoUrl;
     }
     // If this update publishes a draft, reset createdAt to the publish time
     const isPublishing = (post && post.draft === true && updateData.draft === false);
@@ -365,11 +386,16 @@ WebApp.connectHandlers.use('/api/posts/update', async (req, res) => {
     }
   await Posts.updateAsync({ _id: postId }, { $set: set });
   } else {
-    await Posts.updateAsync({ _id: postId }, { $set: updateData });
+    const set = { ...updateData };
+    if (Object.prototype.hasOwnProperty.call(set, 'title')) {
+      set.seoUrl = await generateUniqueSeoUrl(set.title);
+      nextSeoUrl = set.seoUrl;
+    }
+    await Posts.updateAsync({ _id: postId }, { $set: set });
   }
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'success', message: 'Post updated successfully.', seoUrl: post.seoUrl }));
+  res.end(JSON.stringify({ status: 'success', message: 'Post updated successfully.', seoUrl: nextSeoUrl }));
 
   } catch (error) {
     console.error('Error updating post:', error);
