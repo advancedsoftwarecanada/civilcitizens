@@ -183,27 +183,29 @@ export default function PostComposer({
   }, [articleBody, articleTitle, canSubmit, chamberTarget, draft, jurisdiction, onPostCreated, postType, resetComposer, submitting])
 
   return (
-    <section className={clsx('rounded border bg-white p-6 shadow-sm', className)}>
+    <section className={clsx('border border-gray-200 bg-white px-5 py-4', className)}>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-gray-900">Share something new</h2>
-          <p className="text-sm text-gray-500">
+          <h2 className="text-base font-semibold text-gray-900">Share something new</h2>
+          <p className="text-xs text-gray-500">
             Toggle between quick updates and long-form articles whenever you&apos;re inspired.
           </p>
           {chamberTarget ? (
-            <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700">
+            <div className="mt-2 inline-flex items-center gap-1 border border-gray-200 bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-700">
               <span>Posting to</span>
               <span className="font-semibold">{chamberTarget.chamberName ?? chamberTarget.chamberSlug}</span>
               <span className="uppercase tracking-wide text-gray-500">{chamberTarget.provinceCode}</span>
             </div>
           ) : null}
         </div>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-4 text-sm">
           <button
             type="button"
             className={clsx(
-              'rounded-full px-4 py-1 font-medium transition-colors',
-              postType === 'post' ? 'bg-black text-white' : 'bg-gray-100 text-gray-700',
+              'pb-2 text-sm font-semibold transition-colors',
+              postType === 'post'
+                ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                : 'text-gray-400 hover:text-[var(--cc-primary)]',
             )}
             onClick={() => setPostType('post')}
             disabled={submitting}
@@ -213,8 +215,10 @@ export default function PostComposer({
           <button
             type="button"
             className={clsx(
-              'rounded-full px-4 py-1 font-medium transition-colors',
-              postType === 'article' ? 'bg-black text-white' : 'bg-gray-100 text-gray-700',
+              'pb-2 text-sm font-semibold transition-colors',
+              postType === 'article'
+                ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                : 'text-gray-400 hover:text-[var(--cc-primary)]',
             )}
             onClick={() => setPostType('article')}
             disabled={submitting}
@@ -224,15 +228,17 @@ export default function PostComposer({
         </div>
       </header>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-medium text-gray-600">
-        <span className="uppercase tracking-wide text-gray-500">Tag:</span>
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs font-medium text-gray-500">
+        <span className="uppercase tracking-wide text-gray-400">Tag</span>
         {JURISDICTION_OPTIONS.map((option) => (
           <button
             key={option.value}
             type="button"
             className={clsx(
-              'rounded-full border px-3 py-1 transition',
-              jurisdiction === option.value ? 'bg-black text-white border-black' : 'border-gray-300 text-gray-600 hover:border-black/60',
+              'pb-1 text-xs font-semibold uppercase tracking-widest transition',
+              jurisdiction === option.value
+                ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                : 'text-gray-400 hover:text-[var(--cc-primary)]'
             )}
             onClick={() => setJurisdiction(option.value)}
             disabled={submitting}
@@ -242,13 +248,13 @@ export default function PostComposer({
         ))}
       </div>
 
-      <div className="mt-5 space-y-4">
+      <div className="mt-4 space-y-3">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
         {postType === 'post' ? (
           <div className="space-y-2">
             <textarea
-              className="w-full rounded border px-3 py-2 text-[15px] leading-6"
+              className="w-full rounded-none border border-gray-200 px-3 py-3 text-[15px] leading-6 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-0"
               placeholder="What&apos;s happening?"
               rows={4}
               value={draft}
@@ -272,7 +278,7 @@ export default function PostComposer({
               <input
                 id="article-title"
                 type="text"
-                className="mt-1 w-full rounded border px-3 py-2"
+                className="mt-1 w-full rounded-none border border-gray-300 px-3 py-2"
                 placeholder="Give readers a headline"
                 value={articleTitle}
                 onChange={(e) => setArticleTitle(e.target.value)}
@@ -300,14 +306,14 @@ export default function PostComposer({
         <div className="flex items-center justify-end gap-2">
           <button
             type="button"
-            className="rounded px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
+            className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
             onClick={resetComposer}
             disabled={submitting}
           >
             Clear
           </button>
           <button
-            className="rounded bg-black px-4 py-2 text-white transition disabled:cursor-not-allowed disabled:bg-gray-400"
+            className="rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
             onClick={submitPost}
             disabled={!canSubmit || submitting}
           >

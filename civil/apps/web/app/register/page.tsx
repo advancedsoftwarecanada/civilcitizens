@@ -133,7 +133,7 @@ export default function RegisterPage() {
               className={`w-full rounded border p-3 ${
                 hasFieldError('firstName')
                   ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                  : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+                  : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
               }`}
               placeholder="First name"
               value={firstName}
@@ -148,7 +148,7 @@ export default function RegisterPage() {
               className={`w-full rounded border p-3 ${
                 hasFieldError('lastName')
                   ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                  : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+                  : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
               }`}
               placeholder="Last name"
               value={lastName}
@@ -167,7 +167,7 @@ export default function RegisterPage() {
             className={`w-full rounded border p-3 ${
               hasFieldError('email')
                 ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
             }`}
             placeholder="Email"
             value={email}
@@ -182,7 +182,7 @@ export default function RegisterPage() {
             className={`w-full rounded border p-3 ${
               hasFieldError('password')
                 ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:ring-2 focus:ring-black/10'
+                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
             }`}
             placeholder="Password"
             type="password"
@@ -216,7 +216,7 @@ export default function RegisterPage() {
           ) : null}
         </div>
         {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
-        <button className="w-full rounded bg-black px-4 py-2 text-white" type="submit">
+        <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
           Create account
         </button>
       </form>

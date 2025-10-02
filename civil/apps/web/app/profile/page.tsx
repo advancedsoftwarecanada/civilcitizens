@@ -411,6 +411,26 @@ export default function ProfileEditPage() {
     }
   }, [bio, experiences, firstName, lastName, loadProfile, token])
 
+  const handleLogout = useCallback(async () => {
+    try {
+      if (token) {
+        await fetch(buildApiUrl('/auth/logout'), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        })
+      }
+    } catch (err) {
+      console.error('Failed logging out', err)
+    } finally {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('token')
+        window.location.href = '/login'
+      }
+    }
+  }, [token])
+
   const onSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault()
@@ -439,18 +459,15 @@ export default function ProfileEditPage() {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-7xl px-4 py-6">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <aside className="hidden lg:col-span-3 lg:block">
-            <Sidebar me={viewer ?? undefined} active="profile" />
-          </aside>
+      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
+        <Sidebar me={viewer ?? undefined} active="profile" />
 
-          <main className="space-y-6 lg:col-span-6">
+        <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">
             {error ? (
-              <div className="rounded border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
+              <div className="border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
             ) : (
-              <form onSubmit={onSubmit} className="space-y-6">
-                <section className="rounded border bg-white p-6 shadow-sm">
+              <form onSubmit={onSubmit} className="space-y-4">
+                <section className="border border-gray-200 bg-white p-6">
                   <header className="mb-4">
                     <h1 className="text-lg font-semibold text-gray-900">Profile details</h1>
                     <p className="text-sm text-gray-500">Update the basics that other members see.</p>
@@ -470,7 +487,7 @@ export default function ProfileEditPage() {
                             value={firstName}
                             onChange={(event) => setFirstName(event.target.value)}
                             disabled={formDisabled}
-                            className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                            className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                             placeholder="Jane"
                           />
                         </label>
@@ -481,7 +498,7 @@ export default function ProfileEditPage() {
                             value={lastName}
                             onChange={(event) => setLastName(event.target.value)}
                             disabled={formDisabled}
-                            className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                            className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                             placeholder="Citizen"
                           />
                         </label>
@@ -494,7 +511,7 @@ export default function ProfileEditPage() {
                   </div>
                 </section>
 
-                <section className="rounded border bg-white p-6 shadow-sm">
+                <section className="border border-gray-200 bg-white p-6">
                   <header className="mb-4">
                     <h2 className="text-lg font-semibold text-gray-900">Bio</h2>
                     <p className="text-sm text-gray-500">Share your story, work, and what you're focused on today.</p>
@@ -508,7 +525,7 @@ export default function ProfileEditPage() {
                   />
                 </section>
 
-                <section className="rounded border bg-white p-6 shadow-sm">
+                <section className="border border-gray-200 bg-white p-6">
                   <header className="mb-4 flex items-center justify-between gap-4">
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900">Experience</h2>
@@ -517,7 +534,7 @@ export default function ProfileEditPage() {
                     <button
                       type="button"
                       onClick={addExperience}
-                      className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      className="border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
                       disabled={saving}
                     >
                       Add experience
@@ -525,7 +542,7 @@ export default function ProfileEditPage() {
                   </header>
                   <div className="space-y-6">
                     {experiences.map((exp, index) => (
-                      <div key={exp.key} className="rounded-lg border border-gray-200 p-4">
+                      <div key={exp.key} className="border border-gray-200 p-4">
                         <div className="mb-3 flex items-center justify-between">
                           <h3 className="text-sm font-semibold text-gray-800">Position {index + 1}</h3>
                           <button
@@ -545,7 +562,7 @@ export default function ProfileEditPage() {
                               value={exp.title}
                               onChange={(event) => handleExperienceChange(exp.key, { title: event.target.value })}
                               disabled={formDisabled}
-                              className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                              className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                               placeholder="Community Organizer"
                             />
                           </label>
@@ -556,7 +573,7 @@ export default function ProfileEditPage() {
                               value={exp.organization}
                               onChange={(event) => handleExperienceChange(exp.key, { organization: event.target.value })}
                               disabled={formDisabled}
-                              className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                              className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                               placeholder="Civic Association"
                             />
                           </label>
@@ -567,7 +584,7 @@ export default function ProfileEditPage() {
                               value={exp.location}
                               onChange={(event) => handleExperienceChange(exp.key, { location: event.target.value })}
                               disabled={formDisabled}
-                              className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                              className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                               placeholder="Ottawa, ON"
                             />
                           </label>
@@ -579,7 +596,7 @@ export default function ProfileEditPage() {
                                 value={exp.startDate}
                                 onChange={(event) => handleExperienceChange(exp.key, { startDate: event.target.value })}
                                 disabled={formDisabled}
-                                className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                                className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                               />
                             </label>
                             <label className="text-sm font-medium text-gray-700">
@@ -589,7 +606,7 @@ export default function ProfileEditPage() {
                                 value={exp.endDate}
                                 onChange={(event) => handleExperienceChange(exp.key, { endDate: event.target.value })}
                                 disabled={formDisabled || exp.current}
-                                className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                                className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                               />
                             </label>
                           </div>
@@ -610,7 +627,7 @@ export default function ProfileEditPage() {
                             onChange={(event) => handleExperienceChange(exp.key, { description: event.target.value })}
                             disabled={formDisabled}
                             rows={3}
-                            className="mt-1 w-full rounded border px-3 py-2 text-sm focus:border-black focus:outline-none"
+                            className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                             placeholder="Highlight achievements, initiatives, and impact."
                           />
                         </label>
@@ -623,7 +640,7 @@ export default function ProfileEditPage() {
                   <button
                     type="submit"
                     disabled={saving}
-                    className="rounded bg-black px-6 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-500"
+                    className="bg-[var(--cc-primary)] px-6 py-2 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
                   >
                     {saving ? 'Saving…' : 'Save changes'}
                   </button>
@@ -632,8 +649,9 @@ export default function ProfileEditPage() {
             )}
           </main>
 
-          <aside className="space-y-6 lg:col-span-3">
-            <section className="rounded border bg-white p-6 shadow-sm">
+        <aside className="hidden lg:flex lg:min-h-[calc(100vh-48px)] lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
+          <div className="sticky top-0 space-y-4">
+            <section className="border border-gray-200 bg-white p-6">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Account</h2>
               <ul className="mt-4 space-y-3 text-sm text-gray-700">
                 <li>
@@ -646,9 +664,16 @@ export default function ProfileEditPage() {
                   <span className="font-medium text-gray-900">Email:</span> {profile?.user?.email ?? ''}
                 </li>
               </ul>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="mt-6 w-full border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white"
+              >
+                Log out
+              </button>
             </section>
 
-            <section className="rounded border bg-white p-6 shadow-sm">
+            <section className="border border-gray-200 bg-white p-6">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Connections</h2>
               <ul className="mt-4 space-y-3 text-sm text-gray-700">
                 <li>
@@ -667,7 +692,7 @@ export default function ProfileEditPage() {
             </section>
 
             {profile?.homeChamber ? (
-              <section className="rounded border bg-white p-6 shadow-sm">
+              <section className="border border-gray-200 bg-white p-6">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Home chamber</h2>
                 <div className="mt-3 text-sm text-gray-700">
                   <div className="font-semibold text-gray-900">
@@ -680,7 +705,7 @@ export default function ProfileEditPage() {
               </section>
             ) : null}
 
-            <section className="rounded border bg-white p-6 shadow-sm">
+            <section className="border border-gray-200 bg-white p-6">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Experience preview</h2>
               <div className="mt-4 space-y-4">
                 {experiences.length === 0 ? (
@@ -703,8 +728,8 @@ export default function ProfileEditPage() {
                 )}
               </div>
             </section>
-          </aside>
-        </div>
+          </div>
+        </aside>
       </div>
     </div>
   )
