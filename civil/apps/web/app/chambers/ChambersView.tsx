@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import type { ChamberGeoMatch, ChamberGeolocateResponse } from '@civil/shared'
 import Link from 'next/link'
 import Sidebar from '../_components/Sidebar'
@@ -94,9 +94,13 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const [geoBusy, setGeoBusy] = useState(false)
   const [geoStatus, setGeoStatus] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
-  const [geoPrimary, setGeoPrimary] = useState<ChamberGeoMatch | null>(null)
+  const [geoDetected, setGeoDetected] = useState<ChamberGeoMatch | null>(null)
+  const [geoSelected, setGeoSelected] = useState<ChamberGeoMatch | null>(null)
   const [geoAlternatives, setGeoAlternatives] = useState<ChamberGeoMatch[]>([])
   const [showGeoOverlay, setShowGeoOverlay] = useState(false)
+  const [welcomePickerView, setWelcomePickerView] = useState<'options' | 'manual' | 'assist'>(() => (mode === 'welcome' ? 'options' : 'manual'))
+  const [assistUnlocked, setAssistUnlocked] = useState(false)
+  const provinceSelectRef = useRef<HTMLSelectElement | null>(null)
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -234,7 +238,10 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
 
   async function applyGeolocationMatch(match: ChamberGeoMatch, reason: 'auto' | 'suggestion') {
     try {
-      setGeoPrimary(match)
+      if (reason === 'auto') {
+        setGeoDetected(match)
+      }
+      setGeoSelected(match)
       setSelectedProvince(match.province)
       await loadChambersForProvince(match.province, match.chamberSlug)
       setSelectedChamber(match.chamberSlug)
@@ -272,8 +279,9 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     setGeoBusy(true)
     setGeoStatus('Requesting permission…')
     setGeoError(null)
-    setGeoAlternatives([])
-    setGeoPrimary(null)
+  setGeoAlternatives([])
+  setGeoDetected(null)
+  setGeoSelected(null)
     setShowGeoOverlay(true)
 
     navigator.geolocation.getCurrentPosition(
@@ -296,7 +304,8 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           if (primary) {
             await applyGeolocationMatch(primary, 'auto')
           } else {
-            setGeoPrimary(null)
+            setGeoDetected(null)
+            setGeoSelected(null)
             setGeoStatus('We could not find an exact riding match. Please choose a suggestion below.')
             setGeoError('We matched nearby ridings. Pick the correct one to continue.')
           }
@@ -480,6 +489,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const followButtonClass = 'border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
   const visitButtonClass = 'border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
   const locationButtonClass = 'inline-flex items-center justify-center border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
+  const tabButtonBaseClass = 'inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60'
 
   const manageSection = (
     <section className="border border-gray-200 bg-white p-6">
@@ -578,7 +588,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const renderPickerSection = (variant: 'default' | 'welcome') => {
     const isWelcome = variant === 'welcome'
     const sectionClasses = isWelcome ? 'border border-[var(--cc-border)] bg-white p-8 shadow-sm' : 'border border-gray-200 bg-white p-6'
-    const heading = isWelcome ? 'Let’s anchor you in your home chamber' : home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'
+    const heading = isWelcome ? 'Select your EDA' : home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'
     const introCopy = isWelcome
       ? 'Civil is organized by Canada’s Electoral District Associations. Pick your riding and we’ll personalize your feed with neighbours, civic leaders, and local actions.'
       : null
@@ -586,118 +596,231 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       ? 'Choose your province and riding so we can personalize your Civil feed with events, updates, and neighbours from your community.'
       : null
 
+    const focusProvinceSelect = () => {
+      if (provinceSelectRef.current) {
+        provinceSelectRef.current.focus()
+        provinceSelectRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }
+
+    const showFullPicker = !isWelcome || welcomePickerView === 'manual' || assistUnlocked
+    const showManualPickers = !isWelcome || welcomePickerView === 'manual'
+    const pickerContainerClass = `${isWelcome ? 'mt-4' : 'mt-6'} space-y-4`
+    const activeGeoMatch = geoSelected ?? geoDetected
+    const suggestionMatches: ChamberGeoMatch[] = []
+    const seenMatches = new Set<string>()
+    const addSuggestion = (match: ChamberGeoMatch | null | undefined) => {
+      if (!match) return
+      const key = `${match.province}:${match.chamberSlug}`
+      if (seenMatches.has(key)) return
+      seenMatches.add(key)
+      suggestionMatches.push(match)
+    }
+    addSuggestion(activeGeoMatch)
+    addSuggestion(geoDetected)
+    geoAlternatives.forEach((alt) => addSuggestion(alt))
+  const manualButtonClass = `${tabButtonBaseClass} w-full sm:w-auto ${isWelcome && welcomePickerView === 'manual' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm' : 'border-gray-300 text-gray-700 hover:border-gray-400 hover:bg-gray-50'}`
+    const assistButtonClass = `${tabButtonBaseClass} w-full sm:w-auto ${isWelcome && welcomePickerView === 'assist' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm' : 'border-[var(--cc-primary)] text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10'}`
+
+    const handleManualStart = () => {
+      setWelcomePickerView('manual')
+      setTimeout(() => {
+        focusProvinceSelect()
+      }, 0)
+    }
+
+    const handleAssistStart = () => {
+      setWelcomePickerView('assist')
+      setAssistUnlocked(false)
+    }
+
+    const handleAssistGeolocate = () => {
+      if (!assistUnlocked) {
+        setAssistUnlocked(true)
+      }
+      handleAutoDetect()
+    }
+
     return (
       <section className={sectionClasses}>
         <h2 className="text-2xl font-bold text-gray-900">{heading}</h2>
         {introCopy ? <p className="mt-3 text-base text-gray-700">{introCopy}</p> : null}
         {helperCopy ? <p className="mt-2 text-sm text-gray-600">{helperCopy}</p> : null}
-        <div className="mt-6 space-y-4">
-          <div>
-            <label className="text-sm font-medium text-gray-700">Province or territory</label>
-            <select
-              className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
-              value={selectedProvince}
-              onChange={handleProvinceChange}
-            >
-              <option value="">Select your province / territory</option>
-              {provinces.map((prov) => (
-                <option key={prov.code} value={prov.code}>
-                  {prov.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-gray-700">Chamber</label>
-            <select
-              className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
-              value={selectedChamber}
-              onChange={handleChamberChange}
-              disabled={!selectedProvince || loadingChambers}
-            >
-              <option value="">{loadingChambers ? 'Loading chambers…' : 'Select your chamber'}</option>
-              {chambers.map((ch) => (
-                <option key={ch.slug} value={ch.slug}>
-                  {ch.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="font-semibold text-gray-700">Need a hand?</div>
-                <div className="text-xs text-gray-500">Let us detect your riding using your current location.</div>
-              </div>
-              <button
-                type="button"
-                className={locationButtonClass}
-                onClick={handleAutoDetect}
-                disabled={geoBusy}
-              >
-                {geoBusy ? 'Detecting…' : 'Use my location'}
+        {isWelcome ? (
+          <>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <button type="button" className={manualButtonClass} onClick={handleManualStart}>
+                I know my EDA
+              </button>
+              <button type="button" className={assistButtonClass} onClick={handleAssistStart}>
+                Locate it for me
               </button>
             </div>
-            {(geoStatus || geoError || geoPrimary) && (
-              <div className="mt-3 space-y-2 text-xs">
-                {geoPrimary && (
-                  <div className="border border-green-200 bg-green-50 px-3 py-2 text-green-700">
-                    Matched <span className="font-semibold">{geoPrimary.chamberName}</span> ({geoPrimary.province.toUpperCase()})
-                    {geoPrimary.method === 'geofenced' ? ' using Elections Canada boundaries.' : ' as the closest riding to you.'}
-                  </div>
-                )}
-                {geoStatus && <div className="text-gray-600">{geoStatus}</div>}
-                {geoError && <div className="text-red-500">{geoError}</div>}
-              </div>
-            )}
-            {geoAlternatives.length > 0 && (
-              <div className="mt-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Other nearby ridings</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {geoAlternatives.map((match) => (
-                    <button
-                      key={`${match.province}:${match.chamberSlug}`}
-                      type="button"
-                      className="border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                      onClick={() => handleSuggestionSelect(match)}
-                    >
-                      {match.chamberName}
-                      {typeof match.distanceKm === 'number' ? (
-                        <span className="ml-1 text-[11px] text-gray-500">({match.distanceKm} km)</span>
-                      ) : null}
-                    </button>
-                  ))}
+            {welcomePickerView === 'assist' ? (
+              <div className="mt-6 space-y-3 rounded-md border border-dashed border-[var(--cc-border)] bg-slate-50/60 p-4 text-sm text-gray-700">
+                <div className="text-sm font-semibold text-gray-800">
+                  {assistUnlocked ? 'We’ve unlocked the riding picker below.' : 'Press the button below to geolocate your EDA.'}
+                </div>
+                <p className="text-sm text-gray-600">
+                  We'll use your current location to find the closest Electoral District Association. You can confirm or adjust the result below.
+                </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    className={`${locationButtonClass} w-full sm:w-auto`}
+                    onClick={handleAssistGeolocate}
+                    disabled={geoBusy}
+                  >
+                    {geoBusy ? 'Detecting…' : assistUnlocked ? 'Retry geolocation' : 'Geolocate my EDA'}
+                  </button>
                 </div>
               </div>
-            )}
-          </div>
+            ) : null}
+          </>
+        ) : null}
+        {showFullPicker ? (
+          <div className={pickerContainerClass}>
+            {showManualPickers ? (
+              <>
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Province or territory</label>
+                  <select
+                    className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+                    ref={provinceSelectRef}
+                    value={selectedProvince}
+                    onChange={handleProvinceChange}
+                    disabled={welcomePickerView === 'assist' && !assistUnlocked}
+                  >
+                    <option value="">Select your province / territory</option>
+                    {provinces.map((prov) => (
+                      <option key={prov.code} value={prov.code}>
+                        {prov.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button
-              type="button"
-              className={followButtonClass}
-              onClick={handleFollowSelected}
-              disabled={!selectedProvince || !selectedChamber || followSaving || alreadyFollowingSelected}
-            >
-              {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this chamber'}
-            </button>
-            {!home && (
+                <div>
+                  <label className="text-sm font-medium text-gray-700">Chamber</label>
+                  <select
+                    className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+                    value={selectedChamber}
+                    onChange={handleChamberChange}
+                    disabled={welcomePickerView === 'assist' ? !assistUnlocked : !selectedProvince || loadingChambers}
+                  >
+                    <option value="">{loadingChambers ? 'Loading chambers…' : 'Select your chamber'}</option>
+                    {chambers.map((ch) => (
+                      <option key={ch.slug} value={ch.slug}>
+                        {ch.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : null}
+
+            {(!isWelcome || assistUnlocked || welcomePickerView === 'manual') && (
+              <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  {!isWelcome || !assistUnlocked ? (
+                    <div>
+                      <div className="font-semibold text-gray-700">Need a hand?</div>
+                      <div className="text-xs text-gray-500">Let us detect your riding using your current location.</div>
+                    </div>
+                  ) : null}
+                  {!isWelcome && (
+                    <button
+                      type="button"
+                      className={locationButtonClass}
+                      onClick={handleAutoDetect}
+                      disabled={geoBusy}
+                    >
+                      {geoBusy ? 'Detecting…' : 'Use my location'}
+                    </button>
+                  )}
+                </div>
+                {(geoStatus || geoError || activeGeoMatch) && (
+                  <div className="mt-3 space-y-2 text-xs">
+                    {activeGeoMatch && (
+                      <div className="border border-green-200 bg-green-50 px-3 py-2 text-green-700">
+                        Matched <span className="font-semibold">{activeGeoMatch.chamberName}</span> ({activeGeoMatch.province.toUpperCase()})
+                        {activeGeoMatch.method === 'geofenced'
+                          ? ' using Elections Canada boundaries.'
+                          : activeGeoMatch.method
+                            ? ' as the closest riding to you.'
+                            : '.'}
+                      </div>
+                    )}
+                    {geoStatus && !geoStatus.startsWith('Ready to continue') && (
+                      <div className="text-gray-600">{geoStatus}</div>
+                    )}
+                    {geoError && <div className="text-red-500">{geoError}</div>}
+                  </div>
+                )}
+                {suggestionMatches.length > 0 && (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Tap a riding to switch</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {suggestionMatches.map((match) => {
+                        const key = `${match.province}:${match.chamberSlug}`
+                        const isActive = selectedProvince === match.province && selectedChamber === match.chamberSlug
+                        const isDetected = Boolean(
+                          geoDetected &&
+                          geoDetected.province === match.province &&
+                          geoDetected.chamberSlug === match.chamberSlug
+                        )
+                        const buttonClass = isActive
+                          ? 'border border-red-500 bg-red-50 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100'
+                          : 'border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50'
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            className={buttonClass}
+                            onClick={() => handleSuggestionSelect(match)}
+                            aria-pressed={isActive}
+                          >
+                            {match.chamberName}
+                            {typeof match.distanceKm === 'number' ? (
+                              <span className="ml-1 text-[11px] text-gray-500">({match.distanceKm} km)</span>
+                            ) : null}
+                            {isDetected ? (
+                              <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Detected</span>
+                            ) : null}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              {home ? (
+                <button
+                  type="button"
+                  className={followButtonClass}
+                  onClick={handleFollowSelected}
+                  disabled={!selectedProvince || !selectedChamber || followSaving || alreadyFollowingSelected}
+                >
+                  {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this chamber'}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
                 onClick={() => setHomeChamber(selectedProvince, selectedChamber, 'picker')}
                 disabled={!canSave || savingHome}
               >
-                {savingHome ? 'Saving…' : 'Set home chamber'}
+                {savingHome ? 'Saving…' : home ? 'Set as home' : 'Set as home & follow'}
               </button>
-            )}
-            {home && !canSave && (
-              <span className="text-xs text-gray-500">This chamber is already set as your home.</span>
-            )}
+              {home && !canSave && (
+                <span className="text-xs text-gray-500">This chamber is already set as your home.</span>
+              )}
+            </div>
           </div>
-        </div>
+        ) : null}
       </section>
     )
   }
@@ -714,8 +837,14 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     : (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm">
           <div className="border border-gray-200 bg-white px-6 py-4 shadow-lg">
-            <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
-            <div className="mt-1 text-xs text-gray-500">Please allow location detection when asked!</div>
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--cc-primary)] border-t-transparent"
+              />
+              <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
+            </div>
+            <div className="mt-2 text-xs text-gray-500">Please allow location detection when asked!</div>
           </div>
         </div>
       )
