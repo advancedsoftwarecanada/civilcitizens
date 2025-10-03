@@ -797,6 +797,19 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
             )}
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <Link
+                className={`${visitButtonClass} flex-shrink-0 text-center sm:min-w-[120px]`}
+                href={selectedProvince && selectedChamber ? `/${selectedProvince.toLowerCase()}/${selectedChamber.toLowerCase()}` : '#'}
+                aria-disabled={!selectedProvince || !selectedChamber}
+                tabIndex={!selectedProvince || !selectedChamber ? -1 : 0}
+                onClick={(event) => {
+                  if (!selectedProvince || !selectedChamber) {
+                    event.preventDefault()
+                  }
+                }}
+              >
+                Visit
+              </Link>
               {home ? (
                 <button
                   type="button"
