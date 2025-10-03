@@ -477,113 +477,125 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const homeFollowKey = homeFollow ? `${homeFollow.province}:${homeFollow.chamberSlug}` : null
   const homeRemoving = homeFollowKey ? managingFollow === `${homeFollowKey}:remove` : false
 
-  const mainContent = (
-    <div className="space-y-4">
-      <section className="border border-gray-200 bg-white p-6">
-        <h1 className="text-2xl font-bold">Your Chambers of Citizens</h1>
-        <p className="mt-2 text-sm text-gray-600">
-          Pick your home chamber to personalize your Civil experience. We'll use it to curate local news, MP updates,
-          and marketplace offers from your riding.
-        </p>
-        {home ? (
-          <div className="mt-4 border border-gray-200 bg-white p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-gray-500">Home Chamber</div>
-                <div className="text-lg font-semibold">{home.name}</div>
-                <div className="text-sm text-gray-500">Province: {homeProvinceName}</div>
-              </div>
-              {homeFollow && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link
-                    className="border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                    href={`/${home.province.toLowerCase()}/${home.slug.toLowerCase()}`}
-                  >
-                    Visit
-                  </Link>
-                  <button
-                    type="button"
-                    className="border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => handleUnfollow(homeFollow)}
-                    disabled={homeRemoving}
-                  >
-                    {homeRemoving ? 'Removing…' : 'Remove'}
-                  </button>
-                </div>
-              )}
+  const followButtonClass = 'border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
+  const visitButtonClass = 'border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+  const locationButtonClass = 'inline-flex items-center justify-center border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
+
+  const manageSection = (
+    <section className="border border-gray-200 bg-white p-6">
+      <h1 className="text-2xl font-bold text-gray-900">Your Chambers of Citizens</h1>
+      <p className="mt-2 text-sm text-gray-600">
+        Pick your home chamber to personalize your Civil experience. We'll use it to curate local news, MP updates,
+        and marketplace offers from your riding.
+      </p>
+      {home ? (
+        <div className="mt-4 border border-[var(--cc-border)] bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-gray-500">Home Chamber</div>
+              <div className="text-lg font-semibold text-gray-900">{home.name}</div>
+              <div className="text-sm text-gray-500">Province: {homeProvinceName}</div>
             </div>
+            {homeFollow && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Link className={visitButtonClass} href={`/${home.province.toLowerCase()}/${home.slug.toLowerCase()}`}>
+                  Visit
+                </Link>
+                <button
+                  type="button"
+                  className="border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => handleUnfollow(homeFollow)}
+                  disabled={homeRemoving}
+                >
+                  {homeRemoving ? 'Removing…' : 'Remove'}
+                </button>
+              </div>
+            )}
           </div>
-        ) : bootstrapped ? (
-          <div className="mt-4 border border-dashed border-gray-300 p-4 text-sm text-gray-500">
-            You haven't set a home chamber yet. Choose your province and riding to get started.
+        </div>
+      ) : bootstrapped ? (
+        <div className="mt-4 border border-dashed border-[var(--cc-border)] bg-white p-4 text-sm text-gray-500">
+          You haven't set a home chamber yet. Choose your province and riding to get started.
+        </div>
+      ) : (
+        <div className="mt-4 text-sm text-gray-500">Loading your chamber data…</div>
+      )}
+      <div className="mt-6">
+        <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Chambers you follow</div>
+        {loadingFollows ? (
+          <div className="mt-3 text-sm text-gray-500">Loading your followed chambers…</div>
+        ) : additionalFollows.length === 0 ? (
+          <div className="mt-3 border border-dashed border-[var(--cc-border)] bg-white p-4 text-sm text-gray-500">
+            {home
+              ? "You're currently following your home chamber. Explore other Chambers of Citizens below to keep an eye on more communities."
+              : "You haven't followed any chambers yet. Choose one below to get started."}
           </div>
         ) : (
-          <div className="mt-4 text-sm text-gray-500">Loading your chamber data…</div>
-        )}
-        <div className="mt-6">
-          <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Chambers you follow</div>
-          {loadingFollows ? (
-            <div className="mt-3 text-sm text-gray-500">Loading your followed chambers…</div>
-          ) : additionalFollows.length === 0 ? (
-            <div className="mt-3 border border-dashed border-gray-300 p-4 text-sm text-gray-500">
-              {home
-                ? "You're currently following your home chamber. Explore other Chambers of Citizens below to keep an eye on more communities."
-                : "You haven't followed any chambers yet. Choose one below to get started."}
-            </div>
-          ) : (
-            <div className="mt-3 space-y-3">
-              {additionalFollows.map((follow) => {
-                const chamber = follow.chamber ?? { slug: follow.chamberSlug, province: follow.province }
-                const key = `${follow.province}:${follow.chamberSlug}`
-                const provinceName = provinces.find((p) => p.code === chamber.province)?.name || chamber.province.toUpperCase()
-                const visitHref = `/${chamber.province.toLowerCase()}/${chamber.slug.toLowerCase()}`
-                const isUpdating = managingFollow === `${key}:home`
-                const isRemoving = managingFollow === `${key}:remove`
-                return (
-                  <div key={key} className="flex flex-col gap-2 border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="text-base font-semibold">{chamber.name || follow.chamberSlug.replace(/-/g, ' ')}</div>
-                      <div className="text-sm text-gray-500">Province: {provinceName}</div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        className="border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-                        href={visitHref}
-                      >
-                        Visit
-                      </Link>
-                      <button
-                        type="button"
-                        className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-medium text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-                        onClick={() => setHomeChamber(chamber.province, chamber.slug, 'list')}
-                        disabled={isUpdating}
-                      >
-                        {isUpdating ? 'Setting…' : 'Set as home'}
-                      </button>
-                      <button
-                        type="button"
-                        className="border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => handleUnfollow(follow)}
-                        disabled={isRemoving}
-                      >
-                        {isRemoving ? 'Removing…' : 'Remove'}
-                      </button>
-                    </div>
+          <div className="mt-3 space-y-3">
+            {additionalFollows.map((follow) => {
+              const chamber = follow.chamber ?? { slug: follow.chamberSlug, province: follow.province }
+              const key = `${follow.province}:${follow.chamberSlug}`
+              const provinceName = provinces.find((p) => p.code === chamber.province)?.name || chamber.province.toUpperCase()
+              const visitHref = `/${chamber.province.toLowerCase()}/${chamber.slug.toLowerCase()}`
+              const isUpdating = managingFollow === `${key}:home`
+              const isRemoving = managingFollow === `${key}:remove`
+              return (
+                <div key={key} className="flex flex-col gap-2 border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-base font-semibold text-gray-900">{chamber.name || follow.chamberSlug.replace(/-/g, ' ')}</div>
+                    <div className="text-sm text-gray-500">Province: {provinceName}</div>
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </section>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link className={visitButtonClass} href={visitHref}>
+                      Visit
+                    </Link>
+                    <button
+                      type="button"
+                      className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                      onClick={() => setHomeChamber(chamber.province, chamber.slug, 'list')}
+                      disabled={isUpdating}
+                    >
+                      {isUpdating ? 'Setting…' : 'Set as home'}
+                    </button>
+                    <button
+                      type="button"
+                      className="border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => handleUnfollow(follow)}
+                      disabled={isRemoving}
+                    >
+                      {isRemoving ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  )
 
-      <section className="border border-gray-200 bg-white p-6">
-        <h2 className="text-xl font-semibold">{home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'}</h2>
-        <div className="mt-4 space-y-4">
+  const renderPickerSection = (variant: 'default' | 'welcome') => {
+    const isWelcome = variant === 'welcome'
+    const sectionClasses = isWelcome ? 'border border-[var(--cc-border)] bg-white p-8 shadow-sm' : 'border border-gray-200 bg-white p-6'
+    const heading = isWelcome ? 'Let’s anchor you in your home chamber' : home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'
+    const introCopy = isWelcome
+      ? 'Civil is organized by Canada’s Electoral District Associations. Pick your riding and we’ll personalize your feed with neighbours, civic leaders, and local actions.'
+      : null
+    const helperCopy = isWelcome
+      ? 'Choose your province and riding so we can personalize your Civil feed with events, updates, and neighbours from your community.'
+      : null
+
+    return (
+      <section className={sectionClasses}>
+        <h2 className="text-2xl font-bold text-gray-900">{heading}</h2>
+        {introCopy ? <p className="mt-3 text-base text-gray-700">{introCopy}</p> : null}
+        {helperCopy ? <p className="mt-2 text-sm text-gray-600">{helperCopy}</p> : null}
+        <div className="mt-6 space-y-4">
           <div>
             <label className="text-sm font-medium text-gray-700">Province or territory</label>
             <select
-              className="mt-1 w-full border px-3 py-2"
+              className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
               value={selectedProvince}
               onChange={handleProvinceChange}
             >
@@ -599,7 +611,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           <div>
             <label className="text-sm font-medium text-gray-700">Chamber</label>
             <select
-              className="mt-1 w-full border px-3 py-2"
+              className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
               value={selectedChamber}
               onChange={handleChamberChange}
               disabled={!selectedProvince || loadingChambers}
@@ -613,7 +625,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
             </select>
           </div>
 
-          <div className="border border-dashed border-gray-300 px-3 py-3 text-sm">
+          <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="font-semibold text-gray-700">Need a hand?</div>
@@ -621,7 +633,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
               </div>
               <button
                 type="button"
-                className="inline-flex items-center justify-center border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className={locationButtonClass}
                 onClick={handleAutoDetect}
                 disabled={geoBusy}
               >
@@ -662,10 +674,10 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               type="button"
-              className="border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className={followButtonClass}
               onClick={handleFollowSelected}
               disabled={!selectedProvince || !selectedChamber || followSaving || alreadyFollowingSelected}
             >
@@ -674,7 +686,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
             {!home && (
               <button
                 type="button"
-                className="bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
                 onClick={() => setHomeChamber(selectedProvince, selectedChamber, 'picker')}
                 disabled={!canSave || savingHome}
               >
@@ -687,6 +699,13 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           </div>
         </div>
       </section>
+    )
+  }
+
+  const mainContent = (
+    <div className="space-y-4">
+      {manageSection}
+      {renderPickerSection('default')}
     </div>
   )
 
@@ -696,25 +715,17 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 backdrop-blur-sm">
           <div className="border border-gray-200 bg-white px-6 py-4 shadow-lg">
             <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
-            <div className="mt-1 text-xs text-gray-500">
-              {geoStatus || 'Hang tight for a moment while we match you to the right chamber.'}
-            </div>
+            <div className="mt-1 text-xs text-gray-500">Please allow location detection when asked!</div>
           </div>
         </div>
       )
 
   if (mode === 'welcome') {
     return (
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6">
-        <section className="border border-gray-200 bg-white p-6">
-          <div className="text-sm font-semibold uppercase tracking-wide text-gray-500">Welcome to Civil</div>
-          <h1 className="mt-2 text-2xl font-bold text-gray-900">Set your home chamber to unlock your feed</h1>
-          <p className="mt-3 text-sm text-gray-600">
-            We personalize everything around your riding. Confirm your location below—once your home chamber is saved,
-            we'll take you straight to your timeline.
-          </p>
-        </section>
-        <main className="mt-4 space-y-4">{mainContent}</main>
+      <div className="min-h-screen bg-gradient-to-b from-white via-[#fff4f3] to-white">
+        <div className="mx-auto w-full max-w-4xl px-4 py-10">
+          {renderPickerSection('welcome')}
+        </div>
         {geoOverlay}
       </div>
     )
