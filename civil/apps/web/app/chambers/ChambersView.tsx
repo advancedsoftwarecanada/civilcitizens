@@ -881,7 +881,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
+  <div className="mx-auto w-full max-w-5xl gap-0 px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
         <Sidebar me={me ?? undefined} active="chambers" />
 
         <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">{mainContent}</main>

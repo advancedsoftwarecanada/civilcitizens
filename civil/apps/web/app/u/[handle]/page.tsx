@@ -1,10 +1,17 @@
 "use client"
 
 import Image from 'next/image'
-import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../_components/Sidebar'
-import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../../_components/PostComposer'
+import PostComposer, { ApiPost } from '../../_components/PostComposer'
+import PostFeedItem from '../../_components/PostFeedItem'
+import { buildApiUrl } from '../../_lib/api'
+import { redirectToAuthModal } from '../../_lib/authModal'
+
+const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
+  { value: 'hot', label: 'Hot' },
+  { value: 'new', label: 'New' },
+]
 
 type Viewer = {
   id: string
@@ -51,20 +58,6 @@ function formatDate(iso?: string) {
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
 }
 
-function buildPostUrl(post: ApiPost) {
-  if (post.seoSlug) {
-    return `/u/${post.author.handle}/posts/${post.seoSlug}`
-  }
-  return `/post/${post.id}`
-}
-
-function buildChamberUrl(post: ApiPost) {
-  if (post.provinceCode && post.chamberSlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`
-  }
-  return null
-}
-
 function formatDateRange(iso?: string | null) {
   if (!iso) return ''
   const date = new Date(iso)
@@ -94,12 +87,13 @@ export default function UserPostsPage({ params }: PageProps) {
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
 
   const loadViewer = useCallback(async () => {
-    const token = localStorage.getItem('token')
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) return
     try {
-      const res = await fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } })
+      const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       if (!res.ok) return
       const data = await res.json()
       setViewer(data)
@@ -108,42 +102,63 @@ export default function UserPostsPage({ params }: PageProps) {
     }
   }, [])
 
-  const loadProfile = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(`/api/users/${encodeURIComponent(handleParam)}/posts`)
-      if (!res.ok) {
+  const loadProfilePosts = useCallback(
+    async (mode: 'hot' | 'new') => {
+      setLoading(true)
+      setError(null)
+      try {
+        const params = new URLSearchParams()
+        params.set('sort', mode)
+        const search = params.toString()
+        const url = buildApiUrl(
+          `/users/${encodeURIComponent(handleParam)}/posts${search ? `?${search}` : ''}`,
+        )
+        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+        const res = await fetch(
+          url,
+          token
+            ? {
+                headers: {
+                  authorization: `Bearer ${token}`,
+                },
+              }
+            : undefined,
+        )
         if (res.status === 404) {
+          setProfile(null)
+          setPosts([])
           setError('User not found')
-        } else {
-          setError('Unable to load posts right now.')
+          return
         }
-        return
+        if (!res.ok) {
+          setError('Unable to load posts right now.')
+          return
+        }
+
+        const data: {
+          user?: UserProfile
+          items?: ApiPost[]
+        } = await res.json()
+
+        const userPayload = data.user
+        setProfile(
+          userPayload
+            ? {
+                ...userPayload,
+                experiences: Array.isArray(userPayload.experiences) ? userPayload.experiences : [],
+              }
+            : null,
+        )
+        setPosts(Array.isArray(data.items) ? data.items : [])
+      } catch (err) {
+        console.error('Failed loading user posts', err)
+        setError('Unable to load posts right now.')
+      } finally {
+        setLoading(false)
       }
-
-      const data: {
-        user?: UserProfile
-        items?: ApiPost[]
-      } = await res.json()
-
-      const userPayload = data.user
-      setProfile(
-        userPayload
-          ? {
-              ...userPayload,
-              experiences: Array.isArray(userPayload.experiences) ? userPayload.experiences : [],
-            }
-          : null,
-      )
-      setPosts(Array.isArray(data.items) ? data.items : [])
-    } catch (err) {
-      console.error('Failed loading user posts', err)
-      setError('Unable to load posts right now.')
-    } finally {
-      setLoading(false)
-    }
-  }, [handleParam])
+    },
+    [handleParam],
+  )
 
   useEffect(() => {
     loadViewer().catch(() => {
@@ -152,14 +167,56 @@ export default function UserPostsPage({ params }: PageProps) {
   }, [loadViewer])
 
   useEffect(() => {
-    loadProfile().catch(() => {
+    loadProfilePosts(sortMode).catch(() => {
       /* noop */
     })
-  }, [loadProfile])
+  }, [loadProfilePosts, sortMode])
 
-  const handlePostCreated = useCallback((post: ApiPost) => {
-    setPosts((prev) => [post, ...prev])
-  }, [])
+  const handlePostCreated = useCallback(
+    (post: ApiPost) => {
+      if (sortMode === 'new') {
+        setPosts((prev) => [post, ...prev])
+      } else {
+        loadProfilePosts(sortMode).catch(() => {
+          /* noop */
+        })
+      }
+    },
+    [loadProfilePosts, sortMode],
+  )
+
+  const handleVote = useCallback(
+    async (postId: string, value: -1 | 0 | 1) => {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      try {
+        const res = await fetch(buildApiUrl('/posts/vote'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ postId, value }),
+        })
+        if (!res.ok) {
+          console.error('Vote request failed', await res.text())
+          return
+        }
+        const data = await res.json().catch(() => null)
+        const updated = (data as { post?: ApiPost })?.post
+        if (updated) {
+          setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+        }
+      } catch (err) {
+        console.error('Unable to vote on post', err)
+      }
+    },
+    [],
+  )
 
   return (
     <div className="w-full">
@@ -244,56 +301,44 @@ export default function UserPostsPage({ params }: PageProps) {
             </section>
           ) : null}
 
-          {viewer && profile && viewer.handle === profile.handle ? (
-            <PostComposer onPostCreated={handlePostCreated} />
-          ) : null}
+          <div className="border border-gray-200 bg-white">
+            {viewer && profile && viewer.handle === profile.handle ? (
+              <PostComposer className="border-0 px-5 py-4" onPostCreated={handlePostCreated} />
+            ) : null}
 
-          <section className="space-y-4">
+            <div className={`${viewer && profile && viewer.handle === profile.handle ? 'border-t border-gray-200 ' : ''}px-5 py-3`}>
+              <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
+                <div className="text-sm font-semibold uppercase tracking-wide text-gray-500">Posts</div>
+                <div className="flex gap-3 text-xs uppercase tracking-wide text-gray-500">
+                  {SORT_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`pb-1 font-semibold transition ${
+                        sortMode === option.value
+                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                      }`}
+                      onClick={() => setSortMode(option.value)}
+                      disabled={loading && sortMode === option.value}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
             {error ? (
-              <div className="rounded border bg-white p-6 text-center text-sm text-red-600 shadow-sm">{error}</div>
+              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-red-600">{error}</div>
             ) : posts.length === 0 ? (
-              <div className="rounded border bg-white p-6 text-center text-sm text-gray-500 shadow-sm">
+              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-gray-500">
                 {loading ? 'Loading posts…' : 'This user has not shared any posts yet.'}
               </div>
             ) : (
-              posts.map((post) => {
-                const chamberUrl = buildChamberUrl(post)
-                const postUrl = buildPostUrl(post)
-                return (
-                  <article key={post.id} className="rounded border bg-white p-6 shadow-sm">
-                    <header className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide text-gray-500">
-                      <span className="rounded-full border border-gray-300 px-2 py-0.5">{post.type === 'article' ? 'Article' : 'Post'}</span>
-                      {post.type === 'article' && post.title ? (
-                        <Link href={postUrl} className="font-semibold text-gray-700 hover:underline">
-                          {post.title}
-                        </Link>
-                      ) : null}
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-600">
-                        {JURISDICTION_LABELS[post.jurisdiction]}
-                      </span>
-                      {chamberUrl ? (
-                        <Link href={chamberUrl} className="rounded-full border border-gray-200 px-2 py-0.5 text-[10px] uppercase text-gray-500 hover:bg-gray-50">
-                          {post.chamberName ?? post.chamberSlug}
-                        </Link>
-                      ) : null}
-                    </header>
-                    <div className="mt-3 space-y-3 text-[15px] leading-6 text-gray-800">
-                      {post.type === 'article' ? (
-                        <Link href={postUrl} className="prose prose-sm max-w-none text-gray-700 hover:underline">
-                          <span dangerouslySetInnerHTML={{ __html: post.body }} />
-                        </Link>
-                      ) : (
-                        <Link href={postUrl} className="block whitespace-pre-wrap hover:underline">
-                          {post.body}
-                        </Link>
-                      )}
-                    </div>
-                    <footer className="mt-4 text-xs text-gray-400">Posted {formatDate(post.createdAt)}</footer>
-                  </article>
-                )
-              })
+              posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
             )}
-          </section>
+          </div>
         </main>
       </div>
     </div>

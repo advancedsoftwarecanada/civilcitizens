@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { prisma } from '@civil/db'
 import {
   CreatePostInput,
+  CreateCommentInput,
   RegisterInput,
   LoginInput,
   ForgotPasswordInput,
@@ -17,6 +18,9 @@ import {
   UpdateProfileInput,
   CursorQuery,
   HandleParam,
+  VotePostInput,
+  VoteCommentInput,
+  PostSortEnum,
   PROVINCES,
   getChambersByProvince,
   findChamber,
@@ -52,6 +56,191 @@ void redis
 type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
 type Jurisdiction = z.infer<typeof JurisdictionEnum>
 const DEFAULT_JURISDICTION: Jurisdiction = 'citizen'
+const REDDIT_EPOCH_SECONDS = 1134028003
+
+const SCHEMA_MISMATCH_MESSAGE =
+  'Database schema is missing the social feed columns. Apply the latest Prisma migration (pnpm --filter @civil/db prisma migrate deploy) and restart the API.'
+
+function isSchemaOutOfDateError(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    return err.code === 'P2021' || err.code === 'P2022' || err.code === 'P2010'
+  }
+  const message = typeof (err as any)?.message === 'string' ? (err as any).message : ''
+  return /does not exist|unknown column|undefined table|undefined column/i.test(message)
+}
+
+async function withSchemaGuard<T>(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  action: () => Promise<T>,
+): Promise<T | FastifyReply> {
+  try {
+    return await action()
+  } catch (err) {
+    if (isSchemaOutOfDateError(err)) {
+      req.log.error({ err }, 'database schema out of date for social features')
+      return reply.code(503).send({ error: 'schema_out_of_date', message: SCHEMA_MISMATCH_MESSAGE })
+    }
+    throw err
+  }
+}
+
+type PostStatsInput = {
+  upvotes: number
+  downvotes: number
+  commentCount: number
+  createdAt: Date
+  lastActivityAt: Date
+}
+
+function calculateHotScore({ upvotes, downvotes, commentCount, createdAt, lastActivityAt }: PostStatsInput) {
+  const voteScore = upvotes - downvotes
+  const interactionScore = voteScore + Math.min(commentCount, 50)
+  const order = Math.log10(Math.max(Math.abs(interactionScore), 1))
+  const sign = interactionScore > 0 ? 1 : interactionScore < 0 ? -1 : 0
+  const baseTime = Math.max(createdAt.getTime(), lastActivityAt.getTime())
+  const seconds = baseTime / 1000 - REDDIT_EPOCH_SECONDS
+  return Number((sign * seconds + order).toFixed(6))
+}
+
+async function refreshPostAggregates(
+  tx: Prisma.TransactionClient,
+  postId: string,
+  times: { createdAt: Date; lastActivityAt: Date },
+  options: { bumpActivity?: boolean } = {},
+) {
+  const [upvotes, downvotes, commentCount] = await Promise.all([
+    tx.vote.count({ where: { postId, value: 1 } }),
+    tx.vote.count({ where: { postId, value: -1 } }),
+    tx.comment.count({ where: { postId } }),
+  ])
+
+  const nextLastActivityAt = options.bumpActivity ? new Date() : times.lastActivityAt
+  const hotScore = calculateHotScore({
+    upvotes,
+    downvotes,
+    commentCount,
+    createdAt: times.createdAt,
+    lastActivityAt: nextLastActivityAt,
+  })
+
+  await tx.post.update({
+    where: { id: postId },
+    data: {
+      upvotes,
+      downvotes,
+      score: upvotes - downvotes,
+      commentCount,
+      hotScore,
+      lastActivityAt: nextLastActivityAt,
+    },
+  })
+
+  return {
+    upvotes,
+    downvotes,
+    commentCount,
+    lastActivityAt: nextLastActivityAt,
+  }
+}
+
+async function refreshCommentAggregates(tx: Prisma.TransactionClient, commentId: string) {
+  const [upvotes, downvotes] = await Promise.all([
+    tx.commentVote.count({ where: { commentId, value: 1 } }),
+    tx.commentVote.count({ where: { commentId, value: -1 } }),
+  ])
+  const score = upvotes - downvotes
+  await tx.comment.update({
+    where: { id: commentId },
+    data: {
+      upvotes,
+      downvotes,
+      score,
+    },
+  })
+  return { upvotes, downvotes, score }
+}
+
+type CommentWithUser = Prisma.CommentGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true
+        handle: true
+        name: true
+        avatarUrl: true
+      }
+    }
+  }
+}>
+
+type CommentNode = {
+  id: string
+  postId: string
+  parentId: string | null
+  body: string
+  createdAt: Date
+  updatedAt: Date
+  upvotes: number
+  downvotes: number
+  score: number
+  viewerVote: number | null
+  author: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+  replies: CommentNode[]
+}
+
+function mapComment(row: CommentWithUser, viewerVote: number | null = null): CommentNode {
+  return {
+    id: row.id,
+    postId: row.postId,
+    parentId: row.parentId ?? null,
+    body: row.body,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    upvotes: row.upvotes,
+    downvotes: row.downvotes,
+    score: row.score,
+    viewerVote,
+    author: {
+      id: row.user.id,
+      handle: row.user.handle,
+      name: row.user.name ?? null,
+      avatarUrl: row.user.avatarUrl ?? null,
+    },
+    replies: [],
+  }
+}
+
+function buildCommentTree(rows: CommentWithUser[], viewerVotes: Record<string, number> = {}): CommentNode[] {
+  const nodeMap = new Map<string, CommentNode>()
+  const roots: CommentNode[] = []
+
+  rows.forEach((row) => {
+    nodeMap.set(row.id, mapComment(row, viewerVotes[row.id] ?? null))
+  })
+
+  rows.forEach((row) => {
+    const node = nodeMap.get(row.id)
+    if (!node) return
+    if (row.parentId) {
+      const parent = nodeMap.get(row.parentId)
+      if (parent) {
+        parent.replies.push(node)
+        parent.replies.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+        return
+      }
+    }
+    roots.push(node)
+  })
+
+  roots.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+  return roots
+}
 
 // Local schema for API registration that always treats `handle` as optional.
 // This guards against any shared package drift where `handle` might be required.
@@ -180,17 +369,18 @@ async function generateUniquePostSlug(base: string, client: PrismaClientOrTx) {
 
 type PostWithAuthor = Prisma.PostGetPayload<{
   include: {
-    author: true
-    _count: {
+    author: {
       select: {
-        comments: true
-        likes: true
+        id: true
+        handle: true
+        name: true
+        avatarUrl: true
       }
     }
   }
 }>
 
-function formatPost(post: PostWithAuthor) {
+function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null } = {}) {
   const chamber = post.provinceCode && post.chamberSlug ? findChamber(post.provinceCode, post.chamberSlug) : null
   const provinceName = chamber ? getProvinceDisplayName(chamber.province as any) : null
   return {
@@ -214,8 +404,16 @@ function formatPost(post: PostWithAuthor) {
       avatarUrl: post.author.avatarUrl,
     },
     counts: {
-      comments: post._count?.comments ?? 0,
-      likes: post._count?.likes ?? 0,
+      upvotes: post.upvotes,
+      downvotes: post.downvotes,
+      score: post.score,
+      commentCount: post.commentCount,
+    },
+    metrics: {
+      hotScore: post.hotScore,
+    },
+    viewer: {
+      vote: options.viewerVote ?? null,
     },
   }
 }
@@ -268,98 +466,108 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
 })
 
 // Auth: login
-app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = LoginInput.safeParse(req.body)
-  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { emailOrHandle, password } = parse.data
-  const user = await prisma.user.findFirst({ where: {
-    OR: [{ email: emailOrHandle }, { handle: emailOrHandle }]
-  } })
-  if (!user) return reply.code(401).send({ error: 'invalid_credentials' })
-  const ok = await bcrypt.compare(password, (user as any).passwordHash)
-  if (!ok) return reply.code(401).send({ error: 'invalid_credentials' })
-  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
-  const token = await (app as any).jwt.sign({ sub: user.id })
-  return reply.send({ token, user: { id: user.id, email: user.email, handle: user.handle, name: user.name } })
-})
+app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = z
+      .object({
+        province: z.string().min(2).max(64),
+        chamber: z.string().min(1).max(160),
+      })
+      .safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
-// Auth: me
-app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
-  try {
-    const payload = await (req as any).jwtVerify()
-    const user = await prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: { id: true, email: true, handle: true, name: true, avatarUrl: true },
-    })
-    if (!user) return reply.code(401).send({ error: 'unauthorized' })
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
 
-    const homeFollow = await prisma.chamberFollow.findFirst({ where: { userId: payload.sub, home: true } })
-    let homeChamber: null | {
-      provinceCode: string
-      provinceName: string
-      chamberSlug: string
-      chamberName: string
-    } = null
+    const chamberRecord = findChamber(province, params.data.chamber)
+    if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
 
-    if (homeFollow) {
-      const chamber = findChamber(homeFollow.provinceCode, homeFollow.chamberSlug)
-      const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
-      homeChamber = {
-        provinceCode: normalizedProvince ?? homeFollow.provinceCode,
-        provinceName: normalizedProvince ? getProvinceDisplayName(normalizedProvince) : homeFollow.provinceCode.toUpperCase(),
-        chamberSlug: homeFollow.chamberSlug,
-        chamberName: chamber?.name ?? homeFollow.chamberSlug,
-      }
+    const query = CursorQuery.extend({
+      jurisdiction: JurisdictionEnum.optional(),
+      sort: PostSortEnum.optional(),
+    }).safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const { cursor, limit, jurisdiction, sort } = query.data
+    const viewerId = (req as any).user?.id as string | undefined
+    const sortMode = sort ?? 'new'
+
+    const where: Prisma.PostWhereInput = {
+      provinceCode: chamberRecord.province,
+      chamberSlug: chamberRecord.slug,
+      ...(jurisdiction ? { jurisdiction } : {}),
     }
 
-    return reply.send({ ...user, homeChamber })
-  } catch {
-    return reply.code(401).send({ error: 'unauthorized' })
-  }
-})
+    let items: PostWithAuthor[] = []
+    let nextCursor: string | undefined
 
-// Auth: logout (client discards token; endpoint for symmetry)
-app.post('/auth/logout', async (_req: FastifyRequest, reply: FastifyReply) => {
-  return reply.send({ ok: true })
-})
+    if (sortMode === 'hot') {
+      items = await prisma.post.findMany({
+        where,
+        take: limit,
+        orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      })
+    } else {
+      const queryResult = await prisma.post.findMany({
+        where,
+        take: limit + 1,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+        },
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      })
+      if (queryResult.length > limit) {
+        const next = queryResult.pop()!
+        nextCursor = next.id
+      }
+      items = queryResult
+    }
 
-// Auth: forgot password (no SMTP yet; generate token and return it for manual testing)
-app.post('/auth/forgot', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = ForgotPasswordInput.safeParse(req.body)
-  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { emailOrHandle } = parse.data
-  const user = await prisma.user.findFirst({ where: { OR: [{ email: emailOrHandle }, { handle: emailOrHandle }] } })
-  if (!user) return reply.send({ ok: true }) // don't reveal existing accounts
-  const token = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 48)
-  const expires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
-  await prisma.user.update({ where: { id: user.id }, data: { resetToken: token, resetExpires: expires } })
-  // Normally send email here
-  return reply.send({ ok: true, token })
-})
+    let votesByPost: Record<string, number> = {}
+    if (viewerId && items.length) {
+      const votes = await prisma.vote.findMany({
+        where: { userId: viewerId, postId: { in: items.map((item) => item.id) } },
+        select: { postId: true, value: true },
+      })
+      votesByPost = votes.reduce<Record<string, number>>((acc, vote) => {
+        acc[vote.postId] = vote.value
+        return acc
+      }, {})
+    }
 
-// Auth: reset password
-app.post('/auth/reset', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = ResetPasswordInput.safeParse(req.body)
-  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { token, newPassword } = parse.data
-  const user = await prisma.user.findFirst({ where: { resetToken: token, resetExpires: { gt: new Date() } } })
-  if (!user) return reply.code(400).send({ error: 'invalid_or_expired' })
-  const hash = await bcrypt.hash(newPassword, 10)
-  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, resetToken: null, resetExpires: null } })
-  return reply.send({ ok: true })
-})
+    return {
+      chamber: chamberRecord,
+      items: items.map((item) => formatPost(item, { viewerVote: votesByPost[item.id] ?? null })),
+      nextCursor,
+    }
+  }),
+)
 
-// Chambers - provinces list
-app.get('/chambers/provinces', async (_req: FastifyRequest, reply: FastifyReply) => {
-  return reply.send({ items: PROVINCES })
-})
+app.get('/chambers/:province', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z.object({ province: z.string().min(2).max(64) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
-// Chambers - list within a province
-app.get('/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = z.object({ province: z.string().min(2) }).safeParse(req.query)
-  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const province = normalizeProvinceCode(parse.data.province)
+  const province = normalizeProvinceCode(params.data.province)
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
   const chambers = getChambersByProvince(province)
   return reply.send({ items: chambers })
 })
@@ -726,318 +934,852 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
 })
 
 // Create post
-app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = CreatePostInput.safeParse(req.body)
-  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const parse = CreatePostInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true } })
-  if (!author) return reply.code(401).send({ error: 'unauthorized' })
+    const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true } })
+    if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
-  let provinceCode: string | null = null
-  let chamberSlug: string | null = null
-  if (parse.data.chamberProvince && parse.data.chamberSlug) {
-    const normalizedProvince = normalizeProvinceCode(parse.data.chamberProvince)
-    if (!normalizedProvince) {
-      return reply.code(400).send({ error: 'invalid_province' })
+    let provinceCode: string | null = null
+    let chamberSlug: string | null = null
+    if (parse.data.chamberProvince && parse.data.chamberSlug) {
+      const normalizedProvince = normalizeProvinceCode(parse.data.chamberProvince)
+      if (!normalizedProvince) {
+        return reply.code(400).send({ error: 'invalid_province' })
+      }
+      const chamber = findChamber(normalizedProvince, parse.data.chamberSlug)
+      if (!chamber) {
+        return reply.code(404).send({ error: 'chamber_not_found' })
+      }
+      provinceCode = chamber.province
+      chamberSlug = chamber.slug
     }
-    const chamber = findChamber(normalizedProvince, parse.data.chamberSlug)
-    if (!chamber) {
-      return reply.code(404).send({ error: 'chamber_not_found' })
-    }
-    provinceCode = chamber.province
-    chamberSlug = chamber.slug
-  }
 
-  const { body, mediaUrl, hashtags, type, title, jurisdiction } = parse.data
+    const { body, mediaUrl, hashtags, type, title, jurisdiction } = parse.data
 
-  const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
-  const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
+    const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
+    const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
 
-  const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const seoSlug = await generateUniquePostSlug(slugBase, tx)
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const seoSlug = await generateUniquePostSlug(slugBase, tx)
 
-    const post = await tx.post.create({
-      data: {
-        authorId: userId,
-        body,
-        mediaUrl,
-        type,
-        title,
-        provinceCode,
-        chamberSlug,
-        seoSlug,
-        jurisdiction: normalizedJurisdiction,
+      const post = await tx.post.create({
+        data: {
+          authorId: userId,
+          body,
+          mediaUrl,
+          type,
+          title,
+          provinceCode,
+          chamberSlug,
+          seoSlug,
+          jurisdiction: normalizedJurisdiction,
+        },
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      })
+
+      if (hashtags?.length) {
+        const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))] as string[]
+        if (tags.length) {
+          await tx.hashtag.createMany({ data: tags.map((tag: string) => ({ tag })), skipDuplicates: true })
+          await tx.postHashtag.createMany({ data: tags.map((tag: string) => ({ postId: post.id, tag })) })
+        }
+      }
+
+      return post
+    })
+
+    return reply.code(201).send(formatPost(created))
+  }),
+)
+
+// Auth: login
+app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const parse = LoginInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+    const { emailOrHandle, password } = parse.data
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email: emailOrHandle }, { handle: emailOrHandle }],
       },
+    })
+    if (!user) return reply.code(401).send({ error: 'invalid_credentials' })
+    const ok = await bcrypt.compare(password, (user as any).passwordHash)
+    if (!ok) return reply.code(401).send({ error: 'invalid_credentials' })
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
+    const token = await (app as any).jwt.sign({ sub: user.id })
+    return reply.send({ token, user: { id: user.id, email: user.email, handle: user.handle, name: user.name } })
+  }),
+)
+
+// Auth: me
+app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
+  try {
+    const payload = await (req as any).jwtVerify()
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, email: true, handle: true, name: true, avatarUrl: true },
+    })
+    if (!user) return reply.code(401).send({ error: 'unauthorized' })
+
+    const homeFollow = await prisma.chamberFollow.findFirst({ where: { userId: payload.sub, home: true } })
+    let homeChamber: null | {
+      provinceCode: string
+      provinceName: string
+      chamberSlug: string
+      chamberName: string
+    } = null
+
+    if (homeFollow) {
+      const chamber = findChamber(homeFollow.provinceCode, homeFollow.chamberSlug)
+      const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
+      homeChamber = {
+        provinceCode: normalizedProvince ?? homeFollow.provinceCode,
+        provinceName: normalizedProvince
+          ? getProvinceDisplayName(normalizedProvince)
+          : homeFollow.provinceCode.toUpperCase(),
+        chamberSlug: homeFollow.chamberSlug,
+        chamberName: chamber?.name ?? homeFollow.chamberSlug,
+      }
+    }
+
+    return reply.send({ ...user, homeChamber })
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+})
+
+// Auth: logout (client discards token; endpoint for symmetry)
+app.post('/auth/logout', async (_req: FastifyRequest, reply: FastifyReply) => reply.send({ ok: true }))
+
+// Auth: forgot password (no SMTP yet; generate token and return it for manual testing)
+app.post('/auth/forgot', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = ForgotPasswordInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+  const { emailOrHandle } = parse.data
+  const user = await prisma.user.findFirst({ where: { OR: [{ email: emailOrHandle }, { handle: emailOrHandle }] } })
+  if (!user) return reply.send({ ok: true })
+  const token = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 48)
+  const expires = new Date(Date.now() + 60 * 60 * 1000)
+  await prisma.user.update({ where: { id: user.id }, data: { resetToken: token, resetExpires: expires } })
+  return reply.send({ ok: true, token })
+})
+
+// Auth: reset password
+app.post('/auth/reset', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = ResetPasswordInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+  const { token, newPassword } = parse.data
+  const user = await prisma.user.findFirst({ where: { resetToken: token, resetExpires: { gt: new Date() } } })
+  if (!user) return reply.code(400).send({ error: 'invalid_or_expired' })
+  const hash = await bcrypt.hash(newPassword, 10)
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash, resetToken: null, resetExpires: null } })
+  return reply.send({ ok: true })
+})
+
+// Chambers - provinces list
+app.get('/chambers/provinces', async (_req: FastifyRequest, reply: FastifyReply) => reply.send({ items: PROVINCES }))
+
+// Chambers - list within a province
+app.get('/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = z.object({ province: z.string().min(2) }).safeParse(req.query)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+  const province = normalizeProvinceCode(parse.data.province)
+  if (!province) return reply.code(404).send({ error: 'province_not_found' })
+  const chambers = getChambersByProvince(province)
+  return reply.send({ items: chambers })
+})
+
+// Get post by id
+app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid id' })
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
       include: {
-        author: true,
-        _count: {
+        author: {
           select: {
-            comments: true,
-            likes: true,
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
+    if (!post) return reply.code(404).send({ error: 'not found' })
+    const viewerId = (req as any).user?.id as string | undefined
+    let viewerVote: number | null = null
+    if (viewerId) {
+      const vote = await prisma.vote.findUnique({
+        where: {
+          userId_postId: {
+            userId: viewerId,
+            postId: post.id,
+          },
+        },
+        select: { value: true },
+      })
+      viewerVote = vote?.value ?? null
+    }
+
+    const commentRows = await prisma.comment.findMany({
+      where: { postId: post.id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
           },
         },
       },
     })
 
-    if (hashtags?.length) {
-  const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))] as string[]
-      if (tags.length) {
-  await tx.hashtag.createMany({ data: tags.map((tag: string) => ({ tag })), skipDuplicates: true })
-  await tx.postHashtag.createMany({ data: tags.map((tag: string) => ({ postId: post.id, tag })) })
+    let viewerCommentVotes: Record<string, number> = {}
+    if (viewerId && commentRows.length) {
+      const votes = await prisma.commentVote.findMany({
+        where: { userId: viewerId, commentId: { in: commentRows.map((row) => row.id) } },
+        select: { commentId: true, value: true },
+      })
+      viewerCommentVotes = votes.reduce<Record<string, number>>((acc, vote) => {
+        acc[vote.commentId] = vote.value
+        return acc
+      }, {})
+    }
+
+    return {
+      post: formatPost(post, { viewerVote }),
+      paths: getCanonicalPaths(post),
+      comments: buildCommentTree(commentRows, viewerCommentVotes),
+    }
+  }),
+)
+
+// List posts (newest first) with cursor pagination
+app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const parse = z
+      .object({
+        cursor: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(20),
+        jurisdiction: JurisdictionEnum.optional(),
+        sort: PostSortEnum.optional(),
+      })
+      .safeParse(req.query)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+    const { cursor, limit, jurisdiction, sort } = parse.data
+    const where: Prisma.PostWhereInput = {}
+    if (jurisdiction) {
+      where.jurisdiction = jurisdiction
+    }
+    const viewerId = (req as any).user?.id as string | undefined
+    const sortMode = sort ?? 'new'
+
+    let items: PostWithAuthor[] = []
+    let nextCursor: string | undefined = undefined
+
+    if (sortMode === 'hot') {
+      items = await prisma.post.findMany({
+        take: limit,
+        orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
+        where,
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      })
+    } else {
+      const query = await prisma.post.findMany({
+        take: limit + 1,
+        orderBy: { createdAt: 'desc' },
+        where,
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+        },
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      })
+      if (query.length > limit) {
+        const next = query.pop()!
+        nextCursor = next.id
+      }
+      items = query
+    }
+
+    let votesByPost: Record<string, number> = {}
+    if (viewerId && items.length) {
+      const votes = await prisma.vote.findMany({
+        where: { postId: { in: items.map((item) => item.id) }, userId: viewerId },
+        select: { postId: true, value: true },
+      })
+      votesByPost = votes.reduce<Record<string, number>>((acc, vote) => {
+        acc[vote.postId] = vote.value
+        return acc
+      }, {})
+    }
+
+    return {
+      items: items.map((item) => formatPost(item, { viewerVote: votesByPost[item.id] ?? null })),
+      nextCursor,
+    }
+  }),
+)
+
+app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = VotePostInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { postId, value } = parse.data
+
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: {
+        id: true,
+        createdAt: true,
+        lastActivityAt: true,
+        authorId: true,
+      },
+    })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    let currentVote: number | null = null
+
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.vote.findUnique({
+        where: {
+          userId_postId: {
+            userId,
+            postId,
+          },
+        },
+        select: { value: true },
+      })
+
+      currentVote = existing?.value ?? null
+      let voteChanged = false
+
+      if (value === 0) {
+        if (existing) {
+          await tx.vote.delete({
+            where: {
+              userId_postId: {
+                userId,
+                postId,
+              },
+            },
+          })
+          currentVote = null
+          voteChanged = true
+        }
+      } else if (!existing) {
+        await tx.vote.create({ data: { userId, postId, value } })
+        currentVote = value
+        voteChanged = true
+      } else if (existing.value !== value) {
+        await tx.vote.update({
+          where: {
+            userId_postId: {
+              userId,
+              postId,
+            },
+          },
+          data: { value },
+        })
+        currentVote = value
+        voteChanged = true
+      }
+
+      if (voteChanged) {
+        await refreshPostAggregates(
+          tx,
+          postId,
+          {
+            createdAt: post.createdAt,
+            lastActivityAt: post.lastActivityAt,
+          },
+          { bumpActivity: true },
+        )
+      }
+    })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: postId },
+      include: {
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
+
+    if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
+
+    return reply.send({ post: formatPost(updatedPost, { viewerVote: currentVote }) })
+  }),
+)
+
+app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = CreateCommentInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { postId, body, parentId } = parse.data
+
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: {
+        id: true,
+        createdAt: true,
+        lastActivityAt: true,
+      },
+    })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (parentId) {
+      const parent = await prisma.comment.findUnique({ where: { id: parentId }, select: { id: true, postId: true } })
+      if (!parent || parent.postId !== postId) {
+        return reply.code(400).send({ error: 'invalid_parent' })
       }
     }
 
-    return post
-  })
+    let createdComment: CommentWithUser | null = null
 
-  return reply.code(201).send(formatPost(created))
-})
-
-// Get post by id
-app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) => {
-  const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
-  if (!params.success) return reply.code(400).send({ error: 'invalid id' })
-  const post = await prisma.post.findUnique({
-    where: { id: params.data.id },
-    include: {
-      author: true,
-      _count: {
-        select: {
-          comments: true,
-          likes: true,
+    await prisma.$transaction(async (tx) => {
+      createdComment = await tx.comment.create({
+        data: {
+          postId,
+          userId,
+          parentId: parentId ?? null,
+          body,
         },
-      },
-    },
-  })
-  if (!post) return reply.code(404).send({ error: 'not found' })
-  return {
-    post: formatPost(post),
-    paths: getCanonicalPaths(post),
-  }
-})
+        include: {
+          user: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      })
 
-// List posts (newest first) with cursor pagination
-app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) => {
-  const parse = z
-    .object({
-      cursor: z.string().optional(),
-      limit: z.coerce.number().int().min(1).max(50).default(20),
-      jurisdiction: JurisdictionEnum.optional(),
+      await refreshPostAggregates(
+        tx,
+        postId,
+        {
+          createdAt: post.createdAt,
+          lastActivityAt: post.lastActivityAt,
+        },
+        { bumpActivity: true },
+      )
     })
-    .safeParse(req.query)
-  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { cursor, limit, jurisdiction } = parse.data
-  const where: Prisma.PostWhereInput = {}
-  if (jurisdiction) {
-    where.jurisdiction = jurisdiction
-  }
-  const items = await prisma.post.findMany({
-    take: limit + 1,
-    orderBy: { createdAt: 'desc' },
-    where,
-    include: {
-      author: true,
-      _count: {
-        select: {
-          comments: true,
-          likes: true,
+
+    if (!createdComment) return reply.code(500).send({ error: 'comment_failed' })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: postId },
+      include: {
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
         },
       },
-    },
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-  })
-  let nextCursor: string | undefined = undefined
-  if (items.length > limit) {
-    const next = items.pop()!
-    nextCursor = next.id
-  }
-  return { items: items.map((item: PostWithAuthor) => formatPost(item)), nextCursor }
-})
-
-app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) => {
-  const params = z.object({ slug: z.string().min(3).max(200) }).safeParse(req.params)
-  if (!params.success) return reply.code(400).send({ error: 'invalid_slug' })
-
-  const post = await prisma.post.findUnique({
-    where: { seoSlug: params.data.slug },
-    include: {
-      author: true,
-      _count: {
-        select: {
-          comments: true,
-          likes: true,
-        },
-      },
-    },
-  })
-
-  if (!post) return reply.code(404).send({ error: 'not_found' })
-
-  return {
-    post: formatPost(post),
-    paths: getCanonicalPaths(post),
-  }
-})
-
-app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply) => {
-  const params = HandleParam.safeParse(req.params)
-  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-
-  const handle = params.data.handle.replace(/^@/, '').toLowerCase()
-
-  const userRecord = await prisma.user.findUnique({
-    where: { handle },
-    select: {
-      id: true,
-      handle: true,
-      name: true,
-      bio: true,
-      avatarUrl: true,
-      createdAt: true,
-    },
-  })
-
-  if (!userRecord) return reply.code(404).send({ error: 'user_not_found' })
-
-  let experiences: Array<{
-    id: string
-    title: string
-    organization: string
-    location: string | null
-    startDate: Date
-    endDate: Date | null
-    current: boolean
-    description: string | null
-    position: number
-  }> = []
-
-  try {
-    experiences = await prisma.experience.findMany({
-      where: { userId: userRecord.id },
-      orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
     })
-  } catch (error) {
-    if (!isExperienceTableMissing(error)) {
-      throw error
+
+    return reply.code(201).send({
+      comment: mapComment(createdComment, null),
+      post: updatedPost ? formatPost(updatedPost, { viewerVote: null }) : null,
+    })
+  }),
+)
+
+app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = VoteCommentInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { commentId, value } = parse.data
+
+    const comment = await prisma.comment.findUnique({
+      where: { id: commentId },
+      select: {
+        id: true,
+      },
+    })
+
+    if (!comment) return reply.code(404).send({ error: 'comment_not_found' })
+
+    let viewerVote: number | null = null
+    let voteChanged = false
+
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.commentVote.findUnique({
+        where: {
+          userId_commentId: {
+            userId,
+            commentId,
+          },
+        },
+        select: { value: true },
+      })
+
+      if (value === 0) {
+        if (existing) {
+          await tx.commentVote.delete({
+            where: {
+              userId_commentId: {
+                userId,
+                commentId,
+              },
+            },
+          })
+          voteChanged = true
+        }
+        viewerVote = null
+      } else if (!existing) {
+        await tx.commentVote.create({ data: { userId, commentId, value } })
+        voteChanged = true
+        viewerVote = value
+      } else if (existing.value !== value) {
+        await tx.commentVote.update({
+          where: {
+            userId_commentId: {
+              userId,
+              commentId,
+            },
+          },
+          data: { value },
+        })
+        voteChanged = true
+        viewerVote = value
+      } else {
+        viewerVote = existing.value
+      }
+
+      if (voteChanged) {
+        await refreshCommentAggregates(tx, commentId)
+      }
+    })
+
+    const updated = await prisma.comment.findUnique({
+      where: { id: commentId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
+
+    if (!updated) return reply.code(404).send({ error: 'comment_not_found' })
+
+    return reply.send({ comment: mapComment(updated, viewerVote) })
+  }),
+)
+
+app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid id' })
+
+    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { id: true } })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    const rows = await prisma.comment.findMany({
+      where: { postId: post.id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
+
+    const viewerId = (req as any).user?.id as string | undefined
+    let viewerVotes: Record<string, number> = {}
+    if (viewerId && rows.length) {
+      const votes = await prisma.commentVote.findMany({
+        where: { userId: viewerId, commentId: { in: rows.map((row) => row.id) } },
+        select: { commentId: true, value: true },
+      })
+      viewerVotes = votes.reduce<Record<string, number>>((acc, vote) => {
+        acc[vote.commentId] = vote.value
+        return acc
+      }, {})
     }
-  }
 
-  const mappedExperiences = experiences.map((exp) => ({
-    id: exp.id,
-    title: exp.title,
-    organization: exp.organization,
-    location: exp.location,
-    startDate: exp.startDate.toISOString(),
-    endDate: exp.endDate ? exp.endDate.toISOString() : null,
-    current: exp.current,
-    description: exp.description,
-    position: exp.position,
-  }))
+    return reply.send({ comments: buildCommentTree(rows, viewerVotes) })
+  }),
+)
 
-  const user = {
-    ...userRecord,
-    experiences: mappedExperiences,
-  }
+app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = z.object({ slug: z.string().min(3).max(200) }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_slug' })
 
-  const query = CursorQuery.extend({ jurisdiction: JurisdictionEnum.optional() }).safeParse(req.query)
-  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+    const post = await prisma.post.findUnique({
+      where: { seoSlug: params.data.slug },
+      include: {
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
 
-  const { cursor, limit, jurisdiction } = query.data
+    if (!post) return reply.code(404).send({ error: 'not_found' })
 
-  const posts = await prisma.post.findMany({
-    where: {
+    const viewerId = (req as any).user?.id as string | undefined
+    let viewerVote: number | null = null
+    if (viewerId) {
+      const vote = await prisma.vote.findUnique({
+        where: {
+          userId_postId: {
+            userId: viewerId,
+            postId: post.id,
+          },
+        },
+        select: { value: true },
+      })
+      viewerVote = vote?.value ?? null
+    }
+
+    const commentRows = await prisma.comment.findMany({
+      where: { postId: post.id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    })
+
+    let viewerCommentVotes: Record<string, number> = {}
+    if (viewerId && commentRows.length) {
+      const votes = await prisma.commentVote.findMany({
+        where: { userId: viewerId, commentId: { in: commentRows.map((row) => row.id) } },
+        select: { commentId: true, value: true },
+      })
+      viewerCommentVotes = votes.reduce<Record<string, number>>((acc, vote) => {
+        acc[vote.commentId] = vote.value
+        return acc
+      }, {})
+    }
+
+    return {
+      post: formatPost(post, { viewerVote }),
+      paths: getCanonicalPaths(post),
+      comments: buildCommentTree(commentRows, viewerCommentVotes),
+    }
+  }),
+)
+
+app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+
+    const userRecord = await prisma.user.findUnique({
+      where: { handle },
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        bio: true,
+        avatarUrl: true,
+        createdAt: true,
+      },
+    })
+
+    if (!userRecord) return reply.code(404).send({ error: 'user_not_found' })
+
+    let experiences: Array<{
+      id: string
+      title: string
+      organization: string
+      location: string | null
+      startDate: Date
+      endDate: Date | null
+      current: boolean
+      description: string | null
+      position: number
+    }> = []
+
+    try {
+      experiences = await prisma.experience.findMany({
+        where: { userId: userRecord.id },
+        orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
+      })
+    } catch (error) {
+      if (!isExperienceTableMissing(error)) {
+        throw error
+      }
+    }
+
+    const mappedExperiences = experiences.map((exp) => ({
+      id: exp.id,
+      title: exp.title,
+      organization: exp.organization,
+      location: exp.location,
+      startDate: exp.startDate.toISOString(),
+      endDate: exp.endDate ? exp.endDate.toISOString() : null,
+      current: exp.current,
+      description: exp.description,
+      position: exp.position,
+    }))
+
+    const user = {
+      ...userRecord,
+      experiences: mappedExperiences,
+    }
+
+    const query = CursorQuery.extend({
+      jurisdiction: JurisdictionEnum.optional(),
+      sort: PostSortEnum.optional(),
+    }).safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const { cursor, limit, jurisdiction, sort } = query.data
+    const viewerId = (req as any).user?.id as string | undefined
+    const sortMode = sort ?? 'new'
+
+    const where: Prisma.PostWhereInput = {
       authorId: user.id,
       ...(jurisdiction ? { jurisdiction } : {}),
-    },
-    take: limit + 1,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      author: true,
-      _count: {
-        select: {
-          comments: true,
-          likes: true,
+    }
+
+    let posts: PostWithAuthor[] = []
+    let nextCursor: string | undefined
+
+    if (sortMode === 'hot') {
+      posts = await prisma.post.findMany({
+        where,
+        take: limit,
+        orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
         },
-      },
-    },
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-  })
-
-  let nextCursor: string | undefined
-  if (posts.length > limit) {
-    const next = posts.pop()!
-    nextCursor = next.id
-  }
-
-  return {
-    user,
-  items: posts.map((post: PostWithAuthor) => formatPost(post)),
-    nextCursor,
-  }
-})
-
-app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply: FastifyReply) => {
-  const params = z
-    .object({
-      province: z.string().min(2).max(64),
-      chamber: z.string().min(1).max(160),
-    })
-    .safeParse(req.params)
-  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-
-  const province = normalizeProvinceCode(params.data.province)
-  if (!province) return reply.code(404).send({ error: 'province_not_found' })
-
-  const chamberRecord = findChamber(province, params.data.chamber)
-  if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
-
-  const query = CursorQuery.extend({ jurisdiction: JurisdictionEnum.optional() }).safeParse(req.query)
-  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
-
-  const { cursor, limit, jurisdiction } = query.data
-
-  const posts = await prisma.post.findMany({
-    where: {
-      provinceCode: chamberRecord.province,
-      chamberSlug: chamberRecord.slug,
-      ...(jurisdiction ? { jurisdiction } : {}),
-    },
-    take: limit + 1,
-    orderBy: { createdAt: 'desc' },
-    include: {
-      author: true,
-      _count: {
-        select: {
-          comments: true,
-          likes: true,
+      })
+    } else {
+      const queryResult = await prisma.post.findMany({
+        where,
+        take: limit + 1,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+            },
+          },
         },
-      },
-    },
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-  })
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      })
+      if (queryResult.length > limit) {
+        const next = queryResult.pop()!
+        nextCursor = next.id
+      }
+      posts = queryResult
+    }
 
-  let nextCursor: string | undefined
-  if (posts.length > limit) {
-    const next = posts.pop()!
-    nextCursor = next.id
-  }
+    let votesByPost: Record<string, number> = {}
+    if (viewerId && posts.length) {
+      const votes = await prisma.vote.findMany({
+        where: { userId: viewerId, postId: { in: posts.map((post) => post.id) } },
+        select: { postId: true, value: true },
+      })
+      votesByPost = votes.reduce<Record<string, number>>((acc, vote) => {
+        acc[vote.postId] = vote.value
+        return acc
+      }, {})
+    }
 
-  const provinceName = getProvinceDisplayName(chamberRecord.province as any)
-
-  return {
-    chamber: {
-      provinceCode: chamberRecord.province,
-      provinceName,
-      slug: chamberRecord.slug,
-      name: chamberRecord.name,
-    },
-  items: posts.map((post: PostWithAuthor) => formatPost(post)),
-    nextCursor,
-  }
-})
+    return {
+      user,
+      items: posts.map((post) => formatPost(post, { viewerVote: votesByPost[post.id] ?? null })),
+      nextCursor,
+    }
+  }),
+)
 
 // SSE notifications (skeleton)
 app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply) => {
