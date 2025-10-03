@@ -23,6 +23,41 @@ import pointToPolygonDistance from '@turf/point-to-polygon-distance'
 
 const DEFAULT_SHP_URL = 'https://elections.ca/res/cir/mapsCorner/vector/FederalElectoralDistricts_2025_SHP.zip'
 
+const MOJIBAKE_MAP: Record<string, string> = {
+  'â€”': '—',
+  'â€“': '–',
+  'â€™': '’',
+  'â€˜': '‘',
+  'â€œ': '“',
+  'â€\u009d': '”',
+  'â€¢': '•',
+  'Ã©': 'é',
+  'Ã¨': 'è',
+  'Ãª': 'ê',
+  'Ã«': 'ë',
+  'Ã´': 'ô',
+  'Ã¶': 'ö',
+  'Ã¢': 'â',
+  'Ã¤': 'ä',
+  'Ã®': 'î',
+  'Ã¯': 'ï',
+  'Ã‡': 'Ç',
+  'Ã§': 'ç',
+  'Ã¹': 'ù',
+  'Ã»': 'û',
+  'Ã¼': 'ü'
+}
+
+function fixMojibake(value: string): string {
+  let output = value
+  for (const [bad, good] of Object.entries(MOJIBAKE_MAP)) {
+    if (output.includes(bad)) {
+      output = output.split(bad).join(good)
+    }
+  }
+  return output
+}
+
 const PROVINCE_BY_PRUID: Record<string, ProvinceCodeLocal> = {
   '10': 'nl',
   '11': 'pe',
@@ -67,6 +102,7 @@ const cache: GeoCacheHolder = {
 }
 
 const BOUNDARY_TOLERANCE_KM = 0.05
+const DEFAULT_BBOX_PADDING_DEGREES = 0.2
 
 function getConfiguredShapefileUrl(): string {
   return process.env.FEDERAL_SHP_URL?.trim() || DEFAULT_SHP_URL
@@ -88,9 +124,19 @@ function extendBBox(coords: any, bbox?: [number, number, number, number]): [numb
   return (coords as any[]).reduce<[number, number, number, number]>((acc, sub) => extendBBox(sub, acc), bbox ?? [Infinity, Infinity, -Infinity, -Infinity])
 }
 
+function pointWithinExpandedBBox(bbox: [number, number, number, number], lng: number, lat: number, paddingDegrees: number) {
+  const [minLng, minLat, maxLng, maxLat] = bbox
+  return (
+    lng >= minLng - paddingDegrees &&
+    lng <= maxLng + paddingDegrees &&
+    lat >= minLat - paddingDegrees &&
+    lat <= maxLat + paddingDegrees
+  )
+}
+
 function normalizeName(value: unknown): string {
   if (typeof value !== 'string') return ''
-  return value
+  return fixMojibake(value)
     .normalize('NFKD')
     .replace(/\p{Diacritic}/gu, '')
     .trim()
@@ -303,37 +349,69 @@ export async function locateChamberFromPoint(lat: number, lng: number, options: 
   const { features, fetchedAt, sourceUrl, cached } = await ensureGeoCache()
   const limit = Math.max(1, Math.min(options.limit ?? 8, 25))
   const targetPoint = point([lng, lat])
-  const scored = features.map((pf) => {
+  const paddingDegrees = options.paddingDegrees ?? DEFAULT_BBOX_PADDING_DEGREES
+
+  type FeatureScore = {
+    feature: ProcessedFeature
+    centroidDistanceKm: number
+    polygonDistanceKm: number
+    inside: boolean
+  }
+
+  const scored: FeatureScore[] = []
+  const insideMatches: FeatureScore[] = []
+
+  for (const pf of features) {
     const centroidDistanceKm = turfDistance(targetPoint, pf.centroidPoint, { units: 'kilometers' })
-    const polygonDistanceKm = pointToPolygonDistance(targetPoint as any, pf.feature as any, { units: 'kilometers' })
-    const inside = booleanPointInPolygon(targetPoint as any, pf.feature as any)
-    const consideredInside = inside || polygonDistanceKm <= BOUNDARY_TOLERANCE_KM
-    return { feature: pf, centroidDistanceKm, polygonDistanceKm, consideredInside }
-  })
+    const polygonDistanceRaw = pointToPolygonDistance(targetPoint as any, pf.feature as any, { units: 'kilometers' })
+    const polygonDistanceKm = Math.max(0, polygonDistanceRaw)
+    let inside = false
 
-  const polygonHitEntry = scored
-    .filter((entry) => entry.consideredInside)
-    .sort((a, b) => a.polygonDistanceKm - b.polygonDistanceKm)[0] ?? null
+    if (pointWithinExpandedBBox(pf.bbox, lng, lat, paddingDegrees)) {
+      inside = booleanPointInPolygon(targetPoint as any, pf.feature as any)
+      if (!inside && polygonDistanceRaw <= BOUNDARY_TOLERANCE_KM) {
+        inside = true
+      }
+    }
 
-  const polygonHit = polygonHitEntry?.feature ?? null
-
-  const sortedByPolygon = [...scored].sort((a, b) => a.polygonDistanceKm - b.polygonDistanceKm)
+    const entry: FeatureScore = { feature: pf, centroidDistanceKm, polygonDistanceKm, inside }
+    scored.push(entry)
+    if (inside) insideMatches.push(entry)
+  }
 
   let primary: GeoMatch | null = null
   const alternatives: GeoMatch[] = []
 
-  if (polygonHit && polygonHitEntry) {
-    primary = buildMatch(polygonHit, 'geofenced', polygonHitEntry.polygonDistanceKm)
-  }
+  if (insideMatches.length) {
+    insideMatches.sort((a, b) => a.polygonDistanceKm - b.polygonDistanceKm)
+    const winner = insideMatches[0]
+    if (winner) {
+      primary = buildMatch(winner.feature, 'geofenced', winner.polygonDistanceKm)
 
-  for (const entry of sortedByPolygon) {
-    if (polygonHit && entry.feature === polygonHit) continue
-    if (!primary) {
-      primary = buildMatch(entry.feature, 'nearest', entry.polygonDistanceKm)
-      continue
+      const altPool = scored
+        .filter((entry) => entry.feature !== winner.feature)
+        .sort((a, b) => a.centroidDistanceKm - b.centroidDistanceKm)
+
+      for (const entry of altPool) {
+        if (alternatives.length >= limit - 1) break
+        const method: GeoMatch['method'] = entry.inside ? 'geofenced' : 'nearest'
+        const distance = entry.inside ? entry.polygonDistanceKm : entry.centroidDistanceKm
+        alternatives.push(buildMatch(entry.feature, method, distance))
+      }
     }
-    if (alternatives.length >= limit - 1) break
-    alternatives.push(buildMatch(entry.feature, 'nearest', entry.polygonDistanceKm))
+  } else {
+    const sortedFallback = scored.sort((a, b) => a.centroidDistanceKm - b.centroidDistanceKm)
+    const winner = sortedFallback[0]
+    if (winner) {
+      primary = buildMatch(winner.feature, 'nearest', winner.centroidDistanceKm)
+      for (let idx = 1; idx < sortedFallback.length && alternatives.length < limit - 1; idx += 1) {
+        const entry = sortedFallback[idx]
+        if (!entry) continue
+        const method: GeoMatch['method'] = entry.inside ? 'geofenced' : 'nearest'
+        const distance = entry.inside ? entry.polygonDistanceKm : entry.centroidDistanceKm
+        alternatives.push(buildMatch(entry.feature, method, distance))
+      }
+    }
   }
 
   return {

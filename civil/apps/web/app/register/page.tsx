@@ -116,7 +116,7 @@ export default function RegisterPage() {
       if (safeData && 'token' in safeData && typeof safeData.token === 'string') {
         localStorage.setItem('token', safeData.token)
       }
-      window.location.href = '/home'
+      window.location.href = '/welcome'
     } catch (error) {
       console.error('Registration request failed', error)
       pushToast('Unexpected error during registration. Please try again.', 'error')
