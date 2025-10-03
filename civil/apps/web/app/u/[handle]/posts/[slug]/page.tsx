@@ -4,6 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../../../_components/Sidebar'
+import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
 
 type Viewer = {
@@ -109,12 +110,10 @@ export default function UserPostPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto flex w-full max-w-6xl gap-6 px-4 py-6">
-        <aside className="hidden w-72 shrink-0 lg:block">
-          <Sidebar me={viewer ?? undefined} active="home" />
-        </aside>
+      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
+        <Sidebar me={viewer ?? undefined} active="home" />
 
-        <main className="flex-1 space-y-6">
+        <main className="space-y-6 lg:min-h-[calc(100vh-48px)] lg:px-0">
           {status === 'loading' ? (
             <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading post…</div>
           ) : status === 'not-found' ? (
@@ -199,6 +198,10 @@ export default function UserPostPage({ params }: PageProps) {
             </article>
           ) : null}
         </main>
+
+        <aside className="hidden lg:flex lg:min-h-[calc(100vh-48px)] lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
+          <RightRail />
+        </aside>
       </div>
     </div>
   )

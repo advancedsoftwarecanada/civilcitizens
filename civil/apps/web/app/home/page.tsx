@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
 import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../_components/PostComposer'
+import { RightRail } from '../_components/RightRail'
 import type { Jurisdiction } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
@@ -224,14 +225,7 @@ export default function HomePage() {
         </main>
 
         <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
-          <div className="sticky top-0 space-y-4">
-            <section className="border border-gray-200 bg-white p-4">
-              <div className="border-b pb-3 text-sm font-semibold">For you</div>
-              <p className="pt-3 text-sm text-gray-500">
-                We&apos;ll recommend chambers and citizens to follow as this feed comes to life.
-              </p>
-            </section>
-          </div>
+          <RightRail />
         </aside>
       </div>
     </div>
