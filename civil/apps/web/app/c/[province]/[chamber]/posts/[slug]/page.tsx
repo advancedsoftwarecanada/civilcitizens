@@ -5,9 +5,12 @@ import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../../../../_components/Sidebar'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
+import CommentComposer from '../../../../../_components/CommentComposer'
+import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import { buildApiUrl } from '../../../../../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
+import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
 
 type Viewer = {
   id: string
@@ -51,6 +54,7 @@ export default function ChamberPostPage({ params }: PageProps) {
   const [post, setPost] = useState<ApiPost | null>(null)
   const [paths, setPaths] = useState<CanonicalPaths | null>(null)
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error' | 'not-found'>('loading')
+  const [comments, setComments] = useState<ApiComment[]>([])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -88,15 +92,18 @@ export default function ChamberPostPage({ params }: PageProps) {
 
   const loadPost = useCallback(async () => {
     setStatus('loading')
+    setComments([])
     try {
       const res = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}`)
       if (!res.ok) {
         setStatus(res.status === 404 ? 'not-found' : 'error')
+        setComments([])
         return
       }
       const data = await res.json()
       const retrievedPost = data.post as ApiPost
       const canonical = data.paths as CanonicalPaths
+      const commentTree = normalizeCommentTree((data as { comments?: ApiComment[] }).comments ?? [])
 
       setPaths(canonical)
 
@@ -111,9 +118,11 @@ export default function ChamberPostPage({ params }: PageProps) {
       }
 
       setPost(retrievedPost)
+      setComments(commentTree)
       setStatus('loaded')
     } catch (err) {
       console.error('Failed loading post', err)
+      setComments([])
       setStatus('error')
     }
   }, [chamberParam, provinceParam, slugParam])
@@ -130,6 +139,76 @@ export default function ChamberPostPage({ params }: PageProps) {
     })
   }, [loadPost])
 
+  const handleReply = useCallback(
+    async (parentId: string | null, body: string) => {
+      if (!post) throw new Error('post_not_loaded')
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        throw new Error('auth_required')
+      }
+
+      const requestPayload: Record<string, unknown> = { postId: post.id, body }
+      if (parentId) {
+        requestPayload.parentId = parentId
+      }
+
+      const response = await fetch('/api/comments', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(requestPayload),
+      })
+
+      if (!response.ok) {
+        const message = await response.text().catch(() => '')
+        throw new Error(message || 'comment_failed')
+      }
+
+      const responseData = await response.json().catch(() => null)
+      const newComment = (responseData as { comment?: ApiComment })?.comment
+      const updatedPost = (responseData as { post?: ApiPost | null })?.post
+
+      if (newComment) {
+        setComments((prev) => addCommentToTree(prev, newComment))
+      }
+      if (updatedPost) {
+        setPost(updatedPost)
+      }
+    },
+    [post],
+  )
+
+  const handleCommentVote = useCallback(async (commentId: string, value: -1 | 0 | 1) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      throw new Error('auth_required')
+    }
+
+    const response = await fetch('/api/comments/vote', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ commentId, value }),
+    })
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '')
+      throw new Error(message || 'vote_failed')
+    }
+
+    const responseData = await response.json().catch(() => null)
+    const updatedComment = (responseData as { comment?: ApiComment | null })?.comment
+    if (updatedComment) {
+      setComments((prev) => updateCommentInTree(prev, updatedComment))
+    }
+  }, [])
+
   return (
     <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
@@ -138,10 +217,10 @@ export default function ChamberPostPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto grid w-full max-w-7xl grid-cols-12 gap-6 px-4 py-6">
+  <div className="mx-auto w-full max-w-7xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_260px] lg:gap-0 lg:px-0 xl:gap-0">
         <Sidebar me={viewer ?? undefined} active="chambers" />
 
-        <main className="col-span-12 space-y-6 md:col-span-9 lg:col-span-6">
+        <main className="space-y-6 lg:px-0">
           {status === 'loading' ? (
             <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading post…</div>
           ) : status === 'not-found' ? (
@@ -215,15 +294,41 @@ export default function ChamberPostPage({ params }: PageProps) {
 
               <footer className="mt-6 flex flex-wrap items-center gap-4 text-xs text-gray-500">
                 {post.counts ? (
-                  <span>{post.counts.likes} likes • {post.counts.comments} comments</span>
+                  <span>{post.counts.score} points • {post.counts.commentCount} comments</span>
                 ) : null}
                 <span>Canonical: {paths?.chamber ?? buildLegacyPath(post)}</span>
               </footer>
+
+              <section className="mt-8 border-t border-gray-200 pt-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold text-gray-900">Comments</h2>
+                  {post.counts ? <span className="text-sm text-gray-500">{post.counts.commentCount} total</span> : null}
+                </div>
+
+                {viewer ? (
+                  <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
+                ) : (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                    <span>Sign in to join the conversation.</span>
+                    <button
+                      type="button"
+                      onClick={() => redirectToAuthModal('login')}
+                      className="inline-flex items-center bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)]"
+                    >
+                      Sign in
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-6">
+                  <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
+                </div>
+              </section>
             </article>
           ) : null}
         </main>
 
-        <aside className="col-span-3 hidden lg:block">
+        <aside className="hidden lg:flex lg:flex-col lg:space-y-4">
           <div className="sticky top-4 space-y-4">
             <div className="rounded border bg-white p-4 shadow-sm">
               <div className="text-sm font-semibold text-gray-900">Keep exploring</div>

@@ -1,14 +1,19 @@
 "use client"
 
-import Image from 'next/image'
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../../_components/Sidebar'
 import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../../../_components/PostComposer'
-import type { Jurisdiction } from '@civil/shared'
+import type { Jurisdiction, ProvinceCode } from '@civil/shared'
+import { getProvinceDisplayName } from '@civil/shared'
 import { buildApiUrl } from '../../../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../../../_lib/me'
 import { redirectToAuthModal } from '../../../_lib/authModal'
+import PostFeedItem from '../../../_components/PostFeedItem'
+
+const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
+  { value: 'hot', label: 'Hot' },
+  { value: 'new', label: 'New' },
+]
 
 type Viewer = {
   id: string
@@ -18,10 +23,10 @@ type Viewer = {
 }
 
 type ChamberInfo = {
-  provinceCode: string
-  provinceName: string
-  slug: string
+  code: number
   name: string
+  slug: string
+  province: ProvinceCode
 }
 
 type PageProps = {
@@ -29,28 +34,6 @@ type PageProps = {
     province: string
     chamber: string
   }
-}
-
-function formatDate(iso: string) {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
-
-function buildPostUrl(post: ApiPost) {
-  if (post.seoSlug && post.provinceCode && post.chamberSlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}/posts/${post.seoSlug}`
-  }
-  if (post.seoSlug) {
-    return `/u/${post.author.handle}/posts/${post.seoSlug}`
-  }
-  return `/post/${post.id}`
 }
 
 const FILTER_OPTIONS: Array<{ value: 'all' | Jurisdiction; label: string }> = [
@@ -71,6 +54,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
+  const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -110,8 +94,15 @@ export default function ChamberFeedPage({ params }: PageProps) {
     setLoading(true)
     setError(null)
     try {
-      const query = activeFilter === 'all' ? '' : `?jurisdiction=${activeFilter}`
-      const res = await fetch(`/api/chambers/${encodeURIComponent(provinceParam)}/${encodeURIComponent(chamberParam)}/posts${query}`)
+      const params = new URLSearchParams()
+      if (activeFilter !== 'all') {
+        params.set('jurisdiction', activeFilter)
+      }
+      params.set('sort', sortMode)
+      const query = params.toString()
+      const res = await fetch(
+        `/api/chambers/${encodeURIComponent(provinceParam)}/${encodeURIComponent(chamberParam)}/posts${query ? `?${query}` : ''}`,
+      )
       if (!res.ok) {
         setError(res.status === 404 ? 'Chamber not found.' : 'Unable to load chamber posts right now.')
         return
@@ -125,7 +116,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
     } finally {
       setLoading(false)
     }
-  }, [activeFilter, chamberParam, provinceParam])
+  }, [activeFilter, chamberParam, provinceParam, sortMode])
 
   useEffect(() => {
     loadViewer().catch(() => {
@@ -141,19 +132,58 @@ export default function ChamberFeedPage({ params }: PageProps) {
 
   const chamberTarget = useMemo(() => {
     if (!chamber) return null
+    const provinceName = getProvinceDisplayName(chamber.province)
     return {
-      provinceCode: chamber.provinceCode,
+      provinceCode: chamber.province,
       chamberSlug: chamber.slug,
       chamberName: chamber.name,
-      provinceName: chamber.provinceName,
+      provinceName,
     }
   }, [chamber])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
-      setPosts((prev) => (activeFilter === 'all' || post.jurisdiction === activeFilter ? [post, ...prev] : prev))
+      if (sortMode === 'new' && (activeFilter === 'all' || post.jurisdiction === activeFilter)) {
+        setPosts((prev) => [post, ...prev])
+      } else {
+        loadChamberPosts().catch(() => {
+          /* noop */
+        })
+      }
     },
-    [activeFilter],
+    [activeFilter, sortMode, loadChamberPosts],
+  )
+
+  const handleVote = useCallback(
+    async (postId: string, value: -1 | 0 | 1) => {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      try {
+        const res = await fetch(buildApiUrl('/posts/vote'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ postId, value }),
+        })
+        if (!res.ok) {
+          console.error('Vote request failed', await res.text())
+          return
+        }
+        const data = await res.json().catch(() => null)
+        const updated = (data as { post?: ApiPost })?.post
+        if (updated) {
+          setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+        }
+      } catch (err) {
+        console.error('Unable to vote on post', err)
+      }
+    },
+    [],
   )
 
   return (
@@ -174,7 +204,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
                 <div className="text-[11px] uppercase tracking-wide text-gray-500">Chamber of Citizens</div>
                 <h1 className="text-xl font-semibold text-gray-900">{chamber.name}</h1>
                 <div className="text-sm text-gray-600">
-                  Province: {chamber.provinceName} ({chamber.provinceCode.toUpperCase()})
+                  Province: {getProvinceDisplayName(chamber.province)} ({chamber.province.toUpperCase()})
                 </div>
                 <div className="text-xs text-gray-400">
                   {posts.length} post{posts.length === 1 ? '' : 's'} shared here.
@@ -193,22 +223,41 @@ export default function ChamberFeedPage({ params }: PageProps) {
             ) : null}
 
             <div className={`${viewer && chamberTarget ? 'border-t border-gray-200 ' : ''}px-5`}>
-              <div className="flex flex-wrap gap-4 text-sm">
-                {FILTER_OPTIONS.map((filter) => (
-                  <button
-                    key={filter.value}
-                    type="button"
-                    className={`pb-2 text-sm font-semibold transition ${
-                      activeFilter === filter.value
-                        ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                        : 'text-gray-400 hover:text-[var(--cc-primary)]'
-                    }`}
-                    onClick={() => setActiveFilter(filter.value)}
-                    disabled={loading && activeFilter === filter.value}
-                  >
-                    {filter.label}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
+                <div className="flex flex-wrap gap-4">
+                  {FILTER_OPTIONS.map((filter) => (
+                    <button
+                      key={filter.value}
+                      type="button"
+                      className={`pb-2 text-sm font-semibold transition ${
+                        activeFilter === filter.value
+                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                      }`}
+                      onClick={() => setActiveFilter(filter.value)}
+                      disabled={loading && activeFilter === filter.value}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-3 text-xs uppercase tracking-wide text-gray-500">
+                  {SORT_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`pb-1 font-semibold transition ${
+                        sortMode === option.value
+                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                      }`}
+                      onClick={() => setSortMode(option.value)}
+                      disabled={loading && sortMode === option.value}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -219,64 +268,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
                 {loading ? 'Loading posts…' : 'No posts in this chamber yet. Be the first to start the conversation!'}
               </div>
             ) : (
-              posts.map((post) => {
-                const postUrl = buildPostUrl(post)
-                return (
-                  <article key={post.id} className="border-t border-gray-200 px-5 py-4">
-                    <header className="flex items-start gap-3">
-                      <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
-                        {post.author.avatarUrl ? (
-                          <Image
-                            src={post.author.avatarUrl}
-                            alt={post.author.name ?? post.author.handle}
-                            width={44}
-                            height={44}
-                            unoptimized
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-gray-600">
-                            {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
-                          </div>
-                        )}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
-                          <Link href={`/u/${post.author.handle}`} className="font-semibold text-gray-900 hover:underline">
-                            {post.author.name ?? post.author.handle}
-                          </Link>
-                          <span>@{post.author.handle}</span>
-                          <span className="text-xs">• {formatDate(post.createdAt)}</span>
-                          <span className="bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
-                            {JURISDICTION_LABELS[post.jurisdiction]}
-                          </span>
-                        </div>
-                        <div className="mt-3 space-y-3 text-[15px] leading-6 text-gray-800">
-                          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-500">
-                            <span className="border border-gray-300 px-2 py-0.5">
-                              {post.type === 'article' ? 'Article' : 'Post'}
-                            </span>
-                            {post.type === 'article' && post.title ? (
-                              <Link href={postUrl} className="font-semibold text-gray-700 hover:underline">
-                                {post.title}
-                              </Link>
-                            ) : null}
-                          </div>
-                          {post.type === 'article' ? (
-                            <Link href={postUrl} className="prose prose-sm max-w-none text-gray-700 hover:underline">
-                              <span dangerouslySetInnerHTML={{ __html: post.body }} />
-                            </Link>
-                          ) : (
-                            <Link href={postUrl} className="block whitespace-pre-wrap hover:underline">
-                              {post.body}
-                            </Link>
-                          )}
-                        </div>
-                      </div>
-                    </header>
-                  </article>
-                )
-              })
+              posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
             )}
           </div>
         </main>

@@ -76,14 +76,35 @@ export type CreatePostInput = z.infer<typeof CreatePostInput>
 
 export type PostType = z.infer<typeof PostTypeEnum>
 
-export const LikePostInput = z.object({
+export const VoteValueSchema = z.union([z.literal(-1), z.literal(0), z.literal(1)])
+export type VoteValue = z.infer<typeof VoteValueSchema>
+
+export const VotePostInput = z.object({
   postId: z.string().cuid(),
+  value: VoteValueSchema,
 })
+export type VotePostInput = z.infer<typeof VotePostInput>
+
+export const VoteCommentInput = z.object({
+  commentId: z.string().cuid(),
+  value: VoteValueSchema,
+})
+export type VoteCommentInput = z.infer<typeof VoteCommentInput>
+
+export const CreateCommentInput = z.object({
+  postId: z.string().cuid(),
+  body: z.string().trim().min(1).max(5000),
+  parentId: z.string().cuid().optional(),
+})
+export type CreateCommentInput = z.infer<typeof CreateCommentInput>
 
 export const CursorQuery = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
+
+export const PostSortEnum = z.enum(['new', 'hot'])
+export type PostSort = z.infer<typeof PostSortEnum>
 
 export const HandleParam = z.object({ handle: z.string().min(3).max(32) })
 

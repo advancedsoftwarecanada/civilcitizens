@@ -30,8 +30,16 @@ export type ApiPost = {
     avatarUrl?: string | null
   }
   counts?: {
-    comments: number
-    likes: number
+    upvotes: number
+    downvotes: number
+    score: number
+    commentCount: number
+  }
+  metrics?: {
+    hotScore: number
+  }
+  viewer?: {
+    vote: number | null
   }
 }
 
