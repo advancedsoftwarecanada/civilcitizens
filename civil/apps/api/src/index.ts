@@ -21,6 +21,7 @@ import {
   VotePostInput,
   VoteCommentInput,
   PostSortEnum,
+  CommentSortEnum,
   PROVINCES,
   getChambersByProvince,
   findChamber,
@@ -89,13 +90,16 @@ type PostStatsInput = {
   upvotes: number
   downvotes: number
   commentCount: number
+  commentScore: number
   createdAt: Date
   lastActivityAt: Date
 }
 
-function calculateHotScore({ upvotes, downvotes, commentCount, createdAt, lastActivityAt }: PostStatsInput) {
+function calculateHotScore({ upvotes, downvotes, commentCount, commentScore, createdAt, lastActivityAt }: PostStatsInput) {
   const voteScore = upvotes - downvotes
-  const interactionScore = voteScore + Math.min(commentCount, 50)
+  const discussionWeight = Math.min(commentCount, 50)
+  const commentScoreWeight = Math.max(Math.min(commentScore / 4, 75), -75)
+  const interactionScore = voteScore + discussionWeight + commentScoreWeight
   const order = Math.log10(Math.max(Math.abs(interactionScore), 1))
   const sign = interactionScore > 0 ? 1 : interactionScore < 0 ? -1 : 0
   const baseTime = Math.max(createdAt.getTime(), lastActivityAt.getTime())
@@ -109,17 +113,21 @@ async function refreshPostAggregates(
   times: { createdAt: Date; lastActivityAt: Date },
   options: { bumpActivity?: boolean } = {},
 ) {
-  const [upvotes, downvotes, commentCount] = await Promise.all([
+  const [upvotes, downvotes, commentCount, commentScoreResult] = await Promise.all([
     tx.vote.count({ where: { postId, value: 1 } }),
     tx.vote.count({ where: { postId, value: -1 } }),
     tx.comment.count({ where: { postId } }),
+    tx.comment.aggregate({ where: { postId }, _sum: { score: true } }),
   ])
+
+  const commentScore = commentScoreResult?._sum?.score ?? 0
 
   const nextLastActivityAt = options.bumpActivity ? new Date() : times.lastActivityAt
   const hotScore = calculateHotScore({
     upvotes,
     downvotes,
     commentCount,
+    commentScore,
     createdAt: times.createdAt,
     lastActivityAt: nextLastActivityAt,
   })
@@ -140,6 +148,7 @@ async function refreshPostAggregates(
     upvotes,
     downvotes,
     commentCount,
+    commentScore,
     lastActivityAt: nextLastActivityAt,
   }
 }
@@ -185,6 +194,7 @@ type CommentNode = {
   downvotes: number
   score: number
   viewerVote: number | null
+  hotScore: number
   author: {
     id: string
     handle: string
@@ -192,6 +202,45 @@ type CommentNode = {
     avatarUrl: string | null
   }
   replies: CommentNode[]
+}
+
+function calculateCommentHotScore({
+  upvotes,
+  downvotes,
+  replyCount,
+  replyScore,
+  createdAt,
+  updatedAt,
+}: {
+  upvotes: number
+  downvotes: number
+  replyCount: number
+  replyScore: number
+  createdAt: Date
+  updatedAt: Date
+}) {
+  return calculateHotScore({
+    upvotes,
+    downvotes,
+    commentCount: replyCount,
+    commentScore: replyScore,
+    createdAt,
+    lastActivityAt: updatedAt,
+  })
+}
+
+function attachCommentHotScore(node: CommentNode, stats?: { replyCount?: number; replyScore?: number }) {
+  const replyCount = stats?.replyCount ?? node.replies.length
+  const replyScore = stats?.replyScore ?? node.replies.reduce((total, child) => total + child.score, 0)
+  node.hotScore = calculateCommentHotScore({
+    upvotes: node.upvotes,
+    downvotes: node.downvotes,
+    replyCount,
+    replyScore,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+  })
+  return node
 }
 
 function mapComment(row: CommentWithUser, viewerVote: number | null = null): CommentNode {
@@ -206,6 +255,7 @@ function mapComment(row: CommentWithUser, viewerVote: number | null = null): Com
     downvotes: row.downvotes,
     score: row.score,
     viewerVote,
+    hotScore: 0,
     author: {
       id: row.user.id,
       handle: row.user.handle,
@@ -216,9 +266,14 @@ function mapComment(row: CommentWithUser, viewerVote: number | null = null): Com
   }
 }
 
-function buildCommentTree(rows: CommentWithUser[], viewerVotes: Record<string, number> = {}): CommentNode[] {
+function buildCommentTree(
+  rows: CommentWithUser[],
+  viewerVotes: Record<string, number> = {},
+  options: { sort?: 'hot' | 'new' } = {},
+): CommentNode[] {
   const nodeMap = new Map<string, CommentNode>()
   const roots: CommentNode[] = []
+  const sortMode = options.sort ?? 'hot'
 
   rows.forEach((row) => {
     nodeMap.set(row.id, mapComment(row, viewerVotes[row.id] ?? null))
@@ -231,15 +286,52 @@ function buildCommentTree(rows: CommentWithUser[], viewerVotes: Record<string, n
       const parent = nodeMap.get(row.parentId)
       if (parent) {
         parent.replies.push(node)
-        parent.replies.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         return
       }
     }
     roots.push(node)
   })
 
-  roots.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-  return roots
+  const visit = (node: CommentNode): CommentNode => {
+    node.replies = node.replies.map(visit)
+    attachCommentHotScore(node)
+
+    if (sortMode === 'hot') {
+      node.replies.sort((a, b) => {
+        if (b.hotScore !== a.hotScore) return b.hotScore - a.hotScore
+        const updatedDiff = b.updatedAt.getTime() - a.updatedAt.getTime()
+        if (updatedDiff !== 0) return updatedDiff
+        return a.id.localeCompare(b.id)
+      })
+    } else {
+      node.replies.sort((a, b) => {
+        const createdDiff = b.createdAt.getTime() - a.createdAt.getTime()
+        if (createdDiff !== 0) return createdDiff
+        return a.id.localeCompare(b.id)
+      })
+    }
+
+    return node
+  }
+
+  const processedRoots = roots.map(visit)
+
+  if (sortMode === 'hot') {
+    processedRoots.sort((a, b) => {
+      if (b.hotScore !== a.hotScore) return b.hotScore - a.hotScore
+      const updatedDiff = b.updatedAt.getTime() - a.updatedAt.getTime()
+      if (updatedDiff !== 0) return updatedDiff
+      return a.id.localeCompare(b.id)
+    })
+  } else {
+    processedRoots.sort((a, b) => {
+      const createdDiff = b.createdAt.getTime() - a.createdAt.getTime()
+      if (createdDiff !== 0) return createdDiff
+      return a.id.localeCompare(b.id)
+    })
+  }
+
+  return processedRoots
 }
 
 // Local schema for API registration that always treats `handle` as optional.
@@ -1437,8 +1529,10 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
       },
     })
 
+    const createdPayload = attachCommentHotScore(mapComment(createdComment, null), { replyCount: 0, replyScore: 0 })
+
     return reply.code(201).send({
-      comment: mapComment(createdComment, null),
+      comment: createdPayload,
       post: updatedPost ? formatPost(updatedPost, { viewerVote: null }) : null,
     })
   }),
@@ -1458,6 +1552,14 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
       where: { id: commentId },
       select: {
         id: true,
+        postId: true,
+        post: {
+          select: {
+            id: true,
+            createdAt: true,
+            lastActivityAt: true,
+          },
+        },
       },
     })
 
@@ -1512,6 +1614,18 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
       if (voteChanged) {
         await refreshCommentAggregates(tx, commentId)
+
+        if (comment.post) {
+          await refreshPostAggregates(
+            tx,
+            comment.postId,
+            {
+              createdAt: comment.post.createdAt,
+              lastActivityAt: comment.post.lastActivityAt,
+            },
+            { bumpActivity: true },
+          )
+        }
       }
     })
 
@@ -1531,7 +1645,17 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (!updated) return reply.code(404).send({ error: 'comment_not_found' })
 
-    return reply.send({ comment: mapComment(updated, viewerVote) })
+    const [directReplyCount, replyScoreAggregate] = await Promise.all([
+      prisma.comment.count({ where: { parentId: commentId } }),
+      prisma.comment.aggregate({ where: { parentId: commentId }, _sum: { score: true } }),
+    ])
+
+    const formatted = attachCommentHotScore(mapComment(updated, viewerVote), {
+      replyCount: directReplyCount,
+      replyScore: replyScoreAggregate._sum?.score ?? 0,
+    })
+
+    return reply.send({ comment: formatted })
   }),
 )
 
@@ -1543,9 +1667,18 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
     const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { id: true } })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
+    const sortQuery = z
+      .object({
+        sort: CommentSortEnum.optional(),
+      })
+      .safeParse(req.query)
+    if (!sortQuery.success) return reply.code(400).send({ error: sortQuery.error.flatten() })
+
+    const sortMode = sortQuery.data.sort ?? 'hot'
+
     const rows: CommentWithUser[] = await prisma.comment.findMany({
       where: { postId: post.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       include: {
         user: {
           select: {
@@ -1573,7 +1706,7 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
       viewerVotes = voteMap
     }
 
-    return reply.send({ comments: buildCommentTree(rows, viewerVotes) })
+    return reply.send({ comments: buildCommentTree(rows, viewerVotes, { sort: sortMode }) })
   }),
 )
 
@@ -1581,6 +1714,15 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const params = z.object({ slug: z.string().min(3).max(200) }).safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_slug' })
+
+    const commentSortQuery = z
+      .object({
+        commentSort: CommentSortEnum.optional(),
+      })
+      .safeParse(req.query)
+    if (!commentSortQuery.success) return reply.code(400).send({ error: commentSortQuery.error.flatten() })
+
+    const commentSort = commentSortQuery.data.commentSort ?? 'hot'
 
     const post = await prisma.post.findUnique({
       where: { seoSlug: params.data.slug },
@@ -1615,7 +1757,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
       where: { postId: post.id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       include: {
         user: {
           select: {
@@ -1645,7 +1787,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     return {
       post: formatPost(post, { viewerVote }),
       paths: getCanonicalPaths(post),
-      comments: buildCommentTree(commentRows, viewerCommentVotes),
+      comments: buildCommentTree(commentRows, viewerCommentVotes, { sort: commentSort }),
     }
   }),
 )

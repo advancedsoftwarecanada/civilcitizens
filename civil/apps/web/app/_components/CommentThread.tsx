@@ -20,6 +20,7 @@ export type ApiComment = {
   downvotes: number
   score: number
   viewerVote: -1 | 0 | 1
+  hotScore: number
   author: {
     id: string
     handle: string

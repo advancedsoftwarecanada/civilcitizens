@@ -36,6 +36,7 @@ function normalizeCommentNode(input: any): ApiComment {
     downvotes: Number.isFinite(Number(input?.downvotes)) ? Number(input?.downvotes) : 0,
     score: Number.isFinite(Number(input?.score)) ? Number(input?.score) : 0,
     viewerVote: normalizeVote(input?.viewerVote ?? 0),
+    hotScore: Number.isFinite(Number(input?.hotScore)) ? Number(input?.hotScore) : 0,
     author: {
       id: String(input?.author?.id ?? ''),
       handle: String(input?.author?.handle ?? ''),

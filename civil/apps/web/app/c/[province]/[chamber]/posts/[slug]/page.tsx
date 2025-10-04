@@ -33,6 +33,11 @@ type PageProps = {
   }
 }
 
+const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
+  { value: 'hot', label: 'Hot' },
+  { value: 'new', label: 'New' },
+]
+
 function formatDateTime(iso: string) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
@@ -55,6 +60,8 @@ export default function ChamberPostPage({ params }: PageProps) {
   const [paths, setPaths] = useState<CanonicalPaths | null>(null)
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error' | 'not-found'>('loading')
   const [comments, setComments] = useState<ApiComment[]>([])
+  const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
+  const [appliedCommentSort, setAppliedCommentSort] = useState<'hot' | 'new'>('hot')
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -90,11 +97,11 @@ export default function ChamberPostPage({ params }: PageProps) {
     }
   }, [])
 
-  const loadPost = useCallback(async () => {
+  const loadPost = useCallback(async (sortMode: 'hot' | 'new') => {
     setStatus('loading')
     setComments([])
     try {
-      const res = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}`)
+      const res = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}?commentSort=${sortMode}`)
       if (!res.ok) {
         setStatus(res.status === 404 ? 'not-found' : 'error')
         setComments([])
@@ -119,6 +126,7 @@ export default function ChamberPostPage({ params }: PageProps) {
 
       setPost(retrievedPost)
       setComments(commentTree)
+      setAppliedCommentSort(sortMode)
       setStatus('loaded')
     } catch (err) {
       console.error('Failed loading post', err)
@@ -127,6 +135,28 @@ export default function ChamberPostPage({ params }: PageProps) {
     }
   }, [chamberParam, provinceParam, slugParam])
 
+  const postId = post?.id
+
+  const loadComments = useCallback(
+    async (sortMode: 'hot' | 'new') => {
+      if (!postId) return
+      try {
+        const res = await fetch(`/api/posts/${postId}/comments?sort=${sortMode}`)
+        if (!res.ok) {
+          console.error('Failed loading comments', res.status)
+          return
+        }
+        const data = await res.json()
+        const commentTree = normalizeCommentTree((data as { comments?: ApiComment[] }).comments ?? [])
+        setComments(commentTree)
+        setAppliedCommentSort(sortMode)
+      } catch (err) {
+        console.error('Failed loading comments', err)
+      }
+    },
+    [postId],
+  )
+
   useEffect(() => {
     loadViewer().catch(() => {
       /* noop */
@@ -134,10 +164,18 @@ export default function ChamberPostPage({ params }: PageProps) {
   }, [loadViewer])
 
   useEffect(() => {
-    loadPost().catch(() => {
+    loadPost('hot').catch(() => {
       /* noop */
     })
   }, [loadPost])
+
+  useEffect(() => {
+    if (!postId) return
+    if (commentSort === appliedCommentSort) return
+    loadComments(commentSort).catch(() => {
+      /* noop */
+    })
+  }, [appliedCommentSort, commentSort, loadComments, postId])
 
   const handleReply = useCallback(
     async (parentId: string | null, body: string) => {
@@ -173,12 +211,13 @@ export default function ChamberPostPage({ params }: PageProps) {
 
       if (newComment) {
         setComments((prev) => addCommentToTree(prev, newComment))
+        void loadComments(commentSort)
       }
       if (updatedPost) {
         setPost(updatedPost)
       }
     },
-    [post],
+    [commentSort, loadComments, post],
   )
 
   const handleCommentVote = useCallback(async (commentId: string, value: -1 | 0 | 1) => {
@@ -206,8 +245,9 @@ export default function ChamberPostPage({ params }: PageProps) {
     const updatedComment = (responseData as { comment?: ApiComment | null })?.comment
     if (updatedComment) {
       setComments((prev) => updateCommentInTree(prev, updatedComment))
+      void loadComments(commentSort)
     }
-  }, [])
+  }, [commentSort, loadComments])
 
   return (
     <div className="w-full">
@@ -303,6 +343,26 @@ export default function ChamberPostPage({ params }: PageProps) {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <h2 className="text-lg font-semibold text-gray-900">Comments</h2>
                   {post.counts ? <span className="text-sm text-gray-500">{post.counts.commentCount} total</span> : null}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
+                  <div className="flex gap-3 font-semibold">
+                    {COMMENT_SORT_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`pb-1 transition ${
+                          commentSort === option.value
+                            ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                            : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                        }`}
+                        onClick={() => setCommentSort(option.value)}
+                        disabled={commentSort === option.value}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {viewer ? (

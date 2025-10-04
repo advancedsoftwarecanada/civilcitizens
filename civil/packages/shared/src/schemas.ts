@@ -106,6 +106,9 @@ export const CursorQuery = z.object({
 export const PostSortEnum = z.enum(['new', 'hot'])
 export type PostSort = z.infer<typeof PostSortEnum>
 
+export const CommentSortEnum = z.enum(['hot', 'new'])
+export type CommentSort = z.infer<typeof CommentSortEnum>
+
 export const HandleParam = z.object({ handle: z.string().min(3).max(32) })
 
 // Auth
