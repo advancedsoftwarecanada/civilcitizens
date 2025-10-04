@@ -547,10 +547,11 @@ app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply:
         where: { userId: viewerId, postId: { in: items.map((item) => item.id) } },
         select: { postId: true, value: true },
       })
-      votesByPost = votes.reduce<Record<string, number>>((acc, vote) => {
-        acc[vote.postId] = vote.value
-        return acc
-      }, {})
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.postId] = vote.value
+      }
+      votesByPost = voteMap
     }
 
     return {
@@ -1139,7 +1140,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       viewerVote = vote?.value ?? null
     }
 
-    const commentRows = await prisma.comment.findMany({
+    const commentRows: CommentWithUser[] = await prisma.comment.findMany({
       where: { postId: post.id },
       orderBy: { createdAt: 'asc' },
       include: {
@@ -1156,14 +1157,16 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
 
     let viewerCommentVotes: Record<string, number> = {}
     if (viewerId && commentRows.length) {
+      const commentIds = commentRows.map((comment) => comment.id)
       const votes = await prisma.commentVote.findMany({
-        where: { userId: viewerId, commentId: { in: commentRows.map((row) => row.id) } },
+        where: { userId: viewerId, commentId: { in: commentIds } },
         select: { commentId: true, value: true },
       })
-      viewerCommentVotes = votes.reduce<Record<string, number>>((acc, vote) => {
-        acc[vote.commentId] = vote.value
-        return acc
-      }, {})
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.commentId] = vote.value
+      }
+      viewerCommentVotes = voteMap
     }
 
     return {
@@ -1243,10 +1246,11 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         where: { postId: { in: items.map((item) => item.id) }, userId: viewerId },
         select: { postId: true, value: true },
       })
-      votesByPost = votes.reduce<Record<string, number>>((acc, vote) => {
-        acc[vote.postId] = vote.value
-        return acc
-      }, {})
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.postId] = vote.value
+      }
+      votesByPost = voteMap
     }
 
     return {
@@ -1279,7 +1283,7 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
     let currentVote: number | null = null
 
-    await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.vote.findUnique({
         where: {
           userId_postId: {
@@ -1386,7 +1390,7 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     let createdComment: CommentWithUser | null = null
 
-    await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       createdComment = await tx.comment.create({
         data: {
           postId,
@@ -1462,7 +1466,7 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     let viewerVote: number | null = null
     let voteChanged = false
 
-    await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.commentVote.findUnique({
         where: {
           userId_commentId: {
@@ -1539,7 +1543,7 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
     const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { id: true } })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
-    const rows = await prisma.comment.findMany({
+    const rows: CommentWithUser[] = await prisma.comment.findMany({
       where: { postId: post.id },
       orderBy: { createdAt: 'asc' },
       include: {
@@ -1557,14 +1561,16 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
     const viewerId = (req as any).user?.id as string | undefined
     let viewerVotes: Record<string, number> = {}
     if (viewerId && rows.length) {
+      const commentIds = rows.map((comment) => comment.id)
       const votes = await prisma.commentVote.findMany({
-        where: { userId: viewerId, commentId: { in: rows.map((row) => row.id) } },
+        where: { userId: viewerId, commentId: { in: commentIds } },
         select: { commentId: true, value: true },
       })
-      viewerVotes = votes.reduce<Record<string, number>>((acc, vote) => {
-        acc[vote.commentId] = vote.value
-        return acc
-      }, {})
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.commentId] = vote.value
+      }
+      viewerVotes = voteMap
     }
 
     return reply.send({ comments: buildCommentTree(rows, viewerVotes) })
@@ -1607,7 +1613,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
       viewerVote = vote?.value ?? null
     }
 
-    const commentRows = await prisma.comment.findMany({
+    const commentRows: CommentWithUser[] = await prisma.comment.findMany({
       where: { postId: post.id },
       orderBy: { createdAt: 'asc' },
       include: {
@@ -1624,14 +1630,16 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
 
     let viewerCommentVotes: Record<string, number> = {}
     if (viewerId && commentRows.length) {
+      const commentIds = commentRows.map((comment) => comment.id)
       const votes = await prisma.commentVote.findMany({
-        where: { userId: viewerId, commentId: { in: commentRows.map((row) => row.id) } },
+        where: { userId: viewerId, commentId: { in: commentIds } },
         select: { commentId: true, value: true },
       })
-      viewerCommentVotes = votes.reduce<Record<string, number>>((acc, vote) => {
-        acc[vote.commentId] = vote.value
-        return acc
-      }, {})
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.commentId] = vote.value
+      }
+      viewerCommentVotes = voteMap
     }
 
     return {
@@ -1767,10 +1775,11 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         where: { userId: viewerId, postId: { in: posts.map((post) => post.id) } },
         select: { postId: true, value: true },
       })
-      votesByPost = votes.reduce<Record<string, number>>((acc, vote) => {
-        acc[vote.postId] = vote.value
-        return acc
-      }, {})
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.postId] = vote.value
+      }
+      votesByPost = voteMap
     }
 
     return {
