@@ -174,15 +174,12 @@ export default function UserPostsPage({ params }: PageProps) {
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
-      if (sortMode === 'new') {
-        setPosts((prev) => [post, ...prev])
-      } else {
-        loadProfilePosts(sortMode).catch(() => {
-          /* noop */
-        })
-      }
+      setPosts((prev) => {
+        const withoutDuplicate = prev.filter((item) => item.id !== post.id)
+        return [post, ...withoutDuplicate]
+      })
     },
-    [loadProfilePosts, sortMode],
+    [],
   )
 
   const handleVote = useCallback(

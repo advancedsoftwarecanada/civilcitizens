@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
 import type { Jurisdiction } from '@civil/shared'
@@ -91,6 +91,7 @@ export default function PostComposer({
   chamberTarget = null,
   onPostCreated,
 }: PostComposerProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const [postType, setPostType] = useState<PostType>(defaultPostType)
   const [draft, setDraft] = useState('')
   const [articleTitle, setArticleTitle] = useState('')
@@ -190,8 +191,26 @@ export default function PostComposer({
     }
   }, [articleBody, articleTitle, canSubmit, chamberTarget, draft, jurisdiction, onPostCreated, postType, resetComposer, submitting])
 
+  useEffect(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter') return
+      if (!(event.ctrlKey || event.metaKey)) return
+      if (!containerRef.current) return
+      const target = event.target as Node | null
+      if (!target || !containerRef.current.contains(target)) return
+      if (!canSubmit || submitting) return
+      event.preventDefault()
+      void submitPost()
+    }
+
+    document.addEventListener('keydown', handleKeydown)
+    return () => {
+      document.removeEventListener('keydown', handleKeydown)
+    }
+  }, [canSubmit, submitPost, submitting])
+
   return (
-    <section className={clsx('border border-gray-200 bg-white px-5 py-4', className)}>
+  <section ref={containerRef} className={clsx('border border-gray-200 bg-white px-5 py-4', className)}>
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-base font-semibold text-gray-900">Share something new</h2>
