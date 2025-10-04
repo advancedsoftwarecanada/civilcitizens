@@ -212,15 +212,15 @@ export default function ChamberPostPage({ params }: PageProps) {
   return (
     <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-7xl px-4">
+        <div className="mx-auto max-w-6xl px-4">
           <Sidebar me={viewer ?? undefined} active="chambers" />
         </div>
       </div>
 
-  <div className="mx-auto w-full max-w-7xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_260px] lg:gap-0 lg:px-0 xl:gap-0">
+    <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
         <Sidebar me={viewer ?? undefined} active="chambers" />
 
-        <main className="space-y-6 lg:px-0">
+  <main className="space-y-5 lg:min-h-[calc(100vh-48px)] lg:px-0">
           {status === 'loading' ? (
             <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading post…</div>
           ) : status === 'not-found' ? (
@@ -328,8 +328,8 @@ export default function ChamberPostPage({ params }: PageProps) {
           ) : null}
         </main>
 
-        <aside className="hidden lg:flex lg:flex-col lg:space-y-4">
-          <div className="sticky top-4 space-y-4">
+        <aside className="hidden lg:flex lg:min-h-[calc(100vh-48px)] lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
+          <div className="sticky top-4 space-y-4 px-5 py-4">
             <div className="rounded border bg-white p-4 shadow-sm">
               <div className="text-sm font-semibold text-gray-900">Keep exploring</div>
               <p className="mt-2 text-sm text-gray-600">

@@ -5,7 +5,7 @@ import Toasts from './_components/Toasts'
 export default function RootLayout({ children, modal }: { children: ReactNode; modal: ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen text-gray-900">
+  <body className="min-h-screen bg-white text-gray-900">
         {children}
         {modal}
         <Toasts />
