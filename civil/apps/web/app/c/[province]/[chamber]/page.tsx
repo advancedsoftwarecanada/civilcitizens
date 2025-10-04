@@ -143,15 +143,20 @@ export default function ChamberFeedPage({ params }: PageProps) {
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
-      if (sortMode === 'new' && (activeFilter === 'all' || post.jurisdiction === activeFilter)) {
-        setPosts((prev) => [post, ...prev])
-      } else {
-        loadChamberPosts().catch(() => {
-          /* noop */
+      const matchesFilter = activeFilter === 'all' || post.jurisdiction === activeFilter
+      if (matchesFilter) {
+        setPosts((prev) => {
+          const withoutDuplicate = prev.filter((item) => item.id !== post.id)
+          return [post, ...withoutDuplicate]
         })
+        return
       }
+
+      loadChamberPosts().catch(() => {
+        /* noop */
+      })
     },
-    [activeFilter, sortMode, loadChamberPosts],
+    [activeFilter, loadChamberPosts],
   )
 
   const handleVote = useCallback(

@@ -48,17 +48,18 @@ function normalizeCommentNode(input: any): ApiComment {
 
 function insertIntoTree(nodes: ApiComment[], comment: ApiComment, parentId: string | null): { updated: ApiComment[]; inserted: boolean } {
   if (!parentId) {
-    const next = [...nodes, comment].sort(sortByCreatedAt)
-    return { updated: next, inserted: true }
+    const withoutDuplicate = nodes.filter((node) => node.id !== comment.id)
+    return { updated: [comment, ...withoutDuplicate], inserted: true }
   }
 
   let inserted = false
   const nextNodes = nodes.map((node) => {
     if (node.id === parentId) {
       inserted = true
+      const withoutDuplicate = node.replies.filter((reply) => reply.id !== comment.id)
       return {
         ...node,
-        replies: [...node.replies, comment].sort(sortByCreatedAt),
+        replies: [comment, ...withoutDuplicate],
       }
     }
     const { updated: childReplies, inserted: childInserted } = insertIntoTree(node.replies, comment, parentId)
@@ -73,8 +74,8 @@ function insertIntoTree(nodes: ApiComment[], comment: ApiComment, parentId: stri
   })
 
   if (!inserted) {
-    const next = [...nodes, comment].sort(sortByCreatedAt)
-    return { updated: next, inserted: false }
+    const withoutDuplicate = nodes.filter((node) => node.id !== comment.id)
+    return { updated: [comment, ...withoutDuplicate], inserted: false }
   }
 
   return { updated: nextNodes, inserted: true }

@@ -89,15 +89,20 @@ export default function HomePage() {
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
-      if (sortMode === 'new' && (activeFilter === 'all' || post.jurisdiction === activeFilter)) {
-        setPosts((prev) => [post, ...prev])
-      } else {
-        refreshPosts().catch(() => {
-          /* noop */
+      const matchesFilter = activeFilter === 'all' || post.jurisdiction === activeFilter
+      if (matchesFilter) {
+        setPosts((prev) => {
+          const withoutDuplicate = prev.filter((item) => item.id !== post.id)
+          return [post, ...withoutDuplicate]
         })
+        return
       }
+
+      refreshPosts().catch(() => {
+        /* noop */
+      })
     },
-    [activeFilter, sortMode, refreshPosts],
+    [activeFilter, refreshPosts],
   )
 
   const handleVote = useCallback(

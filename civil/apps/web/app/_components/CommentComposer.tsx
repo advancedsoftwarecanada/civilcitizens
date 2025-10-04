@@ -30,25 +30,29 @@ export default function CommentComposer({
 
   const canSubmit = value.trim().length > 0 && value.trim().length <= MAX_COMMENT_LENGTH
 
+  const submit = useCallback(async () => {
+    if (!canSubmit || submitting) return
+
+    setSubmitting(true)
+    setError(null)
+    try {
+      await onSubmit(value.trim())
+      setValue('')
+      onSuccess?.()
+    } catch (err) {
+      console.error('Unable to submit comment', err)
+      setError('Unable to post your comment right now. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }, [canSubmit, onSubmit, onSuccess, submitting, value])
+
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault()
-      if (!canSubmit || submitting) return
-
-      setSubmitting(true)
-      setError(null)
-      try {
-        await onSubmit(value.trim())
-        setValue('')
-        onSuccess?.()
-      } catch (err) {
-        console.error('Unable to submit comment', err)
-        setError('Unable to post your comment right now. Please try again.')
-      } finally {
-        setSubmitting(false)
-      }
+      await submit()
     },
-    [canSubmit, onSubmit, onSuccess, submitting, value],
+    [submit],
   )
 
   return (
@@ -59,6 +63,12 @@ export default function CommentComposer({
           onChange={(event) => {
             setValue(event.target.value)
             if (error) setError(null)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault()
+              void submit()
+            }
           }}
           placeholder={placeholder}
           rows={4}
