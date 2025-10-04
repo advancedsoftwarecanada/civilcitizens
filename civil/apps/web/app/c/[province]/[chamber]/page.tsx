@@ -189,15 +189,15 @@ export default function ChamberFeedPage({ params }: PageProps) {
   return (
     <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-7xl px-4">
+        <div className="mx-auto max-w-6xl px-4">
           <Sidebar me={viewer ?? undefined} active="chambers" />
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
+  <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
         <Sidebar me={viewer ?? undefined} active="chambers" />
 
-        <main className="space-y-4 lg:min-h-screen lg:px-0">
+  <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">
           <section className="border border-gray-200 bg-white px-5 py-4">
             {chamber ? (
               <div className="flex flex-col gap-2">

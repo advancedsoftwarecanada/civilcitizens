@@ -4,6 +4,7 @@ import { useCallback, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import clsx from 'clsx'
+import { LuArrowBigDown, LuArrowBigUp } from 'react-icons/lu'
 import type { ApiPost } from './PostComposer'
 import { JURISDICTION_LABELS } from './PostComposer'
 
@@ -27,6 +28,50 @@ function buildChamberUrl(post: ApiPost) {
 type PostFeedItemProps = {
   post: ApiPost
   onVote: (postId: string, value: -1 | 0 | 1) => Promise<void>
+}
+
+function formatScore(value: number) {
+  const abs = Math.abs(value)
+  if (abs >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  }
+  if (abs >= 1_000) {
+    return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+  }
+  return value.toString()
+}
+
+type VoteButtonProps = {
+  direction: 'up' | 'down'
+  active: boolean
+  disabled: boolean
+  onClick: () => void
+}
+
+function VoteButton({ direction, active, disabled, onClick }: VoteButtonProps) {
+  const Icon = direction === 'up' ? LuArrowBigUp : LuArrowBigDown
+  const intentClasses =
+    direction === 'up'
+      ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm'
+      : 'border-red-500 bg-red-500 text-white shadow-sm'
+
+  return (
+    <button
+      type="button"
+      className={clsx(
+        'flex h-8 w-8 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-1',
+        active
+          ? intentClasses
+          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-600 focus:ring-[var(--cc-primary)]',
+        disabled && 'pointer-events-none opacity-60',
+      )}
+      onClick={onClick}
+      aria-label={direction === 'up' ? 'Upvote post' : 'Downvote post'}
+      disabled={disabled}
+    >
+      <Icon className="h-4 w-4" aria-hidden="true" />
+    </button>
+  )
 }
 
 export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
@@ -61,37 +106,8 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
 
   return (
     <article className="border-t border-gray-200 px-5 py-4">
-      <div className="flex gap-4">
-        <div className="flex w-12 flex-col items-center justify-start gap-1 pt-1">
-          <button
-            type="button"
-            className={clsx(
-              'flex h-7 w-7 items-center justify-center rounded-full text-sm transition',
-              currentVote === 1 ? 'bg-[var(--cc-primary)] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
-            )}
-            onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
-            disabled={pending}
-            aria-label="Upvote"
-          >
-            ▲
-          </button>
-          <div className="text-sm font-semibold text-gray-700">{score}</div>
-          <button
-            type="button"
-            className={clsx(
-              'flex h-7 w-7 items-center justify-center rounded-full text-sm transition',
-              currentVote === -1 ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200',
-            )}
-            onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
-            disabled={pending}
-            aria-label="Downvote"
-          >
-            ▼
-          </button>
-        </div>
-        <div className="min-w-0 flex-1">
-          <header className="flex items-start gap-3">
-            <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
+      <div className="flex items-start gap-3">
+        <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
               {post.author.avatarUrl ? (
                 <Image
                   src={post.author.avatarUrl}
@@ -106,8 +122,8 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
                   {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
                 </div>
               )}
-            </div>
-            <div className="min-w-0 flex-1">
+        </div>
+        <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
                 <Link href={`/u/${post.author.handle}`} className="font-semibold text-gray-900 hover:underline">
                   {post.author.name ?? post.author.handle}
@@ -147,18 +163,35 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
                   </Link>
                 )}
               </div>
-              <footer className="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-                <Link href={postUrl} className="hover:underline">
-                  {commentCount === 1 ? '1 comment' : `${commentCount} comments`}
-                </Link>
-                <span className="text-gray-400">
-                  Hot score: {post.metrics?.hotScore?.toFixed(2) ?? '0.00'}
-                </span>
-              </footer>
-            </div>
-          </header>
         </div>
       </div>
+      <footer className="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-500">
+  <div className="flex items-center text-sm font-semibold text-gray-600">
+          <VoteButton
+            direction="up"
+            active={currentVote === 1}
+            disabled={pending}
+            onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
+          />
+          <span
+            className={clsx(
+              'min-w-[2rem] text-center',
+              score > 0 ? 'text-[var(--cc-primary)]' : score < 0 ? 'text-red-500' : 'text-gray-600',
+            )}
+          >
+            {formatScore(score)}
+          </span>
+          <VoteButton
+            direction="down"
+            active={currentVote === -1}
+            disabled={pending}
+            onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
+          />
+        </div>
+        <Link href={postUrl} className="hover:underline">
+          {commentCount === 1 ? '1 comment' : `${commentCount} comments`}
+        </Link>
+      </footer>
     </article>
   )
 }

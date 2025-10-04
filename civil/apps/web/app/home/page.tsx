@@ -135,7 +135,7 @@ export default function HomePage() {
   return (
   <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-7xl px-4">
+        <div className="mx-auto max-w-6xl px-4">
           <Sidebar me={me ?? undefined} active="home" />
         </div>
       </div>
