@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""Docker helper for the Civil Citizens stack."""
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, Iterable, Mapping, Optional, Sequence
+
+ROOT_DIR = Path(__file__).resolve().parent
+COMPOSE_DIR = ROOT_DIR / "civil"
+DOCKER_COMPOSE_FILE = COMPOSE_DIR / "docker-compose.yml"
+
+
+def ensure_docker() -> None:
+    if shutil.which("docker") is None:
+        print("Error: docker is not installed or not on PATH", file=sys.stderr)
+        sys.exit(1)
+
+
+def detect_env_file(explicit: Optional[str], candidates: Sequence[Path | str]) -> Optional[Path]:
+    if explicit:
+        candidate = Path(explicit)
+        if not candidate.is_absolute():
+            candidate = ROOT_DIR / candidate
+        if not candidate.is_file():
+            print(f"Error: --env-file '{candidate}' does not exist", file=sys.stderr)
+            sys.exit(1)
+        return candidate
+
+    for candidate in candidates:
+        path = candidate if isinstance(candidate, Path) else Path(candidate)
+        if not path.is_absolute():
+            path = ROOT_DIR / path
+        if path.is_file():
+            return path
+    return None
+
+
+def parse_env_file(path: Path) -> Dict[str, str]:
+    env_map: Dict[str, str] = {}
+    try:
+        for raw_line in path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env_map[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return env_map
+
+
+def describe_env_file(path: Optional[Path]) -> str:
+    if not path:
+        return "<none>"
+    try:
+        relative = path.relative_to(ROOT_DIR)
+        return str(relative).replace("\\", "/")
+    except ValueError:
+        return str(path)
+
+
+def build_compose_base(project_name: str, env_file: Optional[Path]) -> list[str]:
+    cmd = [
+        "docker",
+        "compose",
+        "-p",
+        project_name,
+        "-f",
+        str(DOCKER_COMPOSE_FILE),
+    ]
+    if env_file:
+        cmd += ["--env-file", str(env_file)]
+    return cmd
+
+
+def run_compose(base_cmd: list[str], extra_args: list[str], overrides: Mapping[str, str]) -> None:
+    env = os.environ.copy()
+    env.update(overrides)
+    subprocess.run(base_cmd + extra_args, check=True, env=env)
+
+
+def command_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "up", "-d"],
+        overrides,
+    )
+
+
+def command_rebuild(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "build", "--no-cache"],
+        overrides,
+    )
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "up", "-d", "--force-recreate"],
+        overrides,
+    )
+
+
+def command_rebuild_all(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    command_down_all(compose_cmd, overrides)
+    command_rebuild(compose_cmd, overrides)
+
+
+def command_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["--profile", "infra", "up", "-d"], overrides)
+
+
+def command_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["down"], overrides)
+
+
+def command_down_all(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["down", "-v", "--remove-orphans"], overrides)
+
+
+def command_status(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["ps"], overrides)
+
+
+def command_logs(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["logs", "-f"], overrides)
+
+
+def parse_args(default_command: Optional[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Civil Citizens docker helper",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python _DEV.py up --env-file .env.dev\n"
+            "  python _PROD.py status\n"
+        ),
+    )
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=[
+            "up",
+            "infra-up",
+            "down",
+            "down-all",
+            "status",
+            "logs",
+            "rebuild",
+            "rebuild-all",
+        ],
+        help="Command to execute",
+    )
+    parser.add_argument("--env-file", dest="env_file", help="Optional env file to pass to docker compose")
+    args = parser.parse_args()
+    args.command_was_default = False
+    if args.command is None:
+        if default_command is None:
+            parser.error("command is required")
+        args.command = default_command
+        args.command_was_default = True
+    return args
+
+
+def normalize_candidates(candidates: Iterable[Path | str]) -> list[Path]:
+    normalized: list[Path] = []
+    for candidate in candidates:
+        path = candidate if isinstance(candidate, Path) else Path(candidate)
+        if not path.is_absolute():
+            path = ROOT_DIR / path
+        normalized.append(path)
+    return normalized
+
+
+def run_helper(
+    *,
+    default_env_candidates: Iterable[Path | str],
+    default_project_name: str,
+    default_command: Optional[str],
+) -> None:
+    ensure_docker()
+    args = parse_args(default_command)
+    os.chdir(ROOT_DIR)
+    if args.command_was_default:
+        print(f"→ No command provided; defaulting to '{args.command}'")
+
+    env_candidates = normalize_candidates(default_env_candidates)
+    env_file = detect_env_file(args.env_file, env_candidates)
+    env_file_vars: Dict[str, str] = {}
+    if env_file:
+        env_file_vars = parse_env_file(env_file)
+        print(f"→ Using env file {describe_env_file(env_file)}")
+    else:
+        print("→ No env file detected; relying on shell environment variables")
+
+    project_name = os.environ.get("COMPOSE_PROJECT_NAME", default_project_name)
+    compose_cmd = build_compose_base(project_name, env_file)
+
+    overrides: Dict[str, str] = {"COMPOSE_PROJECT_NAME": project_name}
+    overrides.update(env_file_vars)
+
+    command_map = {
+        "up": command_up,
+        "infra-up": command_infra_up,
+        "down": command_down,
+        "down-all": command_down_all,
+        "status": command_status,
+        "logs": command_logs,
+        "rebuild": command_rebuild,
+        "rebuild-all": command_rebuild_all,
+    }
+
+    handler = command_map[args.command]
+    try:
+        handler(compose_cmd, overrides)
+        print("✔ Done")
+    except subprocess.CalledProcessError as exc:
+        print(f"✖ Command failed (exit code {exc.returncode})", file=sys.stderr)
+        sys.exit(exc.returncode)
+    except KeyboardInterrupt:
+        print("\nAborted", file=sys.stderr)
+        sys.exit(1)
