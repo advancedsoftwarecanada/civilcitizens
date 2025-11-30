@@ -56,10 +56,9 @@ services:
       context: .
       dockerfile: ./apps/web/Dockerfile
     environment:
-      # Use relative path so it works behind Nginx and Cloudflare
-      NEXT_PUBLIC_API_BASE: /api
-      # Optional base URL for absolute links (can be overridden in env)
-      NEXT_PUBLIC_BASE_URL: http://localhost
+      # Allow overriding via env files per environment
+      NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-/api}
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost}
     depends_on:
       api:
         condition: service_healthy
@@ -77,6 +76,8 @@ services:
       POSTGRES_DB: civil
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
 
   redis:
     profiles: [infra]
@@ -84,6 +85,8 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redisdata:/data
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
 
 volumes:
   pgdata:
