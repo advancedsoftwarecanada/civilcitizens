@@ -9,6 +9,7 @@ import { buildApiUrl } from '../../../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../../../_lib/me'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import PostFeedItem from '../../../_components/PostFeedItem'
+import { RightRail } from '../../../_components/RightRail'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -192,52 +193,50 @@ export default function ChamberFeedPage({ params }: PageProps) {
   )
 
   return (
-    <div className="w-full">
+    <div className="min-h-screen">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-6xl px-4">
+        <div className="mx-auto max-w-screen-lg px-4">
           <Sidebar me={viewer ?? undefined} active="chambers" />
         </div>
       </div>
 
-  <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
-        <Sidebar me={viewer ?? undefined} active="chambers" />
+      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
+        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
+          <Sidebar me={viewer ?? undefined} active="chambers" />
 
-  <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">
-          <section className="border border-gray-200 bg-white px-5 py-4">
-            {chamber ? (
-              <div className="flex flex-col gap-2">
-                <div className="text-[11px] uppercase tracking-wide text-gray-500">Chamber of Citizens</div>
-                <h1 className="text-xl font-semibold text-gray-900">{chamber.name}</h1>
-                <div className="text-sm text-gray-600">
-                  Province: {getProvinceDisplayName(chamber.province)} ({chamber.province.toUpperCase()})
+          <main className="space-y-6">
+            <section className="surface-card px-6 py-5 shadow-subtle">
+              {chamber ? (
+                <div className="flex flex-col gap-2">
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Chamber of Citizens</div>
+                  <h1 className="text-xl font-semibold text-slate-900">{chamber.name}</h1>
+                  <div className="text-sm text-slate-600">
+                    Province: {getProvinceDisplayName(chamber.province)} ({chamber.province.toUpperCase()})
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {posts.length} post{posts.length === 1 ? '' : 's'} shared here.
+                  </div>
                 </div>
-                <div className="text-xs text-gray-400">
-                  {posts.length} post{posts.length === 1 ? '' : 's'} shared here.
-                </div>
-              </div>
-            ) : error ? (
-              <div className="text-sm text-red-600">{error}</div>
-            ) : (
-              <div className="text-sm text-gray-500">Loading chamber information…</div>
-            )}
-          </section>
+              ) : error ? (
+                <div className="text-sm text-red-600">{error}</div>
+              ) : (
+                <div className="text-sm text-slate-500">Loading chamber information…</div>
+              )}
+            </section>
 
-          <div className="border border-gray-200 bg-white">
-            {viewer && chamberTarget ? (
-              <PostComposer className="border-0 px-5 py-4" chamberTarget={chamberTarget} onPostCreated={handlePostCreated} />
-            ) : null}
+            {viewer && chamberTarget ? <PostComposer chamberTarget={chamberTarget} onPostCreated={handlePostCreated} /> : null}
 
-            <div className={`${viewer && chamberTarget ? 'border-t border-gray-200 ' : ''}px-5`}>
-              <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
-                <div className="flex flex-wrap gap-4">
+            <section className="surface-card px-6 py-4 shadow-subtle">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap gap-2">
                   {FILTER_OPTIONS.map((filter) => (
                     <button
                       key={filter.value}
                       type="button"
-                      className={`pb-2 text-sm font-semibold transition ${
+                      className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
                         activeFilter === filter.value
-                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                          ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
+                          : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700'
                       }`}
                       onClick={() => setActiveFilter(filter.value)}
                       disabled={loading && activeFilter === filter.value}
@@ -246,15 +245,15 @@ export default function ChamberFeedPage({ params }: PageProps) {
                     </button>
                   ))}
                 </div>
-                <div className="flex gap-3 text-xs uppercase tracking-wide text-gray-500">
+                <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
                   {SORT_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      className={`pb-1 font-semibold transition ${
+                      className={`rounded-full px-3 py-1 transition ${
                         sortMode === option.value
-                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                       }`}
                       onClick={() => setSortMode(option.value)}
                       disabled={loading && sortMode === option.value}
@@ -264,34 +263,55 @@ export default function ChamberFeedPage({ params }: PageProps) {
                   ))}
                 </div>
               </div>
-            </div>
+            </section>
 
-            {error ? (
-              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-red-600">{error}</div>
-            ) : posts.length === 0 ? (
-              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-gray-500">
-                {loading ? 'Loading posts…' : 'No posts in this chamber yet. Be the first to start the conversation!'}
-              </div>
-            ) : (
-              posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
-            )}
-          </div>
-        </main>
+            <div className="space-y-4">
+              {error ? (
+                <section className="surface-card px-6 py-5 text-center text-sm text-red-600">{error}</section>
+              ) : posts.length === 0 ? (
+                <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
+                  {loading ? 'Loading posts…' : 'No posts in this chamber yet. Be the first to start the conversation!'}
+                </section>
+              ) : (
+                posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
+              )}
+            </div>
+          </main>
 
-        <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
-          <div className="sticky top-0 space-y-4">
-            <div className="border border-gray-200 bg-white p-4">
-              <div className="text-sm font-semibold text-gray-900">Stay in the loop</div>
-              <p className="mt-2 text-sm text-gray-600">
-                Follow neighbouring chambers to compare conversations and keep your civic radar sharp across the region.
-              </p>
+          <aside className="hidden lg:block">
+            <div className="sticky top-8 space-y-4">
+              {chamber ? (
+                <section className="surface-card space-y-4 p-5 shadow-subtle">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Chamber snapshot</p>
+                    <h2 className="text-base font-semibold text-slate-900">{chamber.name}</h2>
+                    <p className="text-sm text-slate-500">{getProvinceDisplayName(chamber.province)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                    Currently tracking {posts.length} post{posts.length === 1 ? '' : 's'} inside this chamber feed.
+                  </div>
+                  <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Filters</div>
+                  <div className="flex flex-wrap gap-2">
+                    {FILTER_OPTIONS.map((filter) => (
+                      <span
+                        key={filter.value}
+                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                          activeFilter === filter.value
+                            ? 'bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
+                            : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {filter.label}
+                      </span>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              <RightRail />
             </div>
-            <div className="border border-gray-200 bg-white p-4 text-sm text-gray-600">
-              We&apos;re expanding chamber insights soon&mdash;expect voter stats, MP updates, and upcoming events curated for
-              your riding.
-            </div>
-          </div>
-        </aside>
+          </aside>
+        </div>
       </div>
     </div>
   )

@@ -59,10 +59,10 @@ function VoteButton({ direction, active, disabled, onClick }: VoteButtonProps) {
     <button
       type="button"
       className={clsx(
-        'flex h-8 w-8 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-1',
+        'flex h-9 w-9 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-2',
         active
           ? intentClasses
-          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-600 focus:ring-[var(--cc-primary)]',
+          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
         disabled && 'pointer-events-none opacity-60',
       )}
       onClick={onClick}
@@ -105,68 +105,77 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
   })
 
   return (
-    <article className="border-t border-gray-200 px-5 py-4">
-      <div className="flex items-start gap-3">
-        <div className="h-11 w-11 overflow-hidden rounded-full bg-gray-200">
-              {post.author.avatarUrl ? (
-                <Image
-                  src={post.author.avatarUrl}
-                  alt={post.author.name ?? post.author.handle}
-                  width={44}
-                  height={44}
-                  unoptimized
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-gray-600">
-                  {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
-                </div>
-              )}
-        </div>
-        <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
-                <Link href={`/u/${post.author.handle}`} className="font-semibold text-gray-900 hover:underline">
-                  {post.author.name ?? post.author.handle}
+    <article className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="h-12 w-12 overflow-hidden rounded-full bg-slate-200">
+            {post.author.avatarUrl ? (
+              <Image
+                src={post.author.avatarUrl}
+                alt={post.author.name ?? post.author.handle}
+                width={48}
+                height={48}
+                unoptimized
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-base font-semibold text-slate-500">
+                {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
+              <Link href={`/u/${post.author.handle}`} className="font-semibold text-slate-900 hover:underline">
+                {post.author.name ?? post.author.handle}
+              </Link>
+              <span>@{post.author.handle}</span>
+              <span className="text-xs">• {formattedDate}</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">
+                {JURISDICTION_LABELS[post.jurisdiction]}
+              </span>
+              {chamberUrl ? (
+                <Link
+                  href={chamberUrl}
+                  className="rounded-full border border-slate-200 px-2 py-0.5 uppercase tracking-wide text-slate-500 hover:border-slate-300"
+                >
+                  {post.chamberName ?? post.chamberSlug}
                 </Link>
-                <span>@{post.author.handle}</span>
-                <span className="text-xs">• {formattedDate}</span>
-                <span className="bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
-                  {JURISDICTION_LABELS[post.jurisdiction]}
-                </span>
-                {chamberUrl ? (
-                  <Link
-                    href={chamberUrl}
-                    className="border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50"
-                  >
-                    {post.chamberName ?? post.chamberSlug}
-                  </Link>
-                ) : null}
-              </div>
-              <div className="mt-3 space-y-3 text-[15px] leading-6 text-gray-800">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-500">
-                  <span className="border border-gray-300 px-2 py-0.5">
-                    {post.type === 'article' ? 'Article' : 'Post'}
-                  </span>
-                  {post.type === 'article' && post.title ? (
-                    <Link href={postUrl} className="font-semibold text-gray-700 hover:underline">
-                      {post.title}
-                    </Link>
-                  ) : null}
-                </div>
-                {post.type === 'article' ? (
-                  <Link href={postUrl} className="prose prose-sm max-w-none text-gray-700 hover:underline">
-                    <span dangerouslySetInnerHTML={{ __html: post.body }} />
-                  </Link>
-                ) : (
-                  <Link href={postUrl} className="block whitespace-pre-wrap hover:underline">
-                    {post.body}
-                  </Link>
-                )}
-              </div>
+              ) : null}
+              <span className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500">
+                {post.type === 'article' ? 'Article' : 'Post'}
+              </span>
+            </div>
+          </div>
         </div>
+        {post.metrics?.hotScore ? (
+          <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
+            Hot {Math.round(post.metrics.hotScore)}
+          </div>
+        ) : null}
+      </header>
+
+      <div className="space-y-3 text-[15px] leading-6 text-slate-800">
+        {post.type === 'article' && post.title ? (
+          <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
+            {post.title}
+          </Link>
+        ) : null}
+        {post.type === 'article' ? (
+          <Link href={postUrl} className="block text-slate-700 hover:text-slate-900">
+            <span dangerouslySetInnerHTML={{ __html: post.body }} />
+          </Link>
+        ) : (
+          <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
+            {post.body}
+          </Link>
+        )}
       </div>
-      <footer className="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-  <div className="flex items-center text-sm font-semibold text-gray-600">
+
+      <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 pt-4 text-sm text-slate-500">
+        <div className="flex items-center gap-2 font-semibold">
           <VoteButton
             direction="up"
             active={currentVote === 1}
@@ -176,7 +185,7 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
           <span
             className={clsx(
               'min-w-[2rem] text-center',
-              score > 0 ? 'text-[var(--cc-primary)]' : score < 0 ? 'text-red-500' : 'text-gray-600',
+              score > 0 ? 'text-[var(--cc-primary)]' : score < 0 ? 'text-red-500' : 'text-slate-600',
             )}
           >
             {formatScore(score)}
@@ -188,9 +197,14 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
             onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
           />
         </div>
-        <Link href={postUrl} className="hover:underline">
-          {commentCount === 1 ? '1 comment' : `${commentCount} comments`}
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href={postUrl} className="font-semibold text-slate-600 hover:text-slate-900">
+            {commentCount === 1 ? '1 comment' : `${commentCount} comments`}
+          </Link>
+          <Link href={postUrl} className="text-xs uppercase tracking-wide text-slate-400 hover:text-slate-600">
+            Open post
+          </Link>
+        </div>
       </footer>
     </article>
   )

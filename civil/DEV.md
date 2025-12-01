@@ -7,8 +7,8 @@ This override runs web (Next.js) and api (Fastify) in dev mode with bind mounts 
 ```bash
 cd civil
 
-# Bring up DB/Redis (infra profile) once
-docker compose --profile infra up -d postgres redis
+# Bring up DB/Redis/MinIO (infra profile) once
+docker compose --profile infra up -d postgres redis minio minio-setup
 
 # Start dev-mode web+api (+ nginx) from the app profile using overrides
 docker compose --profile app up -d nginx web api
@@ -40,3 +40,13 @@ docker compose --profile app up -d
 - If web isn’t hot reloading, open DevTools and force a hard refresh (Cmd/Ctrl+Shift+R).
 - If you see old UI, Cloudflare might be caching. Use Development Mode or purge cache.
 - If pnpm install is slow on first run, it’s populating the container cache. Subsequent runs are fast.
+- If MinIO fails to start because the console ports are busy, adjust `MINIO_HOST_PORT` / `MINIO_CONSOLE_HOST_PORT` in your `.env.dev`.
+
+## Media storage (MinIO)
+
+- Defaults:
+	- Access key / secret: `MEDIA_S3_ACCESS_KEY` / `MEDIA_S3_SECRET_KEY` (both default to `minioadmin`).
+	- Buckets: `MEDIA_BUCKET_ORIGINAL` (`civil-media-raw`) for unprocessed files and `MEDIA_BUCKET_PUBLIC` (`civil-media`) for optimized assets.
+	- Public base URL: `MEDIA_PUBLIC_BASE_URL` (defaults to `http://localhost:9000/civil-media`).
+- `minio-setup` runs once per `docker compose up` to create buckets if they don’t exist. Safe to re-run.
+- Visit `http://localhost:9001` to access the MinIO console (use the same access key/secret).

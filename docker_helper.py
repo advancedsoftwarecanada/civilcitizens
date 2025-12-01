@@ -96,12 +96,15 @@ def command_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
     )
 
 
+def command_build(compose_cmd: list[str], overrides: Mapping[str, str], *, no_cache: bool) -> None:
+    args = ["--profile", "infra", "--profile", "app", "build"]
+    if no_cache:
+        args.append("--no-cache")
+    run_compose(compose_cmd, args, overrides)
+
+
 def command_rebuild(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
-    run_compose(
-        compose_cmd,
-        ["--profile", "infra", "--profile", "app", "build", "--no-cache"],
-        overrides,
-    )
+    command_build(compose_cmd, overrides, no_cache=False)
     run_compose(
         compose_cmd,
         ["--profile", "infra", "--profile", "app", "up", "-d", "--force-recreate"],
@@ -111,7 +114,12 @@ def command_rebuild(compose_cmd: list[str], overrides: Mapping[str, str]) -> Non
 
 def command_rebuild_all(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
     command_down_all(compose_cmd, overrides)
-    command_rebuild(compose_cmd, overrides)
+    command_build(compose_cmd, overrides, no_cache=True)
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "up", "-d", "--force-recreate"],
+        overrides,
+    )
 
 
 def command_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:

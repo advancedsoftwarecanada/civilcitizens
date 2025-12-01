@@ -7,16 +7,16 @@ if [ "${PRISMA_SKIP_PUSH}" != "1" ]; then
 
   run_prisma_push() {
     if [ -x ./node_modules/.bin/prisma ]; then
-      ./node_modules/.bin/prisma db push --schema ../../packages/db/schema.prisma --skip-generate
+      ./node_modules/.bin/prisma db push --schema ../../packages/db/schema.prisma --skip-generate --accept-data-loss
       return $?
     fi
 
     if [ -x ../../node_modules/.bin/prisma ]; then
-      ../../node_modules/.bin/prisma db push --schema ../../packages/db/schema.prisma --skip-generate
+      ../../node_modules/.bin/prisma db push --schema ../../packages/db/schema.prisma --skip-generate --accept-data-loss
       return $?
     fi
 
-    npx --yes prisma db push --schema ../../packages/db/schema.prisma --skip-generate
+    npx --yes prisma db push --schema ../../packages/db/schema.prisma --skip-generate --accept-data-loss
   }
 
   MAX_ATTEMPTS=${PRISMA_MAX_RETRIES:-30}

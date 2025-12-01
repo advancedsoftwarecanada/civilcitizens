@@ -7,12 +7,13 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages ./packages
 COPY apps/web/package.json ./apps/web/package.json
-RUN pnpm -w i --frozen-lockfile || pnpm -w i
+RUN pnpm install --recursive --frozen-lockfile || pnpm install --recursive
 
 FROM deps AS build
 ENV NODE_ENV=production
 COPY apps/web ./apps/web
-RUN pnpm --filter @civil/shared build \
+RUN pnpm install --filter @civil/web... --prod=false --prefer-offline \
+	&& pnpm --filter @civil/shared build \
 	&& pnpm --filter @civil/ui build \
 	&& pnpm --filter @civil/web build
 

@@ -8,5 +8,5 @@ if __name__ == "__main__":
     run_helper(
         default_env_candidates=[Path(".env.dev"), Path(".env")],
         default_project_name="civil_dev",
-        default_command="up",
+        default_command="rebuild",
     )

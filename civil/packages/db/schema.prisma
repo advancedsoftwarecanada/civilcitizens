@@ -8,50 +8,57 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  handle       String   @unique
-  name         String?
-  bio          String?  @db.Text
-  avatarUrl    String?
-  passwordHash String
-  lastLoginAt  DateTime?
-  resetToken   String?   @unique
-  resetExpires DateTime?
-  createdAt    DateTime @default(now())
-  posts        Post[]
-  comments     Comment[]
-  votes        Vote[]
-  commentVotes CommentVote[]
-  followers    Follow[] @relation("followers")
-  following    Follow[] @relation("following")
+  id             String   @id @default(cuid())
+  email          String   @unique
+  handle         String   @unique
+  name           String?
+  bio            String?  @db.Text
+  avatarUrl      String?
+  coverUrl       String?
+  passwordHash   String
+  lastLoginAt    DateTime?
+  resetToken     String?   @unique
+  resetExpires   DateTime?
+  createdAt      DateTime @default(now())
+  posts          Post[]
+  comments       Comment[]
+  votes          Vote[]
+  commentVotes   CommentVote[]
+  followers      Follow[] @relation("followers")
+  following      Follow[] @relation("following")
   chamberFollows ChamberFollow[]
-  experiences  Experience[]
+  experiences    Experience[]
+  avatarMediaId  String?  @unique
+  coverMediaId   String?  @unique
+  mediaAssets    MediaAsset[] @relation("UserMediaAssets")
+  avatarMedia    MediaAsset? @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
+  coverMedia     MediaAsset? @relation("CoverMedia", fields: [coverMediaId], references: [id])
 }
 
 model Post {
-  id          String    @id @default(cuid())
-  authorId    String
-  author      User      @relation(fields: [authorId], references: [id])
-  body        String    @db.Text
-  title       String?
-  type        String    @default("post")
-  mediaUrl    String?
-  seoSlug     String?   @unique
-  jurisdiction String    @default("citizen")
-  provinceCode String?
-  chamberSlug  String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  comments    Comment[]
-  votes       Vote[]
-  upvotes     Int       @default(0)
-  downvotes   Int       @default(0)
-  score       Int       @default(0)
-  commentCount Int      @default(0)
-  hotScore    Float     @default(0)
-  lastActivityAt DateTime @default(now())
-  hashtags    PostHashtag[]
+  id             String    @id @default(cuid())
+  authorId       String
+  author         User      @relation(fields: [authorId], references: [id])
+  body           String    @db.Text
+  title          String?
+  type           String    @default("post")
+  mediaUrl       String?
+  seoSlug        String?   @unique
+  jurisdiction   String    @default("citizen")
+  provinceCode   String?
+  chamberSlug    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  comments       Comment[]
+  votes          Vote[]
+  upvotes        Int       @default(0)
+  downvotes      Int       @default(0)
+  score          Int       @default(0)
+  commentCount   Int       @default(0)
+  hotScore       Float     @default(0)
+  lastActivityAt DateTime  @default(now())
+  hashtags       PostHashtag[]
+
   @@index([authorId, createdAt])
   @@index([provinceCode, chamberSlug, createdAt])
   @@index([jurisdiction, createdAt])
@@ -110,6 +117,7 @@ model Follow {
   follower   User @relation("following", fields: [followerId], references: [id])
   target     User @relation("followers", fields: [targetId], references: [id])
   createdAt  DateTime @default(now())
+
   @@id([followerId, targetId])
   @@index([targetId])
 }
@@ -122,6 +130,7 @@ model Notification {
   postId    String?
   readAt    DateTime?
   createdAt DateTime @default(now())
+
   @@index([userId, createdAt])
 }
 
@@ -129,6 +138,7 @@ model FeedEntry {
   userId    String
   postId    String
   createdAt DateTime @default(now())
+
   @@id([userId, postId])
   @@index([userId, createdAt])
 }
@@ -141,8 +151,7 @@ model ChamberFollow {
   home         Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, provinceCode, chamberSlug])
   @@index([userId])
@@ -160,25 +169,78 @@ model PostHashtag {
   tag    String
   post   Post    @relation(fields: [postId], references: [id])
   hash   Hashtag @relation(fields: [tag], references: [tag])
+
   @@id([postId, tag])
   @@index([tag])
 }
 
 model Experience {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title       String
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
   organization String
-  location    String?
-  startDate   DateTime
-  endDate     DateTime?
-  current     Boolean  @default(false)
-  description String?  @db.Text
-  position    Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  location     String?
+  startDate    DateTime
+  endDate      DateTime?
+  current      Boolean  @default(false)
+  description  String?  @db.Text
+  position     Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([userId, position])
   @@index([userId, startDate])
+}
+
+model MediaAsset {
+  id            String           @id @default(cuid())
+  ownerId       String
+  owner         User             @relation("UserMediaAssets", fields: [ownerId], references: [id], onDelete: Cascade)
+  category      MediaCategory
+  assetType     MediaAssetType   @default(image)
+  storageType   MediaStorageType @default(minio)
+  originalKey   String
+  mime          String
+  byteSize      Int
+  width         Int?
+  height        Int?
+  durationMs    Int?
+  checksum      String?
+  status        MediaStatus      @default(pending)
+  failureReason String?
+  variants      Json?
+  metadata      Json?
+  readyAt       DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  avatarOwner   User?            @relation("AvatarMedia")
+  coverOwner    User?            @relation("CoverMedia")
+
+  @@index([ownerId, category])
+  @@index([status])
+}
+
+enum MediaCategory {
+  avatar
+  cover
+  post_image
+  attachment
+}
+
+enum MediaStatus {
+  pending
+  processing
+  ready
+  failed
+}
+
+enum MediaAssetType {
+  image
+  video
+}
+
+enum MediaStorageType {
+  minio
+  s3
 }
