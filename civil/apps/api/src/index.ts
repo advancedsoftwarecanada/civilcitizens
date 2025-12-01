@@ -55,6 +55,50 @@ const MEDIA_BUCKET_PUBLIC = process.env.MEDIA_BUCKET_PUBLIC || 'civil-media'
 const MEDIA_BUCKET_ORIGINAL = process.env.MEDIA_BUCKET_ORIGINAL || 'civil-media-raw'
 const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `http://127.0.0.1:9000/${MEDIA_BUCKET_PUBLIC}`).replace(/\/$/, '')
 const MEDIA_SIGNED_URL_TTL = Number(process.env.MEDIA_SIGNED_URL_TTL_SECONDS || 900)
+const LEGACY_MEDIA_BASE_URLS = [
+  'http://localhost:9000/civil-media',
+  'http://127.0.0.1:9000/civil-media',
+  'http://minio:9000/civil-media',
+]
+
+function normalizeMediaUrl(url?: string | null): string | null {
+  if (!url) return url ?? null
+  for (const legacy of LEGACY_MEDIA_BASE_URLS) {
+    if (url.startsWith(legacy)) {
+      return `${MEDIA_PUBLIC_BASE_URL}${url.slice(legacy.length)}`
+    }
+  }
+  return url
+}
+
+function normalizeMediaVariants(variants: unknown): unknown {
+  if (!variants || typeof variants !== 'object') return variants
+  let mutated = false
+  const copy: Record<string, any> = { ...(variants as Record<string, any>) }
+  for (const [name, value] of Object.entries(copy)) {
+    if (value && typeof value === 'object' && typeof (value as any).url === 'string') {
+      const normalized = normalizeMediaUrl((value as any).url)
+      if (normalized !== (value as any).url) {
+        copy[name] = { ...value, url: normalized }
+        mutated = true
+      }
+    }
+  }
+  return mutated ? copy : variants
+}
+
+function normalizeUserMedia<T extends { avatarUrl?: string | null; coverUrl?: string | null }>(user: T): T {
+  const normalizedAvatar = normalizeMediaUrl(user.avatarUrl ?? null)
+  const normalizedCover = normalizeMediaUrl(user.coverUrl ?? null)
+  if (normalizedAvatar !== (user.avatarUrl ?? null) || normalizedCover !== (user.coverUrl ?? null)) {
+    return {
+      ...user,
+      avatarUrl: normalizedAvatar,
+      coverUrl: normalizedCover,
+    }
+  }
+  return user
+}
 
 const MB = 1024 * 1024
 const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
@@ -180,7 +224,7 @@ function extractVariantUrl(variants: unknown, preferred: string[]): string | nul
   for (const name of preferred) {
     const value = (variants as Record<string, any>)[name]
     if (value && typeof value.url === 'string') {
-      return value.url
+      return normalizeMediaUrl(value.url)
     }
   }
   return null
@@ -360,7 +404,7 @@ function mapComment(row: CommentWithUser, viewerVote: number | null = null): Com
       id: row.user.id,
       handle: row.user.handle,
       name: row.user.name ?? null,
-      avatarUrl: row.user.avatarUrl ?? null,
+      avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
     },
     replies: [],
   }
@@ -581,7 +625,7 @@ function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null 
     type: post.type,
     title: post.title,
     body: post.body,
-    mediaUrl: post.mediaUrl,
+    mediaUrl: normalizeMediaUrl(post.mediaUrl ?? null),
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
   jurisdiction: post.jurisdiction,
@@ -593,7 +637,7 @@ function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null 
       id: post.author.id,
       handle: post.author.handle,
       name: post.author.name,
-      avatarUrl: post.author.avatarUrl,
+      avatarUrl: normalizeMediaUrl(post.author.avatarUrl ?? null),
     },
     counts: {
       upvotes: post.upvotes,
@@ -1055,8 +1099,8 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       lastName,
       name: user.name,
       bio: user.bio ?? '',
-      avatarUrl: user.avatarUrl ?? null,
-      coverUrl: user.coverUrl ?? null,
+      avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+      coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
       avatarMediaId: user.avatarMediaId ?? null,
       coverMediaId: user.coverMediaId ?? null,
       createdAt: user.createdAt,
@@ -1169,7 +1213,7 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       return updatedUser
     })
 
-    return reply.send({ ok: true, user: result })
+    return reply.send({ ok: true, user: normalizeUserMedia(result) })
   } catch (err) {
     if (isExperienceTableMissing(err)) {
       return reply.code(503).send({ error: 'experiences_not_available' })
@@ -1347,7 +1391,7 @@ app.get('/media/assets/:id', async (req: FastifyRequest, reply: FastifyReply) =>
         id: asset.id,
         category: asset.category,
         status: asset.status,
-        variants: asset.variants,
+        variants: normalizeMediaVariants(asset.variants),
         width: asset.width,
         height: asset.height,
         failureReason: asset.failureReason,
@@ -1482,7 +1526,8 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
       }
     }
 
-    return reply.send({ ...user, homeChamber })
+    const normalizedUser = normalizeUserMedia(user)
+    return reply.send({ ...normalizedUser, homeChamber })
   } catch {
     return reply.code(401).send({ error: 'unauthorized' })
   }
@@ -2180,10 +2225,10 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       position: exp.position,
     }))
 
-    const user = {
+    const user = normalizeUserMedia({
       ...userRecord,
       experiences: mappedExperiences,
-    }
+    })
 
     const query = CursorQuery.extend({
       jurisdiction: JurisdictionEnum.optional(),
