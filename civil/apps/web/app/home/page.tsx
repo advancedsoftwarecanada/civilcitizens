@@ -138,31 +138,38 @@ export default function HomePage() {
   )
 
   return (
-  <div className="w-full">
-      <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-6xl px-4">
+    <div className="min-h-screen">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
+        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
           <Sidebar me={me ?? undefined} active="home" />
-        </div>
-      </div>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
-        <Sidebar me={me ?? undefined} active="home" />
+          <main className="space-y-6">
+            <section className="surface-card px-6 py-4 shadow-subtle">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">News feed</p>
+                  <h1 className="text-xl font-semibold text-slate-900">{me?.name ? `Welcome back, ${me.name.split(' ')[0]}!` : 'Welcome to Civil Citizens'}</h1>
+                  <p className="text-sm text-slate-500">Track what&apos;s hot inside your home chamber and beyond.</p>
+                </div>
+                <div className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {sortMode === 'hot' ? 'Hot sorting' : 'Newest first'}
+                </div>
+              </div>
+            </section>
 
-        <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">
-          <div className="border border-gray-200 bg-white">
-            <PostComposer className="border-0 px-5 py-4" onPostCreated={handlePostCreated} />
+            <PostComposer onPostCreated={handlePostCreated} />
 
-            <div className="border-t border-gray-200 px-5">
-              <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
-                <div className="flex flex-wrap gap-4">
+            <section className="surface-card px-6 py-4 shadow-subtle">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap gap-2">
                   {JURISDICTION_FILTERS.map((filter) => (
                     <button
                       key={filter.value}
                       type="button"
-                      className={`pb-2 text-sm font-semibold transition ${
+                      className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
                         activeFilter === filter.value
-                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                          ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
+                          : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700'
                       }`}
                       onClick={() => setActiveFilter(filter.value)}
                       disabled={loading && activeFilter === filter.value}
@@ -171,15 +178,15 @@ export default function HomePage() {
                     </button>
                   ))}
                 </div>
-                <div className="flex gap-3 text-xs uppercase tracking-wide text-gray-500">
+                <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
                   {SORT_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
-                      className={`pb-1 font-semibold transition ${
+                      className={`rounded-full px-3 py-1 transition ${
                         sortMode === option.value
-                          ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                          : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                       }`}
                       onClick={() => setSortMode(option.value)}
                       disabled={loading && sortMode === option.value}
@@ -189,21 +196,23 @@ export default function HomePage() {
                   ))}
                 </div>
               </div>
+            </section>
+
+            <div className="space-y-4">
+              {posts.length === 0 ? (
+                <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
+                  {loading ? 'Loading the latest updates…' : "No updates yet. Once the community starts posting, you'll see them here."}
+                </section>
+              ) : (
+                posts.map((p) => <PostFeedItem key={p.id} post={p} onVote={handleVote} />)
+              )}
             </div>
+          </main>
 
-            {posts.length === 0 ? (
-              <div className="border-t border-gray-200 px-5 py-4 text-center text-sm text-gray-500">
-                {loading ? 'Loading the latest updates…' : "No updates yet. Once the community starts posting, you'll see them here."}
-              </div>
-            ) : (
-              posts.map((p) => <PostFeedItem key={p.id} post={p} onVote={handleVote} />)
-            )}
-          </div>
-        </main>
-
-        <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
-          <RightRail />
-        </aside>
+          <aside className="hidden lg:block">
+            <RightRail />
+          </aside>
+        </div>
       </div>
     </div>
   )

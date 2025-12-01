@@ -6,6 +6,7 @@ import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
+import { RightRail } from '../_components/RightRail'
 
 const provincesFallback = [
   { code: 'nl', name: 'Newfoundland and Labrador' },
@@ -492,14 +493,14 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const tabButtonBaseClass = 'inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60'
 
   const manageSection = (
-    <section className="border border-gray-200 bg-white p-6">
+    <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
       <h1 className="text-2xl font-bold text-gray-900">Your Chambers of Citizens</h1>
       <p className="mt-2 text-sm text-gray-600">
         Pick your home chamber to personalize your Civil experience. We'll use it to curate local news, MP updates,
         and marketplace offers from your riding.
       </p>
       {home ? (
-        <div className="mt-4 border border-[var(--cc-border)] bg-white p-4 shadow-sm">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-subtle">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-xs uppercase tracking-wide text-gray-500">Home Chamber</div>
@@ -524,7 +525,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           </div>
         </div>
       ) : bootstrapped ? (
-        <div className="mt-4 border border-dashed border-[var(--cc-border)] bg-white p-4 text-sm text-gray-500">
+        <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
           You haven't set a home chamber yet. Choose your province and riding to get started.
         </div>
       ) : (
@@ -535,7 +536,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         {loadingFollows ? (
           <div className="mt-3 text-sm text-gray-500">Loading your followed chambers…</div>
         ) : additionalFollows.length === 0 ? (
-          <div className="mt-3 border border-dashed border-[var(--cc-border)] bg-white p-4 text-sm text-gray-500">
+          <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
             {home
               ? "You're currently following your home chamber. Explore other Chambers of Citizens below to keep an eye on more communities."
               : "You haven't followed any chambers yet. Choose one below to get started."}
@@ -550,7 +551,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
               const isUpdating = managingFollow === `${key}:home`
               const isRemoving = managingFollow === `${key}:remove`
               return (
-                <div key={key} className="flex flex-col gap-2 border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div key={key} className="flex flex-col gap-2 rounded-2xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-base font-semibold text-gray-900">{chamber.name || follow.chamberSlug.replace(/-/g, ' ')}</div>
                     <div className="text-sm text-gray-500">Province: {provinceName}</div>
@@ -587,7 +588,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
 
   const renderPickerSection = (variant: 'default' | 'welcome') => {
     const isWelcome = variant === 'welcome'
-    const sectionClasses = isWelcome ? 'border border-[var(--cc-border)] bg-white p-8 shadow-sm' : 'border border-gray-200 bg-white p-6'
+    const sectionClasses = isWelcome ? 'surface-card px-8 py-8 shadow-panel' : 'surface-card px-6 py-5 shadow-subtle'
     const heading = isWelcome ? 'Select your EDA' : home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'
     const introCopy = isWelcome
       ? 'Civil is organized by Canada’s Electoral District Associations. Pick your riding and we’ll personalize your feed with neighbours, civic leaders, and local actions.'
@@ -839,7 +840,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   }
 
   const mainContent = (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {manageSection}
       {renderPickerSection('default')}
     </div>
@@ -874,32 +875,39 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   }
 
   return (
-    <div className="w-full">
+    <div className="min-h-screen">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-6xl px-4">
+        <div className="mx-auto max-w-screen-lg px-4">
           <Sidebar me={me ?? undefined} active="chambers" />
         </div>
       </div>
 
-    <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
-        <Sidebar me={me ?? undefined} active="chambers" />
+      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
+        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
+          <Sidebar me={me ?? undefined} active="chambers" />
 
-        <main className="space-y-4 lg:min-h-[calc(100vh-48px)] lg:px-0">{mainContent}</main>
+          <main className="space-y-6">{mainContent}</main>
 
-        <aside className="hidden lg:flex lg:min-h-screen lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
-          <div className="sticky top-4 space-y-4 px-5 py-4">
-            <section className="border border-gray-200 bg-white p-6">
-              <div className="text-sm font-semibold">Need help choosing?</div>
-              <p className="mt-2 text-sm text-gray-600">
-                Your chamber matches your federal Electoral District Association (EDA). If you're not sure which one is yours,
-                look at your voter card or search for your MP by postal code on Elections Canada.
-              </p>
-            </section>
-            <section className="border border-gray-200 bg-white p-6 text-sm text-gray-600">
-              Tap “Use my location” to let Civil auto-detect your riding, or choose manually and we'll tailor your feed instantly.
-            </section>
-          </div>
-        </aside>
+          <aside className="hidden lg:block">
+            <div className="sticky top-8 space-y-4">
+              <section className="surface-card space-y-3 p-5 shadow-subtle">
+                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Need help choosing?</div>
+                <p className="text-sm text-slate-600">
+                  Your chamber matches your federal Electoral District Association (EDA). Not sure which one is yours? Check
+                  your voter card or search for your MP by postal code on Elections Canada.
+                </p>
+              </section>
+              <section className="surface-card space-y-3 p-5 shadow-subtle text-sm text-slate-600">
+                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Tip</div>
+                <p>
+                  Tap “Use my location” to let Civil auto-detect your riding, or choose manually and we&apos;ll tailor your feed
+                  instantly.
+                </p>
+              </section>
+              <RightRail />
+            </div>
+          </aside>
+        </div>
       </div>
       {geoOverlay}
     </div>

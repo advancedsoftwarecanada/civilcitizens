@@ -223,26 +223,29 @@ export default function UserPostPage({ params }: PageProps) {
   }, [commentSort, loadComments])
 
   return (
-    <div className="w-full">
-      <div className="border-b bg-white py-4 shadow-sm lg:hidden">
+    <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
+      <div className="border-b border-white/60 bg-white/80 py-4 shadow-sm backdrop-blur lg:hidden">
         <div className="mx-auto max-w-6xl px-4">
           <Sidebar me={viewer ?? undefined} active="home" />
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
-        <Sidebar me={viewer ?? undefined} active="home" />
+      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-8 sm:px-6 lg:px-10 lg:pb-16">
+        <div className="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px]">
+          <div className="hidden lg:block">
+            <Sidebar me={viewer ?? undefined} active="home" />
+          </div>
 
-        <main className="space-y-6 lg:min-h-[calc(100vh-48px)] lg:px-0">
-          {status === 'loading' ? (
-            <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading post…</div>
-          ) : status === 'not-found' ? (
-            <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Post not found.</div>
-          ) : status === 'error' ? (
-            <div className="rounded border bg-white p-6 text-sm text-red-600 shadow-sm">Unable to load this post right now.</div>
-          ) : post ? (
-            <article className="rounded border bg-white p-6 shadow-sm">
-              <nav className="mb-4 text-xs text-gray-500">
+          <main className="space-y-8">
+            {status === 'loading' ? (
+              <div className="rounded-[28px] border border-white/70 bg-white/80 p-6 text-sm text-slate-500 shadow-subtle">Loading post…</div>
+            ) : status === 'not-found' ? (
+              <div className="rounded-[28px] border border-white/70 bg-white/80 p-6 text-sm text-slate-500 shadow-subtle">Post not found.</div>
+            ) : status === 'error' ? (
+              <div className="rounded-[28px] border border-white/70 bg-white/80 p-6 text-sm text-red-600 shadow-subtle">Unable to load this post right now.</div>
+            ) : post ? (
+              <article className="rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-panel sm:p-8">
+                <nav className="mb-4 text-xs text-gray-500">
                 <Link href="/home" className="hover:underline">
                   Home
                 </Link>
@@ -260,114 +263,121 @@ export default function UserPostPage({ params }: PageProps) {
                 ) : null}
               </nav>
 
-              <header className="flex items-start gap-3">
-                <div className="h-12 w-12 overflow-hidden rounded-full bg-gray-200">
-                  {post.author.avatarUrl ? (
-                    <Image
-                      src={post.author.avatarUrl}
-                      alt={post.author.name ?? post.author.handle}
-                      width={48}
-                      height={48}
-                      unoptimized
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-gray-600">
-                      {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
-                    <Link href={`/u/${post.author.handle}`} className="font-semibold text-gray-900 hover:underline">
-                      {post.author.name ?? post.author.handle}
-                    </Link>
-                    <span>@{post.author.handle}</span>
-                    <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
-                      {JURISDICTION_LABELS[post.jurisdiction]}
-                    </span>
-                    {post.provinceCode && post.chamberSlug ? (
-                      <Link
-                        href={`/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`}
-                        className="rounded-full border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50"
-                      >
-                        {post.chamberName ?? post.chamberSlug}
-                      </Link>
-                    ) : null}
-                  </div>
-                  <div className="mt-4 space-y-4 text-[16px] leading-7 text-gray-900">
-                    {post.type === 'article' && post.title ? (
-                      <h1 className="text-2xl font-semibold text-gray-900">{post.title}</h1>
-                    ) : null}
-                    {post.type === 'article' ? (
-                      <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
+                <header className="flex flex-col gap-4 md:flex-row md:items-start">
+                  <div className="h-14 w-14 overflow-hidden rounded-full bg-slate-200">
+                    {post.author.avatarUrl ? (
+                      <Image
+                        src={post.author.avatarUrl}
+                        alt={post.author.name ?? post.author.handle}
+                        width={48}
+                        height={48}
+                        unoptimized
+                        className="h-full w-full object-cover"
+                      />
                     ) : (
-                      <div className="whitespace-pre-wrap">{post.body}</div>
+                      <div className="flex h-full w-full items-center justify-center text-base font-semibold text-slate-600">
+                        {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
+                      </div>
                     )}
                   </div>
-                </div>
-              </header>
+                  <div className="min-w-0 flex-1 space-y-4">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
+                      <Link href={`/u/${post.author.handle}`} className="font-semibold text-slate-900 hover:underline">
+                        {post.author.name ?? post.author.handle}
+                      </Link>
+                      <span>@{post.author.handle}</span>
+                      <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                        {JURISDICTION_LABELS[post.jurisdiction]}
+                      </span>
+                      {post.provinceCode && post.chamberSlug ? (
+                        <Link
+                          href={`/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`}
+                          className="rounded-full border border-slate-200 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-500 hover:bg-slate-50"
+                        >
+                          {post.chamberName ?? post.chamberSlug}
+                        </Link>
+                      ) : null}
+                    </div>
+                    <div className="text-[16px] leading-7 text-slate-900">
+                      {post.type === 'article' && post.title ? (
+                        <h1 className="text-3xl font-semibold text-slate-900">{post.title}</h1>
+                      ) : null}
+                      <div className="mt-4 space-y-4">
+                        {post.type === 'article' ? (
+                          <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
+                        ) : (
+                          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{post.body}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </header>
 
-              <footer className="mt-6 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-                {post.counts ? (
-                  <span>{post.counts.score} points • {post.counts.commentCount} comments</span>
-                ) : null}
-                <span>Canonical: {paths?.user ?? buildLegacyPath(post)}</span>
-              </footer>
+                <footer className="mt-6 flex flex-wrap items-center gap-4 text-xs text-slate-500">
+                  {post.counts ? (
+                    <span>
+                      {post.counts.score} points • {post.counts.commentCount} comments
+                    </span>
+                  ) : null}
+                  <span>Canonical: {paths?.user ?? buildLegacyPath(post)}</span>
+                </footer>
 
-              <section className="mt-8 border-t border-gray-200 pt-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-gray-900">Comments</h2>
-                  {post.counts ? <span className="text-sm text-gray-500">{post.counts.commentCount} total</span> : null}
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
-                  <div className="flex gap-3 font-semibold">
-                    {COMMENT_SORT_OPTIONS.map((option) => (
+                <section className="mt-8 rounded-[28px] border border-white/70 bg-white/95 p-5 shadow-subtle">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Comments</p>
+                      {post.counts ? (
+                        <h2 className="text-lg font-semibold text-slate-900">{post.counts.commentCount} total</h2>
+                      ) : (
+                        <h2 className="text-lg font-semibold text-slate-900">Join the conversation</h2>
+                      )}
+                    </div>
+                    <div className="inline-flex rounded-full bg-slate-100 p-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      {COMMENT_SORT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`rounded-full px-4 py-1 transition ${
+                            commentSort === option.value
+                              ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
+                              : 'text-slate-500'
+                          }`}
+                          onClick={() => setCommentSort(option.value)}
+                          disabled={commentSort === option.value}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {viewer ? (
+                    <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
+                  ) : (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                      <span>Sign in to join the conversation.</span>
                       <button
-                        key={option.value}
                         type="button"
-                        className={`pb-1 transition ${
-                          commentSort === option.value
-                            ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                            : 'text-gray-400 hover:text-[var(--cc-primary)]'
-                        }`}
-                        onClick={() => setCommentSort(option.value)}
-                        disabled={commentSort === option.value}
+                        onClick={() => redirectToAuthModal('login')}
+                        className="inline-flex items-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)]"
                       >
-                        {option.label}
+                        Sign in
                       </button>
-                    ))}
+                    </div>
+                  )}
+
+                  <div className="mt-6">
+                    <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
                   </div>
-                </div>
+                </section>
+              </article>
+            ) : null}
+          </main>
 
-                {viewer ? (
-                  <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
-                ) : (
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-                    <span>Sign in to join the conversation.</span>
-                    <button
-                      type="button"
-                      onClick={() => redirectToAuthModal('login')}
-                      className="inline-flex items-center bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)]"
-                    >
-                      Sign in
-                    </button>
-                  </div>
-                )}
-
-                <div className="mt-6">
-                  <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
-                </div>
-              </section>
-            </article>
-          ) : null}
-        </main>
-
-        <aside className="hidden lg:flex lg:min-h-[calc(100vh-48px)] lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
-          <RightRail />
-        </aside>
+          <aside className="hidden lg:block">
+            <RightRail />
+          </aside>
+        </div>
       </div>
     </div>
   )

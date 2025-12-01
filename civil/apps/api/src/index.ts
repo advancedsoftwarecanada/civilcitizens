@@ -3,8 +3,12 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import sse from 'fastify-sse-v2'
+import { Queue } from 'bullmq'
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
 import { prisma } from '@civil/db'
+import { Prisma, MediaCategory } from '@prisma/client'
 import {
   CreatePostInput,
   CreateCommentInput,
@@ -30,10 +34,12 @@ import {
   buildHandleBase,
   JurisdictionEnum,
   ChamberGeolocateInput,
+  RequestMediaUploadInput,
+  CompleteMediaUploadInput,
+  MediaAssetIdSchema,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
-import { Prisma } from '@prisma/client'
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { randomUUID } from 'crypto'
 import { locateChamberFromPoint } from './geodata.js'
@@ -41,11 +47,55 @@ import { locateChamberFromPoint } from './geodata.js'
 const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
+const MEDIA_S3_ENDPOINT = process.env.MEDIA_S3_ENDPOINT || 'http://127.0.0.1:9000'
+const MEDIA_S3_REGION = process.env.MEDIA_S3_REGION || 'us-east-1'
+const MEDIA_S3_ACCESS_KEY = process.env.MEDIA_S3_ACCESS_KEY || 'minioadmin'
+const MEDIA_S3_SECRET_KEY = process.env.MEDIA_S3_SECRET_KEY || 'minioadmin'
+const MEDIA_BUCKET_PUBLIC = process.env.MEDIA_BUCKET_PUBLIC || 'civil-media'
+const MEDIA_BUCKET_ORIGINAL = process.env.MEDIA_BUCKET_ORIGINAL || 'civil-media-raw'
+const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `http://127.0.0.1:9000/${MEDIA_BUCKET_PUBLIC}`).replace(/\/$/, '')
+const MEDIA_SIGNED_URL_TTL = Number(process.env.MEDIA_SIGNED_URL_TTL_SECONDS || 900)
+
+const MB = 1024 * 1024
+const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
+  avatar: 8 * MB,
+  cover: 20 * MB,
+  post_image: 25 * MB,
+  attachment: 40 * MB,
+}
+const MEDIA_PROXY_UPLOAD_LIMIT = 50 * MB
+
+const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif'])
+const MIME_EXTENSION_MAP: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/avif': 'avif',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+}
+const BINARY_UPLOAD_MIME_TYPES = ['application/octet-stream', ...IMAGE_MIME_TYPES]
+
+const s3Client = new S3Client({
+  region: MEDIA_S3_REGION,
+  endpoint: MEDIA_S3_ENDPOINT,
+  forcePathStyle: true,
+  credentials: {
+    accessKeyId: MEDIA_S3_ACCESS_KEY,
+    secretAccessKey: MEDIA_S3_SECRET_KEY,
+  },
+})
 
 const app = Fastify({
   logger: true,
   trustProxy: true, // behind Nginx/Cloudflare
 })
+
+for (const mime of BINARY_UPLOAD_MIME_TYPES) {
+  app.addContentTypeParser(mime, { parseAs: 'buffer' }, (request, payload, done) => {
+    done(null, payload)
+  })
+}
 
 await app.register(cors, { origin: true, credentials: true })
 await app.register(jwt, { secret: JWT_SECRET })
@@ -53,6 +103,12 @@ await app.register(sse as any)
 
 const redis = new IORedis(REDIS_URL)
 void redis
+
+const mediaQueue = new Queue('media', {
+  connection: {
+    url: REDIS_URL,
+  },
+})
 
 type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
 type Jurisdiction = z.infer<typeof JurisdictionEnum>
@@ -70,6 +126,8 @@ function isSchemaOutOfDateError(err: unknown): boolean {
   return /does not exist|unknown column|undefined table|undefined column/i.test(message)
 }
 
+const MediaAssetParam = z.object({ id: MediaAssetIdSchema })
+
 async function withSchemaGuard<T>(
   req: FastifyRequest,
   reply: FastifyReply,
@@ -84,6 +142,48 @@ async function withSchemaGuard<T>(
     }
     throw err
   }
+}
+
+function ensureMimeSupported(mime: string) {
+  return IMAGE_MIME_TYPES.has(mime.toLowerCase())
+}
+
+function extensionForMime(mime: string) {
+  return MIME_EXTENSION_MAP[mime.toLowerCase()] || 'bin'
+}
+
+function buildOriginalObjectKey(category: MediaCategory, userId: string, assetId: string, extension: string) {
+  return `raw/${category}/${userId}/${assetId}/original.${extension}`
+}
+
+function buildPublicUrl(key: string) {
+  return `${MEDIA_PUBLIC_BASE_URL}/${key}`
+}
+
+async function readRequestBuffer(req: FastifyRequest): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  for await (const chunk of req.raw as any as AsyncIterable<Buffer | Uint8Array | string>) {
+    if (!chunk) continue
+    if (Buffer.isBuffer(chunk)) {
+      chunks.push(chunk)
+    } else if (typeof chunk === 'string') {
+      chunks.push(Buffer.from(chunk))
+    } else {
+      chunks.push(Buffer.from(chunk))
+    }
+  }
+  return Buffer.concat(chunks)
+}
+
+function extractVariantUrl(variants: unknown, preferred: string[]): string | null {
+  if (!variants || typeof variants !== 'object') return null
+  for (const name of preferred) {
+    const value = (variants as Record<string, any>)[name]
+    if (value && typeof value.url === 'string') {
+      return value.url
+    }
+  }
+  return null
 }
 
 type PostStatsInput = {
@@ -881,6 +981,10 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       handle: true,
       name: true,
       bio: true,
+      avatarUrl: true,
+      coverUrl: true,
+      avatarMediaId: true,
+      coverMediaId: true,
       createdAt: true,
     },
   })
@@ -951,6 +1055,10 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       lastName,
       name: user.name,
       bio: user.bio ?? '',
+      avatarUrl: user.avatarUrl ?? null,
+      coverUrl: user.coverUrl ?? null,
+      avatarMediaId: user.avatarMediaId ?? null,
+      coverMediaId: user.coverMediaId ?? null,
       createdAt: user.createdAt,
       experiences: experienceItems,
     },
@@ -971,8 +1079,30 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = UpdateProfileInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-  const { firstName, lastName, bio, experiences } = parse.data
+  const { firstName, lastName, bio, experiences, avatarMediaId, coverMediaId } = parse.data
   const fullName = `${firstName} ${lastName}`.trim()
+
+  let avatarAsset: Awaited<ReturnType<typeof prisma.mediaAsset.findFirst>> = null
+  if (avatarMediaId) {
+    avatarAsset = await prisma.mediaAsset.findFirst({ where: { id: avatarMediaId, ownerId: userId, category: 'avatar' } })
+    if (!avatarAsset) {
+      return reply.code(400).send({ error: 'invalid_avatar_media' })
+    }
+    if (avatarAsset.status === 'failed') {
+      return reply.code(400).send({ error: 'avatar_media_failed' })
+    }
+  }
+
+  let coverAsset: Awaited<ReturnType<typeof prisma.mediaAsset.findFirst>> = null
+  if (coverMediaId) {
+    coverAsset = await prisma.mediaAsset.findFirst({ where: { id: coverMediaId, ownerId: userId, category: 'cover' } })
+    if (!coverAsset) {
+      return reply.code(400).send({ error: 'invalid_cover_media' })
+    }
+    if (coverAsset.status === 'failed') {
+      return reply.code(400).send({ error: 'cover_media_failed' })
+    }
+  }
 
   const normalizedExperiences = (experiences ?? []).map((exp: { title: string; organization: string; location?: string | null; startDate: string; endDate?: string | null; current: boolean; description?: string | null }, index: number) => ({
     id: randomUUID(),
@@ -992,18 +1122,40 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       const baseHandle = buildHandleBase(firstName, lastName)
       const handle = await generateUniqueHandle(baseHandle, tx, userId)
 
+      const userUpdateData: Prisma.UserUncheckedUpdateInput = {
+        name: fullName,
+        bio: bio?.trim() ? bio.trim() : null,
+        handle,
+      }
+
+      if (avatarMediaId) {
+        userUpdateData.avatarMediaId = avatarMediaId
+        const avatarUrl = avatarAsset?.status === 'ready' ? extractVariantUrl(avatarAsset.variants, ['avatar@2x', 'avatar@1x', 'avatar-thumb']) : null
+        if (avatarUrl) {
+          userUpdateData.avatarUrl = avatarUrl
+        }
+      }
+
+      if (coverMediaId) {
+        userUpdateData.coverMediaId = coverMediaId
+        const coverUrl = coverAsset?.status === 'ready' ? extractVariantUrl(coverAsset.variants, ['cover-xl', 'cover-lg', 'cover-md']) : null
+        if (coverUrl) {
+          userUpdateData.coverUrl = coverUrl
+        }
+      }
+
       const updatedUser = await tx.user.update({
         where: { id: userId },
-        data: {
-          name: fullName,
-          bio: bio?.trim() ? bio.trim() : null,
-          handle,
-        },
+        data: userUpdateData,
         select: {
           id: true,
           name: true,
           bio: true,
           handle: true,
+          avatarUrl: true,
+          coverUrl: true,
+          avatarMediaId: true,
+          coverMediaId: true,
         },
       })
 
@@ -1025,6 +1177,185 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
     throw err
   }
 })
+
+app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = RequestMediaUploadInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { category, mime, byteSize, filename } = parse.data
+    const mediaCategory = category as MediaCategory
+    const limit = MEDIA_CATEGORY_LIMITS[mediaCategory]
+    if (byteSize > limit) {
+      return reply.code(400).send({ error: 'file_too_large', maxBytes: limit })
+    }
+    if (!ensureMimeSupported(mime)) {
+      return reply.code(400).send({ error: 'unsupported_mime' })
+    }
+
+    const assetId = randomUUID()
+    const extension = extensionForMime(mime)
+    const originalKey = buildOriginalObjectKey(mediaCategory, userId, assetId, extension)
+
+    const asset = await prisma.mediaAsset.create({
+      data: {
+        id: assetId,
+        ownerId: userId,
+        category: mediaCategory,
+        assetType: 'image',
+        storageType: 'minio',
+        originalKey,
+        mime,
+        byteSize,
+        status: 'pending',
+        metadata: filename ? { filename } : undefined,
+      },
+    })
+
+    const command = new PutObjectCommand({
+      Bucket: MEDIA_BUCKET_ORIGINAL,
+      Key: originalKey,
+      ContentType: mime,
+    })
+    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: MEDIA_SIGNED_URL_TTL })
+
+    return reply.send({
+      assetId: asset.id,
+      upload: {
+        url: uploadUrl,
+        method: 'PUT',
+        headers: {
+          'content-type': mime,
+        },
+      },
+      proxyPath: `/media/uploads/${asset.id}/proxy`,
+      expiresInSeconds: MEDIA_SIGNED_URL_TTL,
+      bucket: MEDIA_BUCKET_ORIGINAL,
+      key: originalKey,
+      maxBytes: limit,
+    })
+  }),
+)
+
+app.post('/media/uploads/complete', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = CompleteMediaUploadInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { assetId, width, height, checksum } = parse.data
+    const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId } })
+    if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+
+    if (asset.status === 'ready') {
+      return reply.send({ ok: true, assetId })
+    }
+
+    const updatedAsset = await prisma.mediaAsset.update({
+      where: { id: assetId },
+      data: {
+        width: width ?? asset.width,
+        height: height ?? asset.height,
+        checksum: checksum ?? asset.checksum,
+        status: 'processing',
+        failureReason: null,
+      },
+    })
+
+    if (asset.category === 'avatar') {
+      await prisma.user.update({ where: { id: userId }, data: { avatarMediaId: updatedAsset.id } })
+    } else if (asset.category === 'cover') {
+      await prisma.user.update({ where: { id: userId }, data: { coverMediaId: updatedAsset.id } })
+    }
+
+    await mediaQueue.add(
+      'process',
+      { assetId },
+      {
+        removeOnComplete: true,
+        attempts: 5,
+        backoff: { type: 'exponential', delay: 2000 },
+      },
+    )
+
+    return reply.send({ ok: true, assetId })
+  }),
+)
+
+app.put(
+  '/media/uploads/:id/proxy',
+  { config: { bodyLimit: MEDIA_PROXY_UPLOAD_LIMIT } },
+  async (req: FastifyRequest, reply: FastifyReply) =>
+    withSchemaGuard(req, reply, async () => {
+      const userId = (req as any).user?.id
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = MediaAssetParam.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      const asset = await prisma.mediaAsset.findFirst({ where: { id: params.data.id, ownerId: userId } })
+      if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+      if (asset.status !== 'pending') {
+        return reply.code(409).send({ error: 'asset_not_pending' })
+      }
+
+      const bodyBuffer = Buffer.isBuffer((req as any).body) ? ((req as any).body as Buffer) : await readRequestBuffer(req)
+      if (!bodyBuffer || bodyBuffer.length === 0) {
+        return reply.code(400).send({ error: 'empty_upload' })
+      }
+
+      const assetCategory = asset.category as MediaCategory
+      const maxBytes = asset.byteSize ?? MEDIA_CATEGORY_LIMITS[assetCategory]
+      if (maxBytes && bodyBuffer.length > maxBytes) {
+        return reply.code(400).send({ error: 'file_too_large', maxBytes })
+      }
+
+      await s3Client.send(
+        new PutObjectCommand({
+          Bucket: MEDIA_BUCKET_ORIGINAL,
+          Key: asset.originalKey,
+          Body: bodyBuffer,
+          ContentType: asset.mime ?? 'application/octet-stream',
+        }),
+      )
+
+      return reply.send({ ok: true, bytesUploaded: bodyBuffer.length })
+    }),
+)
+
+app.get('/media/assets/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MediaAssetParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const asset = await prisma.mediaAsset.findFirst({
+      where: { id: params.data.id, ownerId: userId },
+    })
+
+    if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+
+    return reply.send({
+      asset: {
+        id: asset.id,
+        category: asset.category,
+        status: asset.status,
+        variants: asset.variants,
+        width: asset.width,
+        height: asset.height,
+        failureReason: asset.failureReason,
+        readyAt: asset.readyAt,
+      },
+    })
+  }),
+)
 
 // Create post
 app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -1807,6 +2138,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         name: true,
         bio: true,
         avatarUrl: true,
+        coverUrl: true,
         createdAt: true,
       },
     })

@@ -1,11 +1,11 @@
 "use client"
 import { useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import type { FormEvent } from 'react'
+import Link from 'next/link'
 import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
-import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
+import { AuthScreen } from '../_components/AuthScreen'
 
 type FieldErrors = Record<string, string[]>
 
@@ -24,23 +24,7 @@ type RegisterErrorResponse = {
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
-const triggerModalOrNavigate = (router: ReturnType<typeof useRouter>, modal: 'login' | 'forgot') => {
-  const eventName = modal === 'login' ? 'openLoginModal' : 'openForgotModal'
-  const inModal = Boolean(document.querySelector('[data-cc-modal-root]'))
-  if (inModal) {
-    if (window.location.pathname.startsWith('/register')) {
-      router.back()
-      setTimeout(() => window.dispatchEvent(new CustomEvent(eventName)), 0)
-    } else {
-      window.dispatchEvent(new CustomEvent(eventName))
-    }
-  } else {
-    redirectToAuthModal(modal)
-  }
-}
-
 export default function RegisterPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -124,113 +108,82 @@ export default function RegisterPage() {
     }
   }
 
+  const inputClass = (key: string) =>
+    `w-full rounded-2xl border px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 transition focus-visible:outline-none ${
+      hasFieldError(key)
+        ? 'border-red-500 ring-2 ring-red-100'
+        : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
+    }`
+
+  const footer = (
+    <div className="space-y-2">
+      <p>
+        Already have an account?{' '}
+        <Link href="/login" className="font-semibold text-[var(--cc-primary)]">
+          Sign in
+        </Link>
+      </p>
+      <p>
+        Forgot password?{' '}
+        <Link href="/forgot" className="font-semibold text-[var(--cc-primary)]">
+          Reset it here
+        </Link>
+      </p>
+    </div>
+  )
+
   return (
-    <div className="mx-auto max-w-md p-8">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <input
-              className={`w-full rounded border p-3 ${
-                hasFieldError('firstName')
-                  ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-              }`}
-              placeholder="First name"
-              value={firstName}
-              onChange={(event) => setFirstName(event.target.value)}
-            />
-            {hasFieldError('firstName') ? (
-              <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('firstName')}</div>
-            ) : null}
-          </div>
-          <div>
-            <input
-              className={`w-full rounded border p-3 ${
-                hasFieldError('lastName')
-                  ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                  : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-              }`}
-              placeholder="Last name"
-              value={lastName}
-              onChange={(event) => setLastName(event.target.value)}
-            />
-            {hasFieldError('lastName') ? (
-              <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('lastName')}</div>
-            ) : null}
-          </div>
-        </div>
-        <div className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
-          Your handle will be <span className="font-semibold text-gray-900">@{previewHandle}</span>. If someone already has it, we'll adjust it automatically.
-        </div>
-        <div>
-          <input
-            className={`w-full rounded border p-3 ${
-              hasFieldError('email')
-                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-            }`}
-            placeholder="Email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-          {hasFieldError('email') ? (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('email')}</div>
-          ) : null}
-        </div>
-        <div>
-          <input
-            className={`w-full rounded border p-3 ${
-              hasFieldError('password')
-                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-            }`}
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          {hasFieldError('password') ? (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div>
-          ) : null}
-        </div>
-        <div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={acceptTerms}
-              onChange={(event) => setAcceptTerms(event.target.checked)}
-            />
-            <span>
-              I agree to the{' '}
-              <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">
-                Terms of Service
-              </a>{' '}
-              and{' '}
-              <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
-                Privacy Policy
-              </a>
-            </span>
+    <AuthScreen
+      title="Create your Civil account"
+      subtitle="Reserve your handle, pick your home chamber, and get access to Canada’s civic operating system."
+      footer={footer}
+      hideSidePanel
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="block text-sm font-medium text-slate-700">
+            First name
+            <input className={`${inputClass('firstName')} mt-2`} placeholder="Jane" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+            {hasFieldError('firstName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('firstName')}</div> : null}
           </label>
-          {hasFieldError('acceptTerms') ? (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div>
-          ) : null}
+          <label className="block text-sm font-medium text-slate-700">
+            Last name
+            <input className={`${inputClass('lastName')} mt-2`} placeholder="Citizen" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+            {hasFieldError('lastName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('lastName')}</div> : null}
+          </label>
         </div>
-        {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
-        <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Your Civil handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
+        </div>
+        <label className="block text-sm font-medium text-slate-700">
+          Email
+          <input className={`${inputClass('email')} mt-2`} placeholder="you@civil.ca" value={email} onChange={(event) => setEmail(event.target.value)} />
+          {hasFieldError('email') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('email')}</div> : null}
+        </label>
+        <label className="block text-sm font-medium text-slate-700">
+          Password
+          <input className={`${inputClass('password')} mt-2`} placeholder="At least 8 characters" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
+        </label>
+        <label className="flex items-start gap-3 text-sm text-slate-600">
+          <input type="checkbox" className="mt-1" checked={acceptTerms} onChange={(event) => setAcceptTerms(event.target.checked)} />
+          <span>
+            I agree to the{' '}
+            <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">
+              Terms of Service
+            </a>{' '}
+            and{' '}
+            <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
+              Privacy Policy
+            </a>
+          </span>
+        </label>
+        {hasFieldError('acceptTerms') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div> : null}
+        {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
+        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
           Create account
         </button>
       </form>
-      <div className="mt-4 text-sm">
-        Already have an account?{' '}
-  <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'login')}>
-          Sign in
-        </button>
-      </div>
-      <div className="mt-2 text-sm">
-  <button className="underline" type="button" onClick={() => triggerModalOrNavigate(router, 'forgot')}>
-          Forgot password?
-        </button>
-      </div>
-    </div>
+    </AuthScreen>
   )
 }

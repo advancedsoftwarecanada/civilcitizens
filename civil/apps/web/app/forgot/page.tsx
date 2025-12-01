@@ -1,8 +1,10 @@
 "use client"
 import { useState } from 'react'
 import type { FormEvent } from 'react'
+import Link from 'next/link'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
+import { AuthScreen } from '../_components/AuthScreen'
 
 type FieldErrors = Record<string, string[]>
 
@@ -77,30 +79,38 @@ export default function ForgotPasswordPage() {
     }
   }
 
+  const inputClass = hasFieldError('emailOrHandle')
+    ? 'border-red-500 ring-2 ring-red-100'
+    : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
+
+  const footer = (
+    <p>
+      Remembered your password?{' '}
+      <Link href="/login" className="font-semibold text-[var(--cc-primary)]">
+        Return to login
+      </Link>
+    </p>
+  )
+
   return (
-    <div className="mx-auto max-w-md p-8">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
+    <AuthScreen title="Reset your password" subtitle="Enter your email or Civil handle and we’ll send you a secure reset link." footer={footer}>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <label className="block text-sm font-medium text-slate-700">
+          Email or handle
           <input
-            className={`w-full rounded border p-3 ${
-              hasFieldError('emailOrHandle')
-                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-            }`}
-            placeholder="Email or handle"
+            className={`mt-2 w-full rounded-2xl border px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 transition focus-visible:outline-none ${inputClass}`}
+            placeholder="you@civil.ca or @handle"
             value={emailOrHandle}
             onChange={(event) => setEmailOrHandle(event.target.value)}
           />
-          {hasFieldError('emailOrHandle') ? (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div>
-          ) : null}
-        </div>
-        {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
-        <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
+          {hasFieldError('emailOrHandle') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div> : null}
+        </label>
+        {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
+        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
           Send reset link
         </button>
       </form>
-      {statusMessage ? <div className="mt-4 text-sm">{statusMessage}</div> : null}
-    </div>
+      {statusMessage ? <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">{statusMessage}</div> : null}
+    </AuthScreen>
   )
 }

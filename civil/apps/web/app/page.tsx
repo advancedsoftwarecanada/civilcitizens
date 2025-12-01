@@ -1,12 +1,7 @@
-"use client"
-import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import Image from 'next/image'
-import dynamic from 'next/dynamic'
-import Modal from './_components/Modal'
+import Link from 'next/link'
 import AutoRedirect from './_components/AutoRedirect'
-import { consumeQueuedAuthModal } from './_lib/authModal'
-import type { AuthModalType } from './_lib/authModal'
 import {
   FaMapMarkedAlt,
   FaUserTie,
@@ -18,68 +13,15 @@ import {
   FaShieldAlt,
 } from 'react-icons/fa'
 
-type EmptyProps = Record<string, never>
-
-// @ts-expect-error -- Next.js runtime resolves extensionless dynamic imports
-const LoginForm = dynamic<EmptyProps>(() => import('./login/page').then((mod) => mod.default), { ssr: false })
-// @ts-expect-error -- Next.js runtime resolves extensionless dynamic imports
-const RegisterForm = dynamic<EmptyProps>(() => import('./register/page').then((mod) => mod.default), { ssr: false })
-// @ts-expect-error -- Next.js runtime resolves extensionless dynamic imports
-const ForgotForm = dynamic<EmptyProps>(() => import('./forgot/page').then((mod) => mod.default), { ssr: false })
-
 function IconWrap({ children }: { children: ReactNode }) {
   return <div className="mb-3 text-primary-cc flex flex-col items-center justify-center text-center">{children}</div>
 }
 
 export default function Home() {
-  const [showLogin, setShowLogin] = useState(false)
-  const [showRegister, setShowRegister] = useState(false)
-  const [showForgot, setShowForgot] = useState(false)
-  useEffect(() => {
-    const openLogin = () => { setShowRegister(false); setShowLogin(true) }
-    const openRegister = () => { setShowLogin(false); setShowRegister(true) }
-    const openForgot = () => { setShowLogin(false); setShowRegister(false); setShowForgot(true) }
-    window.addEventListener('openLoginModal', openLogin)
-    window.addEventListener('openRegisterModal', openRegister)
-    window.addEventListener('openForgotModal', openForgot)
-    return () => {
-      window.removeEventListener('openLoginModal', openLogin)
-      window.removeEventListener('openRegisterModal', openRegister)
-      window.removeEventListener('openForgotModal', openForgot)
-    }
-  }, [])
-  useEffect(() => {
-    let target: AuthModalType | null = consumeQueuedAuthModal()
-    if (!target && typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search)
-      const authParam = params.get('auth')
-      if (authParam === 'login' || authParam === 'register' || authParam === 'forgot') {
-        target = authParam
-        params.delete('auth')
-        const nextQuery = params.toString()
-        const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname
-        window.history.replaceState(null, '', nextUrl)
-      }
-    }
-    if (!target) return
-    setShowLogin(target === 'login')
-    setShowRegister(target === 'register')
-    setShowForgot(target === 'forgot')
-  }, [])
   return (
     <main className="bg-white min-h-screen text-slate-900">
       {/* Redirect signed-in users to /home */}
       <AutoRedirect />
-      {/* Auth modals using shared component */}
-      <Modal open={showLogin} onClose={() => setShowLogin(false)} title="Login">
-        <LoginForm />
-      </Modal>
-      <Modal open={showRegister} onClose={() => setShowRegister(false)} title="Create your account">
-        <RegisterForm />
-      </Modal>
-      <Modal open={showForgot} onClose={() => setShowForgot(false)} title="Reset your password">
-        <ForgotForm />
-      </Modal>
       {/* Hero */}
       <section className="hero-section py-12">
         <div className="container mx-auto px-4">
@@ -99,8 +41,8 @@ export default function Home() {
                 When neighbours, leaders, and local businesses align, we support our <strong>local economy</strong>, strengthen our communities, and succeed together.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <button onClick={() => setShowRegister(true)} className="btn-primary-cc">Register</button>
-                <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc">Login</button>
+                <Link href="/register" className="btn-primary-cc">Register</Link>
+                <Link href="/login" className="btn-outline-primary-cc">Login</Link>
               </div>
             </div>
           </div>
@@ -229,7 +171,7 @@ export default function Home() {
                     <li className="cc-li">Go deeper any time with linked sources</li>
                   </ul>
                   <div className="mt-4">
-                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-sm">Stay Updated</button>
+                    <Link href="/login" className="btn-outline-primary-cc btn-sm">Stay Updated</Link>
                   </div>
                 </div>
               </article>
@@ -245,8 +187,8 @@ export default function Home() {
                     <li className="cc-li">Lower recruiting spend, better retention from hiring nearby</li>
                   </ul>
                   <div className="mt-4 flex gap-2">
-                    <button onClick={() => setShowLogin(true)} className="btn-primary-cc btn-sm">Post a Job</button>
-                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-sm">Find Work</button>
+                    <Link href="/login" className="btn-primary-cc btn-sm">Post a Job</Link>
+                    <Link href="/login" className="btn-outline-primary-cc btn-sm">Find Work</Link>
                   </div>
                 </div>
               </article>
@@ -262,7 +204,7 @@ export default function Home() {
                     <li className="cc-li">Earn a badge that boosts replies and conversions</li>
                   </ul>
                   <div className="mt-4">
-                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-sm">Get Verified</button>
+                    <Link href="/login" className="btn-outline-primary-cc btn-sm">Get Verified</Link>
                   </div>
                 </div>
               </article>
@@ -295,7 +237,7 @@ export default function Home() {
                     <li className="cc-li">Keep dollars circulating locally</li>
                   </ul>
                   <div className="text-center mt-6">
-                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-lg">Browse Marketplace</button>
+                    <Link href="/login" className="btn-outline-primary-cc btn-lg">Browse Marketplace</Link>
                   </div>
                 </div>
               </article>
@@ -311,7 +253,7 @@ export default function Home() {
                     <li className="cc-li">Safety tips &amp; easy reporting</li>
                   </ul>
                   <div className="text-center mt-6">
-                    <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc btn-lg">List an Item</button>
+                    <Link href="/login" className="btn-outline-primary-cc btn-lg">List an Item</Link>
                   </div>
                 </div>
               </article>
@@ -331,8 +273,8 @@ export default function Home() {
           <h2 className="text-3xl font-bold mb-3">Start Building Your Chamber of Citizens</h2>
           <p className="text-lg text-slate-700 mb-6">Stay informed. Solve problems together. Keep politics civil.</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <button onClick={() => setShowRegister(true)} className="btn-primary-cc">Register</button>
-            <button onClick={() => setShowLogin(true)} className="btn-outline-primary-cc">Login</button>
+            <Link href="/register" className="btn-primary-cc">Register</Link>
+            <Link href="/login" className="btn-outline-primary-cc">Login</Link>
           </div>
         </div>
       </section>

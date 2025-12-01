@@ -241,5 +241,28 @@ export const UpdateProfileInput = z.object({
     .max(10000, { message: 'Bio must be 10,000 characters or fewer' })
     .optional(),
   experiences: z.array(ExperienceInput).max(50, { message: 'experience_limit' }).optional(),
+  avatarMediaId: z.string().cuid().optional(),
+  coverMediaId: z.string().cuid().optional(),
 })
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInput>
+
+export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'post_image', 'attachment'])
+export type MediaCategory = z.infer<typeof MediaCategoryEnum>
+
+export const RequestMediaUploadInput = z.object({
+  category: MediaCategoryEnum,
+  mime: z.string().trim().min(3).max(120),
+  byteSize: z.number().int().positive().max(50 * 1024 * 1024),
+  filename: z.string().trim().max(180).optional(),
+})
+export type RequestMediaUploadInput = z.infer<typeof RequestMediaUploadInput>
+
+export const MediaAssetIdSchema = z.string().uuid().or(z.string().cuid())
+
+export const CompleteMediaUploadInput = z.object({
+  assetId: MediaAssetIdSchema,
+  width: z.number().int().positive().max(10000).optional(),
+  height: z.number().int().positive().max(10000).optional(),
+  checksum: z.string().trim().max(160).optional(),
+})
+export type CompleteMediaUploadInput = z.infer<typeof CompleteMediaUploadInput>

@@ -85,16 +85,16 @@ function VoteButton({ direction, active, disabled, onClick }: VoteButtonProps) {
   const intentClasses =
     direction === 'up'
       ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm'
-      : 'border-red-500 bg-red-500 text-white shadow-sm'
+      : 'border-red-400 bg-red-50 text-red-500 shadow-sm'
 
   return (
     <button
       type="button"
       className={clsx(
-        'flex h-8 w-8 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-1',
+        'flex h-9 w-9 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-1',
         active
           ? intentClasses
-          : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300 hover:text-gray-600 focus:ring-[var(--cc-primary)]',
+          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
         disabled && 'pointer-events-none opacity-60',
       )}
       onClick={onClick}
@@ -119,10 +119,10 @@ function InlineAction({ icon: Icon, label, onClick, subtle }: InlineActionProps)
       type="button"
       onClick={onClick}
       className={clsx(
-        'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium transition',
+        'inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition',
         subtle
-          ? 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-          : 'text-[var(--cc-primary)] hover:bg-[var(--cc-primary-50)]',
+          ? 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+          : 'text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10',
       )}
     >
       <Icon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -183,16 +183,16 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
   }, [canReply])
 
   return (
-    <div className={clsx('space-y-3', isNested && 'border-l border-gray-200 pl-4')}>
+    <div className={clsx('space-y-4', isNested && 'border-l border-white/70 pl-5')}> 
       <article
         id={`comment-${comment.id}`}
         className={clsx(
-          'rounded-xl border border-gray-200 bg-white/95 px-4 py-3 shadow-sm transition hover:shadow-md md:px-4',
-          isNested && 'bg-gray-50/80',
+          'rounded-[24px] border border-white/70 bg-white/95 px-4 py-4 shadow-subtle transition hover:shadow-panel',
+          isNested && 'bg-white/90',
         )}
       >
-        <div className="flex items-start gap-3">
-          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-gray-200">
+        <div className="flex items-start gap-4">
+          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-slate-200">
             {comment.author.avatarUrl ? (
               <Image
                 src={comment.author.avatarUrl}
@@ -203,40 +203,31 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-gray-600">
+              <div className="flex h-full w-full items-center justify-center text-base font-semibold text-slate-600">
                 {(comment.author.name || comment.author.handle).substring(0, 1).toUpperCase()}
               </div>
             )}
           </div>
-          <div className="min-w-0 flex-1 space-y-2.5">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
-              <Link href={`/u/${comment.author.handle}`} className="font-semibold text-gray-900 hover:underline">
+          <div className="min-w-0 flex-1 space-y-3">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+              <Link href={`/u/${comment.author.handle}`} className="font-semibold text-slate-900 hover:underline">
                 {comment.author.name ?? comment.author.handle}
               </Link>
-              <span className="inline-flex items-center gap-1 text-[11px] text-gray-400">
+              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
                 <LuDot className="h-3 w-3" />@{comment.author.handle}
               </span>
-              <span className="text-gray-400">• {createdLabel}</span>
+              <span className="text-slate-400">• {createdLabel}</span>
             </div>
-            <div className="whitespace-pre-wrap text-sm leading-6 text-gray-900">{comment.body}</div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-              <div className="flex items-center text-sm font-semibold text-gray-600">
+            <div className="whitespace-pre-wrap text-sm leading-6 text-slate-900">{comment.body}</div>
+            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
                 <VoteButton
                   direction="up"
                   active={currentVote === 1}
                   disabled={pendingVote}
                   onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
                 />
-                <span
-                  className={clsx(
-                    'min-w-[2rem] text-center',
-                    comment.score > 0
-                      ? 'text-[var(--cc-primary)]'
-                      : comment.score < 0
-                        ? 'text-red-500'
-                        : 'text-gray-600',
-                  )}
-                >
+                <span className={clsx('min-w-[2rem] text-center text-sm', comment.score > 0 ? 'text-[var(--cc-primary)]' : comment.score < 0 ? 'text-red-500' : 'text-slate-500')}>
                   {formatScore(comment.score)}
                 </span>
                 <VoteButton
@@ -249,7 +240,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
               <InlineAction icon={LuMessageSquare} label={replying ? 'Cancel reply' : 'Reply'} onClick={toggleReply} subtle={!canReply} />
             </div>
             {replying ? (
-              <div className="mt-3 rounded-lg border border-dashed border-gray-300 bg-white/80 p-4">
+              <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4">
                 <CommentComposer
                   placeholder={`Reply to @${comment.author.handle}`}
                   submitLabel="Reply"
@@ -284,11 +275,11 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
 
 export default function CommentThread({ comments, onReply, onVote, currentUser }: CommentThreadProps) {
   if (!comments.length) {
-    return <div className="text-sm text-gray-500">No comments yet. Start the conversation!</div>
+    return <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-4 text-sm text-slate-500">No comments yet. Start the conversation!</div>
   }
 
   return (
-  <div className="space-y-4">
+    <div className="space-y-5">
       {comments.map((comment) => (
         <CommentItem
           key={comment.id}

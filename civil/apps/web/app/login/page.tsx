@@ -1,10 +1,11 @@
 "use client"
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { pushToast } from '../_components/useToasts'
-import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
+import { AuthScreen } from '../_components/AuthScreen'
 
 type LoginSuccess = {
   token: string
@@ -21,8 +22,13 @@ const AUTH_ERROR_MESSAGES = {
 
 const isKnownAuthError = (code: string): code is keyof typeof AUTH_ERROR_MESSAGES => code in AUTH_ERROR_MESSAGES
 
-export default function LoginPage() {
-  const router = useRouter()
+function LoginPageInner() {
+  const searchParams = useSearchParams()
+  const nextParam = searchParams.get('next')
+  const safeNext = useMemo(() => {
+    if (!nextParam) return null
+    return nextParam.startsWith('/') ? nextParam : null
+  }, [nextParam])
   const [emailOrHandle, setId] = useState('')
   const [password, setPassword] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
@@ -86,7 +92,8 @@ export default function LoginPage() {
       if (typeof data.token === 'string') {
         localStorage.setItem('token', data.token)
       }
-      window.location.href = '/home'
+      const destination = safeNext ?? '/home'
+      window.location.href = destination
     } catch (error) {
       console.error('Login request failed', error)
       pushToast('Unexpected error logging in. Please try again.', 'error')
@@ -94,84 +101,56 @@ export default function LoginPage() {
     }
   }
 
-  const triggerRegister = () => {
-    const inModal = Boolean(document.querySelector('[data-cc-modal-root]'))
-    if (inModal) {
-      if (window.location.pathname.startsWith('/login')) {
-        router.back()
-        setTimeout(() => window.dispatchEvent(new CustomEvent('openRegisterModal')), 0)
-      } else {
-        window.dispatchEvent(new CustomEvent('openRegisterModal'))
-      }
-    } else {
-      redirectToAuthModal('register')
-    }
-  }
+  const inputClass = (key: string) =>
+    `w-full rounded-2xl border px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 transition focus-visible:outline-none ${
+      hasFieldError(key)
+        ? 'border-red-500 ring-2 ring-red-100'
+        : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
+    }`
 
-  const triggerForgot = () => {
-    const inModal = Boolean(document.querySelector('[data-cc-modal-root]'))
-    if (inModal) {
-      if (window.location.pathname.startsWith('/login')) {
-        router.back()
-        setTimeout(() => window.dispatchEvent(new CustomEvent('openForgotModal')), 0)
-      } else {
-        window.dispatchEvent(new CustomEvent('openForgotModal'))
-      }
-    } else {
-      redirectToAuthModal('forgot')
-    }
-  }
+  const footer = (
+    <div className="space-y-2">
+      <p>
+        New to Civil?{' '}
+        <Link href="/register" className="font-semibold text-[var(--cc-primary)]">
+          Create an account
+        </Link>
+      </p>
+      <p>
+        Forgot password?{' '}
+        <Link href="/forgot" className="font-semibold text-[var(--cc-primary)]">
+          Reset it here
+        </Link>
+      </p>
+    </div>
+  )
 
   return (
-    <div className="mx-auto max-w-md p-8">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <input
-            className={`w-full rounded border p-3 ${
-              hasFieldError('emailOrHandle')
-                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-            }`}
-            placeholder="Email or handle"
-            value={emailOrHandle}
-            onChange={(event) => setId(event.target.value)}
-          />
-          {hasFieldError('emailOrHandle') ? (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div>
-          ) : null}
-        </div>
-        <div>
-          <input
-            className={`w-full rounded border p-3 ${
-              hasFieldError('password')
-                ? 'border-red-500 focus:ring-2 focus:ring-red-500'
-                : 'border-gray-300 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-red-200'
-            }`}
-            placeholder="Password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          {hasFieldError('password') ? (
-            <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div>
-          ) : null}
-        </div>
-        {formError ? <div className="text-sm text-red-600">{formError}</div> : null}
-        <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
+    <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your chamber." footer={footer} hideSidePanel>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <label className="block text-sm font-medium text-slate-700">
+          Email or handle
+          <input className={`${inputClass('emailOrHandle')} mt-2`} placeholder="you@civil.ca or @handle" value={emailOrHandle} onChange={(event) => setId(event.target.value)} />
+          {hasFieldError('emailOrHandle') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div> : null}
+        </label>
+        <label className="block text-sm font-medium text-slate-700">
+          Password
+          <input className={`${inputClass('password')} mt-2`} placeholder="Enter your password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
+        </label>
+        {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
+        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
           Sign in
         </button>
       </form>
-      <div className="mt-4 text-sm">
-        New here?{' '}
-        <button className="underline" type="button" onClick={triggerRegister}>
-          Create an account
-        </button>
-        <div className="mt-2">
-          <button className="underline" type="button" onClick={triggerForgot}>
-            Forgot password?
-          </button>
-        </div>
-      </div>
-    </div>
+    </AuthScreen>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[var(--cc-page-bg)] text-slate-500">Loading…</div>}>
+      <LoginPageInner />
+    </Suspense>
   )
 }

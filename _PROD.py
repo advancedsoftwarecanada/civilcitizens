@@ -8,5 +8,5 @@ if __name__ == "__main__":
     run_helper(
         default_env_candidates=[Path(".env.production"), Path(".env"), Path(".env.prod")],
         default_project_name="civil_prod",
-        default_command="rebuild-all",
+        default_command="rebuild",
     )
