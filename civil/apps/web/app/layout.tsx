@@ -54,8 +54,10 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
   return (
     <html lang="en">
       <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
-        {children}
-        {modal}
+        <div className="min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-0">
+          {children}
+          {modal}
+        </div>
         <MobileDock />
         <Toasts />
       </body>
