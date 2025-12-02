@@ -33,6 +33,17 @@ model User {
   mediaAssets    MediaAsset[] @relation("UserMediaAssets")
   avatarMedia    MediaAsset? @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
   coverMedia     MediaAsset? @relation("CoverMedia", fields: [coverMediaId], references: [id])
+  premiumStatus  PremiumStatus       @default(NONE)
+  premiumSince   DateTime?
+  premiumRenewsAt DateTime?
+  premiumCanceledAt DateTime?
+  premiumCancellationReason String?
+  stripeCustomerId String?   @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId     String?
+  premiumPaymentFingerprint String?
+  businesses      Business[]
+  businessMemberships BusinessMembership[]
 }
 
 model Post {
@@ -216,9 +227,75 @@ model MediaAsset {
   updatedAt     DateTime         @updatedAt
   avatarOwner   User?            @relation("AvatarMedia")
   coverOwner    User?            @relation("CoverMedia")
+  logoBusiness  Business?        @relation("BusinessLogoMedia")
 
   @@index([ownerId, category])
   @@index([status])
+}
+
+model Business {
+  id              String          @id @default(cuid())
+  ownerId         String
+  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name            String
+  slug            String
+  description     String?         @db.Text
+  logoMediaId     String?         @unique
+  logoMedia       MediaAsset?     @relation("BusinessLogoMedia", fields: [logoMediaId], references: [id])
+  status          BusinessStatus  @default(DRAFT)
+  isVerified      Boolean         @default(false)
+  stripeSubscriptionId String?    @unique
+  stripePriceId   String?
+  billingEmail    String?
+  metadata        Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  memberships     BusinessMembership[]
+
+  @@index([ownerId])
+  @@index([slug])
+  @@unique([ownerId, slug])
+}
+
+model BusinessMembership {
+  id          String       @id @default(cuid())
+  businessId  String
+  userId      String
+  role        BusinessRole @default(OWNER)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+model StripeWebhookEvent {
+  id            String              @id @default(cuid())
+  eventId       String              @unique
+  eventType     String
+  apiVersion    String?
+  livemode      Boolean             @default(false)
+  payload       Json
+  status        StripeWebhookStatus @default(RECEIVED)
+  subscriptionId String?
+  invoiceId     String?
+  customerId    String?
+  businessId    String?
+  userId        String?
+  lastError     String?
+  retryCount    Int                 @default(0)
+  lastReceivedAt DateTime           @default(now())
+  processingStartedAt DateTime?
+  processedAt   DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([subscriptionId])
+  @@index([customerId])
+  @@index([businessId])
+  @@index([userId])
 }
 
 enum MediaCategory {
@@ -243,4 +320,32 @@ enum MediaAssetType {
 enum MediaStorageType {
   minio
   s3
+}
+
+enum PremiumStatus {
+  NONE
+  PENDING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum BusinessStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  CANCELED
+}
+
+enum BusinessRole {
+  OWNER
+  MANAGER
+}
+
+enum StripeWebhookStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  IGNORED
 }

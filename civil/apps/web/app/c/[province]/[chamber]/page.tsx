@@ -21,6 +21,7 @@ type Viewer = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  isPremium?: boolean
 }
 
 type ChamberInfo = {
@@ -200,7 +201,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 xl:px-12">
         <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
           <Sidebar me={viewer ?? undefined} active="chambers" />
 

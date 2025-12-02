@@ -1,6 +1,5 @@
 "use client"
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../../../../_components/Sidebar'
@@ -11,12 +10,15 @@ import { buildApiUrl } from '../../../../../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
+import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
 
 type Viewer = {
   id: string
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  isPremium?: boolean
+  isVerified?: boolean
 }
 
 type CanonicalPaths = {
@@ -284,22 +286,14 @@ export default function ChamberPostPage({ params }: PageProps) {
               </nav>
 
               <header className="flex items-start gap-3">
-                <div className="h-12 w-12 overflow-hidden rounded-full bg-gray-200">
-                  {post.author.avatarUrl ? (
-                    <Image
-                      src={post.author.avatarUrl}
-                      alt={post.author.name ?? post.author.handle}
-                      width={48}
-                      height={48}
-                      unoptimized
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-gray-600">
-                      {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
-                    </div>
-                  )}
-                </div>
+                <VerifiedAvatar
+                  src={post.author.avatarUrl}
+                  alt={post.author.name ?? post.author.handle}
+                  initials={post.author.name ?? post.author.handle}
+                  size={48}
+                  isVerified={Boolean(post.author.isVerified ?? post.author.isPremium)}
+                  className="shrink-0"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
                     <Link href={`/u/${post.author.handle}`} className="font-semibold text-gray-900 hover:underline">

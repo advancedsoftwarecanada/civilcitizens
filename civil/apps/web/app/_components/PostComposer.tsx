@@ -28,6 +28,8 @@ export type ApiPost = {
     handle: string
     name?: string | null
     avatarUrl?: string | null
+    isPremium?: boolean
+    isVerified?: boolean
   }
   counts?: {
     upvotes: number

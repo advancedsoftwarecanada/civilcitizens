@@ -7,6 +7,8 @@ import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from '../_components/RightRail'
+import DashboardShell from '../_components/DashboardShell'
+import type { MeResponse } from '../_lib/me'
 
 const provincesFallback = [
   { code: 'nl', name: 'Newfoundland and Labrador' },
@@ -35,14 +37,6 @@ type ChamberFollow = {
   home: boolean
   followedAt?: string
   chamber?: Chamber
-}
-
-type Me = {
-  id: string
-  name?: string | null
-  handle: string
-  email: string
-  avatarUrl?: string | null
 }
 
 type ItemsResponse<T> = {
@@ -79,7 +73,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) {
-  const [me, setMe] = useState<Me | null>(null)
+  const [me, setMe] = useState<MeResponse | null>(null)
   const [provinces, setProvinces] = useState<Province[]>(provincesFallback)
   const [chambers, setChambers] = useState<Chamber[]>([])
   const [selectedProvince, setSelectedProvince] = useState('')
@@ -119,7 +113,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
             fetch(buildApiUrl('/chambers/follows'), { headers: { authorization: `Bearer ${token}` } }),
         ])
 
-        const meData = await jsonOrThrow<Me>(meRes)
+        const meData = await jsonOrThrow<MeResponse>(meRes)
         setMe(meData)
 
         let provData: ItemsResponse<Province> | null = null
@@ -874,42 +868,42 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     )
   }
 
+  const rightRailContent = (
+    <div className="space-y-4">
+      <section className="surface-card space-y-3 p-5 shadow-subtle">
+        <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Need help choosing?</div>
+        <p className="text-sm text-slate-600">
+          Your chamber matches your federal Electoral District Association (EDA). Not sure which one is yours? Check your voter card or search for your MP by postal code on Elections Canada.
+        </p>
+      </section>
+      <section className="surface-card space-y-3 p-5 shadow-subtle text-sm text-slate-600">
+        <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Tip</div>
+        <p>
+          Tap “Use my location” to let Civil auto-detect your riding, or choose manually and we&apos;ll tailor your feed instantly.
+        </p>
+      </section>
+      <RightRail />
+    </div>
+  )
+
   return (
-    <div className="min-h-screen">
+    <>
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
         <div className="mx-auto max-w-screen-lg px-4">
           <Sidebar me={me ?? undefined} active="chambers" />
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
-        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
-          <Sidebar me={me ?? undefined} active="chambers" />
-
-          <main className="space-y-6">{mainContent}</main>
-
-          <aside className="hidden lg:block">
-            <div className="sticky top-8 space-y-4">
-              <section className="surface-card space-y-3 p-5 shadow-subtle">
-                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Need help choosing?</div>
-                <p className="text-sm text-slate-600">
-                  Your chamber matches your federal Electoral District Association (EDA). Not sure which one is yours? Check
-                  your voter card or search for your MP by postal code on Elections Canada.
-                </p>
-              </section>
-              <section className="surface-card space-y-3 p-5 shadow-subtle text-sm text-slate-600">
-                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Tip</div>
-                <p>
-                  Tap “Use my location” to let Civil auto-detect your riding, or choose manually and we&apos;ll tailor your feed
-                  instantly.
-                </p>
-              </section>
-              <RightRail />
-            </div>
-          </aside>
-        </div>
-      </div>
+      <DashboardShell
+        className="min-h-screen"
+        sidebar={<Sidebar me={me ?? undefined} active="chambers" />}
+        rightRail={rightRailContent}
+        rightRailClassName="lg:sticky lg:top-8"
+        mainClassName="space-y-6"
+      >
+        {mainContent}
+      </DashboardShell>
       {geoOverlay}
-    </div>
+    </>
   )
 }

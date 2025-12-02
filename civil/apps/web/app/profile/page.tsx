@@ -1,5 +1,6 @@
 "use client"
 
+import Link from 'next/link'
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildHandleBase, MediaCategory } from '@civil/shared'
 import Sidebar from '../_components/Sidebar'
@@ -14,6 +15,9 @@ type Viewer = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  isPremium?: boolean
+  premiumSince?: string | null
+  premiumRenewsAt?: string | null
 }
 
 type ExperienceResponse = {
@@ -562,6 +566,9 @@ export default function ProfileEditPage() {
         handle: data.handle,
         name: data.name,
         avatarUrl: data.avatarUrl,
+        isPremium: Boolean(data.isPremium),
+        premiumSince: data.premiumSince ?? null,
+        premiumRenewsAt: data.premiumRenewsAt ?? null,
       })
       setToken(storedToken)
       return storedToken
@@ -880,6 +887,8 @@ export default function ProfileEditPage() {
 
   const formDisabled = saving || loading
   const joinDate = profile?.user?.createdAt ? formatMonthYear(profile.user.createdAt) : ''
+  const premiumActive = Boolean(viewer?.isPremium)
+  const premiumRenews = viewer?.premiumRenewsAt ? formatMonthYear(viewer.premiumRenewsAt) : ''
 
   const displayInitials = useMemo(() => {
     return (
@@ -901,16 +910,54 @@ export default function ProfileEditPage() {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pr-0 xl:pl-12 xl:pr-0">
         <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
           <Sidebar me={viewer ?? undefined} active="profile" />
 
-          <main className="space-y-6">
+          <main className="space-y-6 pt-8">
+            {viewer ? (
+              <section className="surface-card p-6 shadow-subtle">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Membership</p>
+                    <h2 className="text-lg font-semibold text-slate-900">
+                      {premiumActive ? 'Premium member' : 'Boost your credibility with Premium'}
+                    </h2>
+                    <p className="text-sm text-slate-500">
+                      Premium unlocks trust badges, early business tools, and concierge support when you need help.
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-start gap-2 sm:items-end">
+                    {premiumActive ? (
+                      <>
+                        <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />Active plan
+                        </span>
+                        {premiumRenews ? <p className="text-xs text-slate-500">Renews {premiumRenews}</p> : null}
+                        <Link
+                          href="/settings/billing"
+                          className="text-sm font-semibold text-[var(--cc-primary)] underline-offset-4 hover:underline"
+                        >
+                          Manage billing
+                        </Link>
+                      </>
+                    ) : (
+                      <Link
+                        href="/settings/billing"
+                        className="inline-flex items-center rounded-full border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/10"
+                      >
+                        Upgrade for $9.99/month
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              </section>
+            ) : null}
             {error ? (
-              <div className="border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
+              <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
             ) : (
               <form onSubmit={onSubmit} className="space-y-4">
-                <section className="border border-gray-200 bg-white p-6">
+                <section className="surface-card p-6 shadow-subtle">
                   <header className="mb-4">
                     <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
                     <p className="text-sm text-gray-500">Upload a cover and profile photo to personalize your profile.</p>
@@ -984,7 +1031,7 @@ export default function ProfileEditPage() {
                   />
                 </section>
 
-                <section className="border border-gray-200 bg-white p-6">
+                <section className="surface-card p-6 shadow-subtle">
                   <header className="mb-4">
                     <h1 className="text-lg font-semibold text-gray-900">Profile details</h1>
                     <p className="text-sm text-gray-500">Update the basics that other members see.</p>
@@ -1028,7 +1075,7 @@ export default function ProfileEditPage() {
                   </div>
                 </section>
 
-                <section className="border border-gray-200 bg-white p-6">
+                <section className="surface-card p-6 shadow-subtle">
                   <header className="mb-4">
                     <h2 className="text-lg font-semibold text-gray-900">Bio</h2>
                     <p className="text-sm text-gray-500">Share your story, work, and what you're focused on today.</p>
@@ -1042,7 +1089,7 @@ export default function ProfileEditPage() {
                   />
                 </section>
 
-                <section className="border border-gray-200 bg-white p-6">
+                <section className="surface-card p-6 shadow-subtle">
                   <header className="mb-4 flex items-center justify-between gap-4">
                     <div>
                       <h2 className="text-lg font-semibold text-gray-900">Experience</h2>
@@ -1059,7 +1106,7 @@ export default function ProfileEditPage() {
                   </header>
                   <div className="space-y-6">
                     {experiences.map((exp, index) => (
-                      <div key={exp.key} className="border border-gray-200 p-4">
+                      <div key={exp.key} className="rounded-2xl border border-slate-200 p-4">
                         <div className="mb-3 flex items-center justify-between">
                           <h3 className="text-sm font-semibold text-gray-800">Position {index + 1}</h3>
                           <button
@@ -1166,7 +1213,7 @@ export default function ProfileEditPage() {
             )}
           </main>
 
-        <aside className="hidden lg:block">
+        <aside className="hidden pt-8 lg:block">
           <div className="sticky top-8 space-y-4">
             <section className="surface-card space-y-4 p-5 shadow-subtle">
               <div>

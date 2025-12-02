@@ -203,9 +203,10 @@ def run_helper(
     env_candidates = normalize_candidates(default_env_candidates)
     env_file = detect_env_file(args.env_file, env_candidates)
     env_file_vars: Dict[str, str] = {}
+    env_file_desc = describe_env_file(env_file) if env_file else None
     if env_file:
         env_file_vars = parse_env_file(env_file)
-        print(f"→ Using env file {describe_env_file(env_file)}")
+        print(f"→ Using env file {env_file_desc}")
     else:
         print("→ No env file detected; relying on shell environment variables")
 
@@ -214,6 +215,31 @@ def run_helper(
 
     overrides: Dict[str, str] = {"COMPOSE_PROJECT_NAME": project_name}
     overrides.update(env_file_vars)
+
+    env_label = os.environ.get("CIVIL_ENV_LABEL")
+    if not env_label:
+        if env_file:
+            name = env_file.name.lower()
+            if "prod" in name:
+                env_label = "production"
+            elif "stage" in name:
+                env_label = "staging"
+            else:
+                env_label = "development"
+        else:
+            env_label = os.environ.get("NODE_ENV", "development")
+
+    if env_file_desc:
+        overrides.setdefault("CIVIL_ENV_PRIMARY", env_file_desc)
+        existing_sources = overrides.get("CIVIL_ENV_FILES")
+        overrides["CIVIL_ENV_FILES"] = (
+            f"{existing_sources};{env_file_desc}" if existing_sources else env_file_desc
+        )
+    else:
+        overrides.setdefault("CIVIL_ENV_PRIMARY", "")
+
+    if env_label:
+        overrides.setdefault("CIVIL_ENV_LABEL", env_label)
 
     command_map = {
         "up": command_up,

@@ -1,6 +1,5 @@
 "use client"
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useMemo, useState } from 'react'
 import clsx from 'clsx'
@@ -8,6 +7,7 @@ import type { IconType } from 'react-icons'
 import { LuArrowBigDown, LuArrowBigUp, LuDot, LuMessageSquare } from 'react-icons/lu'
 import CommentComposer from './CommentComposer'
 import { pushToast } from './useToasts'
+import VerifiedAvatar from './VerifiedAvatar'
 
 export type ApiComment = {
   id: string
@@ -26,6 +26,8 @@ export type ApiComment = {
     handle: string
     name: string | null
     avatarUrl: string | null
+    isPremium?: boolean
+    isVerified?: boolean
   }
   replies: ApiComment[]
 }
@@ -192,22 +194,14 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
         )}
       >
         <div className="flex items-start gap-4">
-          <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-slate-200">
-            {comment.author.avatarUrl ? (
-              <Image
-                src={comment.author.avatarUrl}
-                alt={comment.author.name ?? comment.author.handle}
-                width={40}
-                height={40}
-                unoptimized
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-base font-semibold text-slate-600">
-                {(comment.author.name || comment.author.handle).substring(0, 1).toUpperCase()}
-              </div>
-            )}
-          </div>
+          <VerifiedAvatar
+            src={comment.author.avatarUrl}
+            alt={comment.author.name ?? comment.author.handle}
+            initials={comment.author.name ?? comment.author.handle}
+            size={44}
+            isVerified={Boolean(comment.author.isVerified ?? comment.author.isPremium)}
+            className="shrink-0"
+          />
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
               <Link href={`/u/${comment.author.handle}`} className="font-semibold text-slate-900 hover:underline">

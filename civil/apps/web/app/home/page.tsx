@@ -1,5 +1,6 @@
 "use client"
 
+import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
 import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../_components/PostComposer'
@@ -7,8 +8,9 @@ import { RightRail } from '../_components/RightRail'
 import type { Jurisdiction } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeChamber, type MeResponse } from '../_lib/me'
+import { hasHomeChamber, isPremiumMember, type MeResponse } from '../_lib/me'
 import PostFeedItem from '../_components/PostFeedItem'
+import DashboardShell from '../_components/DashboardShell'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -138,82 +140,84 @@ export default function HomePage() {
   )
 
   return (
-    <div className="min-h-screen">
-      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-4 sm:px-8 lg:pb-16 lg:pt-8 xl:px-12">
-        <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
-          <Sidebar me={me ?? undefined} active="home" />
-
-          <main className="space-y-6">
-            <section className="surface-card px-6 py-4 shadow-subtle">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">News feed</p>
-                  <h1 className="text-xl font-semibold text-slate-900">{me?.name ? `Welcome back, ${me.name.split(' ')[0]}!` : 'Welcome to Civil Citizens'}</h1>
-                  <p className="text-sm text-slate-500">Track what&apos;s hot inside your home chamber and beyond.</p>
-                </div>
-                <div className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {sortMode === 'hot' ? 'Hot sorting' : 'Newest first'}
-                </div>
-              </div>
-            </section>
-
-            <PostComposer onPostCreated={handlePostCreated} />
-
-            <section className="surface-card px-6 py-4 shadow-subtle">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-wrap gap-2">
-                  {JURISDICTION_FILTERS.map((filter) => (
-                    <button
-                      key={filter.value}
-                      type="button"
-                      className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
-                        activeFilter === filter.value
-                          ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
-                          : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700'
-                      }`}
-                      onClick={() => setActiveFilter(filter.value)}
-                      disabled={loading && activeFilter === filter.value}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
-                  {SORT_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`rounded-full px-3 py-1 transition ${
-                        sortMode === option.value
-                          ? 'bg-slate-900 text-white'
-                          : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                      }`}
-                      onClick={() => setSortMode(option.value)}
-                      disabled={loading && sortMode === option.value}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <div className="space-y-4">
-              {posts.length === 0 ? (
-                <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
-                  {loading ? 'Loading the latest updates…' : "No updates yet. Once the community starts posting, you'll see them here."}
-                </section>
+    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="home" />} rightRail={<RightRail />} mainClassName="space-y-6">
+      <section className="surface-card px-6 py-4 shadow-subtle">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">News feed</p>
+            <h1 className="text-xl font-semibold text-slate-900">{me?.name ? `Welcome back, ${me.name.split(' ')[0]}!` : 'Welcome to Civil Citizens'}</h1>
+            <p className="text-sm text-slate-500">Track what&apos;s hot inside your home chamber and beyond.</p>
+            {me ? (
+              isPremiumMember(me) ? (
+                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />Premium member
+                </span>
               ) : (
-                posts.map((p) => <PostFeedItem key={p.id} post={p} onVote={handleVote} />)
-              )}
-            </div>
-          </main>
-
-          <aside className="hidden lg:block">
-            <RightRail />
-          </aside>
+                <Link
+                  href="/settings/billing"
+                  className="inline-flex items-center rounded-full border border-[var(--cc-primary)] px-3 py-1 text-xs font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/10"
+                >
+                  Unlock Premium for $9.99
+                </Link>
+              )
+            ) : null}
+          </div>
+          <div className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {sortMode === 'hot' ? 'Hot sorting' : 'Newest first'}
+          </div>
         </div>
+      </section>
+
+      <PostComposer onPostCreated={handlePostCreated} />
+
+      <section className="surface-card px-6 py-4 shadow-subtle">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {JURISDICTION_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
+                  activeFilter === filter.value
+                    ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
+                    : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700'
+                }`}
+                onClick={() => setActiveFilter(filter.value)}
+                disabled={loading && activeFilter === filter.value}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+            {SORT_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`rounded-full px-3 py-1 transition ${
+                  sortMode === option.value
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                }`}
+                onClick={() => setSortMode(option.value)}
+                disabled={loading && sortMode === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <div className="space-y-4">
+        {posts.length === 0 ? (
+          <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
+            {loading ? 'Loading the latest updates…' : "No updates yet. Once the community starts posting, you'll see them here."}
+          </section>
+        ) : (
+          posts.map((p) => <PostFeedItem key={p.id} post={p} onVote={handleVote} />)
+        )}
       </div>
-    </div>
+    </DashboardShell>
   )
 }
