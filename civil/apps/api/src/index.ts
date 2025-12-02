@@ -3,12 +3,13 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import cors from '@fastify/cors'
 import jwt from '@fastify/jwt'
 import sse from 'fastify-sse-v2'
+import rawBody from 'fastify-raw-body'
 import { Queue } from 'bullmq'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
 import { prisma } from '@civil/db'
-import { Prisma, MediaCategory } from '@prisma/client'
+import { Prisma, MediaCategory, PremiumStatus, BusinessStatus, BusinessRole, StripeWebhookStatus } from '@prisma/client'
 import {
   CreatePostInput,
   CreateCommentInput,
@@ -40,8 +41,9 @@ import {
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
+import Stripe from 'stripe'
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { locateChamberFromPoint } from './geodata.js'
 
 const PORT = Number(process.env.PORT || 3000)
@@ -60,6 +62,181 @@ const LEGACY_MEDIA_BASE_URLS = [
   'http://127.0.0.1:9000/civil-media',
   'http://minio:9000/civil-media',
 ]
+
+const STRIPE_API_VERSION = '2024-06-20'
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || ''
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || ''
+const STRIPE_PRICE_PREMIUM = process.env.STRIPE_PRICE_PREMIUM_MONTHLY || ''
+const STRIPE_PRICE_BUSINESS = process.env.STRIPE_PRICE_BUSINESS_MONTHLY || ''
+const BILLING_PORTAL_RETURN_FALLBACK = process.env.BILLING_RETURN_URL || 'http://localhost:3001/settings/billing'
+const MAX_BUSINESSES_PER_USER = 5
+const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
+
+function normalizeEmail(value?: string | null): string | null {
+  if (!value) return null
+  return value.trim().toLowerCase() || null
+}
+
+const SUPER_ADMIN_EMAILS = (() => {
+  const emails = new Set<string>()
+  for (const email of DEFAULT_SUPER_ADMINS) {
+    const normalized = normalizeEmail(email)
+    if (normalized) emails.add(normalized)
+  }
+  const extra = (process.env.CIVIL_ADMIN_EMAILS || '')
+    .split(/[,;]/)
+    .map((email) => normalizeEmail(email))
+    .filter((email): email is string => Boolean(email))
+  for (const email of extra) {
+    emails.add(email)
+  }
+  return emails
+})()
+
+function isSuperAdminEmail(email?: string | null): boolean {
+  const normalized = normalizeEmail(email)
+  if (!normalized) return false
+  return SUPER_ADMIN_EMAILS.has(normalized)
+}
+
+type AdminChecklistItemDefinition = {
+  key: string
+  label: string
+  optional?: boolean
+  hint?: string
+  resolve?: () => boolean
+}
+
+type AdminChecklistGroupDefinition = {
+  id: string
+  title: string
+  description?: string
+  items: AdminChecklistItemDefinition[]
+}
+
+const ADMIN_CHECKLIST_GROUPS: AdminChecklistGroupDefinition[] = [
+  {
+    id: 'environment',
+    title: 'Environment metadata',
+    description: 'Values exported by the launcher to explain which env file is active.',
+    items: [
+      { key: 'CIVIL_ENV_LABEL', label: 'Environment label', hint: 'Human friendly tag for dashboards.' },
+      { key: 'CIVIL_ENV_PRIMARY', label: 'Primary env file', hint: 'Path recorded by the launcher.' },
+    ],
+  },
+  {
+    id: 'stripe',
+    title: 'Stripe configuration',
+    description: 'Keys required for premium and business billing.',
+    items: [
+      { key: 'STRIPE_SECRET_KEY', label: 'Secret key' },
+      { key: 'STRIPE_WEBHOOK_SECRET', label: 'Webhook secret' },
+      { key: 'STRIPE_PRICE_PREMIUM_MONTHLY', label: 'Premium price ID' },
+      { key: 'STRIPE_PRICE_BUSINESS_MONTHLY', label: 'Business price ID' },
+      {
+        key: 'STRIPE_PUBLIC_KEY',
+        label: 'Publishable key',
+        optional: true,
+        hint: 'Accepts STRIPE_PUBLIC_KEY or NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY.',
+        resolve: () => {
+          const publishable = process.env.STRIPE_PUBLIC_KEY || process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+          return Boolean(publishable && publishable.trim())
+        },
+      },
+      { key: 'BILLING_RETURN_URL', label: 'Billing portal return URL', optional: true },
+    ],
+  },
+]
+
+function envValuePresent(key: string): boolean {
+  const value = process.env[key]
+  if (typeof value !== 'string') return false
+  return value.trim().length > 0
+}
+
+function buildAdminChecklist() {
+  return ADMIN_CHECKLIST_GROUPS.map((group) => ({
+    id: group.id,
+    title: group.title,
+    description: group.description,
+    items: group.items.map((item) => ({
+      key: item.key,
+      label: item.label,
+      optional: Boolean(item.optional),
+      hint: item.hint,
+      present: item.resolve ? item.resolve() : envValuePresent(item.key),
+    })),
+  }))
+}
+
+let stripeClient: Stripe | null = null
+
+function isStripeConfigured() {
+  return Boolean(STRIPE_SECRET_KEY)
+}
+
+function requireStripeConfig() {
+  if (!isStripeConfigured()) {
+    throw new Error('Stripe is not configured. Set STRIPE_SECRET_KEY to enable billing features.')
+  }
+}
+
+function getStripeClient() {
+  requireStripeConfig()
+  if (stripeClient) return stripeClient
+  stripeClient = new Stripe(STRIPE_SECRET_KEY, { apiVersion: STRIPE_API_VERSION })
+  return stripeClient
+}
+
+function mapSubscriptionStatus(status?: Stripe.Subscription.Status | null): PremiumStatus {
+  switch (status) {
+    case 'active':
+    case 'trialing':
+      return 'ACTIVE'
+    case 'past_due':
+    case 'unpaid':
+      return 'PAST_DUE'
+    case 'canceled':
+    case 'incomplete_expired':
+      return 'CANCELED'
+    default:
+      return 'PENDING'
+  }
+}
+
+function businessStatusFromSubscription(status?: Stripe.Subscription.Status | null): BusinessStatus {
+  switch (status) {
+    case 'active':
+    case 'trialing':
+      return 'ACTIVE'
+    case 'past_due':
+    case 'unpaid':
+      return 'SUSPENDED'
+    case 'canceled':
+    case 'incomplete_expired':
+      return 'CANCELED'
+    default:
+      return 'DRAFT'
+  }
+}
+
+function isPremium(status: PremiumStatus | null | undefined) {
+  return status === 'ACTIVE'
+}
+
+function serializeError(error: unknown) {
+  if (error instanceof Error) {
+    return error.stack ?? error.message
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
 
 function normalizeMediaUrl(url?: string | null): string | null {
   if (!url) return url ?? null
@@ -144,6 +321,12 @@ for (const mime of BINARY_UPLOAD_MIME_TYPES) {
 await app.register(cors, { origin: true, credentials: true })
 await app.register(jwt, { secret: JWT_SECRET })
 await app.register(sse as any)
+await app.register(rawBody, {
+  field: 'rawBody',
+  global: false,
+  encoding: false,
+  runFirst: true,
+})
 
 const redis = new IORedis(REDIS_URL)
 void redis
@@ -171,6 +354,11 @@ function isSchemaOutOfDateError(err: unknown): boolean {
 }
 
 const MediaAssetParam = z.object({ id: MediaAssetIdSchema })
+
+async function loadAuthenticatedUser(req: FastifyRequest) {
+  const payload = await (req as any).jwtVerify()
+  return prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, name: true } })
+}
 
 async function withSchemaGuard<T>(
   req: FastifyRequest,
@@ -322,6 +510,7 @@ type CommentWithUser = Prisma.CommentGetPayload<{
         handle: true
         name: true
         avatarUrl: true
+        premiumStatus: true
       }
     }
   }
@@ -344,6 +533,8 @@ type CommentNode = {
     handle: string
     name: string | null
     avatarUrl: string | null
+    isPremium: boolean
+    isVerified: boolean
   }
   replies: CommentNode[]
 }
@@ -405,6 +596,8 @@ function mapComment(row: CommentWithUser, viewerVote: number | null = null): Com
       handle: row.user.handle,
       name: row.user.name ?? null,
       avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
+      isPremium: isPremium(row.user.premiumStatus),
+      isVerified: isPremium(row.user.premiumStatus),
     },
     replies: [],
   }
@@ -611,6 +804,7 @@ type PostWithAuthor = Prisma.PostGetPayload<{
         handle: true
         name: true
         avatarUrl: true
+        premiumStatus: true
       }
     }
   }
@@ -638,6 +832,8 @@ function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null 
       handle: post.author.handle,
       name: post.author.name,
       avatarUrl: normalizeMediaUrl(post.author.avatarUrl ?? null),
+      isPremium: isPremium(post.author.premiumStatus),
+      isVerified: isPremium(post.author.premiumStatus),
     },
     counts: {
       upvotes: post.upvotes,
@@ -749,6 +945,7 @@ app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply:
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -765,6 +962,7 @@ app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply:
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -1027,6 +1225,9 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       bio: true,
       avatarUrl: true,
       coverUrl: true,
+      premiumStatus: true,
+      premiumSince: true,
+      premiumRenewsAt: true,
       avatarMediaId: true,
       coverMediaId: true,
       createdAt: true,
@@ -1333,7 +1534,7 @@ app.post('/media/uploads/complete', async (req: FastifyRequest, reply: FastifyRe
 
 app.put(
   '/media/uploads/:id/proxy',
-  { config: { bodyLimit: MEDIA_PROXY_UPLOAD_LIMIT } },
+  { bodyLimit: MEDIA_PROXY_UPLOAD_LIMIT },
   async (req: FastifyRequest, reply: FastifyReply) =>
     withSchemaGuard(req, reply, async () => {
       const userId = (req as any).user?.id
@@ -1455,6 +1656,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -1501,7 +1703,16 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     const payload = await (req as any).jwtVerify()
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, handle: true, name: true, avatarUrl: true },
+      select: {
+        id: true,
+        email: true,
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        premiumStatus: true,
+        premiumSince: true,
+        premiumRenewsAt: true,
+      },
     })
     if (!user) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -1527,7 +1738,14 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     }
 
     const normalizedUser = normalizeUserMedia(user)
-    return reply.send({ ...normalizedUser, homeChamber })
+    return reply.send({
+      ...normalizedUser,
+      homeChamber,
+      isPremium: isPremium(user.premiumStatus),
+      isVerified: isPremium(user.premiumStatus),
+      premiumSince: user.premiumSince ?? null,
+      premiumRenewsAt: user.premiumRenewsAt ?? null,
+    })
   } catch {
     return reply.code(401).send({ error: 'unauthorized' })
   }
@@ -1588,6 +1806,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -1618,6 +1837,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -1680,6 +1900,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -1696,6 +1917,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -1818,6 +2040,7 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -1873,6 +2096,7 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -1900,6 +2124,7 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -2014,6 +2239,7 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -2062,6 +2288,7 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -2109,6 +2336,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -2141,6 +2369,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
             handle: true,
             name: true,
             avatarUrl: true,
+            premiumStatus: true,
           },
         },
       },
@@ -2185,6 +2414,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         avatarUrl: true,
         coverUrl: true,
         createdAt: true,
+        premiumStatus: true,
       },
     })
 
@@ -2225,10 +2455,17 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       position: exp.position,
     }))
 
-    const user = normalizeUserMedia({
+    const normalizedProfile = normalizeUserMedia({
       ...userRecord,
       experiences: mappedExperiences,
-    })
+    }) as typeof userRecord & { experiences: typeof mappedExperiences }
+
+    const { premiumStatus, ...restProfile } = normalizedProfile
+    const user = {
+      ...restProfile,
+      isPremium: isPremium(premiumStatus),
+      isVerified: isPremium(premiumStatus),
+    }
 
     const query = CursorQuery.extend({
       jurisdiction: JurisdictionEnum.optional(),
@@ -2260,6 +2497,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -2276,6 +2514,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
               handle: true,
               name: true,
               avatarUrl: true,
+              premiumStatus: true,
             },
           },
         },
@@ -2308,6 +2547,633 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     }
   }),
 )
+
+const PremiumCheckoutSchema = z.object({
+  successUrl: z.string().url(),
+  cancelUrl: z.string().url(),
+})
+
+const PortalSessionSchema = z.object({
+  returnUrl: z.string().url().optional(),
+})
+
+const CreateBusinessInput = z.object({
+  name: z.string().trim().min(3).max(160),
+  slug: z
+    .string()
+    .trim()
+    .min(3)
+    .max(80)
+    .regex(/^[a-z0-9-]+$/i, { message: 'slug_invalid' })
+    .optional(),
+  description: z.string().trim().max(2000).optional(),
+})
+
+const BusinessCheckoutSchema = PremiumCheckoutSchema
+const BusinessParam = z.object({ businessId: z.string().cuid() })
+
+const BUSINESS_SUMMARY_SELECT = {
+  id: true,
+  name: true,
+  slug: true,
+  description: true,
+  status: true,
+  isVerified: true,
+  stripeSubscriptionId: true,
+  stripePriceId: true,
+  billingEmail: true,
+  createdAt: true,
+  updatedAt: true,
+} as const
+
+type StripeProcessResult =
+  | { type: 'premium'; userId: string | null }
+  | { type: 'business'; businessId: string | null; ownerId: string | null }
+  | { type: 'ignored' }
+
+function buildBusinessSlugBase(name: string) {
+  return trimSlugLength(slugifyText(name), 80) || 'business'
+}
+
+async function generateUniqueBusinessSlug(ownerId: string, name: string) {
+  let candidate = buildBusinessSlugBase(name)
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const existing = await prisma.business.findFirst({ where: { ownerId, slug: candidate }, select: { id: true } })
+    if (!existing) return candidate
+    candidate = trimSlugLength(`${candidate}-${randomSlugSuffix()}`, 80) || `business-${randomSlugSuffix()}`
+  }
+  return `${candidate}-${randomSlugSuffix()}`.slice(0, 80)
+}
+
+async function ensureStripeCustomer(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      stripeCustomerId: true,
+      premiumStatus: true,
+      premiumSince: true,
+      premiumRenewsAt: true,
+    },
+  })
+  if (!user) throw new Error('user_not_found')
+  if (user.stripeCustomerId) {
+    return { customerId: user.stripeCustomerId, user }
+  }
+  const stripe = getStripeClient()
+  const customer = await stripe.customers.create({
+    email: user.email,
+    name: user.name ?? undefined,
+    metadata: { userId },
+  })
+  await prisma.user.update({ where: { id: userId }, data: { stripeCustomerId: customer.id } })
+  return { customerId: customer.id, user: { ...user, stripeCustomerId: customer.id } }
+}
+
+async function loadOwnedBusiness(ownerId: string, businessId: string) {
+  return prisma.business.findFirst({ where: { id: businessId, ownerId }, select: BUSINESS_SUMMARY_SELECT })
+}
+
+function ensurePriceAvailable(priceId: string | undefined, label: string) {
+  if (!priceId) {
+    throw Object.assign(new Error(`${label}_price_missing`), { statusCode: 503 })
+  }
+  return priceId
+}
+
+function extractStripeIdentifiers(event: Stripe.Event) {
+  const rawObject = event.data?.object as unknown
+  const dataObj = rawObject && typeof rawObject === 'object' ? (rawObject as Record<string, unknown>) : null
+  if (!dataObj) {
+    return { subscriptionId: null, invoiceId: null, customerId: null }
+  }
+  const rawId = typeof dataObj.id === 'string' ? (dataObj.id as string) : null
+  const subscriptionField = (dataObj as { subscription?: string | { id?: string } }).subscription
+  const subscriptionId = event.type.startsWith('customer.subscription')
+    ? rawId
+    : typeof subscriptionField === 'string'
+      ? subscriptionField
+      : typeof subscriptionField === 'object' && subscriptionField && typeof subscriptionField.id === 'string'
+        ? subscriptionField.id
+        : null
+
+  const invoiceField = (dataObj as { invoice?: string }).invoice
+  const invoiceId = event.type.startsWith('invoice.')
+    ? rawId
+    : typeof invoiceField === 'string'
+      ? invoiceField
+      : null
+
+  const customerField = (dataObj as { customer?: string | { id?: string } }).customer
+  const customerId =
+    typeof customerField === 'string'
+      ? customerField
+      : typeof customerField === 'object' && customerField && typeof customerField.id === 'string'
+        ? customerField.id
+        : null
+
+  return { subscriptionId, invoiceId, customerId }
+}
+
+async function recordStripeWebhookEvent(event: Stripe.Event) {
+  const identifiers = extractStripeIdentifiers(event)
+  const payload = JSON.parse(JSON.stringify(event))
+  const now = new Date()
+  return prisma.stripeWebhookEvent.upsert({
+    where: { eventId: event.id },
+    create: {
+      eventId: event.id,
+      eventType: event.type,
+      apiVersion: event.api_version ?? null,
+      livemode: Boolean(event.livemode),
+      payload,
+      subscriptionId: identifiers.subscriptionId,
+      invoiceId: identifiers.invoiceId,
+      customerId: identifiers.customerId,
+      lastReceivedAt: now,
+    },
+    update: {
+      eventType: event.type,
+      apiVersion: event.api_version ?? null,
+      livemode: Boolean(event.livemode),
+      payload,
+      subscriptionId: identifiers.subscriptionId,
+      invoiceId: identifiers.invoiceId,
+      customerId: identifiers.customerId,
+      lastReceivedAt: now,
+      retryCount: { increment: 1 },
+      status: StripeWebhookStatus.RECEIVED,
+    },
+    select: { id: true },
+  })
+}
+
+async function updateStripeWebhookEvent(
+  recordId: string,
+  data: Prisma.StripeWebhookEventUpdateInput,
+) {
+  await prisma.stripeWebhookEvent.update({
+    where: { id: recordId },
+    data,
+  })
+}
+
+async function syncPremiumSubscription(subscription: Stripe.Subscription) {
+  const userIdFromMetadata = subscription.metadata?.userId
+  let user = userIdFromMetadata
+    ? await prisma.user.findUnique({ where: { id: userIdFromMetadata }, select: { id: true, premiumSince: true } })
+    : null
+
+  if (!user) {
+    user = await prisma.user.findFirst({
+      where: { stripeSubscriptionId: subscription.id },
+      select: { id: true, premiumSince: true },
+    })
+  }
+
+  if (!user) {
+    return { userId: null }
+  }
+
+  const status = mapSubscriptionStatus(subscription.status)
+  const periodEnd = subscription.current_period_end ? new Date(subscription.current_period_end * 1000) : null
+
+  const updateData: Prisma.UserUpdateInput = {
+    stripeSubscriptionId: subscription.id,
+    stripePriceId: subscription.items.data[0]?.price?.id ?? null,
+    premiumStatus: status,
+    premiumRenewsAt: periodEnd,
+    premiumCanceledAt: status === 'CANCELED' ? new Date() : null,
+  }
+
+  if (!user.premiumSince && status === 'ACTIVE') {
+    updateData.premiumSince = new Date()
+  }
+
+  await prisma.user.update({ where: { id: user.id }, data: updateData })
+  return { userId: user.id }
+}
+
+async function syncBusinessSubscription(subscription: Stripe.Subscription) {
+  const businessId = subscription.metadata?.businessId
+  if (!businessId) {
+    return { businessId: null, ownerId: null }
+  }
+  const business = await prisma.business.findUnique({
+    where: { id: businessId },
+    select: { id: true, ownerId: true, isVerified: true },
+  })
+  if (!business) {
+    return { businessId: null, ownerId: null }
+  }
+
+  const status = businessStatusFromSubscription(subscription.status)
+  const nextData: Prisma.BusinessUpdateInput = {
+    stripeSubscriptionId: subscription.id,
+    stripePriceId: subscription.items.data[0]?.price?.id ?? null,
+    status,
+  }
+  if (status === 'ACTIVE') {
+    nextData.isVerified = true
+  }
+
+  await prisma.business.update({ where: { id: business.id }, data: nextData })
+  return { businessId: business.id, ownerId: business.ownerId }
+}
+
+type PaymentIntentWithExpandedCharges = Stripe.Response<Stripe.PaymentIntent> & {
+  charges?: Stripe.ApiList<Stripe.Charge>
+}
+
+async function fetchPaymentFingerprint(stripe: Stripe, invoice: Stripe.Invoice) {
+  const paymentIntentId =
+    typeof invoice.payment_intent === 'string'
+      ? invoice.payment_intent
+      : invoice.payment_intent?.id
+  if (!paymentIntentId) {
+    return null
+  }
+  try {
+    const paymentIntentResponse = await stripe.paymentIntents.retrieve(paymentIntentId, {
+      expand: ['charges.data.payment_method_details'],
+    })
+    const paymentIntent = paymentIntentResponse as PaymentIntentWithExpandedCharges
+    const charge = paymentIntent.charges?.data?.[0]
+    return charge?.payment_method_details?.card?.fingerprint ?? null
+  } catch (error) {
+    console.warn('[stripe] Unable to fetch payment intent fingerprint', { error })
+    return null
+  }
+}
+
+async function handleInvoicePaymentSucceeded(stripe: Stripe, invoice: Stripe.Invoice) {
+  const subscriptionId =
+    typeof invoice.subscription === 'string'
+      ? invoice.subscription
+      : invoice.subscription?.id ?? null
+  if (!subscriptionId) {
+    return
+  }
+  const priceId = invoice.lines?.data?.find((line) => line.type === 'subscription')?.price?.id ?? null
+  if (!priceId) {
+    return
+  }
+
+  if (STRIPE_PRICE_PREMIUM && priceId === STRIPE_PRICE_PREMIUM) {
+    const user = await prisma.user.findFirst({ where: { stripeSubscriptionId: subscriptionId }, select: { id: true } })
+    if (!user) return
+    const fingerprint = await fetchPaymentFingerprint(stripe, invoice)
+    if (fingerprint) {
+      const hashed = createHash('sha256').update(fingerprint).digest('hex')
+      await prisma.user.update({ where: { id: user.id }, data: { premiumPaymentFingerprint: hashed } })
+    }
+  } else if (STRIPE_PRICE_BUSINESS && priceId === STRIPE_PRICE_BUSINESS) {
+    const business = await prisma.business.findFirst({ where: { stripeSubscriptionId: subscriptionId }, select: { id: true } })
+    if (!business) return
+    await prisma.business.update({ where: { id: business.id }, data: { status: 'ACTIVE', isVerified: true } })
+  }
+}
+
+async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
+  const subscriptionId =
+    typeof invoice.subscription === 'string'
+      ? invoice.subscription
+      : invoice.subscription?.id ?? null
+  if (!subscriptionId) {
+    return
+  }
+  const user = await prisma.user.findFirst({ where: { stripeSubscriptionId: subscriptionId }, select: { id: true } })
+  if (user) {
+    await prisma.user.update({ where: { id: user.id }, data: { premiumStatus: 'PAST_DUE' } })
+  }
+  const business = await prisma.business.findFirst({ where: { stripeSubscriptionId: subscriptionId }, select: { id: true } })
+  if (business) {
+    await prisma.business.update({ where: { id: business.id }, data: { status: 'SUSPENDED' } })
+  }
+}
+
+async function processStripeEvent(stripe: Stripe, event: Stripe.Event): Promise<StripeProcessResult> {
+  switch (event.type) {
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const subscription = event.data.object as Stripe.Subscription
+      const kind = subscription.metadata?.kind ?? (subscription.metadata?.businessId ? 'business' : 'premium')
+      if (kind === 'business') {
+        const result = await syncBusinessSubscription(subscription)
+        return { type: 'business', businessId: result.businessId, ownerId: result.ownerId }
+      }
+      const result = await syncPremiumSubscription(subscription)
+      return { type: 'premium', userId: result.userId }
+    }
+    case 'invoice.payment_succeeded':
+      await handleInvoicePaymentSucceeded(stripe, event.data.object as Stripe.Invoice)
+      return { type: 'ignored' }
+    case 'invoice.payment_failed':
+      await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice)
+      return { type: 'ignored' }
+    default:
+      return { type: 'ignored' }
+  }
+}
+
+app.get('/billing/summary', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      premiumStatus: true,
+      premiumSince: true,
+      premiumRenewsAt: true,
+    },
+  })
+  if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+  const businessCount = await prisma.business.count({ where: { ownerId: userId } })
+  return reply.send({
+    stripeEnabled: isStripeConfigured(),
+    premiumStatus: user.premiumStatus,
+    isPremium: isPremium(user.premiumStatus),
+    premiumSince: user.premiumSince ?? null,
+    premiumRenewsAt: user.premiumRenewsAt ?? null,
+    businessCount,
+    businessLimit: MAX_BUSINESSES_PER_USER,
+  })
+})
+
+app.post('/billing/premium/checkout', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+
+  const body = PremiumCheckoutSchema.safeParse(req.body)
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const priceId = ensurePriceAvailable(STRIPE_PRICE_PREMIUM, 'premium')
+  const stripe = getStripeClient()
+  const { customerId } = await ensureStripeCustomer(userId)
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    customer: customerId,
+    success_url: body.data.successUrl,
+    cancel_url: body.data.cancelUrl,
+    allow_promotion_codes: true,
+    subscription_data: {
+      metadata: {
+        kind: 'premium',
+        userId,
+      },
+    },
+    metadata: {
+      kind: 'premium',
+      userId,
+    },
+    line_items: [
+      {
+        price: priceId,
+        quantity: 1,
+      },
+    ],
+  })
+
+  await prisma.user.update({ where: { id: userId }, data: { premiumStatus: 'PENDING' } })
+  return reply.send({ checkoutUrl: session.url, sessionId: session.id })
+})
+
+app.post('/billing/portal', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+
+  const body = PortalSessionSchema.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const stripe = getStripeClient()
+  const { customerId } = await ensureStripeCustomer(userId)
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: body.data.returnUrl ?? BILLING_PORTAL_RETURN_FALLBACK,
+  })
+  return reply.send({ portalUrl: session.url })
+})
+
+app.get('/businesses', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const businesses = await prisma.business.findMany({
+    where: { ownerId: userId },
+    orderBy: { createdAt: 'desc' },
+    select: BUSINESS_SUMMARY_SELECT,
+  })
+
+  return reply.send({
+    items: businesses,
+    limit: MAX_BUSINESSES_PER_USER,
+  })
+})
+
+app.post('/businesses', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+
+  const body = CreateBusinessInput.safeParse(req.body)
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const { user } = await ensureStripeCustomer(userId)
+  if (!isPremium(user.premiumStatus)) {
+    return reply.code(403).send({ error: 'premium_required' })
+  }
+
+  const existingCount = await prisma.business.count({ where: { ownerId: userId } })
+  if (existingCount >= MAX_BUSINESSES_PER_USER) {
+    return reply.code(422).send({ error: 'business_limit_reached' })
+  }
+
+  const slugBase = body.data.slug ? slugifyText(body.data.slug).slice(0, 80) : body.data.name
+  const slug = await generateUniqueBusinessSlug(userId, slugBase)
+
+  const business = await prisma.business.create({
+    data: {
+      ownerId: userId,
+      name: body.data.name.trim(),
+      slug,
+      description: body.data.description?.trim() || null,
+      memberships: {
+        create: { userId, role: 'OWNER' },
+      },
+    },
+    select: BUSINESS_SUMMARY_SELECT,
+  })
+
+  return reply.code(201).send({ business, remaining: MAX_BUSINESSES_PER_USER - (existingCount + 1) })
+})
+
+app.post('/businesses/:businessId/checkout', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+
+  const params = BusinessParam.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  const body = BusinessCheckoutSchema.safeParse(req.body)
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const { user, customerId } = await ensureStripeCustomer(userId)
+  if (!isPremium(user.premiumStatus)) {
+    return reply.code(403).send({ error: 'premium_required' })
+  }
+
+  const business = await loadOwnedBusiness(userId, params.data.businessId)
+  if (!business) return reply.code(404).send({ error: 'business_not_found' })
+
+  const priceId = ensurePriceAvailable(STRIPE_PRICE_BUSINESS, 'business')
+  const stripe = getStripeClient()
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    customer: customerId,
+    success_url: body.data.successUrl,
+    cancel_url: body.data.cancelUrl,
+    allow_promotion_codes: true,
+    subscription_data: {
+      metadata: {
+        kind: 'business',
+        businessId: business.id,
+        ownerId: userId,
+      },
+    },
+    metadata: {
+      kind: 'business',
+      businessId: business.id,
+      ownerId: userId,
+    },
+    line_items: [
+      {
+        price: priceId,
+        quantity: 1,
+      },
+    ],
+  })
+
+  return reply.send({ checkoutUrl: session.url, sessionId: session.id })
+})
+
+app.post('/businesses/:businessId/portal', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+
+  const params = BusinessParam.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  const body = PortalSessionSchema.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const business = await loadOwnedBusiness(userId, params.data.businessId)
+  if (!business) return reply.code(404).send({ error: 'business_not_found' })
+  if (!business.stripeSubscriptionId) return reply.code(409).send({ error: 'subscription_missing' })
+
+  const stripe = getStripeClient()
+  const { customerId } = await ensureStripeCustomer(userId)
+  const session = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: body.data.returnUrl ?? BILLING_PORTAL_RETURN_FALLBACK,
+  })
+  return reply.send({ portalUrl: session.url })
+})
+
+app.post(
+  '/billing/stripe/webhook',
+  { config: { rawBody: true } },
+  async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!isStripeConfigured() || !STRIPE_WEBHOOK_SECRET) {
+      return reply.code(503).send({ error: 'stripe_unconfigured' })
+    }
+    const signature = req.headers['stripe-signature']
+    if (!signature) {
+      return reply.code(400).send({ error: 'missing_signature' })
+    }
+    const payloadBuffer: Buffer | undefined = (req as any).rawBody
+    if (!payloadBuffer) {
+      return reply.code(400).send({ error: 'raw_body_required' })
+    }
+
+    const stripe = getStripeClient()
+    let event: Stripe.Event
+    try {
+      event = stripe.webhooks.constructEvent(payloadBuffer, signature, STRIPE_WEBHOOK_SECRET)
+    } catch (error) {
+      req.log.error({ err: error }, 'stripe_webhook_signature_invalid')
+      return reply.code(400).send({ error: 'invalid_signature' })
+    }
+
+    const record = await recordStripeWebhookEvent(event)
+    await updateStripeWebhookEvent(record.id, {
+      status: StripeWebhookStatus.PROCESSING,
+      processingStartedAt: new Date(),
+      lastError: null,
+    })
+
+    try {
+      const result = await processStripeEvent(stripe, event)
+      await updateStripeWebhookEvent(record.id, {
+        status: result.type === 'ignored' ? StripeWebhookStatus.IGNORED : StripeWebhookStatus.PROCESSED,
+        processedAt: new Date(),
+        lastError: null,
+        userId: result.type === 'premium' ? result.userId : result.type === 'business' ? result.ownerId : undefined,
+        businessId: result.type === 'business' ? result.businessId : undefined,
+      })
+      return reply.send({ received: true })
+    } catch (error) {
+      await updateStripeWebhookEvent(record.id, {
+        status: StripeWebhookStatus.FAILED,
+        processedAt: new Date(),
+        lastError: serializeError(error),
+      })
+      req.log.error({ err: error }, 'stripe_webhook_failed')
+      return reply.code(500).send({ error: 'webhook_failure' })
+    }
+  },
+)
+
+app.get('/admin/env', async (req: FastifyRequest, reply: FastifyReply) => {
+  let user: { id: string; email: string | null; name: string | null } | null
+  try {
+    user = await loadAuthenticatedUser(req)
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  if (!user || !isSuperAdminEmail(user.email)) {
+    return reply.code(403).send({ error: 'forbidden' })
+  }
+
+  const envSources = (process.env.CIVIL_ENV_FILES || '')
+    .split(/[;,]/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const primarySource = process.env.CIVIL_ENV_PRIMARY?.trim() || envSources.at(-1) || null
+  const label = process.env.CIVIL_ENV_LABEL?.trim() || (process.env.NODE_ENV === 'production' ? 'production' : 'development')
+
+  return reply.send({
+    env: {
+      label,
+      primarySource,
+      sources: envSources,
+      nodeEnv: process.env.NODE_ENV || null,
+      projectName: process.env.COMPOSE_PROJECT_NAME || null,
+    },
+    stripeEnabled: isStripeConfigured(),
+    checklist: buildAdminChecklist(),
+    generatedAt: new Date().toISOString(),
+  })
+})
 
 // SSE notifications (skeleton)
 app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply) => {

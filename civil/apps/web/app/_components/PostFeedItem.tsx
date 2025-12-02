@@ -1,12 +1,12 @@
 "use client"
 
 import { useCallback, useState } from 'react'
-import Image from 'next/image'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { LuArrowBigDown, LuArrowBigUp } from 'react-icons/lu'
 import type { ApiPost } from './PostComposer'
 import { JURISDICTION_LABELS } from './PostComposer'
+import VerifiedAvatar from './VerifiedAvatar'
 
 function buildPostUrl(post: ApiPost) {
   if (post.seoSlug) {
@@ -108,22 +108,14 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
     <article className="surface-card space-y-4 px-6 py-5 shadow-subtle">
       <header className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <div className="h-12 w-12 overflow-hidden rounded-full bg-slate-200">
-            {post.author.avatarUrl ? (
-              <Image
-                src={post.author.avatarUrl}
-                alt={post.author.name ?? post.author.handle}
-                width={48}
-                height={48}
-                unoptimized
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-base font-semibold text-slate-500">
-                {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
-              </div>
-            )}
-          </div>
+          <VerifiedAvatar
+            src={post.author.avatarUrl}
+            alt={post.author.name ?? post.author.handle}
+            initials={post.author.name ?? post.author.handle}
+            size={48}
+            isVerified={Boolean(post.author.isVerified ?? post.author.isPremium)}
+            className="shrink-0"
+          />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
               <Link href={`/u/${post.author.handle}`} className="font-semibold text-slate-900 hover:underline">

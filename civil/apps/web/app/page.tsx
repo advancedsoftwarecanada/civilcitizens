@@ -23,18 +23,28 @@ export default function Home() {
       {/* Redirect signed-in users to /home */}
       <AutoRedirect />
       {/* Hero */}
-      <section className="hero-section py-12">
+      <section
+        className="hero-section flex items-center py-12 text-white"
+        style={{
+          backgroundImage: "url('/canadawallpapercivil.jpg')",
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          backgroundAttachment: 'fixed',
+          minHeight: '100vh',
+        }}
+      >
         <div className="container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="text-center">
-              <div className="mx-auto max-w-xs">
-                <Image src="/logo.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
-                <div className="text-center text-sm text-slate-500 mt-2">Release: Beta 1.0</div>
+              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
+                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <div className="text-center text-sm text-white/80 mt-2">Release: Beta 1.0</div>
               </div>
             </div>
             <div className="text-center lg:text-left">
-              <h1 className="text-4xl font-extrabold mb-3">Together We Imagine an Ideal Society</h1>
-              <p className="text-lg leading-relaxed text-slate-700 mb-6">
+              <h1 className="text-4xl font-extrabold mb-3 text-white">Together We Imagine an Ideal Society</h1>
+              <p className="text-lg leading-relaxed text-white/90 mb-6">
                 Civil gives every Canadian the space to speak with <strong>one voice</strong> about the economy we share, the society we want, and everything that makes our country great.
                 <br className="hidden sm:block" />
                 <br className="hidden sm:block" />
@@ -42,7 +52,7 @@ export default function Home() {
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
                 <Link href="/register" className="btn-primary-cc">Register</Link>
-                <Link href="/login" className="btn-outline-primary-cc">Login</Link>
+                <Link href="/login" className="btn-primary-cc">Login</Link>
               </div>
             </div>
           </div>
@@ -53,7 +63,7 @@ export default function Home() {
       <section id="stakeholders" className="py-0">
         <div className="container mx-auto px-4 pt-10 pb-6">
           <div className="max-w-3xl mx-auto text-center">
-            <h2 className="text-3xl font-bold mb-3">Chambers of Citizens</h2>
+            <h2 className="text-3xl font-bold mb-3">Join Your Chamber of Citizens</h2>
             <p className="text-base sm:text-lg text-slate-700">
               Every Canadian lives in an <strong>Electoral District Association (EDA)</strong>.
             </p>

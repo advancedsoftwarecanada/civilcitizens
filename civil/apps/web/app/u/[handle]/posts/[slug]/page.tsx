@@ -1,6 +1,5 @@
 "use client"
 
-import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import Sidebar from '../../../../_components/Sidebar'
@@ -10,12 +9,15 @@ import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
+import VerifiedAvatar from '../../../../_components/VerifiedAvatar'
 
 type Viewer = {
   id: string
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  isPremium?: boolean
+  isVerified?: boolean
 }
 
 type CanonicalPaths = {
@@ -230,13 +232,13 @@ export default function UserPostPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-12 pt-8 sm:px-6 lg:px-10 lg:pb-16">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pr-0 xl:pl-12 xl:pr-0">
         <div className="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px]">
           <div className="hidden lg:block">
             <Sidebar me={viewer ?? undefined} active="home" />
           </div>
 
-          <main className="space-y-8">
+          <main className="space-y-8 py-8">
             {status === 'loading' ? (
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-6 text-sm text-slate-500 shadow-subtle">Loading post…</div>
             ) : status === 'not-found' ? (
@@ -264,22 +266,14 @@ export default function UserPostPage({ params }: PageProps) {
               </nav>
 
                 <header className="flex flex-col gap-4 md:flex-row md:items-start">
-                  <div className="h-14 w-14 overflow-hidden rounded-full bg-slate-200">
-                    {post.author.avatarUrl ? (
-                      <Image
-                        src={post.author.avatarUrl}
-                        alt={post.author.name ?? post.author.handle}
-                        width={48}
-                        height={48}
-                        unoptimized
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-base font-semibold text-slate-600">
-                        {(post.author.name || post.author.handle).substring(0, 1).toUpperCase()}
-                      </div>
-                    )}
-                  </div>
+                  <VerifiedAvatar
+                    src={post.author.avatarUrl}
+                    alt={post.author.name ?? post.author.handle}
+                    initials={post.author.name ?? post.author.handle}
+                    size={56}
+                    isVerified={Boolean(post.author.isVerified ?? post.author.isPremium)}
+                    className="shrink-0"
+                  />
                   <div className="min-w-0 flex-1 space-y-4">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
                       <Link href={`/u/${post.author.handle}`} className="font-semibold text-slate-900 hover:underline">

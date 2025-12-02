@@ -1,13 +1,15 @@
 "use client"
 
-import Image from 'next/image'
 import { useCallback, useEffect, useState } from 'react'
+import clsx from 'clsx'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import VerifiedAvatar from '../../_components/VerifiedAvatar'
+import DashboardShell from '../../_components/DashboardShell'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -19,6 +21,8 @@ type Viewer = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  isPremium?: boolean
+  isVerified?: boolean
 }
 
 type UserProfile = {
@@ -30,6 +34,8 @@ type UserProfile = {
   coverUrl?: string | null
   createdAt?: string
   experiences?: UserExperience[]
+  isPremium?: boolean
+  isVerified?: boolean
 }
 
 type UserExperience = {
@@ -42,15 +48,6 @@ type UserExperience = {
   current?: boolean
   description?: string | null
   position?: number
-}
-
-function initialsFromUser(user: { name?: string | null; handle: string }) {
-  const source = user.name || user.handle
-  return source
-    .split(' ')
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('')
-    .slice(0, 2)
 }
 
 function formatDate(iso?: string) {
@@ -220,6 +217,11 @@ export default function UserPostsPage({ params }: PageProps) {
   const isOwner = viewer && profile && viewer.handle === profile.handle
   const experienceCount = profile?.experiences?.length ?? 0
   const coverDisplayUrl = profile?.coverUrl ?? null
+  const rightRailContent = (
+    <div className="sticky top-8 space-y-4">
+      <RightRail />
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
@@ -229,16 +231,17 @@ export default function UserPostsPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 py-10 sm:px-6 lg:px-10 lg:py-14">
-        <div className="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px]">
-          <aside className="hidden lg:block">
-            <Sidebar me={viewer ?? undefined} active="profile" />
-          </aside>
-
-          <main className="space-y-8">
+      <DashboardShell
+        className="bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white"
+        sidebar={<Sidebar me={viewer ?? undefined} active="profile" />}
+        rightRail={rightRailContent}
+        rightRailClassName="pt-8"
+        mainClassName="space-y-8 pb-12"
+      >
+        <div className={profile ? 'space-y-0' : undefined}>
           {profile ? (
-            <section className="relative rounded-[36px] border border-white/60 bg-white/40 shadow-[0_35px_120px_rgba(15,23,42,0.12)]">
-              <div className="relative h-48 w-full overflow-hidden rounded-[36px] sm:h-60">
+            <section className="relative rounded-[36px] rounded-b-none border border-white/60 bg-white/40 shadow-[0_35px_120px_rgba(15,23,42,0.12)]">
+              <div className="relative h-48 w-full overflow-hidden rounded-t-[36px] sm:h-60">
                 {coverDisplayUrl ? (
                   <>
                     <img src={coverDisplayUrl} alt={`${profile.name ?? profile.handle} cover`} className="absolute inset-0 h-full w-full object-cover" />
@@ -250,29 +253,26 @@ export default function UserPostsPage({ params }: PageProps) {
               </div>
             </section>
           ) : null}
-          <section className="rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8">
+          <section
+            className={clsx(
+              'rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8',
+              profile && 'rounded-t-none border-t-0',
+            )}
+          >
             {profile ? (
               <>
                 <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
                   <div className="flex items-center gap-4">
                     <div className="relative">
                       <div className="absolute inset-0 rounded-full bg-gradient-to-br from-rose-200 via-amber-100 to-sky-200 blur-lg" aria-hidden="true" />
-                      <div className="relative h-20 w-20 overflow-hidden rounded-full border-4 border-white bg-slate-100">
-                        {profile.avatarUrl ? (
-                          <Image
-                            src={profile.avatarUrl}
-                            alt={profile.name ?? profile.handle}
-                            width={96}
-                            height={96}
-                            unoptimized
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-2xl font-semibold text-slate-500">
-                            {initialsFromUser(profile)}
-                          </div>
-                        )}
-                      </div>
+                      <VerifiedAvatar
+                        src={profile.avatarUrl}
+                        alt={profile.name ?? profile.handle}
+                        initials={profile.name ?? profile.handle}
+                        size={96}
+                        isVerified={Boolean(profile.isVerified ?? profile.isPremium)}
+                        className="relative border-4 border-white shadow-xl"
+                      />
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[var(--cc-primary)]">Civic Identity</p>
@@ -313,95 +313,76 @@ export default function UserPostsPage({ params }: PageProps) {
               <div className="text-sm text-slate-500">Profile not available.</div>
             )}
           </section>
-
-          {profile?.bio ? (
-            <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
-              <h2 className="text-lg font-semibold text-slate-900">About</h2>
-              <div
-                className="prose prose-sm mt-3 max-w-none text-slate-800"
-                dangerouslySetInnerHTML={{ __html: profile.bio }}
-              />
-            </section>
-          ) : null}
-
-          {profile?.experiences && profile.experiences.length > 0 ? (
-            <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
-              <h2 className="text-lg font-semibold text-slate-900">Experience</h2>
-              <ol className="mt-4 space-y-4">
-                {profile.experiences.map((exp, index) => (
-                  <li key={exp.id ?? `${exp.title}-${index}`} className="rounded-2xl border border-slate-100/70 bg-white/90 p-4 shadow-inner">
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
-                      <span className="font-semibold">{exp.title}</span>
-                      {exp.organization ? <span className="text-slate-600">• {exp.organization}</span> : null}
-                    </div>
-                    {exp.location ? (
-                      <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{exp.location}</div>
-                    ) : null}
-                    <div className="mt-2 text-xs text-slate-500">{formatExperienceRange(exp)}</div>
-                    {exp.description ? (
-                      <p className="mt-3 whitespace-pre-line text-sm text-slate-700">{exp.description}</p>
-                    ) : null}
-                  </li>
-                ))}
-              </ol>
-            </section>
-          ) : null}
-
-          {isOwner ? (
-            <PostComposer
-              onPostCreated={handlePostCreated}
-              className="rounded-[28px] border border-white/60 bg-white/95 shadow-panel"
-            />
-          ) : null}
-
-          <section className="rounded-[32px] border border-white/60 bg-white/95 shadow-panel">
-            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/70 px-6 py-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Posts</p>
-                <h2 className="text-lg font-semibold text-slate-900">Updates from @{profile?.handle ?? handleParam}</h2>
-              </div>
-              <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
-                {SORT_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={`rounded-full px-4 py-1 transition ${
-                      sortMode === option.value ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500'
-                    }`}
-                    onClick={() => setSortMode(option.value)}
-                    disabled={loading && sortMode === option.value}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4 px-6 py-6">
-              {error ? (
-                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
-              ) : posts.length === 0 ? (
-                <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-center text-sm text-slate-500">
-                  {loading ? 'Loading posts…' : 'This user has not shared any posts yet.'}
-                </div>
-              ) : (
-                posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
-              )}
-            </div>
-          </section>
-
-          <div className="lg:hidden">
-            <RightRail />
-          </div>
-        </main>
-
-        <aside className="hidden lg:block">
-          <div className="sticky top-8 space-y-4">
-            <RightRail />
-          </div>
-        </aside>
         </div>
-      </div>
+
+        {profile?.bio ? (
+          <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
+            <h2 className="text-lg font-semibold text-slate-900">About</h2>
+            <div className="prose prose-sm mt-3 max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: profile.bio }} />
+          </section>
+        ) : null}
+
+        {profile?.experiences && profile.experiences.length > 0 ? (
+          <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
+            <h2 className="text-lg font-semibold text-slate-900">Experience</h2>
+            <ol className="mt-4 space-y-4">
+              {profile.experiences.map((exp, index) => (
+                <li key={exp.id ?? `${exp.title}-${index}`} className="rounded-2xl border border-slate-100/70 bg-white/90 p-4 shadow-inner">
+                  <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
+                    <span className="font-semibold">{exp.title}</span>
+                    {exp.organization ? <span className="text-slate-600">• {exp.organization}</span> : null}
+                  </div>
+                  {exp.location ? <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{exp.location}</div> : null}
+                  <div className="mt-2 text-xs text-slate-500">{formatExperienceRange(exp)}</div>
+                  {exp.description ? <p className="mt-3 whitespace-pre-line text-sm text-slate-700">{exp.description}</p> : null}
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+
+        {isOwner ? (
+          <PostComposer onPostCreated={handlePostCreated} className="rounded-[28px] border border-white/60 bg-white/95 shadow-panel" />
+        ) : null}
+
+        <section className="rounded-[32px] border border-white/60 bg-white/95 shadow-panel">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/70 px-6 py-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Posts</p>
+              <h2 className="text-lg font-semibold text-slate-900">Updates from @{profile?.handle ?? handleParam}</h2>
+            </div>
+            <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+              {SORT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`rounded-full px-4 py-1 transition ${sortMode === option.value ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500'}`}
+                  onClick={() => setSortMode(option.value)}
+                  disabled={loading && sortMode === option.value}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4 px-6 py-6">
+            {error ? (
+              <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+            ) : posts.length === 0 ? (
+              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-center text-sm text-slate-500">
+                {loading ? 'Loading posts…' : 'This user has not shared any posts yet.'}
+              </div>
+            ) : (
+              posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
+            )}
+          </div>
+        </section>
+
+        <div className="lg:hidden">
+          <RightRail />
+        </div>
+      </DashboardShell>
     </div>
   )
 }

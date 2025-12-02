@@ -12,8 +12,16 @@ export type MeResponse = {
   name?: string | null
   avatarUrl?: string | null
   homeChamber?: HomeChamberSummary | null
+  isPremium?: boolean
+  isVerified?: boolean
+  premiumSince?: string | null
+  premiumRenewsAt?: string | null
 }
 
 export function hasHomeChamber(me: MeResponse | null | undefined): boolean {
   return Boolean(me?.homeChamber && me.homeChamber.chamberSlug && me.homeChamber.provinceCode)
+}
+
+export function isPremiumMember(me: MeResponse | null | undefined): boolean {
+  return Boolean(me?.isPremium)
 }

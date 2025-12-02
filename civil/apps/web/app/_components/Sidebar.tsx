@@ -2,116 +2,119 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
-import { HiOutlineHome, HiOutlineBuildingOffice2, HiOutlineUserCircle } from 'react-icons/hi2'
+import { usePathname } from 'next/navigation'
+import { HiOutlineHome, HiOutlineBuildingOffice2, HiOutlineUserCircle, HiOutlineShieldCheck } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
+import { isEmailSuperAdmin } from '../_lib/admin'
+import VerifiedAvatar from './VerifiedAvatar'
 
 type SidebarProps = {
   me?: {
     name?: string | null
     handle?: string
     avatarUrl?: string | null
+    email?: string | null
+    isPremium?: boolean
+    isVerified?: boolean
   }
   active?: 'home' | 'chambers' | string
 }
 
-type NavItem = {
+export type SidebarNavItem = {
   key: string
   label: string
-  href?: string
-  disabled?: boolean
-  description?: string
+  href: string
   icon: IconType
+  badge?: string
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { key: 'home', label: 'News Feed', href: '/home', description: 'Updates from your chambers', icon: HiOutlineHome },
-  {
-    key: 'chambers',
-    label: 'Chambers',
-    href: '/chambers',
-    description: 'Browse EDAs across Canada',
-    icon: HiOutlineBuildingOffice2,
-  },
-  { key: 'profile', label: 'Profile', href: '/profile', description: 'Your civic identity', icon: HiOutlineUserCircle },
+export const PRIMARY_NAV: SidebarNavItem[] = [
+  { key: 'home', label: 'News Feed', href: '/home', icon: HiOutlineHome },
+  { key: 'chambers', label: 'Chambers', href: '/chambers', icon: HiOutlineBuildingOffice2 },
+  { key: 'profile', label: 'Profile', href: '/profile', icon: HiOutlineUserCircle },
 ]
 
-function navItemClasses(activeKey: string | undefined, itemKey: string, disabled?: boolean) {
+export const ADMIN_NAV: SidebarNavItem[] = [{ key: 'admin', label: 'Admin', href: '/admin', icon: HiOutlineShieldCheck }]
+
+function navItemClasses(active: boolean) {
   return clsx(
-    'flex items-center gap-3 rounded-xl border px-3 py-3 text-sm font-semibold transition',
-    disabled && 'cursor-not-allowed border-transparent text-slate-400',
-    !disabled && activeKey === itemKey && 'border-brand-100 bg-brand-50 text-brand-700 shadow-subtle',
-    !disabled && activeKey !== itemKey && 'border-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-900',
+    'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+    active ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/10' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
   )
 }
 
 export default function Sidebar({ me, active }: SidebarProps) {
+  const pathname = usePathname()
   const displayName = me?.name?.trim() || 'Civil Citizen'
   const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
-  const initials = (me?.name?.trim() || me?.handle || 'C').substring(0, 1).toUpperCase()
-  const avatarUrl = me?.avatarUrl || null
   const profileHref = me?.handle ? `/u/${me.handle}` : '/profile'
+  const verified = Boolean(me?.isVerified ?? me?.isPremium)
+  const isSuperAdmin = isEmailSuperAdmin(me?.email)
+  const sidebarBleedStyle: CSSProperties = {
+    marginLeft: 'calc((100vw - min(100vw, 96rem)) / -2 + var(--sidebar-offset, 0px))',
+  }
+  const derivedActiveKey = useMemo(() => {
+    if (active) return active
+    const allNav = [...PRIMARY_NAV, ...ADMIN_NAV]
+    return allNav.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
+  }, [active, pathname])
+
+  const navContent = (items: SidebarNavItem[]) =>
+    items.map((item) => {
+      const Icon = item.icon
+      const activeMatch = derivedActiveKey === item.key
+      return (
+        <Link key={item.key} href={item.href} className={navItemClasses(activeMatch)} aria-current={activeMatch ? 'page' : undefined}>
+          <span
+            className={clsx(
+              'rounded-lg p-2 text-base transition-colors',
+              activeMatch ? 'bg-white/15 text-white' : 'text-slate-400 group-hover:bg-slate-200 group-hover:text-slate-700',
+            )}
+          >
+            <Icon />
+          </span>
+          <span className="flex-1">{item.label}</span>
+          {item.badge ? (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{item.badge}</span>
+          ) : null}
+        </Link>
+      )
+    })
 
   return (
-    <aside className="hidden lg:block lg:w-[280px] xl:w-[300px]">
-      <div className="sticky top-8 space-y-4">
-        <Link href="/home" className="flex items-center gap-2 text-sm font-semibold text-slate-500">
-          <Image src="/logo.svg" alt="Civil Citizens" width={146} height={36} priority className="h-9 w-auto" />
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Beta</span>
+    <aside
+      className="hidden lg:flex lg:h-screen lg:w-72 lg:flex-col lg:border-r lg:border-slate-200 lg:bg-white lg:px-6 lg:pt-4 lg:pb-8 lg:sticky lg:top-0 lg:[--sidebar-offset:-2rem] xl:w-80 xl:[--sidebar-offset:-3rem]"
+      style={sidebarBleedStyle}
+    >
+      <div className="flex items-center">
+        <Link href="/home" className="inline-flex items-center rounded-2xl border border-slate-100 bg-white px-3 py-2 shadow-sm">
+          <Image src="/logo.svg" alt="Civil Citizens" width={120} height={32} className="h-8 w-auto" priority />
         </Link>
+        <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Beta</span>
+      </div>
 
-        <section className="surface-card p-5">
-          <Link href={profileHref} className="flex items-center gap-3">
-            <div className="h-12 w-12 overflow-hidden rounded-full bg-slate-200">
-              {avatarUrl ? (
-                <Image src={avatarUrl} alt={displayName} width={48} height={48} unoptimized className="h-12 w-12 object-cover" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-slate-500">{initials}</div>
-              )}
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-slate-900">{displayName}</div>
-              <div className="text-xs text-slate-500">{displayHandle}</div>
-            </div>
-          </Link>
+      <Link
+        href={profileHref}
+        className="mt-6 flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 transition hover:border-slate-200"
+      >
+        <VerifiedAvatar src={me?.avatarUrl ?? null} alt={displayName} initials={me?.name ?? me?.handle ?? 'C'} size={48} isVerified={verified} />
+        <div>
+          <p className="text-sm font-semibold text-slate-900">{displayName}</p>
+          <p className="text-xs text-slate-500">{displayHandle}</p>
+        </div>
+      </Link>
 
-          <nav className="mt-6 space-y-1">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon
-              const content = (
-                <div className="flex flex-1 items-center gap-3">
-                  <span className="text-lg text-slate-400">
-                    <Icon />
-                  </span>
-                  <div>
-                    <div>{item.label}</div>
-                    {item.description ? <p className="text-xs font-normal text-slate-400">{item.description}</p> : null}
-                  </div>
-                </div>
-              )
+      <nav className="mt-4 flex flex-1 flex-col gap-1">{navContent(PRIMARY_NAV)}</nav>
 
-              if (item.disabled || !item.href) {
-                return (
-                  <span key={item.key} className={navItemClasses(active, item.key, true)}>
-                    {content}
-                  </span>
-                )
-              }
-              return (
-                <Link key={item.key} href={item.href} className={navItemClasses(active, item.key)}>
-                  {content}
-                </Link>
-              )
-            })}
-          </nav>
-
-          <Link
-            href="/chambers"
-            className="mt-5 inline-flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
-          >
-            Browse Chambers
-          </Link>
-        </section>
+      <div className="mt-auto w-full">
+        {isSuperAdmin ? (
+          <div className="border-t border-slate-200 pt-6">
+            <p className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Admin</p>
+            <nav className="mt-2 flex flex-col gap-1">{navContent(ADMIN_NAV)}</nav>
+          </div>
+        ) : null}
       </div>
     </aside>
   )

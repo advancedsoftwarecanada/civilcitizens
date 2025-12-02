@@ -42,6 +42,8 @@ function normalizeCommentNode(input: any): ApiComment {
       handle: String(input?.author?.handle ?? ''),
       name: input?.author?.name ?? null,
       avatarUrl: input?.author?.avatarUrl ?? null,
+      isPremium: Boolean(input?.author?.isPremium ?? input?.author?.isVerified),
+      isVerified: Boolean(input?.author?.isVerified ?? input?.author?.isPremium),
     },
     replies: normalizedReplies,
   }
