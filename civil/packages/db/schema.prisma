@@ -38,6 +38,19 @@ model User {
   premiumRenewsAt DateTime?
   premiumCanceledAt DateTime?
   premiumCancellationReason String?
+  billingEmail    String?
+  billingFirstName String?
+  billingLastName String?
+  billingCompanyName String?
+  billingPhone    String?
+  billingCountry  String?
+  billingState    String?
+  billingCity     String?
+  billingAddress1 String?
+  billingAddress2 String?
+  billingPostalCode String?
+  billingTaxId    String?
+  billingNotes    String?
   stripeCustomerId String?   @unique
   stripeSubscriptionId String? @unique
   stripePriceId     String?

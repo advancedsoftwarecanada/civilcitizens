@@ -1,15 +1,33 @@
 "use client"
 
 import Image from 'next/image'
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../_components/Sidebar'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { buildApiUrl } from '../../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../../_lib/me'
 import DashboardShell from '../../_components/DashboardShell'
+import { CheckoutModal, type CheckoutSessionConfig } from './CheckoutModal'
+import { ManageSubscriptionModal } from './ManageSubscriptionModal'
 
 const DEFAULT_RETURN_URL = 'https://app.civilcitizens.dev/settings/billing'
+
+type BillingProfile = {
+  firstName: string
+  lastName: string
+  companyName: string
+  email: string
+  phone: string
+  country: string
+  state: string
+  city: string
+  address1: string
+  address2: string
+  postalCode: string
+  taxId: string
+  notes: string
+}
 
 type BillingSummary = {
   stripeEnabled: boolean
@@ -19,7 +37,44 @@ type BillingSummary = {
   premiumRenewsAt: string | null
   businessCount: number
   businessLimit: number
+  billingProfile: BillingProfile
+  billingProfileComplete: boolean
+  billingProfileMissing: Array<keyof BillingProfile>
 }
+
+const EMPTY_BILLING_PROFILE: BillingProfile = {
+  firstName: '',
+  lastName: '',
+  companyName: '',
+  email: '',
+  phone: '',
+  country: 'CA',
+  state: '',
+  city: '',
+  address1: '',
+  address2: '',
+  postalCode: '',
+  taxId: '',
+  notes: '',
+}
+
+const BILLING_REQUIRED_FIELDS: Array<keyof BillingProfile> = [
+  'firstName',
+  'lastName',
+  'email',
+  'country',
+  'state',
+  'city',
+  'address1',
+  'postalCode',
+]
+
+const COUNTRY_OPTIONS = [
+  { code: 'CA', label: 'Canada' },
+  { code: 'US', label: 'United States' },
+  { code: 'GB', label: 'United Kingdom' },
+  { code: 'AU', label: 'Australia' },
+]
 
 type BusinessStatus = 'DRAFT' | 'ACTIVE' | 'SUSPENDED' | 'CANCELED'
 
@@ -57,29 +112,11 @@ const BUSINESS_STATUS_BADGE: Record<BusinessStatus, string> = {
   CANCELED: 'bg-rose-100 text-rose-700',
 }
 
-const PREMIUM_STATUS_LABELS: Record<string, string> = {
-  NONE: 'Unverified user',
-}
-
 function formatMonthYear(iso?: string | null) {
   if (!iso) return ''
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
-}
-
-function formatStatusLabel(value?: string | null) {
-  if (!value) return 'Unknown'
-  const normalized = value.toUpperCase()
-  if (PREMIUM_STATUS_LABELS[normalized]) {
-    return PREMIUM_STATUS_LABELS[normalized]
-  }
-  return normalized
-    .toLowerCase()
-    .replace(/_/g, ' ')
-    .split(' ')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
 }
 
 export default function BillingSettingsPage() {
@@ -91,6 +128,13 @@ export default function BillingSettingsPage() {
   const [bizForm, setBizForm] = useState<BusinessFormState>({ name: '', slug: '', description: '' })
   const [bizError, setBizError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [checkoutSession, setCheckoutSession] = useState<CheckoutSessionConfig | null>(null)
+  const [manageModalOpen, setManageModalOpen] = useState(false)
+  const [profileForm, setProfileForm] = useState<BillingProfile>(EMPTY_BILLING_PROFILE)
+  const [profileDirty, setProfileDirty] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [shippingSameAsBilling, setShippingSameAsBilling] = useState(true)
 
   const billingReturnUrl = useMemo(() => {
     if (typeof window === 'undefined') return DEFAULT_RETURN_URL
@@ -184,6 +228,17 @@ export default function BillingSettingsPage() {
     }
   }, [handleUnauthorized, loadBusinesses, loadSummary])
 
+  useEffect(() => {
+    if (!summary?.billingProfile || profileDirty) {
+      return
+    }
+    setProfileForm({
+      ...EMPTY_BILLING_PROFILE,
+      ...summary.billingProfile,
+      country: summary.billingProfile.country || 'CA',
+    })
+  }, [profileDirty, summary])
+
   const refreshBilling = useCallback(async () => {
     if (!token) return
     try {
@@ -193,135 +248,197 @@ export default function BillingSettingsPage() {
     }
   }, [loadBusinesses, loadSummary, token])
 
-  const handlePremiumCheckout = useCallback(async () => {
-    if (!token) return
-    if (!summary?.stripeEnabled) {
-      pushToast('Billing is not available in this environment.', 'warning', 5000)
-      return
-    }
-    try {
-      setPendingAction('premium-checkout')
-      const payload = {
-        successUrl: `${billingReturnUrl}?result=premium_success`,
-        cancelUrl: `${billingReturnUrl}?result=premium_cancel`,
-      }
-      const res = await fetch(buildApiUrl('/billing/premium/checkout'), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      })
-      if (res.status === 401) {
+  const scrollToBillingProfile = useCallback(() => {
+    if (typeof document === 'undefined') return
+    const section = document.getElementById('billing-profile')
+    section?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])
+
+  const handleProfileFieldChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const field = event.target.name as keyof BillingProfile
+      const value = event.target.value
+      setProfileForm((prev) => ({
+        ...prev,
+        [field]: value,
+      }))
+      setProfileDirty(true)
+      setProfileError(null)
+    },
+    [],
+  )
+
+  const handleProfileSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      if (!token) {
         handleUnauthorized()
         return
       }
-      if (!res.ok) {
-        const payload = await res.json().catch(() => null)
-        const message = typeof payload?.error === 'string' ? payload.error : 'Unable to start checkout.'
-        pushToast(message, 'error', 6000)
-        return
-      }
-      const data = await res.json().catch(() => null)
-      if (data?.checkoutUrl) {
-        window.location.href = data.checkoutUrl
-        return
-      }
-      pushToast('Checkout session missing URL.', 'error', 6000)
-    } catch (err) {
-      console.error('Premium checkout failed', err)
-      pushToast('Unable to start checkout. Please try again.', 'error', 6000)
-    } finally {
-      setPendingAction(null)
-    }
-  }, [billingReturnUrl, handleUnauthorized, summary?.stripeEnabled, token])
-
-  const handlePremiumPortal = useCallback(async () => {
-    if (!token) return
-    if (!summary?.stripeEnabled) {
-      pushToast('Billing is not available in this environment.', 'warning', 5000)
-      return
-    }
-    try {
-      setPendingAction('premium-portal')
-      const res = await fetch(buildApiUrl('/billing/portal'), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ returnUrl: billingReturnUrl }),
-      })
-      if (res.status === 401) {
-        handleUnauthorized()
-        return
-      }
-      if (!res.ok) {
-        const payload = await res.json().catch(() => null)
-        const message = typeof payload?.error === 'string' ? payload.error : 'Unable to open billing portal.'
-        pushToast(message, 'error', 6000)
-        return
-      }
-      const data = await res.json().catch(() => null)
-      if (data?.portalUrl) {
-        window.location.href = data.portalUrl
-        return
-      }
-      pushToast('Billing portal missing URL.', 'error', 6000)
-    } catch (err) {
-      console.error('Billing portal failed', err)
-      pushToast('Unable to open billing portal. Please try again.', 'error', 6000)
-    } finally {
-      setPendingAction(null)
-    }
-  }, [billingReturnUrl, handleUnauthorized, summary?.stripeEnabled, token])
-
-  const handleBusinessCheckout = useCallback(
-    async (businessId: string) => {
-      if (!token) return
-      if (!summary?.stripeEnabled) {
-        pushToast('Billing is not available in this environment.', 'warning', 5000)
-        return
-      }
+      setProfileSaving(true)
+      setProfileError(null)
       try {
-        setPendingAction(`biz-checkout-${businessId}`)
         const payload = {
-          successUrl: `${billingReturnUrl}?result=business_success&business=${businessId}`,
-          cancelUrl: `${billingReturnUrl}?result=business_cancel&business=${businessId}`,
+          ...profileForm,
+          country: profileForm.country.trim().toUpperCase(),
         }
-        const res = await fetch(buildApiUrl(`/businesses/${businessId}/checkout`), {
-          method: 'POST',
+        const res = await fetch(buildApiUrl('/billing/profile'), {
+          method: 'PUT',
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(payload),
         })
+        const data = await res.json().catch(() => null)
+        if (res.status === 401) {
+          handleUnauthorized()
+          return
+        }
+        if (!res.ok || !data?.profile) {
+          const message = typeof data?.error === 'string' ? data.error : 'Unable to save billing details.'
+          setProfileError(message)
+          return
+        }
+        setProfileForm({
+          ...EMPTY_BILLING_PROFILE,
+          ...data.profile,
+        })
+        setProfileDirty(false)
+        setSummary((prev) =>
+          prev
+            ? {
+                ...prev,
+                billingProfile: data.profile,
+                billingProfileComplete: Boolean(data.complete),
+                billingProfileMissing: Array.isArray(data.missingFields) ? data.missingFields : [],
+              }
+            : prev,
+        )
+        pushToast('Billing details saved.', 'success', 5000)
+      } catch (err) {
+        console.error('Unable to save billing profile', err)
+        setProfileError('Unable to save billing details. Please try again.')
+      } finally {
+        setProfileSaving(false)
+      }
+    },
+    [handleUnauthorized, profileForm, token],
+  )
+
+  const handleProfileReset = useCallback(() => {
+    const source = summary?.billingProfile ?? EMPTY_BILLING_PROFILE
+    setProfileForm({
+      ...EMPTY_BILLING_PROFILE,
+      ...source,
+    })
+    setProfileDirty(false)
+    setProfileError(null)
+  }, [summary])
+
+  const handleShippingToggle = useCallback(() => {
+    setShippingSameAsBilling((prev) => !prev)
+  }, [])
+
+  const startCheckout = useCallback(
+    async (mode: 'premium' | 'business', business?: BusinessSummary | null) => {
+      if (!token) return
+      if (!summary?.stripeEnabled) {
+        pushToast('Billing is not available in this environment.', 'warning', 5000)
+        return
+      }
+
+      const actionKey = mode === 'premium' ? 'premium-checkout' : `biz-checkout-${business?.id ?? 'unknown'}`
+      try {
+        setPendingAction(actionKey)
+        const res = await fetch(buildApiUrl('/billing/setup-intent'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(business ? { businessId: business.id } : {}),
+        })
+        const payload = (await res.json().catch(() => null)) as {
+          clientSecret?: string | null
+          publishableKey?: string | null
+          error?: string
+        } | null
         if (res.status === 401) {
           handleUnauthorized()
           return
         }
         if (!res.ok) {
-          const payload = await res.json().catch(() => null)
-          const message = typeof payload?.error === 'string' ? payload.error : 'Unable to start business checkout.'
+          if (payload?.error === 'billing_profile_incomplete') {
+            pushToast('Add your billing information before continuing to checkout.', 'warning', 6000)
+            scrollToBillingProfile()
+            return
+          }
+          const message = typeof payload?.error === 'string' ? payload.error : 'Unable to prepare checkout.'
           pushToast(message, 'error', 6000)
           return
         }
-        const data = await res.json().catch(() => null)
-        if (data?.checkoutUrl) {
-          window.location.href = data.checkoutUrl
+        if (!payload?.clientSecret || !payload?.publishableKey) {
+          pushToast('Stripe did not return a checkout client secret.', 'error', 6000)
           return
         }
-        pushToast('Checkout session missing URL.', 'error', 6000)
+        setCheckoutSession({
+          mode,
+          business: business ? { id: business.id, name: business.name } : null,
+          clientSecret: payload.clientSecret,
+          publishableKey: payload.publishableKey,
+        })
       } catch (err) {
-        console.error('Business checkout failed', err)
+        console.error('Unable to start checkout', err)
         pushToast('Unable to start checkout. Please try again.', 'error', 6000)
       } finally {
         setPendingAction(null)
       }
     },
-    [billingReturnUrl, handleUnauthorized, summary?.stripeEnabled, token],
+    [handleUnauthorized, summary?.stripeEnabled, token, scrollToBillingProfile],
+  )
+
+  const handleCheckoutComplete = useCallback(async () => {
+    await refreshBilling()
+    setCheckoutSession(null)
+  }, [refreshBilling])
+
+  const handlePremiumCheckout = useCallback(() => {
+    if (!summary?.billingProfileComplete) {
+      pushToast('Add your billing information before upgrading.', 'warning', 5000)
+      scrollToBillingProfile()
+      return
+    }
+    void startCheckout('premium', null)
+  }, [scrollToBillingProfile, startCheckout, summary?.billingProfileComplete])
+
+  const handlePremiumManage = useCallback(() => {
+    if (!token) {
+      handleUnauthorized()
+      return
+    }
+    if (!summary?.isPremium) {
+      pushToast('Activate premium before managing your subscription.', 'warning', 5000)
+      return
+    }
+    setManageModalOpen(true)
+  }, [handleUnauthorized, summary?.isPremium, token])
+
+  const handleManageComplete = useCallback(async () => {
+    await refreshBilling()
+    setManageModalOpen(false)
+  }, [refreshBilling])
+
+  const handleBusinessCheckout = useCallback(
+    (business: BusinessSummary) => {
+      if (!summary?.billingProfileComplete) {
+        pushToast('Add your billing information before activating an organization.', 'warning', 5000)
+        scrollToBillingProfile()
+        return
+      }
+      void startCheckout('business', business)
+    },
+    [scrollToBillingProfile, startCheckout, summary?.billingProfileComplete],
   )
 
   const handleBusinessPortal = useCallback(
@@ -422,6 +539,24 @@ export default function BillingSettingsPage() {
   const stripeReady = summary?.stripeEnabled ?? false
   const premiumSince = formatMonthYear(summary?.premiumSince)
   const premiumRenews = formatMonthYear(summary?.premiumRenewsAt)
+  const billingComplete = summary?.billingProfileComplete ?? false
+  const computedProfileMissing = useMemo(() => {
+    return BILLING_REQUIRED_FIELDS.filter((field) => !profileForm[field]?.trim())
+  }, [profileForm])
+  const activeMissingFields = useMemo(() => {
+    const source = profileDirty ? computedProfileMissing : summary?.billingProfileMissing ?? []
+    return new Set(source)
+  }, [computedProfileMissing, profileDirty, summary?.billingProfileMissing])
+  const profileSaveDisabled = profileSaving || !profileDirty || activeMissingFields.size > 0
+  const billingStatusBadge = billingComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+  const billingStatusLabel = billingComplete ? 'Complete' : 'Needs info'
+  const billingStatusMessage = profileDirty
+    ? 'Save your edits to keep billing info current.'
+    : billingComplete
+      ? 'Your billing profile is ready for checkout.'
+      : 'Complete these required details before upgrading.'
+  const billingInputClass = (field: keyof BillingProfile) =>
+    `mt-1 w-full rounded border px-3 py-2 text-sm focus:outline-none ${activeMissingFields.has(field) ? 'border-rose-300 focus:border-rose-500' : 'border-slate-200 focus:border-[var(--cc-primary)]'}`
   const isUnverifiedMember = premiumActive && summary?.premiumStatus === 'NONE'
   const businessSeats = summary?.businessLimit ?? '—'
   const businessUsage = summary ? `${summary.businessCount}/${summary.businessLimit}` : '—'
@@ -459,6 +594,221 @@ export default function BillingSettingsPage() {
         rightRailClassName="space-y-4"
         mainClassName="space-y-6"
       >
+        <section id="billing-profile" className="surface-card px-6 py-5 shadow-subtle">
+          <header className="flex flex-col gap-3 border-b border-slate-100 pb-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Billing information</p>
+              <h1 className="text-lg font-semibold text-slate-900">Billing details</h1>
+              <p className="text-sm text-slate-500">{billingStatusMessage}</p>
+            </div>
+            <span className={`inline-flex w-fit items-center rounded-full px-3 py-1 text-xs font-semibold ${billingStatusBadge}`}>
+              {billingStatusLabel}
+            </span>
+          </header>
+
+          <form onSubmit={handleProfileSubmit} className="mt-4 space-y-5">
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="block text-sm font-medium text-slate-700">
+                First name
+                <input
+                  type="text"
+                  name="firstName"
+                  value={profileForm.firstName}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('firstName')}
+                  placeholder="Alex"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Last name
+                <input
+                  type="text"
+                  name="lastName"
+                  value={profileForm.lastName}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('lastName')}
+                  placeholder="Laurent"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Company (optional)
+                <input
+                  type="text"
+                  name="companyName"
+                  value={profileForm.companyName}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('companyName')}
+                  placeholder="Maple Ventures"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Billing email
+                <input
+                  type="email"
+                  name="email"
+                  value={profileForm.email}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('email')}
+                  placeholder="billing@maple.com"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Phone (optional)
+                <input
+                  type="tel"
+                  name="phone"
+                  value={profileForm.phone}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('phone')}
+                  placeholder="+1 416 555 1234"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Country
+                <select
+                  name="country"
+                  value={profileForm.country}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('country')}
+                  required
+                >
+                  {COUNTRY_OPTIONS.map((country) => (
+                    <option key={country.code} value={country.code}>
+                      {country.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Province / State
+                <input
+                  type="text"
+                  name="state"
+                  value={profileForm.state}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('state')}
+                  placeholder="Ontario"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                City
+                <input
+                  type="text"
+                  name="city"
+                  value={profileForm.city}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('city')}
+                  placeholder="Toronto"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700 md:col-span-2">
+                Address line 1
+                <input
+                  type="text"
+                  name="address1"
+                  value={profileForm.address1}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('address1')}
+                  placeholder="123 King Street W"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700 md:col-span-2">
+                Address line 2 (optional)
+                <input
+                  type="text"
+                  name="address2"
+                  value={profileForm.address2}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('address2')}
+                  placeholder="Suite 1200"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Postal / ZIP code
+                <input
+                  type="text"
+                  name="postalCode"
+                  value={profileForm.postalCode}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('postalCode')}
+                  placeholder="M5H 2N2"
+                  required
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Tax ID (optional)
+                <input
+                  type="text"
+                  name="taxId"
+                  value={profileForm.taxId}
+                  onChange={handleProfileFieldChange}
+                  className={billingInputClass('taxId')}
+                  placeholder="BN 12345"
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700 md:col-span-2">
+                Notes for invoices (optional)
+                <textarea
+                  name="notes"
+                  value={profileForm.notes}
+                  onChange={handleProfileFieldChange}
+                  className={`${billingInputClass('notes')} min-h-[80px] resize-y`}
+                  placeholder="PO numbers, internal cost centres, or reminders for your finance team."
+                />
+              </label>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={shippingSameAsBilling}
+                  onChange={handleShippingToggle}
+                  className="h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
+                />
+                Shipping matches billing
+              </label>
+              <p className="mt-2 text-xs text-slate-500">
+                Shipping addresses are coming soon. Toggle this if you want a reminder that merch or fulfillment should use a different
+                destination later.
+              </p>
+            </div>
+
+            {profileError ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{profileError}</p> : null}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="submit"
+                disabled={profileSaveDisabled}
+                className="rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary)]/90 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {profileSaving ? 'Saving…' : profileDirty ? 'Save billing details' : 'Billing saved'}
+              </button>
+              <button
+                type="button"
+                onClick={handleProfileReset}
+                disabled={profileSaving || !profileDirty}
+                className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Reset
+              </button>
+              <p className="text-xs text-slate-500">
+                {activeMissingFields.size
+                  ? 'Fill the highlighted fields to continue.'
+                  : profileDirty
+                    ? 'Save to sync billing with Stripe before checkout.'
+                    : 'We will reuse these details for every premium or business checkout.'}
+              </p>
+            </div>
+          </form>
+        </section>
+
         <section className="grid gap-4 lg:grid-cols-2">
           <article className="surface-card flex h-full flex-col justify-between gap-5 px-6 py-5 shadow-subtle">
             <div className="space-y-1">
@@ -494,11 +844,10 @@ export default function BillingSettingsPage() {
               {premiumActive ? (
                 <button
                   type="button"
-                  onClick={handlePremiumPortal}
-                  disabled={!stripeReady || pendingAction === 'premium-portal'}
+                  onClick={handlePremiumManage}
                   className="rounded-full border border-slate-200 px-4 py-2 text-[var(--cc-primary)] transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {pendingAction === 'premium-portal' ? 'Opening portal…' : 'Manage subscription'}
+                  Manage subscription
                 </button>
               ) : (
                 <button
@@ -604,7 +953,7 @@ export default function BillingSettingsPage() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => handleBusinessCheckout(biz.id)}
+                            onClick={() => handleBusinessCheckout(biz)}
                             disabled={!stripeReady || pendingAction === `biz-checkout-${biz.id}`}
                             className="rounded-full border border-[var(--cc-primary)] px-4 py-1 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/10 disabled:cursor-not-allowed disabled:opacity-60"
                           >
@@ -681,6 +1030,30 @@ export default function BillingSettingsPage() {
               </form>
             )}
           </section>
+        ) : null}
+        {checkoutSession && token ? (
+          <CheckoutModal
+            session={checkoutSession}
+            token={token}
+            me={me}
+            billingProfile={summary?.billingProfile}
+            onClose={() => setCheckoutSession(null)}
+            onComplete={handleCheckoutComplete}
+          />
+        ) : null}
+        {manageModalOpen && summary && token ? (
+          <ManageSubscriptionModal
+            open={manageModalOpen}
+            token={token}
+            summary={{
+              premiumStatus: summary.premiumStatus,
+              premiumSince: summary.premiumSince,
+              premiumRenewsAt: summary.premiumRenewsAt,
+              isPremium: summary.isPremium,
+            }}
+            onClose={() => setManageModalOpen(false)}
+            onUpdated={handleManageComplete}
+          />
         ) : null}
       </DashboardShell>
     </>

@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { HiOutlineUserCircle, HiOutlineBuildingOffice2, HiOutlineUsers, HiOutlineCreditCard } from 'react-icons/hi2'
+import type { IconType } from 'react-icons'
 import { buildHandleBase, MediaCategory } from '@civil/shared'
 import Sidebar from '../_components/Sidebar'
 import RichTextEditor from '../_components/RichTextEditor'
@@ -110,6 +112,71 @@ const VARIANT_PRIORITY: Record<ProfileMediaCategory, string[]> = {
 }
 const POLL_MAX_ATTEMPTS = 30
 const POLL_DELAY_MS = 3000
+
+const IconCheckCircle = () => (
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-5 w-5">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+    <path d="M8 12.5l2.5 2.5L16 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+const IconCalendar = () => (
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-5 w-5">
+    <rect x="4" y="5.5" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.8" />
+    <path d="M8 3.5v4M16 3.5v4M4 10h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+  </svg>
+)
+
+const IconCreditCard = () => (
+  <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-5 w-5">
+    <rect x="3" y="5.5" width="18" height="13" rx="2" stroke="currentColor" strokeWidth="1.8" />
+    <path d="M3 10.5h18M7 15.5h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+  </svg>
+)
+
+type LauncherLink = {
+  key: string
+  label: string
+  description: string
+  href: string
+  icon: IconType
+  cta?: string
+}
+
+const SETTINGS_LAUNCHER_LINKS: LauncherLink[] = [
+  {
+    key: 'profile',
+    label: 'Profile',
+    description: 'Update your photos, name, bio, and experiences.',
+    href: '#profile-details',
+    icon: HiOutlineUserCircle,
+    cta: 'Edit profile',
+  },
+  {
+    key: 'chambers',
+    label: 'Chambers',
+    description: 'Change your home riding or explore new chambers.',
+    href: '/chambers',
+    icon: HiOutlineBuildingOffice2,
+    cta: 'Open chambers',
+  },
+  {
+    key: 'connections',
+    label: 'Connections',
+    description: 'Review followers, following, and chamber memberships.',
+    href: '#connections-card',
+    icon: HiOutlineUsers,
+    cta: 'View stats',
+  },
+  {
+    key: 'billing',
+    label: 'Billing',
+    description: 'Manage premium, organizations, and payment methods.',
+    href: '/settings/billing',
+    icon: HiOutlineCreditCard,
+    cta: 'Manage billing',
+  },
+]
 
 const syncMediaStateFromProfile = (
   state: MediaSlotState,
@@ -889,6 +956,7 @@ export default function ProfileEditPage() {
   const joinDate = profile?.user?.createdAt ? formatMonthYear(profile.user.createdAt) : ''
   const premiumActive = Boolean(viewer?.isPremium)
   const premiumRenews = viewer?.premiumRenewsAt ? formatMonthYear(viewer.premiumRenewsAt) : ''
+  const premiumRenewLabel = premiumRenews ? `Renews ${premiumRenews}` : 'Auto-renews monthly'
 
   const displayInitials = useMemo(() => {
     return (
@@ -906,18 +974,47 @@ export default function ProfileEditPage() {
     <div className="min-h-screen">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
         <div className="mx-auto max-w-screen-lg px-4">
-          <Sidebar me={viewer ?? undefined} active="profile" />
+          <Sidebar me={viewer ?? undefined} active="account" />
         </div>
       </div>
 
       <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pr-0 xl:pl-12 xl:pr-0">
         <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
-          <Sidebar me={viewer ?? undefined} active="profile" />
+          <Sidebar me={viewer ?? undefined} active="account" />
 
           <main className="space-y-6 pt-8">
+            <section className="surface-card p-6 shadow-subtle">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Shortcuts</p>
+                <h1 className="text-lg font-semibold text-slate-900">Settings launcher</h1>
+                <p className="text-sm text-slate-500">Tap a tile to jump directly into the area you need most.</p>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {SETTINGS_LAUNCHER_LINKS.map((item) => {
+                  const Icon = item.icon
+                  return (
+                    <Link
+                      key={item.key}
+                      href={item.href}
+                      className="group flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--cc-primary)]/40 hover:bg-white"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-[var(--cc-primary)] shadow-inner">
+                          <Icon className="h-5 w-5" />
+                        </span>
+                        <span className="text-sm font-semibold text-slate-900">{item.label}</span>
+                      </div>
+                      <p className="text-xs text-slate-500">{item.description}</p>
+                      <span className="text-xs font-semibold text-[var(--cc-primary)] group-hover:underline">{item.cta ?? 'Open'}</span>
+                    </Link>
+                  )
+                })}
+              </div>
+            </section>
+
             {viewer ? (
               <section className="surface-card p-6 shadow-subtle">
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-5">
                   <div className="space-y-1">
                     <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Membership</p>
                     <h2 className="text-lg font-semibold text-slate-900">
@@ -927,29 +1024,87 @@ export default function ProfileEditPage() {
                       Premium unlocks trust badges, early business tools, and concierge support when you need help.
                     </p>
                   </div>
-                  <div className="flex flex-col items-start gap-2 sm:items-end">
-                    {premiumActive ? (
-                      <>
-                        <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />Active plan
-                        </span>
-                        {premiumRenews ? <p className="text-xs text-slate-500">Renews {premiumRenews}</p> : null}
-                        <Link
-                          href="/settings/billing"
-                          className="text-sm font-semibold text-[var(--cc-primary)] underline-offset-4 hover:underline"
-                        >
-                          Manage billing
-                        </Link>
-                      </>
-                    ) : (
+
+                  {premiumActive ? (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4 shadow-sm">
+                        <div className="flex items-center gap-3 text-sm font-semibold text-emerald-800">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-emerald-600 shadow-inner">
+                            <IconCheckCircle />
+                          </span>
+                          Plan status
+                        </div>
+                        <p className="mt-3 text-base font-semibold text-emerald-900">Active plan</p>
+                        <p className="text-xs text-emerald-700">Maple badge is live across your profile.</p>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 shadow-sm">
+                        <div className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-600 shadow-inner">
+                            <IconCalendar />
+                          </span>
+                          Renewal
+                        </div>
+                        <p className="mt-3 text-base font-semibold text-slate-900">{premiumRenewLabel}</p>
+                        <p className="text-xs text-slate-500">Update payment details anytime.</p>
+                      </div>
+
                       <Link
                         href="/settings/billing"
-                        className="inline-flex items-center rounded-full border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/10"
+                        className="group rounded-2xl border border-[var(--cc-primary)]/30 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--cc-primary)]/60"
                       >
-                        Upgrade for $9.99/month
+                        <div className="flex items-center gap-3 text-sm font-semibold text-[var(--cc-primary)]">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]">
+                            <IconCreditCard />
+                          </span>
+                          Billing
+                        </div>
+                        <p className="mt-3 text-base font-semibold text-slate-900">Manage subscription</p>
+                        <p className="text-xs font-semibold text-[var(--cc-primary)] group-hover:underline">Open billing</p>
                       </Link>
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 shadow-sm">
+                        <div className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-inner">
+                            <IconCheckCircle />
+                          </span>
+                          Plan status
+                        </div>
+                        <p className="mt-3 text-base font-semibold text-slate-900">Free member</p>
+                        <p className="text-xs text-slate-500">Unlock premium to add verification.</p>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 shadow-sm">
+                        <div className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-500 shadow-inner">
+                            <IconCalendar />
+                          </span>
+                          Why upgrade?
+                        </div>
+                        <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-slate-500">
+                          <li>Trusted maple badge on posts.</li>
+                          <li>Organization + hiring pages.</li>
+                          <li>Concierge moderation support.</li>
+                        </ul>
+                      </div>
+
+                      <Link
+                        href="/settings/billing"
+                        className="rounded-2xl border border-[var(--cc-primary)] bg-[var(--cc-primary)]/5 p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:bg-[var(--cc-primary)]/10"
+                      >
+                        <div className="flex items-center gap-3 text-sm font-semibold text-[var(--cc-primary)]">
+                          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-[var(--cc-primary)] shadow-inner">
+                            <IconCreditCard />
+                          </span>
+                          Upgrade now
+                        </div>
+                        <p className="mt-3 text-base font-semibold text-slate-900">$9.99 / month</p>
+                        <p className="text-xs font-semibold text-[var(--cc-primary)]">Tap to start checkout</p>
+                      </Link>
+                    </div>
+                  )}
                 </div>
               </section>
             ) : null}
@@ -957,7 +1112,7 @@ export default function ProfileEditPage() {
               <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
             ) : (
               <form onSubmit={onSubmit} className="space-y-4">
-                <section className="surface-card p-6 shadow-subtle">
+                <section id="profile-details" className="surface-card p-6 shadow-subtle">
                   <header className="mb-4">
                     <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
                     <p className="text-sm text-gray-500">Upload a cover and profile photo to personalize your profile.</p>
@@ -1215,7 +1370,7 @@ export default function ProfileEditPage() {
 
         <aside className="hidden pt-8 lg:block">
           <div className="sticky top-8 space-y-4">
-            <section className="surface-card space-y-4 p-5 shadow-subtle">
+            <section id="connections-card" className="surface-card space-y-4 p-5 shadow-subtle">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Account</p>
                 <h2 className="text-base font-semibold text-slate-900">{profile?.user?.name || profile?.user?.handle || 'Your account'}</h2>
