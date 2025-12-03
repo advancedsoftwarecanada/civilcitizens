@@ -9,7 +9,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
 import { prisma } from '@civil/db'
-import { Prisma, MediaCategory, PremiumStatus, BusinessStatus, BusinessRole, StripeWebhookStatus } from '@prisma/client'
+import { Prisma, MediaCategory, PremiumStatus, BusinessStatus, StripeWebhookStatus } from '@prisma/client'
 import {
   CreatePostInput,
   CreateCommentInput,
@@ -68,6 +68,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || ''
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || ''
 const STRIPE_PRICE_PREMIUM = process.env.STRIPE_PRICE_PREMIUM_MONTHLY || ''
 const STRIPE_PRICE_BUSINESS = process.env.STRIPE_PRICE_BUSINESS_MONTHLY || ''
+const STRIPE_PUBLISHABLE_KEY = (process.env.STRIPE_PUBLIC_KEY || process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '').trim()
 const BILLING_PORTAL_RETURN_FALLBACK = process.env.BILLING_RETURN_URL || 'http://localhost:3001/settings/billing'
 const MAX_BUSINESSES_PER_USER = 5
 const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
@@ -129,19 +130,16 @@ const ADMIN_CHECKLIST_GROUPS: AdminChecklistGroupDefinition[] = [
     title: 'Stripe configuration',
     description: 'Keys required for premium and business billing.',
     items: [
-      { key: 'STRIPE_SECRET_KEY', label: 'Secret key' },
-      { key: 'STRIPE_WEBHOOK_SECRET', label: 'Webhook secret' },
-      { key: 'STRIPE_PRICE_PREMIUM_MONTHLY', label: 'Premium price ID' },
-      { key: 'STRIPE_PRICE_BUSINESS_MONTHLY', label: 'Business price ID' },
+      { key: 'STRIPE_SECRET_KEY', label: 'Secret key', resolve: () => Boolean(STRIPE_SECRET_KEY) },
+      { key: 'STRIPE_WEBHOOK_SECRET', label: 'Webhook secret', resolve: () => Boolean(STRIPE_WEBHOOK_SECRET) },
+      { key: 'STRIPE_PRICE_PREMIUM_MONTHLY', label: 'Premium price ID', resolve: () => Boolean(STRIPE_PRICE_PREMIUM) },
+      { key: 'STRIPE_PRICE_BUSINESS_MONTHLY', label: 'Business price ID', resolve: () => Boolean(STRIPE_PRICE_BUSINESS) },
       {
         key: 'STRIPE_PUBLIC_KEY',
         label: 'Publishable key',
         optional: true,
         hint: 'Accepts STRIPE_PUBLIC_KEY or NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY.',
-        resolve: () => {
-          const publishable = process.env.STRIPE_PUBLIC_KEY || process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-          return Boolean(publishable && publishable.trim())
-        },
+        resolve: () => Boolean(STRIPE_PUBLISHABLE_KEY),
       },
       { key: 'BILLING_RETURN_URL', label: 'Billing portal return URL', optional: true },
     ],
@@ -386,10 +384,6 @@ function extensionForMime(mime: string) {
 
 function buildOriginalObjectKey(category: MediaCategory, userId: string, assetId: string, extension: string) {
   return `raw/${category}/${userId}/${assetId}/original.${extension}`
-}
-
-function buildPublicUrl(key: string) {
-  return `${MEDIA_PUBLIC_BASE_URL}/${key}`
 }
 
 async function readRequestBuffer(req: FastifyRequest): Promise<Buffer> {
@@ -2548,10 +2542,197 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
   }),
 )
 
-const PremiumCheckoutSchema = z.object({
-  successUrl: z.string().url(),
-  cancelUrl: z.string().url(),
+const BillingDetailsSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    email: z.string().email().optional(),
+    phone: z.string().trim().max(50).optional(),
+    address: z
+      .object({
+        line1: z.string().trim().max(200).optional(),
+        line2: z.string().trim().max(200).optional(),
+        city: z.string().trim().max(120).optional(),
+        state: z.string().trim().max(120).optional(),
+        postalCode: z.string().trim().max(40).optional(),
+        country: z.string().trim().length(2).optional(),
+      })
+      .partial()
+      .optional(),
+  })
+  .partial()
+
+const BillingProfileSchema = z.object({
+  firstName: z.string().trim().min(1).max(120),
+  lastName: z.string().trim().min(1).max(120),
+  companyName: z.string().trim().max(160).optional().nullable(),
+  email: z.string().trim().min(1).email(),
+  phone: z.string().trim().max(50).optional().nullable(),
+  country: z.string().trim().min(2).max(2),
+  state: z.string().trim().min(1).max(120),
+  city: z.string().trim().min(1).max(120),
+  address1: z.string().trim().min(1).max(200),
+  address2: z.string().trim().max(200).optional().nullable(),
+  postalCode: z.string().trim().min(2).max(40),
+  taxId: z.string().trim().max(80).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
 })
+
+type BillingProfileInput = z.infer<typeof BillingProfileSchema>
+
+type BillingProfileResponse = {
+  firstName: string
+  lastName: string
+  companyName: string
+  email: string
+  phone: string
+  country: string
+  state: string
+  city: string
+  address1: string
+  address2: string
+  postalCode: string
+  taxId: string
+  notes: string
+}
+
+const BILLING_PROFILE_REQUIRED_FIELDS: Array<keyof BillingProfileResponse> = [
+  'firstName',
+  'lastName',
+  'email',
+  'country',
+  'state',
+  'city',
+  'address1',
+  'postalCode',
+]
+
+const BILLING_PROFILE_SELECT = {
+  email: true,
+  billingEmail: true,
+  billingFirstName: true,
+  billingLastName: true,
+  billingCompanyName: true,
+  billingPhone: true,
+  billingCountry: true,
+  billingState: true,
+  billingCity: true,
+  billingAddress1: true,
+  billingAddress2: true,
+  billingPostalCode: true,
+  billingTaxId: true,
+  billingNotes: true,
+} as const
+
+const EMPTY_BILLING_PROFILE: BillingProfileResponse = {
+  firstName: '',
+  lastName: '',
+  companyName: '',
+  email: '',
+  phone: '',
+  country: '',
+  state: '',
+  city: '',
+  address1: '',
+  address2: '',
+  postalCode: '',
+  taxId: '',
+  notes: '',
+}
+
+function trimOrEmpty(value?: string | null) {
+  if (!value) return ''
+  const trimmed = value.trim()
+  return trimmed.length ? trimmed : ''
+}
+
+function normalizeNullable(value?: string | null) {
+  const trimmed = trimOrEmpty(value)
+  return trimmed.length ? trimmed : null
+}
+
+function buildBillingProfileResponse(user: { email?: string | null } & Record<string, unknown>): BillingProfileResponse {
+  return {
+    firstName: trimOrEmpty((user as any).billingFirstName),
+    lastName: trimOrEmpty((user as any).billingLastName),
+    companyName: trimOrEmpty((user as any).billingCompanyName),
+    email: trimOrEmpty((user as any).billingEmail ?? (user as any).email),
+    phone: trimOrEmpty((user as any).billingPhone),
+    country: trimOrEmpty((user as any).billingCountry).toUpperCase(),
+    state: trimOrEmpty((user as any).billingState),
+    city: trimOrEmpty((user as any).billingCity),
+    address1: trimOrEmpty((user as any).billingAddress1),
+    address2: trimOrEmpty((user as any).billingAddress2),
+    postalCode: trimOrEmpty((user as any).billingPostalCode),
+    taxId: trimOrEmpty((user as any).billingTaxId),
+    notes: trimOrEmpty((user as any).billingNotes),
+  }
+}
+
+function billingProfileIsComplete(profile: BillingProfileResponse) {
+  return BILLING_PROFILE_REQUIRED_FIELDS.every((field) => Boolean(profile[field].trim()))
+}
+
+function missingBillingProfileFields(profile: BillingProfileResponse) {
+  return BILLING_PROFILE_REQUIRED_FIELDS.filter((field) => !profile[field].trim())
+}
+
+function buildBillingProfileIncompleteError(profile: BillingProfileResponse) {
+  return {
+    error: 'billing_profile_incomplete',
+    missingFields: missingBillingProfileFields(profile),
+  }
+}
+
+function mapProfileInputToUserData(input: BillingProfileInput) {
+  return {
+    billingEmail: input.email.trim().toLowerCase(),
+    billingFirstName: input.firstName.trim(),
+    billingLastName: input.lastName.trim(),
+    billingCompanyName: normalizeNullable(input.companyName),
+    billingPhone: normalizeNullable(input.phone),
+    billingCountry: input.country.trim().toUpperCase(),
+    billingState: input.state.trim(),
+    billingCity: input.city.trim(),
+    billingAddress1: input.address1.trim(),
+    billingAddress2: normalizeNullable(input.address2),
+    billingPostalCode: input.postalCode.trim(),
+    billingTaxId: normalizeNullable(input.taxId),
+    billingNotes: normalizeNullable(input.notes),
+  }
+}
+
+function convertProfileToBillingDetails(profile: BillingProfileResponse) {
+  const name = `${profile.firstName} ${profile.lastName}`.trim() || profile.companyName || ''
+  const addressAvailable =
+    profile.address1 || profile.address2 || profile.city || profile.state || profile.postalCode || profile.country
+  return {
+    name: name || undefined,
+    email: profile.email || undefined,
+    phone: profile.phone || undefined,
+    address: addressAvailable
+      ? {
+          line1: profile.address1 || undefined,
+          line2: profile.address2 || undefined,
+          city: profile.city || undefined,
+          state: profile.state || undefined,
+          postal_code: profile.postalCode || undefined,
+          country: profile.country || undefined,
+        }
+      : undefined,
+  }
+}
+
+const CheckoutFinalizeSchema = z.object({
+  subscriptionId: z.string().trim().min(1),
+})
+
+const CheckoutPaymentSchema = z.object({
+  paymentMethodId: z.string().trim().min(1),
+  setupIntentId: z.string().trim().min(1).optional(),
+  billingDetails: BillingDetailsSchema.optional(),
+})
+
+const PremiumCheckoutSchema = z.union([CheckoutPaymentSchema, CheckoutFinalizeSchema])
 
 const PortalSessionSchema = z.object({
   returnUrl: z.string().url().optional(),
@@ -2571,6 +2752,81 @@ const CreateBusinessInput = z.object({
 
 const BusinessCheckoutSchema = PremiumCheckoutSchema
 const BusinessParam = z.object({ businessId: z.string().cuid() })
+const SetupIntentSchema = z.object({ businessId: z.string().cuid().optional() })
+
+class PaymentMethodOwnershipError extends Error {
+  statusCode: number
+  constructor(message: string, statusCode = 400) {
+    super(message)
+    this.name = 'PaymentMethodOwnershipError'
+    this.statusCode = statusCode
+  }
+}
+
+function isStripeError(error: unknown): error is Stripe.errors.StripeError & { code?: string } {
+  return Boolean(error) && typeof error === 'object' && 'type' in (error as Record<string, unknown>)
+}
+
+function escapeStripeSearch(value: string) {
+  return value.replace(/["\\]/g, '\\$&')
+}
+
+async function findStripeCustomerByEmail(stripe: Stripe, email: string) {
+  const trimmed = email.trim()
+  if (!trimmed) return null
+  try {
+    const search = await stripe.customers.search({ query: `email:"${escapeStripeSearch(trimmed)}"`, limit: 1 })
+    if (search.data.length > 0) {
+      return search.data[0] ?? null
+    }
+  } catch (error) {
+    if (!isStripeError(error)) {
+      throw error
+    }
+    // Search may be disabled on some accounts; fall back to list below.
+  }
+  const list = await stripe.customers.list({ email: trimmed, limit: 1 })
+  return list.data.length > 0 ? list.data[0] ?? null : null
+}
+
+async function ensurePaymentMethodForCustomer(stripe: Stripe, customerId: string, paymentMethodId: string) {
+  try {
+    await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId })
+    return
+  } catch (error) {
+    if (isStripeError(error)) {
+      const message = error.message ?? ''
+      if (error.code === 'resource_already_exists' || message.includes('has already been attached')) {
+        return
+      }
+      if (message.includes('may not be used again')) {
+        throw new PaymentMethodOwnershipError(
+          'Stripe cannot reuse this payment method. Re-enter your card details and try again.',
+          400,
+        )
+      }
+    }
+
+    const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId)
+    const methodCustomer =
+      typeof paymentMethod.customer === 'string'
+        ? paymentMethod.customer
+        : paymentMethod.customer?.id ?? null
+
+    if (!methodCustomer) {
+      throw error
+    }
+
+    if (methodCustomer === customerId) {
+      return
+    }
+
+    throw new PaymentMethodOwnershipError(
+      'This card is already linked to another Civil Citizens account. Please use a different card.',
+      409,
+    )
+  }
+}
 
 const BUSINESS_SUMMARY_SELECT = {
   id: true,
@@ -2610,12 +2866,12 @@ async function ensureStripeCustomer(userId: string) {
     where: { id: userId },
     select: {
       id: true,
-      email: true,
       name: true,
       stripeCustomerId: true,
       premiumStatus: true,
       premiumSince: true,
       premiumRenewsAt: true,
+      ...BILLING_PROFILE_SELECT,
     },
   })
   if (!user) throw new Error('user_not_found')
@@ -2623,6 +2879,13 @@ async function ensureStripeCustomer(userId: string) {
     return { customerId: user.stripeCustomerId, user }
   }
   const stripe = getStripeClient()
+  if (user.email) {
+    const existing = await findStripeCustomerByEmail(stripe, user.email)
+    if (existing) {
+      await prisma.user.update({ where: { id: userId }, data: { stripeCustomerId: existing.id } })
+      return { customerId: existing.id, user: { ...user, stripeCustomerId: existing.id } }
+    }
+  }
   const customer = await stripe.customers.create({
     email: user.email,
     name: user.name ?? undefined,
@@ -2641,6 +2904,27 @@ function ensurePriceAvailable(priceId: string | undefined, label: string) {
     throw Object.assign(new Error(`${label}_price_missing`), { statusCode: 503 })
   }
   return priceId
+}
+
+function resolveSubscriptionInvoice(subscription: Stripe.Subscription) {
+  const invoiceField = subscription.latest_invoice
+  const invoice = typeof invoiceField === 'object' && invoiceField ? (invoiceField as Stripe.Invoice) : null
+  const paymentIntentField = invoice?.payment_intent
+  const paymentIntent =
+    paymentIntentField && typeof paymentIntentField === 'object'
+      ? (paymentIntentField as Stripe.PaymentIntent)
+      : null
+  return { invoice, paymentIntent }
+}
+
+function paymentIntentRequiresAction(intent: Stripe.PaymentIntent | null | undefined) {
+  if (!intent) return false
+  return intent.status === 'requires_action' || intent.status === 'requires_confirmation'
+}
+
+function paymentIntentSucceeded(intent: Stripe.PaymentIntent | null | undefined) {
+  if (!intent) return false
+  return intent.status === 'succeeded' || intent.status === 'processing'
 }
 
 function extractStripeIdentifiers(event: Stripe.Event) {
@@ -2889,11 +3173,15 @@ app.get('/billing/summary', async (req: FastifyRequest, reply: FastifyReply) => 
       premiumStatus: true,
       premiumSince: true,
       premiumRenewsAt: true,
+      ...BILLING_PROFILE_SELECT,
     },
   })
   if (!user) return reply.code(404).send({ error: 'user_not_found' })
 
   const businessCount = await prisma.business.count({ where: { ownerId: userId } })
+  const billingProfile = buildBillingProfileResponse(user)
+  const billingProfileMissing = missingBillingProfileFields(billingProfile)
+  const billingProfileComplete = billingProfileMissing.length === 0
   return reply.send({
     stripeEnabled: isStripeConfigured(),
     premiumStatus: user.premiumStatus,
@@ -2902,6 +3190,72 @@ app.get('/billing/summary', async (req: FastifyRequest, reply: FastifyReply) => 
     premiumRenewsAt: user.premiumRenewsAt ?? null,
     businessCount,
     businessLimit: MAX_BUSINESSES_PER_USER,
+    billingProfile,
+    billingProfileComplete,
+    billingProfileMissing,
+  })
+})
+
+app.put('/billing/profile', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const body = BillingProfileSchema.safeParse(req.body ?? {})
+  if (!body.success) {
+    return reply.code(400).send({ error: body.error.flatten() })
+  }
+
+  const data = mapProfileInputToUserData(body.data)
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data,
+    select: BILLING_PROFILE_SELECT,
+  })
+
+  const profile = buildBillingProfileResponse(user)
+  return reply.send({
+    profile,
+    complete: billingProfileIsComplete(profile),
+    missingFields: missingBillingProfileFields(profile),
+  })
+})
+
+app.post('/billing/setup-intent', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+  if (!STRIPE_PUBLISHABLE_KEY) return reply.code(503).send({ error: 'publishable_key_missing' })
+
+  const body = SetupIntentSchema.safeParse(req.body ?? {})
+  if (!body.success) {
+    return reply.code(400).send({ error: body.error.flatten() })
+  }
+
+  if (body.data.businessId) {
+    const business = await loadOwnedBusiness(userId, body.data.businessId)
+    if (!business) return reply.code(404).send({ error: 'business_not_found' })
+  }
+
+  const stripe = getStripeClient()
+  const { customerId, user } = await ensureStripeCustomer(userId)
+  const billingProfile = buildBillingProfileResponse(user)
+  if (!billingProfileIsComplete(billingProfile)) {
+    return reply.code(412).send(buildBillingProfileIncompleteError(billingProfile))
+  }
+  const setupIntent = await stripe.setupIntents.create({
+    customer: customerId,
+    usage: 'off_session',
+    automatic_payment_methods: { enabled: true },
+  })
+
+  if (!setupIntent.client_secret) {
+    return reply.code(502).send({ error: 'setup_intent_missing_secret' })
+  }
+
+  return reply.send({
+    clientSecret: setupIntent.client_secret,
+    setupIntentId: setupIntent.id,
+    publishableKey: STRIPE_PUBLISHABLE_KEY,
   })
 })
 
@@ -2910,39 +3264,97 @@ app.post('/billing/premium/checkout', async (req: FastifyRequest, reply: Fastify
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
   if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
 
-  const body = PremiumCheckoutSchema.safeParse(req.body)
+  const body = PremiumCheckoutSchema.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
   const priceId = ensurePriceAvailable(STRIPE_PRICE_PREMIUM, 'premium')
   const stripe = getStripeClient()
-  const { customerId } = await ensureStripeCustomer(userId)
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    success_url: body.data.successUrl,
-    cancel_url: body.data.cancelUrl,
-    allow_promotion_codes: true,
-    subscription_data: {
-      metadata: {
-        kind: 'premium',
-        userId,
+  if ('paymentMethodId' in body.data) {
+    const { user, customerId } = await ensureStripeCustomer(userId)
+    const billingProfile = buildBillingProfileResponse(user)
+    if (!billingProfileIsComplete(billingProfile)) {
+      return reply.code(412).send(buildBillingProfileIncompleteError(billingProfile))
+    }
+    const billingDetails = convertProfileToBillingDetails(billingProfile)
+
+    try {
+      await ensurePaymentMethodForCustomer(stripe, customerId, body.data.paymentMethodId)
+    } catch (error) {
+      if (error instanceof PaymentMethodOwnershipError) {
+        return reply.code(error.statusCode).send({ error: error.message })
+      }
+      throw error
+    }
+
+    const customerUpdate: Stripe.CustomerUpdateParams = {
+      invoice_settings: { default_payment_method: body.data.paymentMethodId },
+    }
+    if (billingDetails?.name || user.name) customerUpdate.name = billingDetails?.name || user.name || undefined
+    if (billingDetails?.email) customerUpdate.email = billingDetails.email
+    if (billingDetails?.phone) customerUpdate.phone = billingDetails.phone
+    if (billingDetails?.address) {
+      customerUpdate.address = billingDetails.address
+    }
+    await stripe.customers.update(customerId, customerUpdate)
+
+    const metadata: Record<string, string> = { kind: 'premium', userId }
+    if (body.data.setupIntentId) {
+      metadata.setupIntentId = body.data.setupIntentId
+    }
+
+    const subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      items: [{ price: priceId }],
+      payment_behavior: 'default_incomplete',
+      payment_settings: {
+        save_default_payment_method: 'on_subscription',
       },
-    },
-    metadata: {
-      kind: 'premium',
-      userId,
-    },
-    line_items: [
-      {
-        price: priceId,
-        quantity: 1,
-      },
-    ],
+      expand: ['latest_invoice.payment_intent'],
+      metadata,
+    })
+
+    if (!isPremium(user.premiumStatus)) {
+      await prisma.user.update({ where: { id: userId }, data: { premiumStatus: 'PENDING' } })
+    }
+
+    const { invoice, paymentIntent } = resolveSubscriptionInvoice(subscription)
+    if (!paymentIntent) {
+      return reply.code(502).send({ error: 'payment_intent_missing' })
+    }
+    const requiresAction = paymentIntentRequiresAction(paymentIntent)
+    const paymentSucceeded = paymentIntentSucceeded(paymentIntent)
+
+    if (paymentSucceeded) {
+      await syncPremiumSubscription(subscription)
+    }
+
+    return reply.send({
+      subscriptionId: subscription.id,
+      invoiceId: invoice?.id ?? null,
+      paymentIntentId: paymentIntent?.id ?? null,
+      paymentIntentStatus: paymentIntent?.status ?? null,
+      requiresAction,
+      clientSecret: paymentIntent?.client_secret ?? null,
+      planApplied: paymentSucceeded,
+    })
+  }
+
+  const stripeSubscription = await stripe.subscriptions.retrieve(body.data.subscriptionId, {
+    expand: ['latest_invoice.payment_intent'],
   })
+  const { paymentIntent } = resolveSubscriptionInvoice(stripeSubscription)
+  const paymentSucceeded = paymentIntentSucceeded(paymentIntent)
+  if (paymentSucceeded) {
+    await syncPremiumSubscription(stripeSubscription)
+  }
 
-  await prisma.user.update({ where: { id: userId }, data: { premiumStatus: 'PENDING' } })
-  return reply.send({ checkoutUrl: session.url, sessionId: session.id })
+  return reply.send({
+    subscriptionId: stripeSubscription.id,
+    paymentIntentStatus: paymentIntent?.status ?? null,
+    requiresAction: paymentIntentRequiresAction(paymentIntent),
+    planApplied: paymentSucceeded,
+  })
 })
 
 app.post('/billing/portal', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -2960,6 +3372,40 @@ app.post('/billing/portal', async (req: FastifyRequest, reply: FastifyReply) => 
     return_url: body.data.returnUrl ?? BILLING_PORTAL_RETURN_FALLBACK,
   })
   return reply.send({ portalUrl: session.url })
+})
+
+app.post('/billing/cancel', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { stripeSubscriptionId: true, premiumStatus: true },
+  })
+  if (!user?.stripeSubscriptionId) {
+    return reply.code(400).send({ error: 'no_active_subscription' })
+  }
+
+  const stripe = getStripeClient()
+  try {
+    await stripe.subscriptions.cancel(user.stripeSubscriptionId, { invoice_now: false, prorate: false })
+  } catch (err) {
+    req.log.error({ err, subscriptionId: user.stripeSubscriptionId }, 'stripe_cancel_failed')
+    return reply.code(502).send({ error: 'stripe_cancel_failed' })
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      premiumStatus: 'CANCELED',
+      premiumRenewsAt: null,
+      stripeSubscriptionId: null,
+      stripePriceId: null,
+    },
+  })
+
+  return reply.send({ ok: true })
 })
 
 app.get('/businesses', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -3022,47 +3468,100 @@ app.post('/businesses/:businessId/checkout', async (req: FastifyRequest, reply: 
 
   const params = BusinessParam.safeParse(req.params)
   if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-  const body = BusinessCheckoutSchema.safeParse(req.body)
+  const body = BusinessCheckoutSchema.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
   const { user, customerId } = await ensureStripeCustomer(userId)
   if (!isPremium(user.premiumStatus)) {
     return reply.code(403).send({ error: 'premium_required' })
   }
+  const billingProfile = buildBillingProfileResponse(user)
+  if (!billingProfileIsComplete(billingProfile)) {
+    return reply.code(412).send(buildBillingProfileIncompleteError(billingProfile))
+  }
+  const billingDetails = convertProfileToBillingDetails(billingProfile)
 
   const business = await loadOwnedBusiness(userId, params.data.businessId)
   if (!business) return reply.code(404).send({ error: 'business_not_found' })
 
   const priceId = ensurePriceAvailable(STRIPE_PRICE_BUSINESS, 'business')
   const stripe = getStripeClient()
+  if ('paymentMethodId' in body.data) {
+    try {
+      await ensurePaymentMethodForCustomer(stripe, customerId, body.data.paymentMethodId)
+    } catch (error) {
+      if (error instanceof PaymentMethodOwnershipError) {
+        return reply.code(error.statusCode).send({ error: error.message })
+      }
+      throw error
+    }
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
-    customer: customerId,
-    success_url: body.data.successUrl,
-    cancel_url: body.data.cancelUrl,
-    allow_promotion_codes: true,
-    subscription_data: {
-      metadata: {
-        kind: 'business',
-        businessId: business.id,
-        ownerId: userId,
-      },
-    },
-    metadata: {
+    const customerUpdate: Stripe.CustomerUpdateParams = {
+      name: billingDetails?.name || business.name,
+      invoice_settings: { default_payment_method: body.data.paymentMethodId },
+    }
+    if (billingDetails?.email) customerUpdate.email = billingDetails.email
+    if (billingDetails?.phone) customerUpdate.phone = billingDetails.phone
+    if (billingDetails?.address) {
+      customerUpdate.address = billingDetails.address
+    }
+    await stripe.customers.update(customerId, customerUpdate)
+
+    const metadata: Record<string, string> = {
       kind: 'business',
       businessId: business.id,
       ownerId: userId,
-    },
-    line_items: [
-      {
-        price: priceId,
-        quantity: 1,
-      },
-    ],
-  })
+    }
+    if (body.data.setupIntentId) {
+      metadata.setupIntentId = body.data.setupIntentId
+    }
 
-  return reply.send({ checkoutUrl: session.url, sessionId: session.id })
+    const subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      items: [{ price: priceId }],
+      payment_behavior: 'default_incomplete',
+      payment_settings: { save_default_payment_method: 'on_subscription' },
+      expand: ['latest_invoice.payment_intent'],
+      metadata,
+    })
+
+    const { invoice, paymentIntent } = resolveSubscriptionInvoice(subscription)
+    if (!paymentIntent) {
+      return reply.code(502).send({ error: 'payment_intent_missing' })
+    }
+    const requiresAction = paymentIntentRequiresAction(paymentIntent)
+    const paymentSucceeded = paymentIntentSucceeded(paymentIntent)
+
+    if (paymentSucceeded) {
+      await syncBusinessSubscription(subscription)
+    }
+
+    return reply.send({
+      subscriptionId: subscription.id,
+      invoiceId: invoice?.id ?? null,
+      paymentIntentId: paymentIntent?.id ?? null,
+      paymentIntentStatus: paymentIntent?.status ?? null,
+      requiresAction,
+      clientSecret: paymentIntent?.client_secret ?? null,
+      planApplied: paymentSucceeded,
+    })
+  }
+
+  const stripeSubscription = await stripe.subscriptions.retrieve(body.data.subscriptionId, {
+    expand: ['latest_invoice.payment_intent'],
+  })
+  const { paymentIntent } = resolveSubscriptionInvoice(stripeSubscription)
+  const paymentSucceeded = paymentIntentSucceeded(paymentIntent)
+  if (paymentSucceeded) {
+    await syncBusinessSubscription(stripeSubscription)
+  }
+
+  return reply.send({
+    subscriptionId: stripeSubscription.id,
+    paymentIntentStatus: paymentIntent?.status ?? null,
+    requiresAction: paymentIntentRequiresAction(paymentIntent),
+    planApplied: paymentSucceeded,
+  })
 })
 
 app.post('/businesses/:businessId/portal', async (req: FastifyRequest, reply: FastifyReply) => {

@@ -227,13 +227,13 @@ export default function UserPostsPage({ params }: PageProps) {
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
       <div className="border-b border-white/60 bg-white/70 py-4 shadow-sm backdrop-blur lg:hidden">
         <div className="mx-auto max-w-6xl px-4">
-          <Sidebar me={viewer ?? undefined} active="profile" />
+          <Sidebar me={viewer ?? undefined} />
         </div>
       </div>
 
       <DashboardShell
         className="bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white"
-        sidebar={<Sidebar me={viewer ?? undefined} active="profile" />}
+        sidebar={<Sidebar me={viewer ?? undefined} />}
         rightRail={rightRailContent}
         rightRailClassName="pt-8"
         mainClassName="space-y-8 pb-12"

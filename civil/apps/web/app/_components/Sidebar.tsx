@@ -5,7 +5,17 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { HiOutlineHome, HiOutlineBuildingOffice2, HiOutlineUserCircle, HiOutlineShieldCheck } from 'react-icons/hi2'
+import {
+  HiOutlineHome,
+  HiOutlineBuildingOffice2,
+  HiOutlineUserCircle,
+  HiOutlineShieldCheck,
+  HiOutlineChatBubbleLeftRight,
+  HiOutlineBuildingLibrary,
+  HiOutlineCalendarDays,
+  HiOutlineShoppingBag,
+  HiOutlineWallet,
+} from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import { isEmailSuperAdmin } from '../_lib/admin'
 import VerifiedAvatar from './VerifiedAvatar'
@@ -31,9 +41,14 @@ export type SidebarNavItem = {
 }
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
-  { key: 'home', label: 'News Feed', href: '/home', icon: HiOutlineHome },
+  { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
+  { key: 'chat', label: 'Chat', href: '/chat', icon: HiOutlineChatBubbleLeftRight },
+  { key: 'organizations', label: 'Organizations', href: '/organizations', icon: HiOutlineBuildingLibrary },
+  { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
+  { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
+  { key: 'wallet', label: 'Wallet', href: '/wallet', icon: HiOutlineWallet },
   { key: 'chambers', label: 'Chambers', href: '/chambers', icon: HiOutlineBuildingOffice2 },
-  { key: 'profile', label: 'Profile', href: '/profile', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Account Settings', href: '/profile', icon: HiOutlineUserCircle },
 ]
 
 export const ADMIN_NAV: SidebarNavItem[] = [{ key: 'admin', label: 'Admin', href: '/admin', icon: HiOutlineShieldCheck }]
@@ -41,12 +56,15 @@ export const ADMIN_NAV: SidebarNavItem[] = [{ key: 'admin', label: 'Admin', href
 function navItemClasses(active: boolean) {
   return clsx(
     'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
-    active ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/10' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+    active
+      ? 'bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20'
+      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
   )
 }
 
 export default function Sidebar({ me, active }: SidebarProps) {
   const pathname = usePathname()
+  const normalizedActive = active === 'profile' || active === 'settings' ? 'account' : active
   const displayName = me?.name?.trim() || 'Civil Citizen'
   const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
   const profileHref = me?.handle ? `/u/${me.handle}` : '/profile'
@@ -56,10 +74,10 @@ export default function Sidebar({ me, active }: SidebarProps) {
     marginLeft: 'calc((100vw - min(100vw, 96rem)) / -2 + var(--sidebar-offset, 0px))',
   }
   const derivedActiveKey = useMemo(() => {
-    if (active) return active
+    if (normalizedActive) return normalizedActive
     const allNav = [...PRIMARY_NAV, ...ADMIN_NAV]
     return allNav.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
-  }, [active, pathname])
+  }, [normalizedActive, pathname])
 
   const navContent = (items: SidebarNavItem[]) =>
     items.map((item) => {
@@ -70,7 +88,9 @@ export default function Sidebar({ me, active }: SidebarProps) {
           <span
             className={clsx(
               'rounded-lg p-2 text-base transition-colors',
-              activeMatch ? 'bg-white/15 text-white' : 'text-slate-400 group-hover:bg-slate-200 group-hover:text-slate-700',
+              activeMatch
+                ? 'bg-white/25 text-white'
+                : 'text-slate-400 group-hover:bg-[var(--cc-primary)]/10 group-hover:text-[var(--cc-primary)]',
             )}
           >
             <Icon />
