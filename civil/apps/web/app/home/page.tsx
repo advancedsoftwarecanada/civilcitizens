@@ -146,7 +146,7 @@ export default function HomePage() {
           <div className="space-y-1">
             <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">News feed</p>
             <h1 className="text-xl font-semibold text-slate-900">{me?.name ? `Welcome back, ${me.name.split(' ')[0]}!` : 'Welcome to Civil Citizens'}</h1>
-            <p className="text-sm text-slate-500">Track what&apos;s hot inside your home chamber and beyond.</p>
+            <p className="text-sm text-slate-500">Track what&apos;s hot inside your home city and beyond.</p>
             {me ? (
               isPremiumMember(me) ? (
                 <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">

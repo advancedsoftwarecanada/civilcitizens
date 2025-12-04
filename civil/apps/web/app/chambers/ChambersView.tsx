@@ -1,6 +1,6 @@
 "use client"
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
-import type { ChamberGeoMatch, ChamberGeolocateResponse } from '@civil/shared'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
+import type { ChamberGeoMatch, ChamberGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
 import Link from 'next/link'
 import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
@@ -29,7 +29,15 @@ const provincesFallback = [
 type ChambersPageMode = 'default' | 'welcome'
 
 type Province = { code: string; name: string }
-type Chamber = { code?: number; name?: string; slug: string; province: string }
+type Chamber = {
+  code?: number
+  name?: string
+  slug: string
+  province: string
+  cityName?: string
+  citySlug?: string
+  cityPopulation?: number | null
+}
 
 type ChamberFollow = {
   province: string
@@ -49,6 +57,49 @@ type HomeResponse = {
 
 type ErrorResponse = {
   error?: unknown
+}
+
+const populationFormatter = new Intl.NumberFormat('en-CA')
+
+const wallpaperBackground: CSSProperties = {
+  backgroundImage: "url('/canadawallpapercivil.jpg')",
+  backgroundSize: 'cover',
+  backgroundPosition: 'center',
+  backgroundRepeat: 'no-repeat',
+  backgroundAttachment: 'fixed',
+}
+
+function formatPopulation(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return null
+  return populationFormatter.format(value)
+}
+
+function buildCityOptionValue(entry: Pick<Chamber, 'province' | 'citySlug' | 'slug'>) {
+  return `${entry.province}:${entry.citySlug ?? entry.slug}`
+}
+
+function extractCitySlugFromKey(key: string) {
+  if (!key) return null
+  const [, citySlug] = key.split(':')
+  return citySlug || null
+}
+
+function formatCityOptionLabel(entry: Chamber) {
+  const base = entry.cityName ?? entry.name ?? entry.slug
+  const edaLabel = entry.cityName ? ` · ${entry.name ?? entry.slug}` : ''
+  const population = formatPopulation(entry.cityPopulation)
+  const populationLabel = population ? ` — pop ${population}` : ''
+  return `${base}${edaLabel}${populationLabel}`
+}
+
+function formatMatchCityLabel(match: ChamberGeoMatch) {
+  const cityName = match.city?.name ?? match.chamberName
+  const suffix = match.city?.name ? ` (EDA ${match.chamberName})` : ''
+  return `${cityName}${suffix}`
+}
+
+function buildMatchCityKey(match: ChamberGeoMatch) {
+  return `${match.province}:${match.city?.slug ?? match.chamberSlug}`
 }
 
 function getErrorMessage(error: unknown): string | undefined {
@@ -78,9 +129,10 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const [chambers, setChambers] = useState<Chamber[]>([])
   const [selectedProvince, setSelectedProvince] = useState('')
   const [selectedChamber, setSelectedChamber] = useState('')
+  const [selectedCityKey, setSelectedCityKey] = useState('')
   const [home, setHome] = useState<Chamber | null>(null)
   const [follows, setFollows] = useState<ChamberFollow[]>([])
-  const [loadingChambers, setLoadingChambers] = useState(false)
+  const [loadingCities, setLoadingCities] = useState(false)
   const [savingHome, setSavingHome] = useState(false)
   const [followSaving, setFollowSaving] = useState(false)
   const [loadingFollows, setLoadingFollows] = useState(true)
@@ -93,8 +145,17 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const [geoSelected, setGeoSelected] = useState<ChamberGeoMatch | null>(null)
   const [geoAlternatives, setGeoAlternatives] = useState<ChamberGeoMatch[]>([])
   const [showGeoOverlay, setShowGeoOverlay] = useState(false)
+  const [postalCodeInput, setPostalCodeInput] = useState('')
+  const [postalBusy, setPostalBusy] = useState(false)
+  const [postalStatus, setPostalStatus] = useState('')
+  const [postalError, setPostalError] = useState<string | null>(null)
+  const [postalMatches, setPostalMatches] = useState<ChamberGeoMatch[]>([])
+  const [postalFsa, setPostalFsa] = useState<PostalLookupResponse['fsa'] | null>(null)
+  const [postalNormalized, setPostalNormalized] = useState<string | null>(null)
   const [welcomePickerView, setWelcomePickerView] = useState<'options' | 'manual' | 'assist'>(() => (mode === 'welcome' ? 'options' : 'manual'))
   const [assistUnlocked, setAssistUnlocked] = useState(false)
+  const [welcomeAutoSaving, setWelcomeAutoSaving] = useState(false)
+  const isWelcomeMode = mode === 'welcome'
   const provinceSelectRef = useRef<HTMLSelectElement | null>(null)
 
   useEffect(() => {
@@ -143,7 +204,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           setHome(homeChamber)
           setSelectedProvince(homeChamber.province)
           setSelectedChamber(homeChamber.slug)
-          await loadChambersForProvince(homeChamber.province, homeChamber.slug)
+          await loadCitiesForProvince(homeChamber.province, homeChamber.slug)
         }
       } catch (err) {
         console.error('Failed bootstrapping chambers screen', err)
@@ -159,29 +220,60 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function loadChambersForProvince(province: string, preselect?: string) {
+  async function loadCitiesForProvince(province: string, preselectChamber?: string, preselectCitySlug?: string | null) {
     if (!province) {
       setChambers([])
+      setSelectedCityKey('')
       return
     }
-    setLoadingChambers(true)
+    setLoadingCities(true)
     try {
-        const res = await fetch(buildApiUrl(`/chambers?province=${encodeURIComponent(province)}`))
-      const data = await jsonOrThrow<ItemsResponse<Chamber>>(res)
-      const items = Array.isArray(data.items) ? data.items : []
-      setChambers(items)
-      if (preselect) {
-        const exists = items.some((c) => c.slug === preselect)
-        if (exists) {
-          setSelectedChamber(preselect)
+      let items: Chamber[] = []
+      try {
+        const res = await fetch(buildApiUrl(`/cities?province=${encodeURIComponent(province)}&limit=500`))
+        const data = await jsonOrThrow<ItemsResponse<CitySummary>>(res)
+        const cityItems = Array.isArray(data.items) ? data.items : []
+        if (cityItems.length) {
+          items = cityItems.map((city) => ({
+            slug: city.chamberSlug,
+            province: city.provinceCode,
+            name: city.chamberName,
+            cityName: city.name,
+            citySlug: city.slug,
+            cityPopulation: city.population ?? null,
+          }))
         }
+      } catch (error) {
+        console.warn('Failed loading city catalog, falling back to districts', error)
+      }
+
+      if (!items.length) {
+        const res = await fetch(buildApiUrl(`/chambers?province=${encodeURIComponent(province)}`))
+        const data = await jsonOrThrow<ItemsResponse<Chamber>>(res)
+        items = Array.isArray(data.items) ? data.items : []
+      }
+
+      setChambers(items)
+      if (preselectChamber) {
+        const match = items.find(
+          (entry) => entry.slug === preselectChamber && (!preselectCitySlug || entry.citySlug === preselectCitySlug)
+        )
+        if (match) {
+          setSelectedChamber(match.slug)
+          setSelectedCityKey(buildCityOptionValue(match))
+        } else {
+          setSelectedCityKey('')
+        }
+      } else {
+        setSelectedCityKey('')
       }
     } catch (error) {
-      console.error('Failed loading chambers', error)
-      pushToast('Unable to load chambers right now. Please try again later.', 'error')
+      console.error('Failed loading cities', error)
+      pushToast('Unable to load cities right now. Please try again later.', 'error')
       setChambers([])
+      setSelectedCityKey('')
     } finally {
-      setLoadingChambers(false)
+      setLoadingCities(false)
     }
   }
 
@@ -189,15 +281,111 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     const value = evt.target.value
     setSelectedProvince(value)
     setSelectedChamber('')
+    setSelectedCityKey('')
     if (value) {
-      await loadChambersForProvince(value)
+      await loadCitiesForProvince(value)
     } else {
       setChambers([])
     }
   }
 
-  const handleChamberChange = (evt: ChangeEvent<HTMLSelectElement>) => {
-    setSelectedChamber(evt.target.value)
+  const handleCityChange = (evt: ChangeEvent<HTMLSelectElement>) => {
+    const value = evt.target.value
+    setSelectedCityKey(value)
+    if (!value) {
+      setSelectedChamber('')
+      return
+    }
+    const match = chambers.find((entry) => buildCityOptionValue(entry) === value)
+    if (match) {
+      setSelectedChamber(match.slug)
+    } else {
+      setSelectedChamber('')
+    }
+  }
+
+  const handlePostalInputChange = (evt: ChangeEvent<HTMLInputElement>) => {
+    if (isWelcomeMode && welcomeAutoSaving) return
+    const sanitized = evt.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+    const formatted = sanitized.length > 3 ? `${sanitized.slice(0, 3)} ${sanitized.slice(3)}` : sanitized
+    setPostalCodeInput(formatted)
+    if (postalError) setPostalError(null)
+    if (!formatted) {
+      setPostalStatus('')
+      setPostalMatches([])
+      setPostalFsa(null)
+      setPostalNormalized(null)
+    }
+  }
+
+  async function handlePostalLookupSubmit(evt?: FormEvent<HTMLFormElement>) {
+    evt?.preventDefault()
+    if (isWelcomeMode && welcomeAutoSaving) return
+    const token = localStorage.getItem('token')
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    const normalized = postalCodeInput.replace(/\s+/g, '').toUpperCase()
+    if (normalized.length < 3) {
+      setPostalError('Enter at least the first three characters of your postal code (e.g., M5V).')
+      return
+    }
+    setPostalBusy(true)
+    setPostalError(null)
+    setPostalStatus('Looking up your postal code…')
+    setPostalMatches([])
+    setPostalFsa(null)
+    setPostalNormalized(null)
+    try {
+      const res = await fetch(buildApiUrl('/chambers/postal-lookup'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ postalCode: normalized, limit: 8 }),
+      })
+      const data = await jsonOrThrow<PostalLookupResponse>(res)
+      const matches = [data.primary, ...(Array.isArray(data.alternatives) ? data.alternatives : [])].filter(
+        (entry): entry is ChamberGeoMatch => Boolean(entry)
+      )
+      setPostalMatches(matches)
+      setPostalFsa(data.fsa ?? null)
+      setPostalNormalized(data.postalCode || normalized)
+      const primaryMatch = matches[0]
+      if (primaryMatch) {
+        await applyGeolocationMatch(primaryMatch, 'postal')
+        setPostalStatus(`Matched ${formatMatchCityLabel(primaryMatch)} using your postal code.`)
+      } else if (data.fsa?.defaultChamberName) {
+        setPostalStatus(`Matched ${data.fsa.defaultChamberName}. Choose it below to continue.`)
+      } else {
+        setPostalStatus('We found your postal region but need you to pick a city below.')
+        setPostalError(
+          isWelcomeMode
+            ? 'Pick from the suggestions or try another nearby postal code.'
+            : 'Pick from the suggestions or choose your province manually.'
+        )
+      }
+    } catch (error) {
+      console.error('Postal lookup failed', error)
+      const message = getErrorMessage(error)
+      const friendly =
+        message === 'fsa_not_found'
+          ? isWelcomeMode
+            ? 'We could not find that postal code yet. Try a nearby one or pick from the suggestions above.'
+            : 'We could not find that postal code yet. Try a nearby one or pick manually.'
+          : message === 'invalid_postal_code'
+            ? 'That postal code looks invalid. Use the first three characters (e.g., M5V).'
+            : 'Unable to look up that postal code right now.'
+      setPostalError(friendly)
+      setPostalStatus('')
+      setPostalMatches([])
+      setPostalFsa(null)
+      setPostalNormalized(null)
+    } finally {
+      setPostalBusy(false)
+    }
   }
 
   async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}): Promise<ChamberFollow[]> {
@@ -223,65 +411,94 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       }
       return items
     } catch (error) {
-      console.error('Failed loading followed chambers', error)
-      pushToast('Unable to load your followed chambers right now.', 'error')
+      console.error('Failed loading followed cities', error)
+      pushToast('Unable to load your followed cities right now.', 'error')
       return []
     } finally {
       setLoadingFollows(false)
     }
   }
 
-  async function applyGeolocationMatch(match: ChamberGeoMatch, reason: 'auto' | 'suggestion') {
+  async function applyGeolocationMatch(match: ChamberGeoMatch, reason: 'auto' | 'suggestion' | 'postal') {
     try {
-      if (reason === 'auto') {
+      if (reason === 'auto' || reason === 'postal') {
         setGeoDetected(match)
       }
       setGeoSelected(match)
       setSelectedProvince(match.province)
-      await loadChambersForProvince(match.province, match.chamberSlug)
+      if (!isWelcomeMode) {
+        await loadCitiesForProvince(match.province, match.chamberSlug, match.city?.slug ?? null)
+      }
       setSelectedChamber(match.chamberSlug)
+      setSelectedCityKey(buildMatchCityKey(match))
+      const matchLabel = formatMatchCityLabel(match)
       const contextMessage =
         reason === 'auto'
           ? match.method === 'geofenced'
-            ? `Matched ${match.chamberName} using Elections Canada boundaries.`
-            : `Matched ${match.chamberName}. This was the closest riding to your location.`
-          : `Switched to ${match.chamberName}.`
+            ? `Matched ${matchLabel} using Elections Canada boundaries.`
+            : `Matched ${matchLabel}. This is the closest city district to your location.`
+          : reason === 'postal'
+            ? `Matched ${matchLabel} using your postal code.`
+            : `Switched to ${matchLabel}.`
       pushToast(contextMessage, 'success')
-      setGeoStatus(`Ready to continue in ${match.chamberName}.`)
+      if (reason === 'postal') {
+        setGeoStatus(`Ready to continue in ${matchLabel} using your postal code.`)
+      } else {
+        setGeoStatus(`Ready to continue in ${matchLabel}.`)
+      }
       setGeoError(null)
+      if (isWelcomeMode) {
+        await setHomeChamber(match.province, match.chamberSlug, 'welcome', { skipCityLoad: true })
+      }
     } catch (error) {
       console.error('Failed applying geolocation match', error)
-      setGeoError('We found a riding but could not select it automatically. Please choose from the lists above.')
-      pushToast('We found a riding nearby but could not auto-select it. Pick it manually.', 'error')
+      setGeoError(
+        isWelcomeMode
+          ? 'We found a nearby city but could not select it automatically. Pick one of the suggestions above to continue.'
+          : 'We found a nearby city but could not select it automatically. Please choose from the lists above.'
+      )
+      pushToast(
+        isWelcomeMode
+          ? 'We found a nearby city but could not auto-select it. Pick one of the suggestions above.'
+          : 'We found a nearby city but could not auto-select it. Pick it manually.',
+        'error'
+      )
     }
   }
 
   function handleSuggestionSelect(match: ChamberGeoMatch) {
+    if (isWelcomeMode && welcomeAutoSaving) return
     void applyGeolocationMatch(match, 'suggestion')
   }
 
   function handleAutoDetect() {
+    if (isWelcomeMode && welcomeAutoSaving) return
     const token = localStorage.getItem('token')
     if (!token) {
       redirectToAuthModal('login')
       return
     }
     if (!navigator.geolocation) {
-      pushToast('Your browser does not support location detection. Please pick your riding manually.', 'error')
+      pushToast(
+        isWelcomeMode
+          ? 'Your browser does not support location detection. Use the postal search above instead.'
+          : 'Your browser does not support location detection. Please pick your city manually.',
+        'error'
+      )
       return
     }
 
     setGeoBusy(true)
     setGeoStatus('Requesting permission…')
     setGeoError(null)
-  setGeoAlternatives([])
-  setGeoDetected(null)
-  setGeoSelected(null)
+    setGeoAlternatives([])
+    setGeoDetected(null)
+    setGeoSelected(null)
     setShowGeoOverlay(true)
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        setGeoStatus('Matching your riding…')
+        setGeoStatus('Matching your city…')
         try {
           const { latitude, longitude } = pos.coords
           const res = await fetch(buildApiUrl('/chambers/geolocate'), {
@@ -301,14 +518,17 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           } else {
             setGeoDetected(null)
             setGeoSelected(null)
-            setGeoStatus('We could not find an exact riding match. Please choose a suggestion below.')
-            setGeoError('We matched nearby ridings. Pick the correct one to continue.')
+            setGeoStatus('We could not find an exact city match. Please choose a suggestion below.')
+            setGeoError('We matched nearby cities. Pick the correct one to continue.')
           }
         } catch (error) {
           console.error('Geolocation lookup failed', error)
           setGeoStatus('Unable to match your location automatically.')
-          setGeoError(getErrorMessage(error) ?? 'Unable to match your location right now. Please choose manually.')
-          pushToast('Unable to identify your riding automatically right now.', 'error')
+          const fallbackMessage = isWelcomeMode
+            ? 'Unable to match your location right now. Try another postal code or pick from the suggestions above.'
+            : 'Unable to match your location right now. Please choose manually.'
+          setGeoError(getErrorMessage(error) ?? fallbackMessage)
+          pushToast('Unable to identify your city automatically right now.', 'error')
         } finally {
           setGeoBusy(false)
           setShowGeoOverlay(false)
@@ -320,31 +540,64 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         setShowGeoOverlay(false)
         if (err.code === 1) {
           setGeoStatus('Location permission was denied.')
-          setGeoError('Enable location permissions in your browser to auto-detect your riding, or select it manually.')
-          pushToast('Location permission denied. Select your riding manually.', 'error')
+          setGeoError(
+            isWelcomeMode
+              ? 'Enable location permissions in your browser and try again, or enter your postal code above to continue.'
+              : 'Enable location permissions in your browser to auto-detect your city, or select it manually.'
+          )
+          pushToast(
+            isWelcomeMode
+              ? 'Location permission denied. Adjust permissions or use the postal search above.'
+              : 'Location permission denied. Select your city manually.',
+            'error'
+          )
         } else if (err.code === 3) {
           setGeoStatus('Location lookup timed out.')
-          setGeoError('Try again from a spot with better reception, or pick your riding manually.')
-          pushToast('Location lookup timed out. Try again or choose manually.', 'error')
+          setGeoError(
+            isWelcomeMode
+              ? 'We could not get a fix. Adjust permissions or search by postal code above to move forward.'
+              : 'Try again from a spot with better reception, or pick your city manually.'
+          )
+          pushToast(
+            isWelcomeMode
+              ? 'Location lookup timed out. Try again after adjusting permissions or search by postal code.'
+              : 'Location lookup timed out. Try again or choose manually.',
+            'error'
+          )
         } else {
           setGeoStatus('We could not retrieve your location.')
-          setGeoError('Please select your province and riding manually.')
-          pushToast('We could not retrieve your location. Select your riding manually.', 'error')
+          setGeoError(
+            isWelcomeMode
+              ? 'We could not retrieve your location. Adjust permissions and retry, or enter your postal code above.'
+              : 'Please select your province and city manually.'
+          )
+          pushToast(
+            isWelcomeMode
+              ? 'We could not retrieve your location. Adjust permissions or use the postal search above.'
+              : 'We could not retrieve your location. Select your city manually.',
+            'error'
+          )
         }
       },
       { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 }
     )
   }
 
-  async function setHomeChamber(provinceCode: string, chamberSlug: string, source: 'picker' | 'list') {
+  type HomeSetSource = 'picker' | 'list' | 'welcome'
+
+  async function setHomeChamber(provinceCode: string, chamberSlug: string, source: HomeSetSource, options?: { skipCityLoad?: boolean }) {
     if (!provinceCode || !chamberSlug) return
+    if (source === 'welcome' && welcomeAutoSaving) return
     const token = localStorage.getItem('token')
     if (!token) {
       redirectToAuthModal('login')
       return
     }
+    const selectedCitySlug = extractCitySlugFromKey(selectedCityKey)
     if (source === 'picker') {
       setSavingHome(true)
+    } else if (source === 'welcome') {
+      setWelcomeAutoSaving(true)
     } else {
       setManagingFollow(`${provinceCode}:${chamberSlug}:home`)
     }
@@ -362,23 +615,27 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       setHome(nextHome)
       setSelectedProvince(provinceCode)
       setSelectedChamber(chamberSlug)
-      await loadChambersForProvince(provinceCode, chamberSlug)
+      if (!options?.skipCityLoad) {
+        await loadCitiesForProvince(provinceCode, chamberSlug, selectedCitySlug)
+      }
       await refreshFollows({ token, syncHome: true })
-      const message = source === 'picker' ? 'Home chamber set. Welcome home!' : 'Home chamber updated.'
+      const message = source === 'list' ? 'Home city updated.' : 'Home city set. Welcome home!'
       pushToast(message, 'success')
-      if (mode === 'welcome') {
+      if (isWelcomeMode) {
         window.setTimeout(() => {
           window.location.replace('/home')
         }, 500)
       }
     } catch (error) {
-      console.error('Failed saving home chamber', error)
+      console.error('Failed saving home city', error)
       const message = getErrorMessage(error)
-      const friendly = message === 'chamber_not_found' ? 'Chamber not found. Please pick a different option.' : 'Unable to save home chamber right now.'
+      const friendly = message === 'chamber_not_found' ? 'City not found. Please pick a different option.' : 'Unable to save home city right now.'
       pushToast(friendly, 'error')
     } finally {
       if (source === 'picker') {
         setSavingHome(false)
+      } else if (source === 'welcome') {
+        setWelcomeAutoSaving(false)
       } else {
         setManagingFollow(null)
       }
@@ -404,16 +661,16 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       })
       await jsonOrThrow<unknown>(res)
       await refreshFollows({ token, syncHome: true })
-      pushToast('Chamber followed! You will now see updates from this riding.', 'success')
+      pushToast('City followed! You will now see updates from this community.', 'success')
     } catch (error) {
-      console.error('Failed following chamber', error)
+      console.error('Failed following city', error)
       const message = getErrorMessage(error)
       const friendly =
         message === 'chamber_not_found'
-          ? 'Chamber not found. Try selecting from the list above.'
+          ? 'City not found. Try selecting from the list above.'
           : message === 'invalid_province'
             ? 'Province not recognized. Please try again.'
-            : 'Unable to follow this chamber right now.'
+            : 'Unable to follow this city right now.'
       pushToast(friendly, 'error')
     } finally {
       setFollowSaving(false)
@@ -439,7 +696,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       })
       await jsonOrThrow<unknown>(res)
       const items = await refreshFollows({ token, syncHome: true })
-      pushToast('Chamber removed from your list.', 'success')
+      pushToast('City removed from your list.', 'success')
       const homeStillExists = items.some((item) => item.home)
       if (!homeStillExists) {
         setHome(null)
@@ -448,9 +705,9 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         setChambers([])
       }
     } catch (error) {
-      console.error('Failed unfollowing chamber', error)
+      console.error('Failed unfollowing city', error)
       const message = getErrorMessage(error)
-      const friendly = message === 'not_following' ? 'You are not following that chamber.' : 'Unable to remove this chamber right now.'
+      const friendly = message === 'not_following' ? 'You are not following that city.' : 'Unable to remove this city right now.'
       pushToast(friendly, 'error')
     } finally {
       setManagingFollow(null)
@@ -488,16 +745,16 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
 
   const manageSection = (
     <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
-      <h1 className="text-2xl font-bold text-gray-900">Your Chambers of Citizens</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Your Civil Cities</h1>
       <p className="mt-2 text-sm text-gray-600">
-        Pick your home chamber to personalize your Civil experience. We'll use it to curate local news, MP updates,
-        and marketplace offers from your riding.
+        Pick your home city to personalize your Civil experience. We'll use it to curate local news, MP updates,
+        and marketplace offers from your community while still mapping to your federal riding.
       </p>
       {home ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-subtle">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="text-xs uppercase tracking-wide text-gray-500">Home Chamber</div>
+              <div className="text-xs uppercase tracking-wide text-gray-500">Home City</div>
               <div className="text-lg font-semibold text-gray-900">{home.name}</div>
               <div className="text-sm text-gray-500">Province: {homeProvinceName}</div>
             </div>
@@ -520,20 +777,20 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         </div>
       ) : bootstrapped ? (
         <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          You haven't set a home chamber yet. Choose your province and riding to get started.
+          You haven't set a home city yet. Choose your province and city to get started.
         </div>
       ) : (
-        <div className="mt-4 text-sm text-gray-500">Loading your chamber data…</div>
+        <div className="mt-4 text-sm text-gray-500">Loading your city data…</div>
       )}
       <div className="mt-6">
-        <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Chambers you follow</div>
+        <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Cities you follow</div>
         {loadingFollows ? (
-          <div className="mt-3 text-sm text-gray-500">Loading your followed chambers…</div>
+          <div className="mt-3 text-sm text-gray-500">Loading your followed cities…</div>
         ) : additionalFollows.length === 0 ? (
           <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
             {home
-              ? "You're currently following your home chamber. Explore other Chambers of Citizens below to keep an eye on more communities."
-              : "You haven't followed any chambers yet. Choose one below to get started."}
+              ? "You're currently following your home city. Explore other Civil cities below to keep an eye on more communities."
+              : "You haven't followed any cities yet. Choose one below to get started."}
           </div>
         ) : (
           <div className="mt-3 space-y-3">
@@ -560,7 +817,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
                       onClick={() => setHomeChamber(chamber.province, chamber.slug, 'list')}
                       disabled={isUpdating}
                     >
-                      {isUpdating ? 'Setting…' : 'Set as home'}
+                      {isUpdating ? 'Setting…' : 'Set as home city'}
                     </button>
                     <button
                       type="button"
@@ -583,23 +840,11 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const renderPickerSection = (variant: 'default' | 'welcome') => {
     const isWelcome = variant === 'welcome'
     const sectionClasses = isWelcome ? 'surface-card px-8 py-8 shadow-panel' : 'surface-card px-6 py-5 shadow-subtle'
-    const heading = isWelcome ? 'Select your EDA' : home ? 'Explore other Chambers Of Citizens' : 'Find your chamber'
-    const introCopy = isWelcome
-      ? 'Civil is organized by Canada’s Electoral District Associations. Pick your riding and we’ll personalize your feed with neighbours, civic leaders, and local actions.'
-      : null
-    const helperCopy = isWelcome
-      ? 'Choose your province and riding so we can personalize your Civil feed with events, updates, and neighbours from your community.'
-      : null
+    const heading = isWelcome ? 'Enter your Postal Code' : home ? 'Explore more Civil cities' : 'Find your city'
+    const isLocked = isWelcome && welcomeAutoSaving
 
-    const focusProvinceSelect = () => {
-      if (provinceSelectRef.current) {
-        provinceSelectRef.current.focus()
-        provinceSelectRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    }
-
-    const showFullPicker = !isWelcome || welcomePickerView === 'manual' || assistUnlocked
-    const showManualPickers = !isWelcome || welcomePickerView === 'manual'
+    const showFullPicker = !isWelcome
+    const showManualPickers = !isWelcome
     const pickerContainerClass = `${isWelcome ? 'mt-4' : 'mt-6'} space-y-4`
     const activeGeoMatch = geoSelected ?? geoDetected
     const suggestionMatches: ChamberGeoMatch[] = []
@@ -614,22 +859,21 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     addSuggestion(activeGeoMatch)
     addSuggestion(geoDetected)
     geoAlternatives.forEach((alt) => addSuggestion(alt))
-  const manualButtonClass = `${tabButtonBaseClass} w-full sm:w-auto ${isWelcome && welcomePickerView === 'manual' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm' : 'border-gray-300 text-gray-700 hover:border-gray-400 hover:bg-gray-50'}`
+    postalMatches.forEach((match) => addSuggestion(match))
+    const isPostalSuggestion = (match: ChamberGeoMatch) =>
+      postalMatches.some((entry) => entry.province === match.province && entry.chamberSlug === match.chamberSlug)
+    const showAssistPanel = !isWelcome || welcomePickerView === 'assist' || assistUnlocked || postalMatches.length > 0
     const assistButtonClass = `${tabButtonBaseClass} w-full sm:w-auto ${isWelcome && welcomePickerView === 'assist' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm' : 'border-[var(--cc-primary)] text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10'}`
 
-    const handleManualStart = () => {
-      setWelcomePickerView('manual')
-      setTimeout(() => {
-        focusProvinceSelect()
-      }, 0)
-    }
-
     const handleAssistStart = () => {
+      if (isLocked) return
       setWelcomePickerView('assist')
-      setAssistUnlocked(false)
+      setAssistUnlocked(true)
+      handleAutoDetect()
     }
 
     const handleAssistGeolocate = () => {
+      if (isLocked) return
       if (!assistUnlocked) {
         setAssistUnlocked(true)
       }
@@ -639,158 +883,241 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     return (
       <section className={sectionClasses}>
         <h2 className="text-2xl font-bold text-gray-900">{heading}</h2>
-        {introCopy ? <p className="mt-3 text-base text-gray-700">{introCopy}</p> : null}
-        {helperCopy ? <p className="mt-2 text-sm text-gray-600">{helperCopy}</p> : null}
         {isWelcome ? (
           <>
+            <p className="mt-2 text-sm text-gray-600">
+              To finish your account, just enter your postal code to connect with Citizens near you! Only the first three characters are needed to get started.
+            </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <button type="button" className={manualButtonClass} onClick={handleManualStart}>
-                I know my EDA
-              </button>
-              <button type="button" className={assistButtonClass} onClick={handleAssistStart}>
-                Locate it for me
+              <button type="button" className={assistButtonClass} onClick={handleAssistStart} disabled={isLocked}>
+                Detect my postal code automatically
               </button>
             </div>
             {welcomePickerView === 'assist' ? (
               <div className="mt-6 space-y-3 rounded-md border border-dashed border-[var(--cc-border)] bg-slate-50/60 p-4 text-sm text-gray-700">
                 <div className="text-sm font-semibold text-gray-800">
-                  {assistUnlocked ? 'We’ve unlocked the riding picker below.' : 'Press the button below to geolocate your EDA.'}
+                  {geoBusy ? 'Detecting the closest city to your postal area…' : "We're surfacing nearby matches below."}
                 </div>
                 <p className="text-sm text-gray-600">
-                  We'll use your current location to find the closest Electoral District Association. You can confirm or adjust the result below.
+                  We'll use your current location to find the closest city and match it to the right Electoral District Association. We already asked for permission—retry below if you need another attempt.
                 </p>
                 <div className="pt-1">
                   <button
                     type="button"
                     className={`${locationButtonClass} w-full sm:w-auto`}
                     onClick={handleAssistGeolocate}
-                    disabled={geoBusy}
+                    disabled={geoBusy || isLocked}
                   >
-                    {geoBusy ? 'Detecting…' : assistUnlocked ? 'Retry geolocation' : 'Geolocate my EDA'}
+                    {geoBusy ? 'Detecting…' : assistUnlocked ? 'Retry detection' : 'Detect now'}
                   </button>
                 </div>
               </div>
             ) : null}
           </>
         ) : null}
-        {showFullPicker ? (
-          <div className={pickerContainerClass}>
-            {showManualPickers ? (
-              <>
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Province or territory</label>
-                  <select
-                    className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
-                    ref={provinceSelectRef}
-                    value={selectedProvince}
-                    onChange={handleProvinceChange}
-                    disabled={welcomePickerView === 'assist' && !assistUnlocked}
+        {isWelcome && welcomeAutoSaving ? (
+          <div className="mt-4 rounded-2xl border border-emerald-200 bg-white/90 p-4 text-sm text-gray-700 shadow-inner">
+            <div className="flex items-center gap-3">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" aria-hidden="true" />
+              <div>
+                <div className="text-sm font-semibold text-gray-900">Setting your Civil home…</div>
+                <div className="text-xs text-gray-500">Hang tight while we save your city and redirect you.</div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <div className={pickerContainerClass}>
+          <div className="rounded-2xl border border-[var(--cc-border)] bg-white/80 p-4 shadow-subtle">
+            <form className="space-y-3" onSubmit={handlePostalLookupSubmit}>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium text-gray-800">Postal code</label>
+                <p className="text-xs text-gray-500">We only need the first three characters (e.g., M5V).</p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <input
+                  type="text"
+                  inputMode="text"
+                  autoComplete="postal-code"
+                  maxLength={7}
+                  className="flex-1 rounded-md border border-[var(--cc-border)] px-3 py-2 text-lg tracking-[0.4em] focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+                  placeholder="e.g. M5V 2T6"
+                  value={postalCodeInput}
+                  onChange={handlePostalInputChange}
+                  disabled={isLocked}
+                />
+                <div className="flex flex-col gap-2 sm:w-auto sm:flex-row">
+                  <button
+                    type="submit"
+                    className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                    disabled={postalBusy || isLocked}
                   >
-                    <option value="">Select your province / territory</option>
-                    {provinces.map((prov) => (
-                      <option key={prov.code} value={prov.code}>
-                        {prov.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Chamber</label>
-                  <select
-                    className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
-                    value={selectedChamber}
-                    onChange={handleChamberChange}
-                    disabled={welcomePickerView === 'assist' ? !assistUnlocked : !selectedProvince || loadingChambers}
-                  >
-                    <option value="">{loadingChambers ? 'Loading chambers…' : 'Select your chamber'}</option>
-                    {chambers.map((ch) => (
-                      <option key={ch.slug} value={ch.slug}>
-                        {ch.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </>
-            ) : null}
-
-            {(!isWelcome || assistUnlocked || welcomePickerView === 'manual') && (
-              <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  {!isWelcome || !assistUnlocked ? (
-                    <div>
-                      <div className="font-semibold text-gray-700">Need a hand?</div>
-                      <div className="text-xs text-gray-500">Let us detect your riding using your current location.</div>
-                    </div>
-                  ) : null}
-                  {!isWelcome && (
+                    {postalBusy ? 'Working…' : 'Start!'}
+                  </button>
+                  {postalCodeInput ? (
                     <button
                       type="button"
-                      className={locationButtonClass}
-                      onClick={handleAutoDetect}
-                      disabled={geoBusy}
+                      className="border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => {
+                        setPostalCodeInput('')
+                        setPostalMatches([])
+                        setPostalStatus('')
+                        setPostalError(null)
+                        setPostalFsa(null)
+                        setPostalNormalized(null)
+                      }}
+                      disabled={isLocked}
                     >
-                      {geoBusy ? 'Detecting…' : 'Use my location'}
+                      Clear
                     </button>
-                  )}
+                  ) : null}
                 </div>
-                {(geoStatus || geoError || activeGeoMatch) && (
-                  <div className="mt-3 space-y-2 text-xs">
-                    {activeGeoMatch && (
-                      <div className="border border-green-200 bg-green-50 px-3 py-2 text-green-700">
-                        Matched <span className="font-semibold">{activeGeoMatch.chamberName}</span> ({activeGeoMatch.province.toUpperCase()})
-                        {activeGeoMatch.method === 'geofenced'
-                          ? ' using Elections Canada boundaries.'
-                          : activeGeoMatch.method
-                            ? ' as the closest riding to you.'
-                            : '.'}
-                      </div>
-                    )}
-                    {geoStatus && !geoStatus.startsWith('Ready to continue') && (
-                      <div className="text-gray-600">{geoStatus}</div>
-                    )}
-                    {geoError && <div className="text-red-500">{geoError}</div>}
-                  </div>
-                )}
-                {suggestionMatches.length > 0 && (
-                  <div className="mt-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Tap a riding to switch</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {suggestionMatches.map((match) => {
-                        const key = `${match.province}:${match.chamberSlug}`
-                        const isActive = selectedProvince === match.province && selectedChamber === match.chamberSlug
-                        const isDetected = Boolean(
-                          geoDetected &&
-                          geoDetected.province === match.province &&
-                          geoDetected.chamberSlug === match.chamberSlug
-                        )
-                        const buttonClass = isActive
-                          ? 'border border-red-500 bg-red-50 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100'
-                          : 'border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50'
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            className={buttonClass}
-                            onClick={() => handleSuggestionSelect(match)}
-                            aria-pressed={isActive}
-                          >
-                            {match.chamberName}
-                            {typeof match.distanceKm === 'number' ? (
-                              <span className="ml-1 text-[11px] text-gray-500">({match.distanceKm} km)</span>
-                            ) : null}
-                            {isDetected ? (
-                              <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Detected</span>
-                            ) : null}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
+              </div>
+            </form>
+            {(postalStatus || postalError) && (
+              <div className="mt-3 space-y-2 text-xs">
+                {postalStatus ? <div className="text-gray-700">{postalStatus}</div> : null}
+                {postalError ? <div className="text-red-500">{postalError}</div> : null}
               </div>
             )}
+            {postalFsa && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-gray-600">
+                <div className="font-semibold text-gray-800">Matched FSA {postalFsa.code}</div>
+                <div className="flex flex-wrap gap-4 pt-1">
+                  <span>Province: {postalFsa.provinceCode?.toUpperCase() ?? '—'}</span>
+                  {postalFsa.subdivisionName ? <span>Subdivision: {postalFsa.subdivisionName}</span> : null}
+                  {postalNormalized ? <span>Normalized: {postalNormalized}</span> : null}
+                </div>
+              </div>
+            )}
+          </div>
 
+          {(showAssistPanel || suggestionMatches.length > 0) && (
+            <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-semibold text-gray-700">Need a hand?</div>
+                  <div className="text-xs text-gray-500">Let us detect your city automatically or pick from suggested matches below.</div>
+                </div>
+                {showAssistPanel ? (
+                  <button
+                    type="button"
+                    className={locationButtonClass}
+                    onClick={handleAutoDetect}
+                    disabled={geoBusy || isLocked}
+                  >
+                    {geoBusy ? 'Detecting…' : 'Use my location'}
+                  </button>
+                ) : null}
+              </div>
+              {(geoStatus || geoError || activeGeoMatch) && (
+                <div className="mt-3 space-y-2 text-xs">
+                  {activeGeoMatch && (
+                    <div className="border border-green-200 bg-green-50 px-3 py-2 text-green-700">
+                      Matched <span className="font-semibold">{formatMatchCityLabel(activeGeoMatch)}</span> ({activeGeoMatch.province.toUpperCase()})
+                      {activeGeoMatch.method === 'geofenced'
+                        ? ' using Elections Canada boundaries.'
+                        : activeGeoMatch.method
+                          ? ' as the closest city to you.'
+                          : '.'}
+                    </div>
+                  )}
+                  {geoStatus && !geoStatus.startsWith('Ready to continue') && (
+                    <div className="text-gray-600">{geoStatus}</div>
+                  )}
+                  {geoError && <div className="text-red-500">{geoError}</div>}
+                </div>
+              )}
+              {suggestionMatches.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    {isWelcome ? 'Tap a city to continue' : 'Tap a city to switch'}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {suggestionMatches.map((match) => {
+                      const key = `${match.province}:${match.chamberSlug}`
+                      const isActive = selectedProvince === match.province && selectedChamber === match.chamberSlug
+                      const isDetected = Boolean(
+                        geoDetected &&
+                        geoDetected.province === match.province &&
+                        geoDetected.chamberSlug === match.chamberSlug
+                      )
+                      const matchLabel = formatMatchCityLabel(match)
+                      const distanceValue = typeof match.city?.distanceKm === 'number' ? match.city.distanceKm : match.distanceKm
+                      const buttonClass = isActive
+                        ? 'border border-red-500 bg-red-50 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60'
+                        : 'border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
+                      const isPostal = isPostalSuggestion(match)
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          className={buttonClass}
+                          onClick={() => handleSuggestionSelect(match)}
+                          disabled={isLocked}
+                          aria-pressed={isActive}
+                        >
+                          {matchLabel}
+                          {typeof distanceValue === 'number' ? (
+                            <span className="ml-1 text-[11px] text-gray-500">({distanceValue} km)</span>
+                          ) : null}
+                          {isDetected ? (
+                            <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Detected</span>
+                          ) : null}
+                          {isPostal ? (
+                            <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Postal</span>
+                          ) : null}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {showManualPickers ? (
+            <>
+              <div>
+                <label className="text-sm font-medium text-gray-700">Province or territory</label>
+                <select
+                  className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+                  ref={provinceSelectRef}
+                  value={selectedProvince}
+                  onChange={handleProvinceChange}
+                  disabled={welcomePickerView === 'assist' && !assistUnlocked}
+                >
+                  <option value="">Select your province / territory</option>
+                  {provinces.map((prov) => (
+                    <option key={prov.code} value={prov.code}>
+                      {prov.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-700">City</label>
+                <select
+                  className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+                  value={selectedCityKey}
+                  onChange={handleCityChange}
+                  disabled={welcomePickerView === 'assist' ? !assistUnlocked : !selectedProvince || loadingCities}
+                >
+                  <option value="">{loadingCities ? 'Loading cities…' : 'Select your city'}</option>
+                  {chambers.map((ch) => {
+                    const optionValue = buildCityOptionValue(ch)
+                    return (
+                      <option key={optionValue} value={optionValue}>
+                        {formatCityOptionLabel(ch)}
+                      </option>
+                    )
+                  })}
+                </select>
+              </div>
+            </>
+          ) : null}
+
+          {showFullPicker ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link
                 className={`${visitButtonClass} flex-shrink-0 text-center sm:min-w-[120px]`}
@@ -812,7 +1139,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
                   onClick={handleFollowSelected}
                   disabled={!selectedProvince || !selectedChamber || followSaving || alreadyFollowingSelected}
                 >
-                  {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this chamber'}
+                  {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this city'}
                 </button>
               ) : null}
               <button
@@ -821,14 +1148,14 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
                 onClick={() => setHomeChamber(selectedProvince, selectedChamber, 'picker')}
                 disabled={!canSave || savingHome}
               >
-                {savingHome ? 'Saving…' : home ? 'Set as home' : 'Set as home & follow'}
+                {savingHome ? 'Saving…' : home ? 'Set as home city' : 'Set home city & follow'}
               </button>
               {home && !canSave && (
-                <span className="text-xs text-gray-500">This chamber is already set as your home.</span>
+                <span className="text-xs text-gray-500">This city is already set as your home.</span>
               )}
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </section>
     )
   }
@@ -850,7 +1177,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
                 aria-hidden="true"
                 className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--cc-primary)] border-t-transparent"
               />
-              <div className="text-sm font-semibold text-gray-900">Locating your riding…</div>
+              <div className="text-sm font-semibold text-gray-900">Locating your city…</div>
             </div>
             <div className="mt-2 text-xs text-gray-500">Please allow location detection when asked!</div>
           </div>
@@ -859,8 +1186,9 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
 
   if (mode === 'welcome') {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-white via-[#fff4f3] to-white">
-        <div className="mx-auto w-full max-w-4xl px-4 py-10">
+      <div className="relative min-h-screen" style={wallpaperBackground}>
+        <div className="absolute inset-0 bg-slate-950/45" aria-hidden />
+        <div className="relative mx-auto w-full max-w-4xl px-4 py-10">
           {renderPickerSection('welcome')}
         </div>
         {geoOverlay}
@@ -873,13 +1201,13 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       <section className="surface-card space-y-3 p-5 shadow-subtle">
         <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Need help choosing?</div>
         <p className="text-sm text-slate-600">
-          Your chamber matches your federal Electoral District Association (EDA). Not sure which one is yours? Check your voter card or search for your MP by postal code on Elections Canada.
+          Your city automatically maps to your federal Electoral District Association (EDA). Not sure which one is yours? Check your voter card or search for your MP by postal code on Elections Canada.
         </p>
       </section>
       <section className="surface-card space-y-3 p-5 shadow-subtle text-sm text-slate-600">
         <div className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Tip</div>
         <p>
-          Tap “Use my location” to let Civil auto-detect your riding, or choose manually and we&apos;ll tailor your feed instantly.
+          Tap “Detect my postal code automatically” to let Civil auto-detect your city (and the matching EDA), or browse the list yourself and we&apos;ll tailor your feed instantly.
         </p>
       </section>
       <RightRail />

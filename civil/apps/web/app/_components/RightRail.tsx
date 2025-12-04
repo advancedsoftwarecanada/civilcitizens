@@ -1,14 +1,14 @@
 import Link from 'next/link'
 
 const exploreLinks = [
-  { label: 'Browse Chambers', href: '/chambers', description: 'Find your riding and explore civic activity.' },
-  { label: 'Update your profile', href: '/profile', description: 'Add a bio, avatar, and riding details.' },
+  { label: 'Browse Cities', href: '/chambers', description: 'Find your city and explore civic activity.' },
+  { label: 'Update your profile', href: '/profile', description: 'Add a bio, avatar, and city details.' },
 ]
 
 const upcomingHighlights = [
-  { title: 'Community Spotlights', detail: 'Weekly features on chambers creating impact.' },
+  { title: 'Community Spotlights', detail: 'Weekly features on cities creating impact.' },
   { title: 'Civic Actions', detail: 'Tools to coordinate petitions, meetups, and volunteer drives.' },
-  { title: 'Partner Programs', detail: 'Vetted local businesses and employers supporting EDAs.' },
+  { title: 'Partner Programs', detail: 'Vetted local businesses and employers supporting cities and EDAs.' },
 ]
 
 export function RightRail() {
@@ -20,10 +20,10 @@ export function RightRail() {
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Beta</span>
         </div>
         <p className="text-sm text-slate-500">
-          We&apos;ll recommend chambers, citizens, and civic actions as this feed fills with activity.
+          We&apos;ll recommend cities, citizens, and civic actions as this feed fills with activity.
         </p>
         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-          Following at least three chambers helps train your personalized feed.
+          Following at least three cities helps train your personalized feed.
         </div>
       </section>
 
@@ -44,7 +44,7 @@ export function RightRail() {
       <section className="surface-card space-y-3 p-5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Coming soon</h2>
         <p className="text-sm text-slate-500">
-          Fresh drops rolling out as Civil Citizens opens to more ridings.
+          Fresh drops rolling out as Civil Citizens opens to more cities across Canada.
         </p>
         <ul className="space-y-3 text-sm text-slate-600">
           {upcomingHighlights.map((item) => (

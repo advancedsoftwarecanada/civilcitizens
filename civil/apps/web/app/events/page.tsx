@@ -23,7 +23,7 @@ export default function EventsPage() {
     <FeatureScaffold
       activeNavKey="events"
       title="Events"
-      description="Plan civic gatherings, publish agendas, and sync logistics with your chamber."
+      description="Plan civic gatherings, publish agendas, and sync logistics with your city."
       heroBadge="Early concept"
       highlights={EVENT_HIGHLIGHTS}
       roadmap={EVENT_ROADMAP}

@@ -8,8 +8,10 @@ import { Queue } from 'bullmq'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
+import proj4 from 'proj4'
 import { prisma } from '@civil/db'
 import { Prisma, MediaCategory, PremiumStatus, BusinessStatus, StripeWebhookStatus } from '@prisma/client'
+import type { City as CityModel } from '@prisma/client'
 import {
   CreatePostInput,
   CreateCommentInput,
@@ -35,9 +37,12 @@ import {
   buildHandleBase,
   JurisdictionEnum,
   ChamberGeolocateInput,
+  PostalLookupInput,
   RequestMediaUploadInput,
   CompleteMediaUploadInput,
   MediaAssetIdSchema,
+  CitySummarySchema,
+  slugifyChamberName,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
@@ -72,6 +77,8 @@ const STRIPE_PUBLISHABLE_KEY = (process.env.STRIPE_PUBLIC_KEY || process.env.NEX
 const BILLING_PORTAL_RETURN_FALLBACK = process.env.BILLING_RETURN_URL || 'http://localhost:3001/settings/billing'
 const MAX_BUSINESSES_PER_USER = 5
 const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
+
+type CitySummaryType = z.infer<typeof CitySummarySchema>
 
 function normalizeEmail(value?: string | null): string | null {
   if (!value) return null
@@ -314,6 +321,125 @@ for (const mime of BINARY_UPLOAD_MIME_TYPES) {
   app.addContentTypeParser(mime, { parseAs: 'buffer' }, (request, payload, done) => {
     done(null, payload)
   })
+}
+
+const EARTH_RADIUS_KM = 6371
+
+function haversineDistanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRadians = (value: number) => (value * Math.PI) / 180
+  const dLat = toRadians(lat2 - lat1)
+  const dLng = toRadians(lng2 - lng1)
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) ** 2
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return EARTH_RADIUS_KM * c
+}
+
+const STATS_CAN_LAMBERT =
+  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +ellps=GRS80 +units=m +no_defs'
+const statsCanToWgs84 = proj4(STATS_CAN_LAMBERT, 'EPSG:4326')
+
+const POSTAL_SANITIZE_RE = /[^A-Z0-9]/g
+const POSTAL_FSA_REGEX = /^[ABCEGHJKLMNPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]$/
+const POSTAL_FULL_REGEX = /^[ABCEGHJKLMNPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/
+
+type NormalizedPostal = {
+  postal: string
+  fsa: string
+}
+
+function normalizePostalCodeInput(value?: string | null): NormalizedPostal | null {
+  if (!value) return null
+  const sanitized = value.toUpperCase().replace(POSTAL_SANITIZE_RE, '')
+  if (sanitized.length < 3) return null
+  const fsa = sanitized.slice(0, 3)
+  if (!POSTAL_FSA_REGEX.test(fsa)) return null
+  const full = sanitized.slice(0, 6)
+  const postal = POSTAL_FULL_REGEX.test(full) ? full : fsa
+  return { postal, fsa }
+}
+
+function statsCanPointToWgs84(lat?: number | null, lng?: number | null) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  try {
+    const [convertedLng, convertedLat] = statsCanToWgs84.forward([Number(lng), Number(lat)])
+    if (!Number.isFinite(convertedLat) || !Number.isFinite(convertedLng)) return null
+    return {
+      lat: Number(convertedLat.toFixed(6)),
+      lng: Number(convertedLng.toFixed(6)),
+    }
+  } catch {
+    return null
+  }
+}
+
+function formatCitySummary(city: CityModel, distanceKm?: number): CitySummaryType {
+  const provinceName = getProvinceDisplayName(city.provinceCode) ?? city.provinceCode.toUpperCase()
+  return {
+    name: city.name,
+    slug: city.slug,
+    provinceCode: city.provinceCode,
+    provinceName,
+    chamberSlug: city.chamberSlug,
+    chamberName: city.chamberName,
+    latitude: city.latitude,
+    longitude: city.longitude,
+    population: city.population ?? null,
+    distanceKm: typeof distanceKm === 'number' ? Number(distanceKm.toFixed(1)) : undefined,
+  }
+}
+
+function pickNearestCitySummary(cities: CityModel[], lat: number, lng: number): CitySummaryType | undefined {
+  if (!cities.length) return undefined
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return formatCitySummary(cities[0]!)
+  }
+  let closest: CityModel | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const city of cities) {
+    const distance = haversineDistanceKm(lat, lng, city.latitude, city.longitude)
+    if (!closest || distance < bestDistance) {
+      closest = city
+      bestDistance = distance
+    }
+  }
+  if (!closest) return formatCitySummary(cities[0]!)
+  return formatCitySummary(closest, bestDistance)
+}
+
+type LocateResult = Awaited<ReturnType<typeof locateChamberFromPoint>>
+type RawGeoMatch = NonNullable<LocateResult['primary']>
+type RawGeoMatchOrNull = LocateResult['primary']
+type EnrichedGeoMatch = RawGeoMatch & { city?: CitySummaryType }
+type EnrichedGeoMatchOrNull = (RawGeoMatch & { city?: CitySummaryType }) | null
+
+async function enrichMatchesWithCities(matches: RawGeoMatchOrNull[], lat: number, lng: number): Promise<EnrichedGeoMatchOrNull[]> {
+  const validMatches = matches.filter((match): match is RawGeoMatch => Boolean(match))
+  if (!validMatches.length) {
+    return matches as EnrichedGeoMatchOrNull[]
+  }
+
+  const chamberSlugs = [...new Set(validMatches.map((match) => match.chamberSlug))]
+  const cityRows = await prisma.city.findMany({
+    where: { chamberSlug: { in: chamberSlugs } },
+  })
+
+  const citiesByChamber = new Map<string, CityModel[]>()
+  for (const city of cityRows) {
+    const list = citiesByChamber.get(city.chamberSlug)
+    if (list) {
+      list.push(city)
+    } else {
+      citiesByChamber.set(city.chamberSlug, [city])
+    }
+  }
+
+  return matches.map((match) => {
+    if (!match) return null
+    const cityOptions = citiesByChamber.get(match.chamberSlug) ?? []
+    const summary = pickNearestCitySummary(cityOptions, lat, lng)
+    if (!summary) return match
+    return { ...match, city: summary }
+  }) as EnrichedGeoMatchOrNull[]
 }
 
 await app.register(cors, { origin: true, credentials: true })
@@ -1183,10 +1309,95 @@ app.post('/chambers/geolocate', async (req: FastifyRequest, reply: FastifyReply)
       limit: limit ?? undefined,
       paddingDegrees: bboxPaddingDegrees ?? undefined,
     })
-    return reply.send({ primary, alternatives, meta })
+    const enriched = await enrichMatchesWithCities([primary, ...alternatives], lat, lng)
+    const [enrichedPrimary, ...enrichedAlternatives] = enriched
+    return reply.send({
+      primary: enrichedPrimary ?? null,
+      alternatives: enrichedAlternatives.filter((entry): entry is EnrichedGeoMatch => Boolean(entry)),
+      meta,
+    })
   } catch (error) {
     req.log.error({ err: error }, 'chamber_geolocate_failed')
     return reply.code(500).send({ error: 'geolocation_failed' })
+  }
+})
+
+app.post('/chambers/postal-lookup', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = PostalLookupInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const normalized = normalizePostalCodeInput(parse.data.postalCode)
+  if (!normalized) {
+    return reply.code(400).send({ error: 'invalid_postal_code' })
+  }
+
+  try {
+    const fsaRecord = await prisma.forwardSortationArea.findUnique({
+      where: { code: normalized.fsa },
+      select: {
+        code: true,
+        provinceCode: true,
+        subdivisionId: true,
+        subdivisionName: true,
+        centroidLat: true,
+        centroidLng: true,
+        defaultChamberSlug: true,
+        defaultChamberName: true,
+      },
+    })
+
+    if (!fsaRecord) {
+      return reply.code(404).send({ error: 'fsa_not_found' })
+    }
+
+    let coords = statsCanPointToWgs84(fsaRecord.centroidLat, fsaRecord.centroidLng)
+    if (!coords) {
+      const fallbackCity = await (fsaRecord.subdivisionId || fsaRecord.provinceCode
+        ? prisma.city.findFirst({
+            where: fsaRecord.subdivisionId
+              ? { censusSubdivisionId: fsaRecord.subdivisionId }
+              : { provinceCode: fsaRecord.provinceCode ?? undefined },
+            orderBy: { population: 'desc' },
+          })
+        : null)
+      if (fallbackCity) {
+        coords = { lat: fallbackCity.latitude, lng: fallbackCity.longitude }
+      }
+    }
+
+    let enrichedPrimary: EnrichedGeoMatchOrNull = null
+    let enrichedAlternatives: EnrichedGeoMatch[] = []
+    if (coords) {
+      const locateResult = await locateChamberFromPoint(coords.lat, coords.lng, {
+        limit: parse.data.limit ?? undefined,
+      })
+      const enriched = await enrichMatchesWithCities([locateResult.primary, ...locateResult.alternatives], coords.lat, coords.lng)
+      const [primaryMatch, ...alternativeMatches] = enriched
+      enrichedPrimary = primaryMatch ?? null
+      enrichedAlternatives = alternativeMatches.filter((entry): entry is EnrichedGeoMatch => Boolean(entry))
+    }
+
+    return reply.send({
+      postalCode: normalized.postal,
+      fsa: {
+        code: fsaRecord.code,
+        provinceCode: fsaRecord.provinceCode ?? null,
+        subdivisionId: fsaRecord.subdivisionId ?? null,
+        subdivisionName: fsaRecord.subdivisionName ?? null,
+        centroidLat: coords?.lat ?? null,
+        centroidLng: coords?.lng ?? null,
+        defaultChamberSlug: fsaRecord.defaultChamberSlug ?? null,
+        defaultChamberName: fsaRecord.defaultChamberName ?? null,
+      },
+      primary: enrichedPrimary,
+      alternatives: enrichedAlternatives,
+    })
+  } catch (error) {
+    req.log.error({ err: error }, 'postal_lookup_failed')
+    return reply.code(500).send({ error: 'postal_lookup_failed' })
   }
 })
 
@@ -1784,6 +1995,46 @@ app.get('/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
   const chambers = getChambersByProvince(province)
   return reply.send({ items: chambers })
+})
+
+app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = z
+    .object({
+      province: z.string().optional(),
+      q: z.string().optional(),
+      chamberSlug: z.string().optional(),
+      limit: z.coerce.number().int().min(1).max(500).default(200),
+    })
+    .safeParse(req.query)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+  const { limit, q, chamberSlug } = parse.data
+  const province = parse.data.province ? normalizeProvinceCode(parse.data.province) : null
+  if (parse.data.province && !province) return reply.code(404).send({ error: 'province_not_found' })
+
+  const where: Prisma.CityWhereInput = {}
+  if (province) {
+    where.provinceCode = province
+  }
+  if (chamberSlug) {
+    where.chamberSlug = slugifyChamberName(chamberSlug)
+  }
+  const trimmedQuery = q?.trim()
+  if (trimmedQuery) {
+    const slugQuery = slugifyChamberName(trimmedQuery)
+    where.OR = [
+      { name: { contains: trimmedQuery, mode: 'insensitive' } },
+      { slug: { contains: slugQuery, mode: 'insensitive' } },
+      { chamberName: { contains: trimmedQuery, mode: 'insensitive' } },
+    ]
+  }
+
+  const cities = await prisma.city.findMany({
+    where,
+    orderBy: [{ population: 'desc' }, { name: 'asc' }],
+    take: limit,
+  })
+
+  return reply.send({ items: cities.map((city: CityModel) => formatCitySummary(city)) })
 })
 
 // Get post by id

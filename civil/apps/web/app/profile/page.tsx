@@ -154,16 +154,16 @@ const SETTINGS_LAUNCHER_LINKS: LauncherLink[] = [
   },
   {
     key: 'chambers',
-    label: 'Chambers',
-    description: 'Change your home riding or explore new chambers.',
+    label: 'Cities',
+    description: 'Change your home city or explore new communities.',
     href: '/chambers',
     icon: HiOutlineBuildingOffice2,
-    cta: 'Open chambers',
+    cta: 'Open cities',
   },
   {
     key: 'connections',
     label: 'Connections',
-    description: 'Review followers, following, and chamber memberships.',
+    description: 'Review followers, following, and city memberships.',
     href: '#connections-card',
     icon: HiOutlineUsers,
     cta: 'View stats',
@@ -1413,7 +1413,7 @@ export default function ProfileEditPage() {
                   <span className="text-base font-semibold text-slate-900">{profile?.stats?.following ?? 0}</span>
                 </li>
                 <li className="flex items-center justify-between">
-                  <span>Chambers</span>
+                  <span>Cities</span>
                   <span className="text-base font-semibold text-slate-900">{profile?.stats?.chambersFollowing ?? 0}</span>
                 </li>
               </ul>
@@ -1421,7 +1421,7 @@ export default function ProfileEditPage() {
 
             {profile?.homeChamber ? (
               <section className="surface-card space-y-3 p-5 shadow-subtle">
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Home chamber</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Home city</p>
                 <div className="text-sm text-slate-600">
                   <div className="text-base font-semibold text-slate-900">
                     {profile.homeChamber.chamberName ?? profile.homeChamber.chamberSlug}

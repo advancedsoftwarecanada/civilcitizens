@@ -20,7 +20,7 @@ import { pushToast } from './useToasts'
 import { isSuperAdmin } from '../_lib/admin'
 
 const NAV_BUTTONS: Array<{ key: 'home' | 'search' | 'notifications' | 'messages'; label: string; icon: IconType }> = [
-  { key: 'home', label: 'Home', icon: HiOutlineHome },
+  { key: 'home', label: 'Menu', icon: HiOutlineHome },
   { key: 'search', label: 'Search', icon: HiOutlineMagnifyingGlass },
   { key: 'notifications', label: 'Alerts', icon: HiOutlineBell },
   { key: 'messages', label: 'Messages', icon: HiOutlineEnvelope },

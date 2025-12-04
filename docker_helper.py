@@ -104,6 +104,7 @@ def command_build(compose_cmd: list[str], overrides: Mapping[str, str], *, no_ca
 
 
 def command_rebuild(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    command_down(compose_cmd, overrides)
     command_build(compose_cmd, overrides, no_cache=False)
     run_compose(
         compose_cmd,
@@ -127,7 +128,7 @@ def command_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> No
 
 
 def command_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
-    run_compose(compose_cmd, ["down"], overrides)
+    run_compose(compose_cmd, ["down", "--remove-orphans"], overrides)
 
 
 def command_down_all(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:

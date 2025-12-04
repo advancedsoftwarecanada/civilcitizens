@@ -363,11 +363,12 @@ export async function locateChamberFromPoint(lat: number, lng: number, options: 
 
   for (const pf of features) {
     const centroidDistanceKm = turfDistance(targetPoint, pf.centroidPoint, { units: 'kilometers' })
-    const polygonDistanceRaw = pointToPolygonDistance(targetPoint as any, pf.feature as any, { units: 'kilometers' })
-    const polygonDistanceKm = Math.max(0, polygonDistanceRaw)
+    let polygonDistanceKm = Number.POSITIVE_INFINITY
     let inside = false
 
     if (pointWithinExpandedBBox(pf.bbox, lng, lat, paddingDegrees)) {
+      const polygonDistanceRaw = pointToPolygonDistance(targetPoint as any, pf.feature as any, { units: 'kilometers' })
+      polygonDistanceKm = Math.max(0, polygonDistanceRaw)
       inside = booleanPointInPolygon(targetPoint as any, pf.feature as any)
       if (!inside && polygonDistanceRaw <= BOUNDARY_TOLERANCE_KM) {
         inside = true

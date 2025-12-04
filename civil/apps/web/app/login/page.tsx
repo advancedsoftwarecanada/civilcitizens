@@ -126,7 +126,7 @@ function LoginPageInner() {
   )
 
   return (
-    <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your chamber." footer={footer} hideSidePanel>
+    <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your city." footer={footer} hideSidePanel useWallpaper>
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block text-sm font-medium text-slate-700">
           Email or handle

@@ -47,7 +47,7 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: HiOutlineWallet },
-  { key: 'chambers', label: 'Chambers', href: '/chambers', icon: HiOutlineBuildingOffice2 },
+  { key: 'chambers', label: 'Cities', href: '/chambers', icon: HiOutlineBuildingOffice2 },
   { key: 'account', label: 'Account Settings', href: '/profile', icon: HiOutlineUserCircle },
 ]
 

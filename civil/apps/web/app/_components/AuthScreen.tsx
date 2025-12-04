@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 
 const DEFAULT_HIGHLIGHTS = [
   {
@@ -24,6 +24,7 @@ export type AuthScreenProps = {
   sideDescription?: string
   sideHighlights?: Array<{ title: string; description: string }>
   hideSidePanel?: boolean
+  useWallpaper?: boolean
 }
 
 export function AuthScreen({
@@ -32,18 +33,32 @@ export function AuthScreen({
   children,
   footer,
   sideTitle = 'Your civic headquarters',
-  sideDescription = 'Pick your home chamber and join respectful conversations with the MPs, councils, and businesses that shape your riding every day.',
+  sideDescription = 'Drop your postal code, pick your home city, and join respectful conversations with the MPs, councils, and businesses that shape your riding every day.',
   sideHighlights = DEFAULT_HIGHLIGHTS,
   hideSidePanel = false,
+  useWallpaper = false,
 }: AuthScreenProps) {
   const hasSidePanel = !hideSidePanel
   const containerClass = hasSidePanel
     ? 'mx-auto flex min-h-screen max-w-6xl flex-col gap-10 px-4 py-12 sm:px-8 lg:flex-row lg:items-stretch'
     : 'mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-10 px-4 py-12 sm:px-8'
+  const wallpaperStyles: CSSProperties | undefined = useWallpaper
+    ? {
+        backgroundImage: "url('/canadawallpapercivil.jpg')",
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundAttachment: 'fixed',
+      }
+    : undefined
+  const outerClass = useWallpaper
+    ? 'relative min-h-screen'
+    : 'min-h-screen bg-gradient-to-br from-white via-[#fff4f3] to-[#eef6ff]'
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-[#fff4f3] to-[#eef6ff]">
-      <div className={containerClass}>
+    <div className={outerClass} style={wallpaperStyles}>
+      {useWallpaper ? <div className="absolute inset-0 bg-slate-950/45" aria-hidden /> : null}
+      <div className={`${useWallpaper ? 'relative z-10' : ''} ${containerClass}`}>
         {hasSidePanel ? (
           <div className="order-2 flex flex-1 flex-col justify-between rounded-[32px] border border-white/60 bg-white/60 p-8 text-slate-700 shadow-[0_40px_120px_rgba(15,23,42,0.12)] backdrop-blur">
             <div>
