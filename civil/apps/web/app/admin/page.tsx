@@ -35,12 +35,28 @@ type AdminEnvResponse = {
   generatedAt: string
 }
 
+type GeodataDataset = {
+  key: string
+  label: string
+  count: number
+  lastUpdatedAt: string | null
+}
+
+type AdminGeodataResponse = {
+  generatedAt: string
+  datasets: GeodataDataset[]
+}
+
 export default function AdminPage() {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [diagnostics, setDiagnostics] = useState<AdminEnvResponse | null>(null)
+  const [geodata, setGeodata] = useState<AdminGeodataResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [geodataStatus, setGeodataStatus] = useState<'idle' | 'loading' | 'error' | 'ready'>('idle')
+
+  const numberFormatter = useMemo(() => new Intl.NumberFormat('en-CA'), [])
 
   useEffect(() => {
     const storedToken = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
@@ -88,6 +104,23 @@ export default function AdminPage() {
         }
         const payload = (await envResponse.json()) as AdminEnvResponse
         setDiagnostics(payload)
+
+        setGeodataStatus('loading')
+        try {
+          const geoResponse = await fetch(buildApiUrl('/admin/geodata'), {
+            headers: { authorization: `Bearer ${storedToken}` },
+          })
+          if (geoResponse.ok) {
+            const geoPayload = (await geoResponse.json()) as AdminGeodataResponse
+            setGeodata(geoPayload)
+            setGeodataStatus('ready')
+          } else {
+            setGeodataStatus('error')
+          }
+        } catch (geoError) {
+          console.error('[admin] Failed to load geodata summary', geoError)
+          setGeodataStatus('error')
+        }
       } catch (err) {
         console.error('[admin] Failed to load diagnostics', err)
         setError('Unexpected error while loading admin data.')
@@ -112,6 +145,9 @@ export default function AdminPage() {
     return items
   }, [diagnostics])
 
+  const datasets = geodata?.datasets ?? []
+  const geodataGeneratedAt = geodata?.generatedAt ? new Date(geodata.generatedAt).toLocaleString() : null
+
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
@@ -131,6 +167,42 @@ export default function AdminPage() {
               <div className="surface-card border border-amber-200 bg-amber-50 p-6 text-sm text-amber-700">{error}</div>
             ) : diagnostics ? (
               <>
+                <section className="surface-card space-y-5 p-6">
+                  <header className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Custom reports</p>
+                    <h1 className="text-xl font-semibold text-slate-900">GeoData coverage</h1>
+                    <p className="text-sm text-slate-500">
+                      Monitor the StatsCan + Elections Canada import counts that power community feeds and postal lookups.
+                    </p>
+                  </header>
+                  {geodataStatus === 'error' ? (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+                      Unable to load GeoData summary right now. Re-run the API stack or try again shortly.
+                    </div>
+                  ) : geodataStatus === 'loading' || geodataStatus === 'idle' ? (
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Loading GeoData summary…</div>
+                  ) : datasets.length ? (
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {datasets.map((dataset) => (
+                        <article key={dataset.key} className="rounded-2xl border border-slate-200 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{dataset.label}</p>
+                          <p className="mt-2 text-3xl font-semibold text-slate-900">{numberFormatter.format(dataset.count)}</p>
+                          <p className="mt-2 text-xs text-slate-500">
+                            {dataset.lastUpdatedAt ? `Updated ${new Date(dataset.lastUpdatedAt).toLocaleString()}` : 'Awaiting latest import'}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      No GeoData counts found. Run <code className="rounded bg-white px-1.5 py-0.5 font-mono text-xs text-slate-700">pnpm tsx apps/api/scripts/seed-admin-areas.ts</code> and redeploy the API to refresh this report.
+                    </div>
+                  )}
+                  {geodataGeneratedAt ? (
+                    <p className="text-xs text-slate-400">Snapshot generated at {geodataGeneratedAt}</p>
+                  ) : null}
+                </section>
+
                 <section className="surface-card space-y-4 p-6">
                   <header className="space-y-1">
                     <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Environment</p>

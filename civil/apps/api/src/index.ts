@@ -3925,6 +3925,49 @@ app.get('/admin/env', async (req: FastifyRequest, reply: FastifyReply) => {
   })
 })
 
+app.get('/admin/geodata', async (req: FastifyRequest, reply: FastifyReply) => {
+  let user: { id: string; email: string | null } | null
+  try {
+    user = await loadAuthenticatedUser(req)
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  if (!user || !isSuperAdminEmail(user.email)) {
+    return reply.code(403).send({ error: 'forbidden' })
+  }
+
+  const [divisionStats, subdivisionStats, fsaStats] = await Promise.all([
+    prisma.censusDivision.aggregate({ _count: true, _max: { updatedAt: true } }),
+    prisma.censusSubdivision.aggregate({ _count: true, _max: { updatedAt: true } }),
+    prisma.forwardSortationArea.aggregate({ _count: true, _max: { updatedAt: true } }),
+  ])
+
+  return reply.send({
+    generatedAt: new Date().toISOString(),
+    datasets: [
+      {
+        key: 'divisions',
+        label: 'Census divisions',
+        count: divisionStats._count ?? 0,
+        lastUpdatedAt: divisionStats._max?.updatedAt?.toISOString() ?? null,
+      },
+      {
+        key: 'subdivisions',
+        label: 'Census subdivisions',
+        count: subdivisionStats._count ?? 0,
+        lastUpdatedAt: subdivisionStats._max?.updatedAt?.toISOString() ?? null,
+      },
+      {
+        key: 'fsas',
+        label: 'Forward sortation areas',
+        count: fsaStats._count ?? 0,
+        lastUpdatedAt: fsaStats._max?.updatedAt?.toISOString() ?? null,
+      },
+    ],
+  })
+})
+
 // SSE notifications (skeleton)
 app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
