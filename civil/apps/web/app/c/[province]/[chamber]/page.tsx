@@ -197,13 +197,13 @@ export default function ChamberFeedPage({ params }: PageProps) {
     <div className="min-h-screen">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
         <div className="mx-auto max-w-screen-lg px-4">
-          <Sidebar me={viewer ?? undefined} active="chambers" />
+          <Sidebar me={viewer ?? undefined} active="community" />
         </div>
       </div>
 
       <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 xl:px-12">
         <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10">
-          <Sidebar me={viewer ?? undefined} active="chambers" />
+          <Sidebar me={viewer ?? undefined} active="community" />
 
           <main className="space-y-6">
             <section className="surface-card px-6 py-5 shadow-subtle">

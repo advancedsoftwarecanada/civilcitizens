@@ -742,14 +742,57 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const visitButtonClass = 'border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
   const locationButtonClass = 'inline-flex items-center justify-center border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
   const tabButtonBaseClass = 'inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60'
+  const postalCodeDisplay = postalNormalized ?? postalFsa?.code ?? ''
+  const postalRegionLabel = postalFsa?.subdivisionName ?? postalFsa?.defaultChamberName ?? null
+  const postalCommunities = postalMatches.slice(0, 6)
 
   const manageSection = (
     <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
-      <h1 className="text-2xl font-bold text-gray-900">Your Civil Cities</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Your home postal code is</h1>
       <p className="mt-2 text-sm text-gray-600">
-        Pick your home city to personalize your Civil experience. We'll use it to curate local news, MP updates,
-        and marketplace offers from your community while still mapping to your federal riding.
+        Enter your code to list nearby municipalities, electoral districts, and neighbourhood alerts. This is how we tune
+        your unified feed into hyperlocal news while still mapping to your federal riding.
       </p>
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+        <div className="text-xs uppercase tracking-wide text-gray-500">Postal region</div>
+        <div className="text-lg font-semibold text-gray-900">{postalCodeDisplay || 'Not set yet'}</div>
+        <p className="text-sm text-gray-500">
+          {postalRegionLabel ? `Serving ${postalRegionLabel}` : 'Add your postal code below to reveal nearby communities.'}
+        </p>
+      </div>
+      {postalCommunities.length ? (
+        <div className="mt-2">
+          <p className="text-sm font-semibold uppercase tracking-wide text-gray-600">Nearby communities</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {postalCommunities.map((match) => {
+              const label = formatMatchCityLabel(match)
+              const href = `/${match.province.toLowerCase()}/${match.chamberSlug.toLowerCase()}`
+              return (
+                <div key={buildMatchCityKey(match)} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-semibold text-gray-900">{label}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Link className={visitButtonClass} href={href}>
+                      Visit
+                    </Link>
+                    <button
+                      type="button"
+                      className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                      onClick={() => applyGeolocationMatch(match, 'postal')}
+                      disabled={savingHome || welcomeAutoSaving}
+                    >
+                      Tune in
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          Run the postal lookup below to see nearby municipalities, EDAs, and neighbourhood feeds you can follow instantly.
+        </div>
+      )}
       {home ? (
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-subtle">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1218,13 +1261,13 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     <>
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
         <div className="mx-auto max-w-screen-lg px-4">
-          <Sidebar me={me ?? undefined} active="chambers" />
+          <Sidebar me={me ?? undefined} active="community" />
         </div>
       </div>
 
       <DashboardShell
         className="min-h-screen"
-        sidebar={<Sidebar me={me ?? undefined} active="chambers" />}
+        sidebar={<Sidebar me={me ?? undefined} active="community" />}
         rightRail={rightRailContent}
         rightRailClassName="lg:sticky lg:top-8"
         mainClassName="space-y-6"

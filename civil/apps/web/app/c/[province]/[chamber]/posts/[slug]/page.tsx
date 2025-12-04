@@ -255,12 +255,12 @@ export default function ChamberPostPage({ params }: PageProps) {
     <div className="w-full">
       <div className="border-b bg-white py-4 shadow-sm lg:hidden">
         <div className="mx-auto max-w-6xl px-4">
-          <Sidebar me={viewer ?? undefined} active="chambers" />
+          <Sidebar me={viewer ?? undefined} active="community" />
         </div>
       </div>
 
     <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
-        <Sidebar me={viewer ?? undefined} active="chambers" />
+        <Sidebar me={viewer ?? undefined} active="community" />
 
   <main className="space-y-5 lg:min-h-[calc(100vh-48px)] lg:px-0">
           {status === 'loading' ? (
