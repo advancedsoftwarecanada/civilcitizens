@@ -16,9 +16,9 @@ export const metadata: Metadata = {
     template: '%s | Civil Citizens',
   },
   description:
-    'Civil Citizens helps Canadians organize chambers, publish civic updates, and launch trusted organizations backed by verified memberships.',
+    'Civil Citizens helps Canadians organize their cities, publish civic updates, and launch trusted organizations backed by verified memberships.',
   applicationName: 'Civil Citizens',
-  keywords: ['civic', 'canada', 'organizing', 'chambers', 'civil citizens'],
+  keywords: ['civic', 'canada', 'organizing', 'cities', 'civil citizens'],
   icons: {
     icon: '/favicon.png',
     shortcut: '/favicon.png',
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Civil Citizens',
     description:
-      'Organize your riding, publish updates, and unlock verified non-profit and event pages with Civil Citizens Premium.',
+      'Organize your city, publish updates, and unlock verified non-profit and event pages with Civil Citizens Premium.',
     url: baseUrl,
     siteName: 'Civil Citizens',
     images: [
@@ -45,7 +45,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'Civil Citizens',
-    description: 'Organize your chamber, stay verified, and unlock non-profit tools with Civil Citizens.',
+    description: 'Organize your city, stay verified, and unlock non-profit tools with Civil Citizens.',
     images: ['/logo-lg.png'],
   },
 }

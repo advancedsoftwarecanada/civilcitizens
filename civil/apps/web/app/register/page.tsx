@@ -133,11 +133,12 @@ export default function RegisterPage() {
   )
 
   return (
-    <AuthScreen
-      title="Create your Civil account"
-      subtitle="Reserve your handle, pick your home chamber, and get access to Canada’s civic operating system."
+      <AuthScreen
+        title="Create your Civil account"
+        subtitle="Reserve your handle, pick your home city, and get access to Canada’s civic operating system."
       footer={footer}
       hideSidePanel
+      useWallpaper
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

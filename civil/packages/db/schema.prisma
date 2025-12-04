@@ -8,80 +8,80 @@ datasource db {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  email          String   @unique
-  handle         String   @unique
-  name           String?
-  bio            String?  @db.Text
-  avatarUrl      String?
-  coverUrl       String?
-  passwordHash   String
-  lastLoginAt    DateTime?
-  resetToken     String?   @unique
-  resetExpires   DateTime?
-  createdAt      DateTime @default(now())
-  posts          Post[]
-  comments       Comment[]
-  votes          Vote[]
-  commentVotes   CommentVote[]
-  followers      Follow[] @relation("followers")
-  following      Follow[] @relation("following")
-  chamberFollows ChamberFollow[]
-  experiences    Experience[]
-  avatarMediaId  String?  @unique
-  coverMediaId   String?  @unique
-  mediaAssets    MediaAsset[] @relation("UserMediaAssets")
-  avatarMedia    MediaAsset? @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
-  coverMedia     MediaAsset? @relation("CoverMedia", fields: [coverMediaId], references: [id])
-  premiumStatus  PremiumStatus       @default(NONE)
-  premiumSince   DateTime?
-  premiumRenewsAt DateTime?
-  premiumCanceledAt DateTime?
+  id                        String               @id @default(cuid())
+  email                     String               @unique
+  handle                    String               @unique
+  name                      String?
+  bio                       String?
+  avatarUrl                 String?
+  coverUrl                  String?
+  passwordHash              String
+  lastLoginAt               DateTime?
+  resetToken                String?              @unique
+  resetExpires              DateTime?
+  createdAt                 DateTime             @default(now())
+  avatarMediaId             String?              @unique
+  coverMediaId              String?              @unique
+  billingAddress1           String?
+  billingAddress2           String?
+  billingCity               String?
+  billingCompanyName        String?
+  billingCountry            String?
+  billingEmail              String?
+  billingFirstName          String?
+  billingLastName           String?
+  billingNotes              String?
+  billingPhone              String?
+  billingPostalCode         String?
+  billingState              String?
+  billingTaxId              String?
+  premiumCanceledAt         DateTime?
   premiumCancellationReason String?
-  billingEmail    String?
-  billingFirstName String?
-  billingLastName String?
-  billingCompanyName String?
-  billingPhone    String?
-  billingCountry  String?
-  billingState    String?
-  billingCity     String?
-  billingAddress1 String?
-  billingAddress2 String?
-  billingPostalCode String?
-  billingTaxId    String?
-  billingNotes    String?
-  stripeCustomerId String?   @unique
-  stripeSubscriptionId String? @unique
-  stripePriceId     String?
   premiumPaymentFingerprint String?
-  businesses      Business[]
-  businessMemberships BusinessMembership[]
+  premiumRenewsAt           DateTime?
+  premiumSince              DateTime?
+  premiumStatus             PremiumStatus        @default(NONE)
+  stripeCustomerId          String?              @unique
+  stripePriceId             String?
+  stripeSubscriptionId      String?              @unique
+  businesses                Business[]
+  businessMemberships       BusinessMembership[]
+  chamberFollows            ChamberFollow[]
+  comments                  Comment[]
+  commentVotes              CommentVote[]
+  experiences               Experience[]
+  following                 Follow[]             @relation("following")
+  followers                 Follow[]             @relation("followers")
+  mediaAssets               MediaAsset[]         @relation("UserMediaAssets")
+  posts                     Post[]
+  avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
+  coverMedia                MediaAsset?          @relation("CoverMedia", fields: [coverMediaId], references: [id])
+  votes                     Vote[]
 }
 
 model Post {
-  id             String    @id @default(cuid())
+  id             String        @id @default(cuid())
   authorId       String
-  author         User      @relation(fields: [authorId], references: [id])
-  body           String    @db.Text
+  body           String
   title          String?
-  type           String    @default("post")
+  type           String        @default("post")
   mediaUrl       String?
-  seoSlug        String?   @unique
-  jurisdiction   String    @default("citizen")
+  seoSlug        String?       @unique
+  jurisdiction   String        @default("citizen")
   provinceCode   String?
   chamberSlug    String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  upvotes        Int           @default(0)
+  downvotes      Int           @default(0)
+  score          Int           @default(0)
+  commentCount   Int           @default(0)
+  hotScore       Float         @default(0)
+  lastActivityAt DateTime      @default(now())
   comments       Comment[]
-  votes          Vote[]
-  upvotes        Int       @default(0)
-  downvotes      Int       @default(0)
-  score          Int       @default(0)
-  commentCount   Int       @default(0)
-  hotScore       Float     @default(0)
-  lastActivityAt DateTime  @default(now())
+  author         User          @relation(fields: [authorId], references: [id])
   hashtags       PostHashtag[]
+  votes          Vote[]
 
   @@index([authorId, createdAt])
   @@index([provinceCode, chamberSlug, createdAt])
@@ -89,20 +89,20 @@ model Post {
 }
 
 model Comment {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   postId    String
   userId    String
   parentId  String?
-  body      String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  upvotes   Int      @default(0)
-  downvotes Int      @default(0)
-  score     Int      @default(0)
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies   Comment[] @relation("CommentReplies")
+  body      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  upvotes   Int           @default(0)
+  downvotes Int           @default(0)
+  score     Int           @default(0)
+  parent    Comment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[]     @relation("CommentReplies")
+  post      Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   votes     CommentVote[]
 
   @@index([postId, createdAt])
@@ -115,8 +115,8 @@ model CommentVote {
   value     Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  comment   Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, commentId])
   @@index([commentId])
@@ -128,8 +128,8 @@ model Vote {
   value     Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post      Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, postId])
   @@index([postId])
@@ -138,22 +138,22 @@ model Vote {
 model Follow {
   followerId String
   targetId   String
-  follower   User @relation("following", fields: [followerId], references: [id])
-  target     User @relation("followers", fields: [targetId], references: [id])
   createdAt  DateTime @default(now())
+  follower   User     @relation("following", fields: [followerId], references: [id])
+  target     User     @relation("followers", fields: [targetId], references: [id])
 
   @@id([followerId, targetId])
   @@index([targetId])
 }
 
 model Notification {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
   type      String
   actorId   String
   postId    String?
   readAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId, createdAt])
 }
@@ -182,9 +182,123 @@ model ChamberFollow {
   @@index([provinceCode, chamberSlug])
 }
 
+model Province {
+  code        String   @id
+  name        String
+  shortName   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  divisions   CensusDivision[]
+  subdivisions CensusSubdivision[]
+  fsas        ForwardSortationArea[]
+  cities      City[]
+}
+
+model CensusDivision {
+  id            String   @id
+  provinceCode  String
+  name          String
+  type          String?
+  population    Int?
+  areaKm2       Float?
+  centroidLat   Float?
+  centroidLng   Float?
+  bbox          Json?
+  geometry      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  province      Province @relation(fields: [provinceCode], references: [code])
+  subdivisions  CensusSubdivision[]
+  fsas          ForwardSortationArea[]
+
+  @@index([provinceCode])
+}
+
+model CensusSubdivision {
+  id                  String   @id
+  provinceCode        String
+  divisionId          String
+  name                String
+  type                String?
+  slug                String
+  officialName        String?
+  population          Int?
+  areaKm2             Float?
+  centroidLat         Float?
+  centroidLng         Float?
+  bbox                Json?
+  geometry            Json?
+  defaultChamberSlug  String?
+  defaultChamberName  String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  province            Province       @relation(fields: [provinceCode], references: [code])
+  division            CensusDivision @relation(fields: [divisionId], references: [id])
+  cities              City[]
+  fsas                ForwardSortationArea[]
+
+  @@unique([provinceCode, slug])
+  @@index([provinceCode])
+  @@index([divisionId])
+}
+
+model ForwardSortationArea {
+  code               String  @id
+  provinceCode       String
+  divisionId         String?
+  subdivisionId      String?
+  subdivisionName    String?
+  centroidLat        Float?
+  centroidLng        Float?
+  bbox               Json?
+  geometry           Json?
+  defaultChamberSlug String?
+  defaultChamberName String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  province           Province?        @relation(fields: [provinceCode], references: [code])
+  division           CensusDivision?  @relation(fields: [divisionId], references: [id])
+  subdivision        CensusSubdivision? @relation(fields: [subdivisionId], references: [id])
+
+  @@index([provinceCode])
+  @@index([divisionId])
+  @@index([subdivisionId])
+}
+
+model City {
+  id              String   @id @default(cuid())
+  provinceCode    String
+  name            String
+  slug            String
+  chamberSlug     String
+  chamberName     String
+  latitude        Float
+  longitude       Float
+  population      Int?
+  source          String   @default("geonames_ca")
+  sourceId        String
+  featureClass    String?
+  featureCode     String?
+  matchMethod     String
+  matchConfidence String
+  matchDistanceKm Float?
+  censusSubdivisionId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  censusSubdivision CensusSubdivision? @relation(fields: [censusSubdivisionId], references: [id])
+  province Province? @relation(fields: [provinceCode], references: [code])
+
+  @@unique([provinceCode, slug])
+  @@unique([source, sourceId])
+  @@index([chamberSlug])
+  @@index([provinceCode])
+  @@index([latitude, longitude])
+  @@index([censusSubdivisionId])
+}
+
 model Hashtag {
-  tag       String   @id
-  createdAt DateTime @default(now())
+  tag       String        @id
+  createdAt DateTime      @default(now())
   posts     PostHashtag[]
 }
 
@@ -199,19 +313,19 @@ model PostHashtag {
 }
 
 model Experience {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title        String
   organization String
   location     String?
   startDate    DateTime
   endDate      DateTime?
-  current      Boolean  @default(false)
-  description  String?  @db.Text
-  position     Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  current      Boolean   @default(false)
+  description  String?
+  position     Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, position])
   @@index([userId, startDate])
@@ -220,7 +334,6 @@ model Experience {
 model MediaAsset {
   id            String           @id @default(cuid())
   ownerId       String
-  owner         User             @relation("UserMediaAssets", fields: [ownerId], references: [id], onDelete: Cascade)
   category      MediaCategory
   assetType     MediaAssetType   @default(image)
   storageType   MediaStorageType @default(minio)
@@ -238,72 +351,73 @@ model MediaAsset {
   readyAt       DateTime?
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
+  logoBusiness  Business?        @relation("BusinessLogoMedia")
+  owner         User             @relation("UserMediaAssets", fields: [ownerId], references: [id], onDelete: Cascade)
   avatarOwner   User?            @relation("AvatarMedia")
   coverOwner    User?            @relation("CoverMedia")
-  logoBusiness  Business?        @relation("BusinessLogoMedia")
 
   @@index([ownerId, category])
   @@index([status])
 }
 
 model Business {
-  id              String          @id @default(cuid())
-  ownerId         String
-  owner           User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  name            String
-  slug            String
-  description     String?         @db.Text
-  logoMediaId     String?         @unique
-  logoMedia       MediaAsset?     @relation("BusinessLogoMedia", fields: [logoMediaId], references: [id])
-  status          BusinessStatus  @default(DRAFT)
-  isVerified      Boolean         @default(false)
-  stripeSubscriptionId String?    @unique
-  stripePriceId   String?
-  billingEmail    String?
-  metadata        Json?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  memberships     BusinessMembership[]
+  id                   String               @id @default(cuid())
+  ownerId              String
+  name                 String
+  slug                 String
+  description          String?
+  logoMediaId          String?              @unique
+  status               BusinessStatus       @default(DRAFT)
+  isVerified           Boolean              @default(false)
+  stripeSubscriptionId String?              @unique
+  stripePriceId        String?
+  billingEmail         String?
+  metadata             Json?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  logoMedia            MediaAsset?          @relation("BusinessLogoMedia", fields: [logoMediaId], references: [id])
+  owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  memberships          BusinessMembership[]
 
+  @@unique([ownerId, slug])
   @@index([ownerId])
   @@index([slug])
-  @@unique([ownerId, slug])
 }
 
 model BusinessMembership {
-  id          String       @id @default(cuid())
-  businessId  String
-  userId      String
-  role        BusinessRole @default(OWNER)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String       @id @default(cuid())
+  businessId String
+  userId     String
+  role       BusinessRole @default(OWNER)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  business   Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([businessId, userId])
   @@index([userId])
 }
 
 model StripeWebhookEvent {
-  id            String              @id @default(cuid())
-  eventId       String              @unique
-  eventType     String
-  apiVersion    String?
-  livemode      Boolean             @default(false)
-  payload       Json
-  status        StripeWebhookStatus @default(RECEIVED)
-  subscriptionId String?
-  invoiceId     String?
-  customerId    String?
-  businessId    String?
-  userId        String?
-  lastError     String?
-  retryCount    Int                 @default(0)
-  lastReceivedAt DateTime           @default(now())
+  id                  String              @id @default(cuid())
+  eventId             String              @unique
+  eventType           String
+  apiVersion          String?
+  livemode            Boolean             @default(false)
+  payload             Json
+  status              StripeWebhookStatus @default(RECEIVED)
+  subscriptionId      String?
+  invoiceId           String?
+  customerId          String?
+  businessId          String?
+  userId              String?
+  lastError           String?
+  retryCount          Int                 @default(0)
+  lastReceivedAt      DateTime            @default(now())
   processingStartedAt DateTime?
-  processedAt   DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  processedAt         DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   @@index([subscriptionId])
   @@index([customerId])

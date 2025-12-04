@@ -165,6 +165,20 @@ export const UnfollowChamberInput = z.object({
 })
 export type UnfollowChamberInput = z.infer<typeof UnfollowChamberInput>
 
+export const CitySummarySchema = z.object({
+  name: z.string().min(1).max(160),
+  slug: z.string().min(1).max(160),
+  provinceCode: z.string().min(2).max(2),
+  provinceName: z.string().min(1).max(160),
+  chamberSlug: z.string().min(1).max(160),
+  chamberName: z.string().min(1).max(160),
+  latitude: z.number(),
+  longitude: z.number(),
+  population: z.number().int().nonnegative().nullable(),
+  distanceKm: z.number().nonnegative().optional(),
+})
+export type CitySummary = z.infer<typeof CitySummarySchema>
+
 export const ChamberGeoMatchSchema = z.object({
   province: z.string().min(2).max(2),
   chamberSlug: z.string().min(1).max(160),
@@ -172,6 +186,7 @@ export const ChamberGeoMatchSchema = z.object({
   method: z.enum(['geofenced', 'nearest']),
   confidence: z.enum(['high', 'medium', 'low']).default('medium'),
   distanceKm: z.number().nonnegative().optional(),
+  city: CitySummarySchema.optional(),
 })
 export type ChamberGeoMatch = z.infer<typeof ChamberGeoMatchSchema>
 
@@ -196,6 +211,31 @@ export const ChamberGeolocateInput = z.object({
   bboxPaddingDegrees: z.coerce.number().min(0).max(5).default(0.25).optional(),
 })
 export type ChamberGeolocateInput = z.infer<typeof ChamberGeolocateInput>
+
+export const PostalLookupInput = z.object({
+  postalCode: z.string().trim().min(3).max(12),
+  limit: z.coerce.number().int().min(1).max(25).default(8).optional(),
+})
+export type PostalLookupInput = z.infer<typeof PostalLookupInput>
+
+export const PostalLookupResponseSchema = z.object({
+  postalCode: z.string(),
+  fsa: z
+    .object({
+      code: z.string(),
+      provinceCode: z.string().nullable(),
+      subdivisionId: z.string().nullable(),
+      subdivisionName: z.string().nullable(),
+      centroidLat: z.number().nullable(),
+      centroidLng: z.number().nullable(),
+      defaultChamberSlug: z.string().nullable(),
+      defaultChamberName: z.string().nullable(),
+    })
+    .nullable(),
+  primary: ChamberGeoMatchSchema.nullable(),
+  alternatives: z.array(ChamberGeoMatchSchema),
+})
+export type PostalLookupResponse = z.infer<typeof PostalLookupResponseSchema>
 
 export const ExperienceInput = z
   .object({
