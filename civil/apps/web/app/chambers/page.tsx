@@ -1,5 +1,5 @@
-import { ChambersView } from './ChambersView'
+import { CommunitiesView } from '../communities/CommunitiesView'
 
 export default function ChambersPage() {
-  return <ChambersView />
+  return <CommunitiesView />
 }

@@ -1,16 +1,18 @@
 "use client"
 
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
-import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../_components/PostComposer'
+import PostComposer, { ApiPost, JURISDICTION_LABELS, type PostType } from '../_components/PostComposer'
 import { RightRail } from '../_components/RightRail'
 import type { Jurisdiction } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeChamber, isPremiumMember, type MeResponse } from '../_lib/me'
+import { hasHomeChamber, type MeResponse } from '../_lib/me'
 import PostFeedItem from '../_components/PostFeedItem'
 import DashboardShell from '../_components/DashboardShell'
+import Modal from '../_components/Modal'
+import { pushToast } from '../_components/useToasts'
+import VerifiedAvatar from '../_components/VerifiedAvatar'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -31,6 +33,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false)
   const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
 
   const filterQuery = useMemo(() => {
     const params = new URLSearchParams()
@@ -139,41 +143,68 @@ export default function HomePage() {
     [],
   )
 
+  const firstName = me?.name?.split(' ')[0] ?? 'Citizen'
+  const isVerifiedUser = Boolean(me?.isVerified)
+  const isBusinessUser = Boolean(me?.isPremium)
+
+  const openComposer = (type: PostType = 'post') => {
+    setComposerDefaultType(type)
+    setComposerOpen(true)
+  }
+
+  const handleComingSoon = (label: string) => {
+    pushToast(`${label} creation is coming soon.`, 'info')
+  }
+
   return (
     <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="home" />} rightRail={<RightRail />} mainClassName="space-y-6">
-      <section className="surface-card px-6 py-4 shadow-subtle">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">News feed</p>
-            <h1 className="text-xl font-semibold text-slate-900">{me?.name ? `Welcome back, ${me.name.split(' ')[0]}!` : 'Welcome to Civil Citizens'}</h1>
-            <p className="text-sm text-slate-500">Track what&apos;s hot inside your home city and beyond.</p>
-            {me ? (
-              isPremiumMember(me) ? (
-                <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden />Premium member
-                </span>
-              ) : (
-                <Link
-                  href="/settings/billing"
-                  className="inline-flex items-center rounded-full border border-[var(--cc-primary)] px-3 py-1 text-xs font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/10"
-                >
-                  Unlock Premium for $9.99
-                </Link>
-              )
-            ) : null}
-          </div>
-          <div className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {sortMode === 'hot' ? 'Hot sorting' : 'Newest first'}
-          </div>
+      <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+        <div className="flex items-center gap-3">
+          <VerifiedAvatar
+            src={me?.avatarUrl ?? null}
+            alt={me?.name ?? me?.handle ?? firstName}
+            initials={me?.name ?? me?.handle ?? firstName}
+            size={56}
+            isVerified={isVerifiedUser}
+            isBusiness={isBusinessUser}
+            className="shrink-0"
+          />
+          <button
+            type="button"
+            className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-500 transition hover:bg-white hover:text-slate-700"
+            onClick={() => openComposer('post')}
+          >
+            What&apos;s on your mind, {firstName}?
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('post')}>
+            <span role="img" aria-label="Post">📝</span>
+            Post
+          </button>
+          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('article')}>
+            <span role="img" aria-label="Article">📄</span>
+            Article
+          </button>
+          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Poll')}>
+            <span role="img" aria-label="Poll">📊</span>
+            Poll
+          </button>
+          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Link')}>
+            <span role="img" aria-label="Link">🔗</span>
+            Link
+          </button>
+          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Photos')}>
+            <span role="img" aria-label="Photos">📷</span>
+            Photos
+          </button>
         </div>
       </section>
-
-      <PostComposer onPostCreated={handlePostCreated} />
 
       <section className="surface-card px-6 py-4 shadow-subtle">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap gap-2">
-            {JURISDICTION_FILTERS.map((filter) => (
+            {JURISDICTION_FILTERS.filter((filter) => filter.value === 'all').map((filter) => (
               <button
                 key={filter.value}
                 type="button"
@@ -215,9 +246,52 @@ export default function HomePage() {
             {loading ? 'Loading the latest updates…' : "No updates yet. Once the community starts posting, you'll see them here."}
           </section>
         ) : (
-          posts.map((p) => <PostFeedItem key={p.id} post={p} onVote={handleVote} />)
+          posts.map((p) => (
+            <PostFeedItem
+              key={p.id}
+              post={p}
+              onVote={handleVote}
+              viewerIsVerified={isVerifiedUser || isBusinessUser}
+            />
+          ))
         )}
       </div>
+
+      <Modal
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        title="Share something new"
+        key={composerDefaultType}
+        maxWidthClassName="max-w-3xl"
+      >
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+          <span className="text-slate-700">Create:</span>
+          <button type="button" className={`rounded-full px-3 py-1 ${composerDefaultType === 'post' ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-700'}`} onClick={() => setComposerDefaultType('post')}>
+            Post
+          </button>
+          <button type="button" className={`rounded-full px-3 py-1 ${composerDefaultType === 'article' ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-700'}`} onClick={() => setComposerDefaultType('article')}>
+            Article
+          </button>
+          <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Poll')}>
+            Poll
+          </button>
+          <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Link')}>
+            Link
+          </button>
+          <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Photos')}>
+            Photos
+          </button>
+        </div>
+        <PostComposer
+          me={me}
+          defaultPostType={composerDefaultType}
+          onPostCreated={(post) => {
+            handlePostCreated(post)
+            setComposerOpen(false)
+          }}
+          variant="plain"
+        />
+      </Modal>
     </DashboardShell>
   )
 }

@@ -63,6 +63,7 @@ type PostComposerProps = {
   defaultPostType?: PostType
   chamberTarget?: ChamberTarget | null
   onPostCreated?: (post: ApiPost) => void
+  variant?: 'card' | 'plain'
 }
 
 const MAX_POST_LENGTH = 5000
@@ -76,13 +77,6 @@ export const JURISDICTION_LABELS: Record<Jurisdiction, string> = {
   federal: 'Federal',
 }
 
-const JURISDICTION_OPTIONS: Array<{ value: Jurisdiction; label: string }> = [
-  { value: 'citizen', label: JURISDICTION_LABELS.citizen },
-  { value: 'municipal', label: JURISDICTION_LABELS.municipal },
-  { value: 'provincial', label: JURISDICTION_LABELS.provincial },
-  { value: 'federal', label: JURISDICTION_LABELS.federal },
-]
-
 function stripHtml(html: string) {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -92,6 +86,7 @@ export default function PostComposer({
   defaultPostType = 'post',
   chamberTarget = null,
   onPostCreated,
+  variant = 'card',
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [postType, setPostType] = useState<PostType>(defaultPostType)
@@ -100,8 +95,7 @@ export default function PostComposer({
   const [articleBody, setArticleBody] = useState('<p></p>')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const defaultJurisdiction: Jurisdiction = 'citizen'
-  const [jurisdiction, setJurisdiction] = useState<Jurisdiction>(defaultJurisdiction)
+  const jurisdiction: Jurisdiction = 'citizen'
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
 
@@ -122,12 +116,7 @@ export default function PostComposer({
     setArticleBody('<p></p>')
     setPostType(defaultPostType)
     setError(null)
-    setJurisdiction(defaultJurisdiction)
-  }, [defaultJurisdiction, defaultPostType])
-
-  useEffect(() => {
-    setJurisdiction(defaultJurisdiction)
-  }, [chamberTarget, defaultJurisdiction])
+  }, [defaultPostType])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -211,11 +200,14 @@ export default function PostComposer({
     }
   }, [canSubmit, submitPost, submitting])
 
+  const containerClasses = clsx(
+    'flex flex-col gap-4',
+    variant === 'card' ? 'surface-card px-6 py-5 shadow-panel' : '',
+    className,
+  )
+
   return (
-    <section
-      ref={containerRef}
-      className={clsx('surface-card flex flex-col gap-4 px-6 py-5 shadow-panel', className)}
-    >
+    <section ref={containerRef} className={containerClasses}>
       <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Share something new</p>
@@ -254,26 +246,6 @@ export default function PostComposer({
           </button>
         </div>
       </header>
-
-      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-        <span className="mr-2">Tag</span>
-        {JURISDICTION_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={clsx(
-              'rounded-full border px-3 py-1 transition',
-              jurisdiction === option.value
-                ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5 text-[var(--cc-primary)]'
-                : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700',
-            )}
-            onClick={() => setJurisdiction(option.value)}
-            disabled={submitting}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
 
       <div className="space-y-4">
         {error ? <p className="text-sm text-red-600">{error}</p> : null}

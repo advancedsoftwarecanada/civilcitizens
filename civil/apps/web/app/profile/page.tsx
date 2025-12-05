@@ -153,10 +153,10 @@ const SETTINGS_LAUNCHER_LINKS: LauncherLink[] = [
     cta: 'Edit profile',
   },
   {
-    key: 'chambers',
+    key: 'communities',
     label: 'Cities',
     description: 'Change your home city or explore new communities.',
-    href: '/chambers',
+    href: '/communities',
     icon: HiOutlineBuildingOffice2,
     cta: 'Open cities',
   },

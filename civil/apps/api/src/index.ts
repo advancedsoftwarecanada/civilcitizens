@@ -77,8 +77,116 @@ const STRIPE_PUBLISHABLE_KEY = (process.env.STRIPE_PUBLIC_KEY || process.env.NEX
 const BILLING_PORTAL_RETURN_FALLBACK = process.env.BILLING_RETURN_URL || 'http://localhost:3001/settings/billing'
 const MAX_BUSINESSES_PER_USER = 5
 const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
+const COMMUNITY_FOLLOW_TARGET = 3
+const COMMUNITY_SUGGESTION_CACHE_LIMIT = 10
 
 type CitySummaryType = z.infer<typeof CitySummarySchema>
+
+type CommunityMetaPayload = {
+  nearbyCommunities?: CitySummaryType[]
+  computedAt?: string
+  reference?: {
+    provinceCode?: string | null
+    chamberSlug?: string | null
+    cityName?: string | null
+  } | null
+}
+
+const buildFollowKey = (province: string, chamberSlug: string) => `${province}:${chamberSlug}`
+
+function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): CommunityMetaPayload | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const payload = value as Record<string, unknown>
+  const nearby = Array.isArray(payload.nearbyCommunities)
+    ? (payload.nearbyCommunities as CitySummaryType[])
+    : undefined
+  const reference =
+    payload.reference && typeof payload.reference === 'object' && !Array.isArray(payload.reference)
+      ? (payload.reference as { provinceCode?: string | null; chamberSlug?: string | null; cityName?: string | null })
+      : null
+  const computedAt = typeof payload.computedAt === 'string' ? payload.computedAt : undefined
+  return {
+    nearbyCommunities: nearby,
+    computedAt,
+    reference,
+  }
+}
+
+function filterCachedSuggestions(
+  suggestions: CitySummaryType[] | undefined,
+  excludeKeys: Set<string>,
+  limit = COMMUNITY_SUGGESTION_CACHE_LIMIT,
+): CitySummaryType[] {
+  if (!suggestions?.length) return []
+  const filtered: CitySummaryType[] = []
+  for (const entry of suggestions) {
+    if (!entry?.chamberSlug) continue
+    const key = buildFollowKey(entry.provinceCode, entry.chamberSlug)
+    if (excludeKeys.has(key)) continue
+    filtered.push(entry)
+    if (filtered.length >= limit) break
+  }
+  return filtered
+}
+
+async function computeNearbyCommunitySuggestions(
+  referenceCity: CityModel | null,
+  excludeKeys: Set<string>,
+  limit = COMMUNITY_SUGGESTION_CACHE_LIMIT,
+): Promise<CitySummaryType[]> {
+  let candidateCities: Array<{ city: CityModel; distance?: number }> = []
+
+  if (referenceCity) {
+    const provinceCities = await prisma.city.findMany({
+      where: { provinceCode: referenceCity.provinceCode },
+      orderBy: [{ population: 'desc' }, { name: 'asc' }],
+      take: 400,
+    })
+
+    candidateCities = provinceCities.map((city: CityModel) => {
+      let distance: number | undefined
+      if (
+        typeof referenceCity.latitude === 'number' &&
+        typeof referenceCity.longitude === 'number' &&
+        typeof city.latitude === 'number' &&
+        typeof city.longitude === 'number'
+      ) {
+        distance = haversineDistanceKm(referenceCity.latitude, referenceCity.longitude, city.latitude, city.longitude)
+      }
+      return { city, distance }
+    })
+
+    candidateCities.sort((a, b) => {
+      const distanceA = a.distance
+      const distanceB = b.distance
+      if (typeof distanceA === 'number' && typeof distanceB === 'number') {
+        return distanceA - distanceB
+      }
+      if (typeof distanceA === 'number') return -1
+      if (typeof distanceB === 'number') return 1
+      const populationA = a.city.population ?? 0
+      const populationB = b.city.population ?? 0
+      return populationB - populationA
+    })
+  } else {
+    const topCities = await prisma.city.findMany({
+      orderBy: [{ population: 'desc' }, { name: 'asc' }],
+      take: 400,
+    })
+    candidateCities = topCities.map((city: CityModel) => ({ city }))
+  }
+
+  const suggestions: CitySummaryType[] = []
+  for (const candidate of candidateCities) {
+    if (!candidate.city.chamberSlug) continue
+    const key = buildFollowKey(candidate.city.provinceCode, candidate.city.chamberSlug)
+    if (excludeKeys.has(key)) continue
+    suggestions.push(formatCitySummary(candidate.city, candidate.distance))
+    if (suggestions.length >= limit) break
+  }
+
+  return suggestions
+}
 
 function normalizeEmail(value?: string | null): string | null {
   if (!value) return null
@@ -372,6 +480,8 @@ function statsCanPointToWgs84(lat?: number | null, lng?: number | null) {
   }
 }
 
+type ProvinceCodeLiteral = (typeof PROVINCES)[number]['code']
+
 function formatCitySummary(city: CityModel, distanceKm?: number): CitySummaryType {
   const provinceName = getProvinceDisplayName(city.provinceCode) ?? city.provinceCode.toUpperCase()
   return {
@@ -404,6 +514,97 @@ function pickNearestCitySummary(cities: CityModel[], lat: number, lng: number): 
   }
   if (!closest) return formatCitySummary(cities[0]!)
   return formatCitySummary(closest, bestDistance)
+}
+
+type CommunitySummaryPayload = {
+  provinceCode: ProvinceCodeLiteral
+  provinceName: string
+  municipalitySlug: string
+  municipalityName: string
+  population: number | null
+  regionLabel: string | null
+  chamberSlug: string | null
+  chamberName: string | null
+  censusSubdivision: {
+    slug: string
+    name: string
+    type: string | null
+  } | null
+  source: 'city' | 'subdivision'
+}
+
+const pickLabel = (...labels: Array<string | null | undefined>) => {
+  for (const candidate of labels) {
+    if (!candidate) continue
+    const trimmed = candidate.trim()
+    if (trimmed) return trimmed
+  }
+  return null
+}
+
+type CityWithSubdivision = CityModel & {
+  censusSubdivision?: {
+    slug: string
+    name: string
+    type: string | null
+    defaultChamberName: string | null
+  } | null
+}
+
+function buildCommunityPayloadFromCity(city: CityWithSubdivision): CommunitySummaryPayload {
+  const provinceCode = city.provinceCode as ProvinceCodeLiteral
+  return {
+    provinceCode,
+    provinceName: getProvinceDisplayName(provinceCode) ?? provinceCode.toUpperCase(),
+    municipalitySlug: city.slug,
+    municipalityName: city.name,
+    population: city.population ?? null,
+    regionLabel: pickLabel(city.censusSubdivision?.defaultChamberName, city.censusSubdivision?.name, city.chamberName),
+    chamberSlug: city.chamberSlug,
+    chamberName: city.chamberName,
+    censusSubdivision: city.censusSubdivision
+      ? {
+          slug: city.censusSubdivision.slug,
+          name: city.censusSubdivision.name,
+          type: city.censusSubdivision.type ?? null,
+        }
+      : null,
+    source: 'city',
+  }
+}
+
+type SubdivisionWithDivision = {
+  slug: string
+  name: string
+  officialName: string | null
+  type: string | null
+  population: number | null
+  defaultChamberName: string | null
+  defaultChamberSlug: string | null
+  division: { name: string | null } | null
+}
+
+function buildCommunityPayloadFromSubdivision(
+  subdivision: SubdivisionWithDivision,
+  provinceCode: ProvinceCodeLiteral,
+): CommunitySummaryPayload {
+  const municipalityName = pickLabel(subdivision.officialName, subdivision.name) ?? subdivision.name
+  return {
+    provinceCode,
+    provinceName: getProvinceDisplayName(provinceCode) ?? provinceCode.toUpperCase(),
+    municipalitySlug: subdivision.slug,
+    municipalityName,
+    population: subdivision.population ?? null,
+    regionLabel: pickLabel(subdivision.defaultChamberName, subdivision.division?.name, subdivision.name),
+    chamberSlug: subdivision.defaultChamberSlug ? subdivision.defaultChamberSlug : null,
+    chamberName: pickLabel(subdivision.defaultChamberName),
+    censusSubdivision: {
+      slug: subdivision.slug,
+      name: subdivision.name,
+      type: subdivision.type ?? null,
+    },
+    source: 'subdivision',
+  }
 }
 
 type LocateResult = Awaited<ReturnType<typeof locateChamberFromPoint>>
@@ -1202,6 +1403,92 @@ app.get('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) =>
   })
 
   return reply.send({ items })
+})
+
+app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const [user, follows] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } }),
+    prisma.chamberFollow.findMany({
+      where: { userId },
+      orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
+    }),
+  ])
+
+  const followCount = follows.length
+  const followKeys: Set<string> = new Set(
+    follows.map((follow: { provinceCode: string; chamberSlug: string }) => buildFollowKey(follow.provinceCode, follow.chamberSlug))
+  )
+
+  const referenceFollow = follows.find((follow: { home: boolean }) => follow.home) ?? follows[0] ?? null
+  let referenceCity: CityModel | null = null
+
+  if (referenceFollow) {
+    referenceCity = await prisma.city.findFirst({
+      where: { provinceCode: referenceFollow.provinceCode, chamberSlug: referenceFollow.chamberSlug },
+      orderBy: [{ population: 'desc' }],
+    })
+  }
+
+  const communityMeta = parseCommunityMeta(user?.communityMeta ?? null)
+  let suggestions = filterCachedSuggestions(communityMeta?.nearbyCommunities, followKeys)
+
+  if (!suggestions.length) {
+    const computed = await computeNearbyCommunitySuggestions(referenceCity, followKeys)
+    suggestions = computed.slice()
+    if (computed.length) {
+      const payload: CommunityMetaPayload = {
+        nearbyCommunities: computed,
+        computedAt: new Date().toISOString(),
+        reference: referenceCity
+          ? {
+              provinceCode: referenceCity.provinceCode,
+              chamberSlug: referenceCity.chamberSlug,
+              cityName: referenceCity.name,
+            }
+          : null,
+      }
+      try {
+        await prisma.user.update({ where: { id: userId }, data: { communityMeta: payload } })
+      } catch (error) {
+        req.log?.warn({ err: error }, 'Failed to persist community meta')
+      }
+    }
+  }
+
+  let postsToday = 0
+  if (followKeys.size) {
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const orConditions = follows
+      .filter((follow: { chamberSlug: string }) => follow.chamberSlug)
+      .map((follow: { provinceCode: string; chamberSlug: string }) => ({ provinceCode: follow.provinceCode, chamberSlug: follow.chamberSlug }))
+    if (orConditions.length) {
+      postsToday = await prisma.post.count({
+        where: {
+          createdAt: { gte: startOfToday },
+          OR: orConditions,
+        },
+      })
+    }
+  }
+
+  return reply.send({
+    followCount,
+    followTarget: COMMUNITY_FOLLOW_TARGET,
+    postsToday,
+    suggestions,
+    home: referenceCity
+      ? {
+          provinceCode: referenceCity.provinceCode,
+          chamberSlug: referenceCity.chamberSlug,
+          chamberName: referenceCity.chamberName,
+          cityName: referenceCity.name,
+        }
+      : null,
+  })
 })
 
 // Chambers - follow additional chamber
@@ -2037,6 +2324,72 @@ app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
   return reply.send({ items: cities.map((city: CityModel) => formatCitySummary(city)) })
 })
 
+app.get('/communities/:province/:municipality', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z
+    .object({
+      province: z.string().min(2),
+      municipality: z.string().min(1),
+    })
+    .safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+  const province = normalizeProvinceCode(params.data.province)
+  if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+  const municipalitySlug = params.data.municipality.trim().toLowerCase()
+  if (!municipalitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+  reply.header('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
+
+  const city = await prisma.city.findFirst({
+    where: { provinceCode: province, slug: municipalitySlug },
+    select: {
+      provinceCode: true,
+      slug: true,
+      name: true,
+      population: true,
+      chamberSlug: true,
+      chamberName: true,
+      censusSubdivision: {
+        select: {
+          slug: true,
+          name: true,
+          type: true,
+          defaultChamberName: true,
+        },
+      },
+    },
+  })
+
+  if (city) {
+    return reply.send(buildCommunityPayloadFromCity(city as CityWithSubdivision))
+  }
+
+  const subdivision = await prisma.censusSubdivision.findFirst({
+    where: { provinceCode: province, slug: municipalitySlug },
+    select: {
+      slug: true,
+      name: true,
+      officialName: true,
+      type: true,
+      population: true,
+      defaultChamberName: true,
+      defaultChamberSlug: true,
+      division: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  })
+
+  if (subdivision) {
+    return reply.send(buildCommunityPayloadFromSubdivision(subdivision as SubdivisionWithDivision, province))
+  }
+
+  return reply.code(404).send({ error: 'community_not_found' })
+})
+
 // Get post by id
 app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
@@ -2715,16 +3068,64 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     const query = CursorQuery.extend({
       jurisdiction: JurisdictionEnum.optional(),
       sort: PostSortEnum.optional(),
+      province: z.string().optional(),
+      chamber: z.string().optional(),
+      municipality: z.string().optional(),
     }).safeParse(req.query)
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-    const { cursor, limit, jurisdiction, sort } = query.data
+    const {
+      cursor,
+      limit,
+      jurisdiction,
+      sort,
+      province: provinceParam,
+      chamber: chamberParam,
+      municipality,
+    } = query.data
     const viewerId = (req as any).user?.id as string | undefined
     const sortMode = sort ?? 'new'
 
     const where: Prisma.PostWhereInput = {
       authorId: user.id,
       ...(jurisdiction ? { jurisdiction } : {}),
+    }
+
+    const province = provinceParam ? normalizeProvinceCode(provinceParam) : null
+    if (provinceParam && !province) {
+      return reply.code(404).send({ error: 'province_not_found' })
+    }
+    if (province) {
+      where.provinceCode = province
+    }
+
+    const municipalitySlug = municipality?.trim().toLowerCase() || null
+    if (municipalitySlug && !province) {
+      return reply.code(400).send({ error: 'province_required_for_municipality' })
+    }
+
+    let chamberSlugFilter = chamberParam ? slugifyChamberName(chamberParam) : null
+
+    if (!chamberSlugFilter && municipalitySlug && province) {
+      const cityMatch = await prisma.city.findFirst({
+        where: { provinceCode: province, slug: municipalitySlug },
+        select: { chamberSlug: true },
+      })
+      if (cityMatch?.chamberSlug) {
+        chamberSlugFilter = cityMatch.chamberSlug
+      } else {
+        const subdivisionMatch = await prisma.censusSubdivision.findFirst({
+          where: { provinceCode: province, slug: municipalitySlug },
+          select: { defaultChamberSlug: true },
+        })
+        if (subdivisionMatch?.defaultChamberSlug) {
+          chamberSlugFilter = subdivisionMatch.defaultChamberSlug
+        }
+      }
+    }
+
+    if (chamberSlugFilter) {
+      where.chamberSlug = chamberSlugFilter
     }
 
     let posts: PostWithAuthor[] = []

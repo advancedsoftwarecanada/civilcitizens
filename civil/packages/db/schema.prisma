@@ -57,6 +57,7 @@ model User {
   avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
   coverMedia                MediaAsset?          @relation("CoverMedia", fields: [coverMediaId], references: [id])
   votes                     Vote[]
+  communityMeta             Json?
 }
 
 model Post {
