@@ -1,7 +1,7 @@
 "use client"
 
 import Link from 'next/link'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { IconType } from 'react-icons'
 import { LuArrowBigDown, LuArrowBigUp, LuDot, LuMessageSquare } from 'react-icons/lu'
@@ -41,6 +41,8 @@ type CommentThreadProps = {
     handle: string
     name?: string | null
     avatarUrl?: string | null
+    isVerified?: boolean
+    isPremium?: boolean
   } | null
 }
 
@@ -52,6 +54,8 @@ type CommentContextProps = {
     handle: string
     name?: string | null
     avatarUrl?: string | null
+    isVerified?: boolean
+    isPremium?: boolean
   } | null
 }
 
@@ -79,27 +83,40 @@ type VoteButtonProps = {
   direction: 'up' | 'down'
   active: boolean
   disabled: boolean
+  blocked: boolean
   onClick: () => void
+  onBlockedClick?: () => void
 }
 
-function VoteButton({ direction, active, disabled, onClick }: VoteButtonProps) {
+function VoteButton({ direction, active, blocked, disabled, onClick, onBlockedClick }: VoteButtonProps) {
   const Icon = direction === 'up' ? LuArrowBigUp : LuArrowBigDown
   const intentClasses =
     direction === 'up'
       ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm'
       : 'border-red-400 bg-red-50 text-red-500 shadow-sm'
 
+  const handleClick = () => {
+    if (disabled) return
+    if (blocked) {
+      onBlockedClick?.()
+      return
+    }
+    onClick()
+  }
+
   return (
     <button
       type="button"
       className={clsx(
         'flex h-9 w-9 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-1',
-        active
-          ? intentClasses
-          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
+        blocked
+          ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200 hover:text-slate-400 focus:ring-slate-200'
+          : active
+              ? intentClasses
+              : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
         disabled && 'pointer-events-none opacity-60',
       )}
-      onClick={onClick}
+      onClick={handleClick}
       aria-label={direction === 'up' ? 'Upvote comment' : 'Downvote comment'}
       disabled={disabled}
     >
@@ -154,15 +171,22 @@ function formatRelativeTime(iso: string) {
 
 function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentContextProps & { comment: ApiComment; depth: number }) {
   const [replying, setReplying] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
   const [pendingVote, setPendingVote] = useState(false)
+  const [showVoteTooltip, setShowVoteTooltip] = useState(false)
+  const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const createdLabel = useMemo(() => formatRelativeTime(comment.createdAt), [comment.createdAt])
   const canReply = Boolean(currentUser)
   const currentVote = comment.viewerVote ?? 0
   const isNested = depth > 0
+  const hasReplies = comment.replies.length > 0
+  const showCollapseButton = hasReplies || isNested
+  const canVote = Boolean(currentUser?.isVerified || currentUser?.isPremium)
 
   const handleVote = useCallback(
     async (nextValue: -1 | 0 | 1) => {
       if (pendingVote) return
+      if (!canVote) return
       setPendingVote(true)
       try {
         await onVote(comment.id, nextValue)
@@ -173,8 +197,24 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
         setPendingVote(false)
       }
     },
-    [comment.id, onVote, pendingVote],
+    [canVote, comment.id, onVote, pendingVote],
   )
+
+  const triggerVoteTooltip = useCallback(() => {
+    setShowVoteTooltip(true)
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current)
+    }
+    tooltipTimeoutRef.current = setTimeout(() => setShowVoteTooltip(false), 2500)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (tooltipTimeoutRef.current) {
+        clearTimeout(tooltipTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const toggleReply = useCallback(() => {
     if (!canReply) {
@@ -184,22 +224,44 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
     setReplying((prev) => !prev)
   }, [canReply])
 
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev
+      if (next) {
+        setReplying(false)
+      }
+      return next
+    })
+  }, [])
+
   return (
-    <div className={clsx('space-y-4', isNested && 'border-l border-white/70 pl-5')}> 
-      <article
-        id={`comment-${comment.id}`}
-        className={clsx(
-          'rounded-[24px] border border-white/70 bg-white/95 px-4 py-4 shadow-subtle transition hover:shadow-panel',
-          isNested && 'bg-white/90',
-        )}
-      >
-        <div className="flex items-start gap-4">
+    <div className={clsx('relative', (showCollapseButton || isNested) && 'pl-6')}>
+      {isNested ? (
+        <>
+          <span className="pointer-events-none absolute left-2 top-0 bottom-0 w-px bg-slate-200" aria-hidden />
+          <span className="pointer-events-none absolute left-2 top-5 h-px w-4 bg-slate-200" aria-hidden />
+        </>
+      ) : null}
+      {showCollapseButton ? (
+        <button
+          type="button"
+          className="absolute -left-0.5 top-3 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-500 shadow-sm transition hover:bg-slate-50"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? 'Expand thread' : 'Collapse thread'}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? '+' : '-'}
+        </button>
+      ) : null}
+      <article id={`comment-${comment.id}`} className="border-b border-slate-100 pb-4 pt-4">
+        <div className="flex items-start gap-3">
           <VerifiedAvatar
             src={comment.author.avatarUrl}
             alt={comment.author.name ?? comment.author.handle}
             initials={comment.author.name ?? comment.author.handle}
             size={44}
-            isVerified={Boolean(comment.author.isVerified ?? comment.author.isPremium)}
+            isVerified={Boolean(comment.author.isVerified)}
+            isBusiness={Boolean(comment.author.isPremium)}
             className="shrink-0"
           />
           <div className="min-w-0 flex-1 space-y-3">
@@ -211,46 +273,64 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
                 <LuDot className="h-3 w-3" />@{comment.author.handle}
               </span>
               <span className="text-slate-400">• {createdLabel}</span>
-            </div>
-            <div className="whitespace-pre-wrap text-sm leading-6 text-slate-900">{comment.body}</div>
-            <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-600">
-                <VoteButton
-                  direction="up"
-                  active={currentVote === 1}
-                  disabled={pendingVote}
-                  onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
-                />
-                <span className={clsx('min-w-[2rem] text-center text-sm', comment.score > 0 ? 'text-[var(--cc-primary)]' : comment.score < 0 ? 'text-red-500' : 'text-slate-500')}>
-                  {formatScore(comment.score)}
+              {collapsed ? (
+                <span className="text-slate-400">
+                  Thread collapsed{hasReplies ? ` • ${comment.replies.length} repl${comment.replies.length === 1 ? 'y' : 'ies'}` : ''}
                 </span>
-                <VoteButton
-                  direction="down"
-                  active={currentVote === -1}
-                  disabled={pendingVote}
-                  onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
-                />
-              </div>
-              <InlineAction icon={LuMessageSquare} label={replying ? 'Cancel reply' : 'Reply'} onClick={toggleReply} subtle={!canReply} />
+              ) : null}
             </div>
-            {replying ? (
-              <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4">
-                <CommentComposer
-                  placeholder={`Reply to @${comment.author.handle}`}
-                  submitLabel="Reply"
-                  onSubmit={(body) => onReply(comment.id, body)}
-                  onSuccess={() => setReplying(false)}
-                  onCancel={() => setReplying(false)}
-                  autoFocus
-                />
-              </div>
-            ) : null}
+            {collapsed ? null : (
+              <>
+                <div className="whitespace-pre-wrap text-sm leading-6 text-slate-900">{comment.body}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                  <div className="relative flex items-center gap-2 text-sm font-semibold text-slate-600">
+                    <VoteButton
+                      direction="up"
+                      active={currentVote === 1 && canVote}
+                      blocked={!canVote}
+                      disabled={pendingVote}
+                      onBlockedClick={triggerVoteTooltip}
+                      onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
+                    />
+                    <span className={clsx('min-w-[2rem] text-center text-sm', comment.score > 0 ? 'text-[var(--cc-primary)]' : comment.score < 0 ? 'text-red-500' : 'text-slate-500')}>
+                      {formatScore(comment.score)}
+                    </span>
+                    <VoteButton
+                      direction="down"
+                      active={currentVote === -1 && canVote}
+                      blocked={!canVote}
+                      disabled={pendingVote}
+                      onBlockedClick={triggerVoteTooltip}
+                      onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
+                    />
+                    {!canVote && showVoteTooltip ? (
+                      <div className="absolute left-0 top-full mt-2 w-max max-w-xs rounded-md bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg">
+                        Only verified members can vote.
+                      </div>
+                    ) : null}
+                  </div>
+                  <InlineAction icon={LuMessageSquare} label={replying ? 'Cancel reply' : 'Reply'} onClick={toggleReply} subtle={!canReply} />
+                </div>
+                {replying ? (
+                  <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4">
+                    <CommentComposer
+                      placeholder={`Reply to @${comment.author.handle}`}
+                      submitLabel="Reply"
+                      onSubmit={(body) => onReply(comment.id, body)}
+                      onSuccess={() => setReplying(false)}
+                      onCancel={() => setReplying(false)}
+                      autoFocus
+                    />
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
       </article>
 
-      {comment.replies.length ? (
-        <div className="space-y-4">
+      {!collapsed && comment.replies.length ? (
+        <div className="space-y-2">
           {comment.replies.map((child) => (
             <CommentItem
               key={child.id}
@@ -273,7 +353,7 @@ export default function CommentThread({ comments, onReply, onVote, currentUser }
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-2">
       {comments.map((comment) => (
         <CommentItem
           key={comment.id}

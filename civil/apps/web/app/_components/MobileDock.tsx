@@ -207,7 +207,8 @@ export default function MobileDock() {
                 alt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
                 initials={viewer?.name ?? viewer?.handle ?? 'C'}
                 size={56}
-                isVerified={Boolean(viewer?.isVerified ?? viewer?.isPremium)}
+                isVerified={Boolean(viewer?.isVerified)}
+                isBusiness={Boolean(viewer?.isPremium)}
               />
               <div className="flex-1">
                 <p className="text-sm font-semibold text-slate-900">{viewer?.name ?? 'Civil Citizen'}</p>

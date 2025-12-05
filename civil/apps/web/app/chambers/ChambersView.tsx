@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
 import type { ChamberGeoMatch, ChamberGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
@@ -9,6 +10,7 @@ import { buildApiUrl } from '../_lib/api'
 import { RightRail } from '../_components/RightRail'
 import DashboardShell from '../_components/DashboardShell'
 import type { MeResponse } from '../_lib/me'
+import { formatStoredPostalCode, readStoredPostalCode, writeStoredPostalCode } from '../_lib/postalRequirement'
 
 const provincesFallback = [
   { code: 'nl', name: 'Newfoundland and Labrador' },
@@ -26,7 +28,7 @@ const provincesFallback = [
   { code: 'nu', name: 'Nunavut' },
 ]
 
-type ChambersPageMode = 'default' | 'welcome'
+type CommunitiesPageMode = 'default' | 'welcome'
 
 type Province = { code: string; name: string }
 type Chamber = {
@@ -123,7 +125,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return data as T
 }
 
-export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) {
+export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMode }) {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [provinces, setProvinces] = useState<Province[]>(provincesFallback)
   const [chambers, setChambers] = useState<Chamber[]>([])
@@ -155,8 +157,12 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
   const [welcomePickerView, setWelcomePickerView] = useState<'options' | 'manual' | 'assist'>(() => (mode === 'welcome' ? 'options' : 'manual'))
   const [assistUnlocked, setAssistUnlocked] = useState(false)
   const [welcomeAutoSaving, setWelcomeAutoSaving] = useState(false)
+  const [postalOwnerId, setPostalOwnerId] = useState<string | null>(null)
   const isWelcomeMode = mode === 'welcome'
   const provinceSelectRef = useRef<HTMLSelectElement | null>(null)
+  const latestPostalSelectionRef = useRef<string | null>(null)
+  const router = useRouter()
+  const activePostalOwnerId = postalOwnerId ?? me?.id ?? null
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -176,6 +182,15 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
 
         const meData = await jsonOrThrow<MeResponse>(meRes)
         setMe(meData)
+        setPostalOwnerId(meData.id ?? null)
+        const storedPostal = readStoredPostalCode(meData.id)
+        if (storedPostal) {
+          const formatted = formatStoredPostalCode(storedPostal)
+          if (formatted) {
+            setPostalNormalized(formatted)
+          }
+          latestPostalSelectionRef.current = storedPostal
+        }
 
         let provData: ItemsResponse<Province> | null = null
         try {
@@ -205,6 +220,14 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
           setSelectedProvince(homeChamber.province)
           setSelectedChamber(homeChamber.slug)
           await loadCitiesForProvince(homeChamber.province, homeChamber.slug)
+        } else if (!isWelcomeMode) {
+          router.replace('/welcome')
+          return
+        }
+
+        if (!storedPostal && !isWelcomeMode) {
+          router.replace('/welcome')
+          return
         }
       } catch (err) {
         console.error('Failed bootstrapping chambers screen', err)
@@ -352,10 +375,12 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       )
       setPostalMatches(matches)
       setPostalFsa(data.fsa ?? null)
-      setPostalNormalized(data.postalCode || normalized)
+      const resolvedPostal = data.postalCode || normalized
+      setPostalNormalized(resolvedPostal)
+      latestPostalSelectionRef.current = resolvedPostal
       const primaryMatch = matches[0]
       if (primaryMatch) {
-        await applyGeolocationMatch(primaryMatch, 'postal')
+        await applyGeolocationMatch(primaryMatch, 'postal', { postalCode: resolvedPostal })
         setPostalStatus(`Matched ${formatMatchCityLabel(primaryMatch)} using your postal code.`)
       } else if (data.fsa?.defaultChamberName) {
         setPostalStatus(`Matched ${data.fsa.defaultChamberName}. Choose it below to continue.`)
@@ -419,7 +444,11 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
     }
   }
 
-  async function applyGeolocationMatch(match: ChamberGeoMatch, reason: 'auto' | 'suggestion' | 'postal') {
+  async function applyGeolocationMatch(
+    match: ChamberGeoMatch,
+    reason: 'auto' | 'suggestion' | 'postal',
+    options?: { postalCode?: string | null },
+  ) {
     try {
       if (reason === 'auto' || reason === 'postal') {
         setGeoDetected(match)
@@ -447,6 +476,14 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
         setGeoStatus(`Ready to continue in ${matchLabel}.`)
       }
       setGeoError(null)
+      if (reason === 'postal') {
+        const selectedPostal = options?.postalCode ?? latestPostalSelectionRef.current ?? postalNormalized ?? postalFsa?.code ?? null
+        if (selectedPostal) {
+          writeStoredPostalCode(activePostalOwnerId, selectedPostal)
+          latestPostalSelectionRef.current = selectedPostal
+          setPostalNormalized(formatStoredPostalCode(selectedPostal))
+        }
+      }
       if (isWelcomeMode) {
         await setHomeChamber(match.province, match.chamberSlug, 'welcome', { skipCityLoad: true })
       }
@@ -623,7 +660,9 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
       pushToast(message, 'success')
       if (isWelcomeMode) {
         window.setTimeout(() => {
-          window.location.replace('/home')
+          if (readStoredPostalCode(activePostalOwnerId)) {
+            window.location.replace('/home')
+          }
         }, 500)
       }
     } catch (error) {
@@ -777,7 +816,7 @@ export function ChambersView({ mode = 'default' }: { mode?: ChambersPageMode }) 
                     <button
                       type="button"
                       className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-                      onClick={() => applyGeolocationMatch(match, 'postal')}
+                      onClick={() => applyGeolocationMatch(match, 'postal', { postalCode: latestPostalSelectionRef.current })}
                       disabled={savingHome || welcomeAutoSaving}
                     >
                       Tune in

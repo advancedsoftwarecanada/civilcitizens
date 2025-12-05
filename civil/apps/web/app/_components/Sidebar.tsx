@@ -30,7 +30,7 @@ type SidebarProps = {
     isPremium?: boolean
     isVerified?: boolean
   }
-  active?: 'home' | 'chambers' | 'community' | string
+  active?: 'home' | 'chambers' | 'communities' | 'community' | string
 }
 
 export type SidebarNavItem = {
@@ -43,31 +43,29 @@ export type SidebarNavItem = {
 }
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
-  { key: 'home', label: 'Home', description: 'Unified feed.', href: '/home', icon: HiOutlineHome },
-  { key: 'chat', label: 'Chat', description: 'Direct messages.', href: '/chat', icon: HiOutlineChatBubbleLeftRight },
+  { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
+  { key: 'chat', label: 'Chat', href: '/chat', icon: HiOutlineChatBubbleLeftRight },
   {
     key: 'organizations',
     label: 'Organizations',
-    description: 'Groups, clubs, associations, boards.',
     href: '/organizations',
     icon: HiOutlineBuildingLibrary,
   },
-  { key: 'events', label: 'Events', description: 'Local and national events.', href: '/events', icon: HiOutlineCalendarDays },
-  { key: 'market', label: 'Market', description: 'Canadian-made goods, delivery.', href: '/market', icon: HiOutlineShoppingBag },
-  { key: 'work', label: 'Work', description: 'Jobs, contracts, gigs.', href: '/work', icon: HiOutlineBriefcase },
-  { key: 'wallet', label: 'Wallet', description: 'CAD balance, payments, payouts.', href: '/wallet', icon: HiOutlineWallet },
+  { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
+  { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
+  { key: 'work', label: 'Work', href: '/work', icon: HiOutlineBriefcase },
+  { key: 'wallet', label: 'Wallet', href: '/wallet', icon: HiOutlineWallet },
   {
     key: 'community',
     label: 'Community',
-    description: 'Municipal feeds, neighbourhood alerts.',
-    href: '/chambers',
+    href: '/communities',
     icon: HiOutlineBuildingOffice2,
   },
-  { key: 'account', label: 'Account Settings', description: 'Profile, preferences.', href: '/profile', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Account Settings', href: '/profile', icon: HiOutlineUserCircle },
 ]
 
 export const ADMIN_NAV: SidebarNavItem[] = [
-  { key: 'admin', label: 'Admin', description: 'Env + operator tools.', href: '/admin', icon: HiOutlineShieldCheck },
+  { key: 'admin', label: 'Admin', href: '/admin', icon: HiOutlineShieldCheck },
 ]
 
 function navItemClasses(active: boolean) {
@@ -81,11 +79,17 @@ function navItemClasses(active: boolean) {
 
 export default function Sidebar({ me, active }: SidebarProps) {
   const pathname = usePathname()
-  const normalizedActive = active === 'profile' || active === 'settings' ? 'account' : active === 'chambers' ? 'community' : active
+  const normalizedActive =
+    active === 'profile' || active === 'settings'
+      ? 'account'
+      : active === 'chambers' || active === 'communities'
+        ? 'community'
+        : active
   const displayName = me?.name?.trim() || 'Civil Citizen'
   const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
   const profileHref = me?.handle ? `/u/${me.handle}` : '/profile'
-  const verified = Boolean(me?.isVerified ?? me?.isPremium)
+  const verified = Boolean(me?.isVerified)
+  const business = Boolean(me?.isPremium)
   const isSuperAdmin = isEmailSuperAdmin(me?.email)
   const sidebarBleedStyle: CSSProperties = {
     marginLeft: 'calc((100vw - min(100vw, 96rem)) / -2 + var(--sidebar-offset, 0px))',
@@ -114,9 +118,6 @@ export default function Sidebar({ me, active }: SidebarProps) {
           </span>
           <div className="flex-1">
             <span className="block">{item.label}</span>
-            {item.description ? (
-              <span className="mt-0.5 block text-xs font-normal text-slate-300 group-hover:text-white/80">{item.description}</span>
-            ) : null}
           </div>
           {item.badge ? (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{item.badge}</span>
@@ -141,7 +142,14 @@ export default function Sidebar({ me, active }: SidebarProps) {
         href={profileHref}
         className="mt-6 flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 transition hover:border-slate-200"
       >
-        <VerifiedAvatar src={me?.avatarUrl ?? null} alt={displayName} initials={me?.name ?? me?.handle ?? 'C'} size={48} isVerified={verified} />
+        <VerifiedAvatar
+          src={me?.avatarUrl ?? null}
+          alt={displayName}
+          initials={me?.name ?? me?.handle ?? 'C'}
+          size={48}
+          isVerified={verified}
+          isBusiness={business}
+        />
         <div>
           <p className="text-sm font-semibold text-slate-900">{displayName}</p>
           <p className="text-xs text-slate-500">{displayHandle}</p>

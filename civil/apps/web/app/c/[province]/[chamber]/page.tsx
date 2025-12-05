@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../../_components/Sidebar'
-import PostComposer, { ApiPost, JURISDICTION_LABELS } from '../../../_components/PostComposer'
-import type { Jurisdiction, ProvinceCode } from '@civil/shared'
+import PostComposer, { ApiPost } from '../../../_components/PostComposer'
+import type { ProvinceCode } from '@civil/shared'
 import { getProvinceDisplayName } from '@civil/shared'
 import { buildApiUrl } from '../../../_lib/api'
 import { hasHomeChamber, type MeResponse } from '../../../_lib/me'
@@ -22,6 +22,7 @@ type Viewer = {
   name?: string | null
   avatarUrl?: string | null
   isPremium?: boolean
+  isVerified?: boolean
 }
 
 type ChamberInfo = {
@@ -38,14 +39,6 @@ type PageProps = {
   }
 }
 
-const FILTER_OPTIONS: Array<{ value: 'all' | Jurisdiction; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'federal', label: JURISDICTION_LABELS.federal },
-  { value: 'provincial', label: JURISDICTION_LABELS.provincial },
-  { value: 'municipal', label: JURISDICTION_LABELS.municipal },
-  { value: 'citizen', label: JURISDICTION_LABELS.citizen },
-]
-
 export default function ChamberFeedPage({ params }: PageProps) {
   const provinceParam = decodeURIComponent(params.province)
   const chamberParam = decodeURIComponent(params.chamber)
@@ -55,7 +48,6 @@ export default function ChamberFeedPage({ params }: PageProps) {
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
 
   useEffect(() => {
@@ -97,9 +89,6 @@ export default function ChamberFeedPage({ params }: PageProps) {
     setError(null)
     try {
       const params = new URLSearchParams()
-      if (activeFilter !== 'all') {
-        params.set('jurisdiction', activeFilter)
-      }
       params.set('sort', sortMode)
       const query = params.toString()
       const res = await fetch(
@@ -118,7 +107,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
     } finally {
       setLoading(false)
     }
-  }, [activeFilter, chamberParam, provinceParam, sortMode])
+  }, [chamberParam, provinceParam, sortMode])
 
   useEffect(() => {
     loadViewer().catch(() => {
@@ -143,23 +132,12 @@ export default function ChamberFeedPage({ params }: PageProps) {
     }
   }, [chamber])
 
-  const handlePostCreated = useCallback(
-    (post: ApiPost) => {
-      const matchesFilter = activeFilter === 'all' || post.jurisdiction === activeFilter
-      if (matchesFilter) {
-        setPosts((prev) => {
-          const withoutDuplicate = prev.filter((item) => item.id !== post.id)
-          return [post, ...withoutDuplicate]
-        })
-        return
-      }
-
-      loadChamberPosts().catch(() => {
-        /* noop */
-      })
-    },
-    [activeFilter, loadChamberPosts],
-  )
+  const handlePostCreated = useCallback((post: ApiPost) => {
+    setPosts((prev) => {
+      const withoutDuplicate = prev.filter((item) => item.id !== post.id)
+      return [post, ...withoutDuplicate]
+    })
+  }, [])
 
   const handleVote = useCallback(
     async (postId: string, value: -1 | 0 | 1) => {
@@ -228,25 +206,9 @@ export default function ChamberFeedPage({ params }: PageProps) {
             {viewer && chamberTarget ? <PostComposer chamberTarget={chamberTarget} onPostCreated={handlePostCreated} /> : null}
 
             <section className="surface-card px-6 py-4 shadow-subtle">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex flex-wrap gap-2">
-                  {FILTER_OPTIONS.map((filter) => (
-                    <button
-                      key={filter.value}
-                      type="button"
-                      className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
-                        activeFilter === filter.value
-                          ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
-                          : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700'
-                      }`}
-                      onClick={() => setActiveFilter(filter.value)}
-                      disabled={loading && activeFilter === filter.value}
-                    >
-                      {filter.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+                <span className="text-slate-500">Sort</span>
+                <div className="flex gap-2">
                   {SORT_OPTIONS.map((option) => (
                     <button
                       key={option.value}
@@ -274,7 +236,14 @@ export default function ChamberFeedPage({ params }: PageProps) {
                   {loading ? 'Loading posts…' : 'No posts in this chamber yet. Be the first to start the conversation!'}
                 </section>
               ) : (
-                posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
+                posts.map((post) => (
+                  <PostFeedItem
+                    key={post.id}
+                    post={post}
+                    onVote={handleVote}
+                    viewerIsVerified={Boolean(viewer?.isVerified || viewer?.isPremium)}
+                  />
+                ))
               )}
             </div>
           </main>
@@ -290,21 +259,6 @@ export default function ChamberFeedPage({ params }: PageProps) {
                   </div>
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
                     Currently tracking {posts.length} post{posts.length === 1 ? '' : 's'} inside this chamber feed.
-                  </div>
-                  <div className="text-xs uppercase tracking-[0.3em] text-slate-400">Filters</div>
-                  <div className="flex flex-wrap gap-2">
-                    {FILTER_OPTIONS.map((filter) => (
-                      <span
-                        key={filter.value}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                          activeFilter === filter.value
-                            ? 'bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
-                            : 'bg-slate-100 text-slate-500'
-                        }`}
-                      >
-                        {filter.label}
-                      </span>
-                    ))}
                   </div>
                 </section>
               ) : null}

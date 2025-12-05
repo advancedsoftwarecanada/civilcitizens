@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { LuArrowBigDown, LuArrowBigUp } from 'react-icons/lu'
@@ -28,6 +28,7 @@ function buildChamberUrl(post: ApiPost) {
 type PostFeedItemProps = {
   post: ApiPost
   onVote: (postId: string, value: -1 | 0 | 1) => Promise<void>
+  viewerIsVerified?: boolean
 }
 
 function formatScore(value: number) {
@@ -45,27 +46,40 @@ type VoteButtonProps = {
   direction: 'up' | 'down'
   active: boolean
   disabled: boolean
+  blocked: boolean
   onClick: () => void
+  onBlockedClick?: () => void
 }
 
-function VoteButton({ direction, active, disabled, onClick }: VoteButtonProps) {
+function VoteButton({ direction, active, blocked, disabled, onClick, onBlockedClick }: VoteButtonProps) {
   const Icon = direction === 'up' ? LuArrowBigUp : LuArrowBigDown
   const intentClasses =
     direction === 'up'
       ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm'
       : 'border-red-500 bg-red-500 text-white shadow-sm'
 
+  const handleClick = () => {
+    if (disabled) return
+    if (blocked) {
+      onBlockedClick?.()
+      return
+    }
+    onClick()
+  }
+
   return (
     <button
       type="button"
       className={clsx(
         'flex h-9 w-9 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-2',
-        active
-          ? intentClasses
-          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
+        blocked
+          ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200 hover:text-slate-400 focus:ring-slate-200'
+          : active
+              ? intentClasses
+              : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
         disabled && 'pointer-events-none opacity-60',
       )}
-      onClick={onClick}
+      onClick={handleClick}
       aria-label={direction === 'up' ? 'Upvote post' : 'Downvote post'}
       disabled={disabled}
     >
@@ -74,18 +88,24 @@ function VoteButton({ direction, active, disabled, onClick }: VoteButtonProps) {
   )
 }
 
-export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onVote, viewerIsVerified }: PostFeedItemProps) {
   const [pending, setPending] = useState(false)
+  const [showVoteTooltip, setShowVoteTooltip] = useState(false)
+  const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const score = post.counts?.score ?? 0
   const commentCount = post.counts?.commentCount ?? 0
   const currentVote = (post.viewer?.vote ?? 0) as -1 | 0 | 1
   const postUrl = buildPostUrl(post)
   const chamberUrl = buildChamberUrl(post)
   const createdAt = new Date(post.createdAt)
+  const isVerifiedAuthor = Boolean(post.author.isVerified)
+  const isBusinessAuthor = Boolean(post.author.isPremium)
+  const canVote = Boolean(viewerIsVerified)
 
   const handleVote = useCallback(
     async (nextValue: -1 | 0 | 1) => {
       if (pending) return
+      if (!canVote) return
       setPending(true)
       try {
         await onVote(post.id, nextValue)
@@ -93,8 +113,24 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
         setPending(false)
       }
     },
-    [onVote, pending, post.id],
+    [canVote, onVote, pending, post.id],
   )
+
+  const triggerVoteTooltip = useCallback(() => {
+    setShowVoteTooltip(true)
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current)
+    }
+    tooltipTimeoutRef.current = setTimeout(() => setShowVoteTooltip(false), 2500)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (tooltipTimeoutRef.current) {
+        clearTimeout(tooltipTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const formattedDate = createdAt.toLocaleString(undefined, {
     month: 'short',
@@ -113,7 +149,8 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
             alt={post.author.name ?? post.author.handle}
             initials={post.author.name ?? post.author.handle}
             size={48}
-            isVerified={Boolean(post.author.isVerified ?? post.author.isPremium)}
+            isVerified={isVerifiedAuthor}
+            isBusiness={isBusinessAuthor}
             className="shrink-0"
           />
           <div className="min-w-0">
@@ -167,34 +204,42 @@ export default function PostFeedItem({ post, onVote }: PostFeedItemProps) {
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 pt-4 text-sm text-slate-500">
-        <div className="flex items-center gap-2 font-semibold">
-          <VoteButton
-            direction="up"
-            active={currentVote === 1}
-            disabled={pending}
-            onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
-          />
-          <span
-            className={clsx(
-              'min-w-[2rem] text-center',
-              score > 0 ? 'text-[var(--cc-primary)]' : score < 0 ? 'text-red-500' : 'text-slate-600',
-            )}
-          >
-            {formatScore(score)}
-          </span>
-          <VoteButton
-            direction="down"
-            active={currentVote === -1}
-            disabled={pending}
-            onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
-          />
+        <div className="relative min-h-[2.5rem] flex items-center">
+          <div className="flex items-center gap-2 font-semibold">
+            <VoteButton
+              direction="up"
+              active={currentVote === 1 && canVote}
+              blocked={!canVote}
+              disabled={pending}
+              onBlockedClick={triggerVoteTooltip}
+              onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
+            />
+            <span
+              className={clsx(
+                'min-w-[2rem] text-center',
+                score > 0 ? 'text-[var(--cc-primary)]' : score < 0 ? 'text-red-500' : 'text-slate-600',
+              )}
+            >
+              {formatScore(score)}
+            </span>
+            <VoteButton
+              direction="down"
+              active={currentVote === -1 && canVote}
+              blocked={!canVote}
+              disabled={pending}
+              onBlockedClick={triggerVoteTooltip}
+              onClick={() => handleVote(currentVote === -1 ? 0 : -1)}
+            />
+          </div>
+          {!canVote && showVoteTooltip ? (
+            <div className="absolute left-0 top-full mt-2 w-max max-w-xs rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg">
+              Only verified members can vote.
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center gap-4">
           <Link href={postUrl} className="font-semibold text-slate-600 hover:text-slate-900">
             {commentCount === 1 ? '1 comment' : `${commentCount} comments`}
-          </Link>
-          <Link href={postUrl} className="text-xs uppercase tracking-wide text-slate-400 hover:text-slate-600">
-            Open post
           </Link>
         </div>
       </footer>

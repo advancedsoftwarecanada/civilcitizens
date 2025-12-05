@@ -291,7 +291,8 @@ export default function ChamberPostPage({ params }: PageProps) {
                   alt={post.author.name ?? post.author.handle}
                   initials={post.author.name ?? post.author.handle}
                   size={48}
-                  isVerified={Boolean(post.author.isVerified ?? post.author.isPremium)}
+                  isVerified={Boolean(post.author.isVerified)}
+                  isBusiness={Boolean(post.author.isPremium)}
                   className="shrink-0"
                 />
                 <div className="min-w-0 flex-1">

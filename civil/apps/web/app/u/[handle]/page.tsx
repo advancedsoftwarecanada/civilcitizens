@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import clsx from 'clsx'
 import Sidebar from '../../_components/Sidebar'
-import PostComposer, { ApiPost } from '../../_components/PostComposer'
+import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import DashboardShell from '../../_components/DashboardShell'
+import Modal from '../../_components/Modal'
+import { pushToast } from '../../_components/useToasts'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -87,6 +89,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -217,11 +221,24 @@ export default function UserPostsPage({ params }: PageProps) {
   const isOwner = viewer && profile && viewer.handle === profile.handle
   const experienceCount = profile?.experiences?.length ?? 0
   const coverDisplayUrl = profile?.coverUrl ?? null
+  const ownerFirstName = viewer?.name?.split(' ')[0] ?? viewer?.handle ?? 'Citizen'
+  const ownerInitials = viewer?.name ?? viewer?.handle ?? 'C'
+  const isViewerVerified = Boolean(viewer?.isVerified)
+  const isViewerBusiness = Boolean(viewer?.isPremium)
   const rightRailContent = (
     <div className="sticky top-8 space-y-4">
       <RightRail />
     </div>
   )
+
+  const openComposer = (type: PostType = 'post') => {
+    setComposerDefaultType(type)
+    setComposerOpen(true)
+  }
+
+  const handleComingSoon = (label: string) => {
+    pushToast(`${label} creation is coming soon.`, 'info')
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
@@ -270,8 +287,9 @@ export default function UserPostsPage({ params }: PageProps) {
                         alt={profile.name ?? profile.handle}
                         initials={profile.name ?? profile.handle}
                         size={96}
-                        isVerified={Boolean(profile.isVerified ?? profile.isPremium)}
-                        className="relative border-4 border-white shadow-xl"
+                        isVerified={Boolean(profile.isVerified)}
+                        isBusiness={Boolean(profile.isPremium)}
+                        className="relative border-4 border-white"
                       />
                     </div>
                     <div>
@@ -342,11 +360,90 @@ export default function UserPostsPage({ params }: PageProps) {
         ) : null}
 
         {isOwner ? (
-          <PostComposer onPostCreated={handlePostCreated} className="rounded-[28px] border border-white/60 bg-white/95 shadow-panel" />
+          <>
+            <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+              <div className="flex items-center gap-3">
+                <VerifiedAvatar
+                  src={viewer?.avatarUrl ?? null}
+                  alt={viewer?.name ?? viewer?.handle ?? ownerFirstName}
+                  initials={ownerInitials}
+                  size={56}
+                  isVerified={isViewerVerified}
+                  isBusiness={isViewerBusiness}
+                  className="shrink-0"
+                />
+                <button
+                  type="button"
+                  className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-500 transition hover:bg-white hover:text-slate-700"
+                  onClick={() => openComposer('post')}
+                >
+                  What&apos;s on your mind, {ownerFirstName}?
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('post')}>
+                  <span role="img" aria-label="Post">📝</span>
+                  Post
+                </button>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('article')}>
+                  <span role="img" aria-label="Article">📄</span>
+                  Article
+                </button>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Poll')}>
+                  <span role="img" aria-label="Poll">📊</span>
+                  Poll
+                </button>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Link')}>
+                  <span role="img" aria-label="Link">🔗</span>
+                  Link
+                </button>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Photos')}>
+                  <span role="img" aria-label="Photos">📷</span>
+                  Photos
+                </button>
+              </div>
+            </section>
+
+            <Modal
+              open={composerOpen}
+              onClose={() => setComposerOpen(false)}
+              title="Share something new"
+              key={composerDefaultType}
+              maxWidthClassName="max-w-3xl"
+            >
+              <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
+                <span className="text-slate-700">Create:</span>
+                <button type="button" className={`rounded-full px-3 py-1 ${composerDefaultType === 'post' ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-700'}`} onClick={() => setComposerDefaultType('post')}>
+                  Post
+                </button>
+                <button type="button" className={`rounded-full px-3 py-1 ${composerDefaultType === 'article' ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-700'}`} onClick={() => setComposerDefaultType('article')}>
+                  Article
+                </button>
+                <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Poll')}>
+                  Poll
+                </button>
+                <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Link')}>
+                  Link
+                </button>
+                <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Photos')}>
+                  Photos
+                </button>
+              </div>
+              <PostComposer
+                me={viewer}
+                defaultPostType={composerDefaultType}
+                onPostCreated={(post) => {
+                  handlePostCreated(post)
+                  setComposerOpen(false)
+                }}
+                variant="plain"
+              />
+            </Modal>
+          </>
         ) : null}
 
-        <section className="rounded-[32px] border border-white/60 bg-white/95 shadow-panel">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/70 px-6 py-4">
+        <section className="surface-card px-6 py-4 shadow-subtle">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Posts</p>
               <h2 className="text-lg font-semibold text-slate-900">Updates from @{profile?.handle ?? handleParam}</h2>
@@ -365,19 +462,28 @@ export default function UserPostsPage({ params }: PageProps) {
               ))}
             </div>
           </div>
-
-          <div className="space-y-4 px-6 py-6">
-            {error ? (
-              <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
-            ) : posts.length === 0 ? (
-              <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-center text-sm text-slate-500">
-                {loading ? 'Loading posts…' : 'This user has not shared any posts yet.'}
-              </div>
-            ) : (
-              posts.map((post) => <PostFeedItem key={post.id} post={post} onVote={handleVote} />)
-            )}
-          </div>
         </section>
+
+        <div className="space-y-4">
+          {error ? (
+            <section className="surface-card border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </section>
+          ) : posts.length === 0 ? (
+            <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
+              {loading ? 'Loading posts…' : 'This user has not shared any posts yet.'}
+            </section>
+          ) : (
+            posts.map((post) => (
+              <PostFeedItem
+                key={post.id}
+                post={post}
+                onVote={handleVote}
+                viewerIsVerified={isViewerVerified || isViewerBusiness}
+              />
+            ))
+          )}
+        </div>
 
         <div className="lg:hidden">
           <RightRail />
