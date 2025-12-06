@@ -10,7 +10,7 @@ import RichTextEditor from '../_components/RichTextEditor'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeChamber, type MeResponse } from '../_lib/me'
+import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 
 type Viewer = {
   id: string
@@ -624,7 +624,7 @@ export default function ProfileEditPage() {
         return null
       }
       const data: MeResponse = await res.json()
-      if (!hasHomeChamber(data)) {
+      if (!hasHomeCommunity(data)) {
         window.location.replace('/welcome')
         return null
       }

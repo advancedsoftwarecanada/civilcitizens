@@ -24,6 +24,7 @@ export default function CommunityPostsFeed() {
   const [error, setError] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
   const [viewerIsVerified, setViewerIsVerified] = useState(false)
+  const [viewerId, setViewerId] = useState<string | null>(null)
 
   const queryDescriptor = useMemo(() => {
     const base = new URLSearchParams()
@@ -78,13 +79,14 @@ export default function CommunityPostsFeed() {
       .then((data) => {
         if (!data) return
         setViewerIsVerified(Boolean(data.isVerified || data.isPremium))
+        setViewerId(data.id ?? null)
       })
       .catch(() => {
         /* ignore viewer state errors */
       })
   }, [])
 
-  const chamberTarget = useMemo(() => {
+  const communityTarget = useMemo(() => {
     if (!community.chamberSlug) return null
     return {
       provinceCode: community.provinceCode,
@@ -135,15 +137,15 @@ export default function CommunityPostsFeed() {
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 sm:px-8">
-      {chamberTarget ? (
+      {communityTarget ? (
         <PostComposer
           className="rounded-3xl border border-slate-200 bg-white shadow-sm"
-          chamberTarget={chamberTarget}
+          communityTarget={communityTarget}
           onPostCreated={handlePostCreated}
         />
       ) : (
         <section className="rounded-3xl border border-dashed border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
-          Posts will unlock once this community is paired with a verified chamber. Admins can set the default chamber via census data imports.
+          Posts will unlock once this community is paired with its verified city feed. Admins can link the default community through the latest census imports.
         </section>
       )}
 
@@ -183,6 +185,7 @@ export default function CommunityPostsFeed() {
               key={post.id}
               post={post}
               onVote={handleVote}
+              viewerId={viewerId}
               viewerIsVerified={viewerIsVerified}
             />
           ))

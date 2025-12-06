@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Sidebar from '../_components/Sidebar'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
-import { hasHomeChamber, type MeResponse } from '../_lib/me'
+import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 import { isSuperAdmin } from '../_lib/admin'
 
 type EnvChecklistItem = {
@@ -77,7 +77,7 @@ export default function AdminPage() {
           return
         }
         const data: MeResponse = await meResponse.json()
-        if (!hasHomeChamber(data)) {
+        if (!hasHomeCommunity(data)) {
           window.location.replace('/welcome')
           return
         }

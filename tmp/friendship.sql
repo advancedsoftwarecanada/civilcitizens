@@ -1,0 +1,1 @@
+select id, status, "requesterId", "addresseeId", "requestedAt", "respondedAt" from "Friendship" where "requesterId" = '9ad989ba-2aa7-4ef2-8797-f52811db2202' or "addresseeId" = 'c508b3f5-2eb4-47aa-a0c4-c5cabb1a4fa9' order by "requestedAt" desc limit 5;

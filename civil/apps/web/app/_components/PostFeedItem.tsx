@@ -18,7 +18,7 @@ function buildPostUrl(post: ApiPost) {
   return `/post/${post.id}`
 }
 
-function buildChamberUrl(post: ApiPost) {
+function buildCommunityUrl(post: ApiPost) {
   if (post.provinceCode && post.chamberSlug) {
     return `/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`
   }
@@ -29,6 +29,7 @@ type PostFeedItemProps = {
   post: ApiPost
   onVote: (postId: string, value: -1 | 0 | 1) => Promise<void>
   viewerIsVerified?: boolean
+  viewerId?: string | null
 }
 
 function formatScore(value: number) {
@@ -88,7 +89,7 @@ function VoteButton({ direction, active, blocked, disabled, onClick, onBlockedCl
   )
 }
 
-export default function PostFeedItem({ post, onVote, viewerIsVerified }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onVote, viewerIsVerified, viewerId }: PostFeedItemProps) {
   const [pending, setPending] = useState(false)
   const [showVoteTooltip, setShowVoteTooltip] = useState(false)
   const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -96,11 +97,13 @@ export default function PostFeedItem({ post, onVote, viewerIsVerified }: PostFee
   const commentCount = post.counts?.commentCount ?? 0
   const currentVote = (post.viewer?.vote ?? 0) as -1 | 0 | 1
   const postUrl = buildPostUrl(post)
-  const chamberUrl = buildChamberUrl(post)
+  const communityUrl = buildCommunityUrl(post)
   const createdAt = new Date(post.createdAt)
   const isVerifiedAuthor = Boolean(post.author.isVerified)
   const isBusinessAuthor = Boolean(post.author.isPremium)
   const canVote = Boolean(viewerIsVerified)
+  const isViewerPost = Boolean(viewerId && post.author.id === viewerId)
+  const jurisdictionLabel = isViewerPost ? 'Self' : JURISDICTION_LABELS[post.jurisdiction]
 
   const handleVote = useCallback(
     async (nextValue: -1 | 0 | 1) => {
@@ -163,12 +166,13 @@ export default function PostFeedItem({ post, onVote, viewerIsVerified }: PostFee
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">
-                {JURISDICTION_LABELS[post.jurisdiction]}
+                {jurisdictionLabel}
               </span>
-              {chamberUrl ? (
+              {communityUrl ? (
                 <Link
-                  href={chamberUrl}
+                  href={communityUrl}
                   className="rounded-full border border-slate-200 px-2 py-0.5 uppercase tracking-wide text-slate-500 hover:border-slate-300"
+                  aria-label="Open community feed"
                 >
                   {post.chamberName ?? post.chamberSlug}
                 </Link>

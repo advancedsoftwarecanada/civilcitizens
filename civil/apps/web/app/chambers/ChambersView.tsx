@@ -413,6 +413,68 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     }
   }
 
+  async function geocodePostalFromLocation(lat: number, lng: number, token: string): Promise<PostalLookupResponse | null> {
+    try {
+      const res = await fetch(buildApiUrl('/postal/geolocate'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ lat, lng, limit: 8 }),
+      })
+      return await jsonOrThrow<PostalLookupResponse>(res)
+    } catch (error) {
+      console.warn('Postal geolocation failed', error)
+      return null
+    }
+  }
+
+  function resolvePostalPromiseWithTimeout(
+    promise: Promise<PostalLookupResponse | null>,
+    timeoutMs = 2000,
+  ): Promise<PostalLookupResponse | null> {
+    if (timeoutMs <= 0 || typeof window === 'undefined') {
+      return promise.catch(() => null)
+    }
+    let settled = false
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => {
+        if (settled) return
+        settled = true
+        resolve(null)
+      }, timeoutMs)
+      promise
+        .then((value) => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          resolve(value)
+        })
+        .catch(() => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          resolve(null)
+        })
+    })
+  }
+
+  function applyPostalGeocodeResult(result: PostalLookupResponse) {
+    const matches = [result.primary, ...(Array.isArray(result.alternatives) ? result.alternatives : [])].filter(
+      (entry): entry is ChamberGeoMatch => Boolean(entry),
+    )
+    setPostalMatches(matches)
+    setPostalFsa(result.fsa ?? null)
+    const formatted = formatStoredPostalCode(result.postalCode)
+    setPostalNormalized(formatted)
+    setPostalCodeInput(formatted.replace('-', ' '))
+    latestPostalSelectionRef.current = result.postalCode
+    writeStoredPostalCode(activePostalOwnerId, result.postalCode)
+    setPostalStatus('Detected your postal code automatically.')
+    setPostalError(null)
+  }
+
   async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}): Promise<ChamberFollow[]> {
     const token = options.token ?? localStorage.getItem('token')
     if (!token) return []
@@ -476,13 +538,16 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         setGeoStatus(`Ready to continue in ${matchLabel}.`)
       }
       setGeoError(null)
-      if (reason === 'postal') {
-        const selectedPostal = options?.postalCode ?? latestPostalSelectionRef.current ?? postalNormalized ?? postalFsa?.code ?? null
-        if (selectedPostal) {
-          writeStoredPostalCode(activePostalOwnerId, selectedPostal)
-          latestPostalSelectionRef.current = selectedPostal
-          setPostalNormalized(formatStoredPostalCode(selectedPostal))
-        }
+      const selectedPostal =
+        options?.postalCode ??
+        (reason === 'postal'
+          ? latestPostalSelectionRef.current ?? postalNormalized ?? postalFsa?.code ?? null
+          : null)
+
+      if (selectedPostal) {
+        writeStoredPostalCode(activePostalOwnerId, selectedPostal)
+        latestPostalSelectionRef.current = selectedPostal
+        setPostalNormalized(formatStoredPostalCode(selectedPostal))
       }
       if (isWelcomeMode) {
         await setHomeChamber(match.province, match.chamberSlug, 'welcome', { skipCityLoad: true })
@@ -532,12 +597,25 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     setGeoDetected(null)
     setGeoSelected(null)
     setShowGeoOverlay(true)
+    setPostalStatus('Detecting your postal code…')
+    setPostalError(null)
 
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         setGeoStatus('Matching your city…')
         try {
           const { latitude, longitude } = pos.coords
+          const postalPromise = geocodePostalFromLocation(latitude, longitude, token)
+          let postalApplied = false
+          const applyPostalIfNeeded = (result: PostalLookupResponse | null) => {
+            if (!result || postalApplied) return result
+            postalApplied = true
+            applyPostalGeocodeResult(result)
+            return result
+          }
+          const postalQuickResult = await resolvePostalPromiseWithTimeout(postalPromise, 2000)
+          applyPostalIfNeeded(postalQuickResult)
+          void postalPromise.then(applyPostalIfNeeded)
           const res = await fetch(buildApiUrl('/chambers/geolocate'), {
             method: 'POST',
             headers: {
@@ -551,7 +629,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           const alternatives = Array.isArray(data.alternatives) ? data.alternatives : []
           setGeoAlternatives(alternatives)
           if (primary) {
-            await applyGeolocationMatch(primary, 'auto')
+            await applyGeolocationMatch(primary, 'auto', { postalCode: postalQuickResult?.postalCode ?? null })
           } else {
             setGeoDetected(null)
             setGeoSelected(null)

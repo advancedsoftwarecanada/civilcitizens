@@ -6,7 +6,7 @@ type Polygon = { type: 'Polygon'; coordinates: any[] }
 type MultiPolygon = { type: 'MultiPolygon'; coordinates: any[] }
 type Feature<G = any, P = GeoJsonProperties> = { type: 'Feature'; geometry: G | null; properties: P }
 type FeatureCollection = { type: 'FeatureCollection'; features: Array<Feature<Polygon | MultiPolygon, any>> }
-import { findChamber, findChamberByCode, findChambersBySlug, slugifyChamberName } from '@civil/shared'
+import { findChamber, findChamberByCode, findChambersBySlug, normalizeProvinceCode, slugifyChamberName } from '@civil/shared'
 // Use local structural types to avoid cross-package type resolution issues in Docker builds
 type ProvinceCodeLocal =
   | 'nl' | 'pe' | 'ns' | 'nb' | 'qc' | 'on' | 'mb' | 'sk' | 'ab' | 'bc' | 'yt' | 'nt' | 'nu'
@@ -425,4 +425,16 @@ export async function locateChamberFromPoint(lat: number, lng: number, options: 
       features: features.length,
     },
   }
+}
+
+export type ChamberCentroid = { lat: number; lng: number }
+
+export async function getChamberCentroid(provinceInput: string, slugInput: string): Promise<ChamberCentroid | null> {
+  const province = normalizeProvinceCode(provinceInput)
+  if (!province) return null
+  const slug = slugifyChamberName(slugInput)
+  const { features } = await ensureGeoCache()
+  const match = features.find((entry) => entry.chamber.province === province && entry.chamber.slug === slug)
+  if (!match) return null
+  return { ...match.centroid }
 }

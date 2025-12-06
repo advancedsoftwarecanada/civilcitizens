@@ -1,7 +1,7 @@
 "use client"
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   HiOutlineBell,
@@ -32,6 +32,7 @@ type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
 
 export default function MobileDock() {
   const pathname = usePathname()
+  const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuMounted, setMenuMounted] = useState(false)
   const [viewer, setViewer] = useState<MeResponse | null>(null)
@@ -128,11 +129,14 @@ export default function MobileDock() {
         handleOpenMenu()
         return
       }
-      const friendlyLabel =
-        key === 'notifications' ? 'Notifications' : key === 'messages' ? 'Messages' : 'Search'
+      if (key === 'messages') {
+        router.push('/messages')
+        return
+      }
+      const friendlyLabel = key === 'notifications' ? 'Notifications' : 'Search'
       pushToast(`${friendlyLabel} is coming soon.`, 'info', 3500)
     },
-    [handleOpenMenu],
+    [handleOpenMenu, router],
   )
 
   const navGroups = useMemo(() => {

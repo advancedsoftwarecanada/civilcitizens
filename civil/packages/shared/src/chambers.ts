@@ -1,4 +1,4 @@
-// Auto-generated mapping of Canadian federal electoral districts to Civil chamber metadata.
+// Auto-generated mapping of Canadian federal electoral districts to Civil community metadata.
 // Source mirrored from the legacy Meteor project (`libs/admin/chambers.js`).
 // The data is denormalized here so both the API and web app can consume it without
 // pulling Large JSON at runtime.
@@ -50,14 +50,14 @@ const PROVINCE_CODE_BY_NAME: Record<string, ProvinceCode> = {
   nunavut: 'nu',
 }
 
-export type RawChamber = {
+export type RawCommunity = {
   code: number
   name: string
   province: keyof typeof PROVINCE_CODE_BY_NAME
 }
 
 // prettier-ignore
-const RAW_CHAMBERS: RawChamber[] = [
+const RAW_COMMUNITIES: RawCommunity[] = [
   // Newfoundland and Labrador
   { code: 10001, name: 'Avalon', province: 'newfoundland and labrador' },
   { code: 10002, name: 'Cape Spear', province: 'newfoundland and labrador' },
@@ -428,7 +428,7 @@ const RAW_CHAMBERS: RawChamber[] = [
   { code: 62001, name: 'Nunavut', province: 'nunavut' },
 ]
 
-export function slugifyChamberName(name: string) {
+export function slugifyCommunityName(name: string) {
   return name
     .toLowerCase()
     .normalize('NFKD')
@@ -439,22 +439,22 @@ export function slugifyChamberName(name: string) {
     .trim()
 }
 
-export type ChamberRecord = {
+export type CommunityRecord = {
   code: number
   name: string
   slug: string
   province: ProvinceCode
 }
 
-export const CHAMBERS: ChamberRecord[] = RAW_CHAMBERS.map((entry) => {
+export const COMMUNITIES: CommunityRecord[] = RAW_COMMUNITIES.map((entry) => {
   const province = PROVINCE_CODE_BY_NAME[entry.province]
   if (!province) {
-    throw new Error(`Unknown province mapping for chamber: ${entry.name} (${entry.province})`)
+    throw new Error(`Unknown province mapping for community: ${entry.name} (${entry.province})`)
   }
   return {
     code: entry.code,
     name: entry.name,
-    slug: slugifyChamberName(entry.name),
+    slug: slugifyCommunityName(entry.name),
     province,
   }
 })
@@ -464,17 +464,17 @@ export const PROVINCES = (Object.keys(PROVINCE_LABELS) as ProvinceCode[]).map((c
   name: PROVINCE_LABELS[code],
 }))
 
-const CHAMBER_LOOKUP = new Map<string, ChamberRecord>()
-const CHAMBER_BY_CODE = new Map<number, ChamberRecord>()
-const CHAMBERS_BY_SLUG = new Map<string, ChamberRecord[]>()
-for (const chamber of CHAMBERS) {
-  CHAMBER_LOOKUP.set(`${chamber.province}:${chamber.slug}`, chamber)
-  CHAMBER_BY_CODE.set(chamber.code, chamber)
-  const list = CHAMBERS_BY_SLUG.get(chamber.slug)
+const COMMUNITY_LOOKUP = new Map<string, CommunityRecord>()
+const COMMUNITY_BY_CODE = new Map<number, CommunityRecord>()
+const COMMUNITIES_BY_SLUG = new Map<string, CommunityRecord[]>()
+for (const community of COMMUNITIES) {
+  COMMUNITY_LOOKUP.set(`${community.province}:${community.slug}`, community)
+  COMMUNITY_BY_CODE.set(community.code, community)
+  const list = COMMUNITIES_BY_SLUG.get(community.slug)
   if (list) {
-    list.push(chamber)
+    list.push(community)
   } else {
-    CHAMBERS_BY_SLUG.set(chamber.slug, [chamber])
+    COMMUNITIES_BY_SLUG.set(community.slug, [community])
   }
 }
 
@@ -506,33 +506,43 @@ export function normalizeProvinceCode(input?: string | null): ProvinceCode | nul
   return null
 }
 
-export function getChambersByProvince(provinceInput: string): ChamberRecord[] {
+export function getCommunitiesByProvince(provinceInput: string): CommunityRecord[] {
   const province = normalizeProvinceCode(provinceInput)
   if (!province) return []
-  return CHAMBERS.filter((c) => c.province === province)
+  return COMMUNITIES.filter((c) => c.province === province)
 }
 
-export function findChamber(provinceInput: string, slugInput: string): ChamberRecord | null {
+export function findCommunity(provinceInput: string, slugInput: string): CommunityRecord | null {
   const province = normalizeProvinceCode(provinceInput)
   if (!province) return null
-  const slug = slugifyChamberName(slugInput)
-  return CHAMBER_LOOKUP.get(`${province}:${slug}`) ?? null
+  const slug = slugifyCommunityName(slugInput)
+  return COMMUNITY_LOOKUP.get(`${province}:${slug}`) ?? null
 }
 
 export function getProvinceDisplayName(code: ProvinceCode): string {
   return PROVINCE_LABELS[code]
 }
 
-export function findChamberByCode(code: number | string): ChamberRecord | null {
+export function findCommunityByCode(code: number | string): CommunityRecord | null {
   if (typeof code === 'string') {
     const parsed = Number.parseInt(code, 10)
     if (Number.isNaN(parsed)) return null
-    return CHAMBER_BY_CODE.get(parsed) ?? null
+    return COMMUNITY_BY_CODE.get(parsed) ?? null
   }
-  return CHAMBER_BY_CODE.get(code) ?? null
+  return COMMUNITY_BY_CODE.get(code) ?? null
 }
 
-export function findChambersBySlug(slugInput: string): ChamberRecord[] {
-  const slug = slugifyChamberName(slugInput)
-  return CHAMBERS_BY_SLUG.get(slug)?.slice() ?? []
+export function findCommunitiesBySlug(slugInput: string): CommunityRecord[] {
+  const slug = slugifyCommunityName(slugInput)
+  return COMMUNITIES_BY_SLUG.get(slug)?.slice() ?? []
 }
+
+// Legacy chamber aliases (to be removed after clients migrate)
+export type RawChamber = RawCommunity
+export type ChamberRecord = CommunityRecord
+export const slugifyChamberName = slugifyCommunityName
+export const CHAMBERS = COMMUNITIES
+export const getChambersByProvince = getCommunitiesByProvince
+export const findChamber = findCommunity
+export const findChamberByCode = findCommunityByCode
+export const findChambersBySlug = findCommunitiesBySlug

@@ -7,7 +7,7 @@ import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/Po
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import { buildApiUrl } from '../../../../../_lib/api'
-import { hasHomeChamber, type MeResponse } from '../../../../../_lib/me'
+import { hasHomeCommunity, type MeResponse } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
 import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
@@ -87,7 +87,7 @@ export default function ChamberPostPage({ params }: PageProps) {
         return
       }
       const data = (await res.json()) as MeResponse
-      if (!hasHomeChamber(data)) {
+      if (!hasHomeCommunity(data)) {
         window.location.replace('/welcome')
         return
       }

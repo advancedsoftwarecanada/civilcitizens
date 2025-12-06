@@ -18,9 +18,11 @@ export type MeResponse = {
   premiumRenewsAt?: string | null
 }
 
-export function hasHomeChamber(me: MeResponse | null | undefined): boolean {
+export function hasHomeCommunity(me: MeResponse | null | undefined): boolean {
   return Boolean(me?.homeChamber && me.homeChamber.chamberSlug && me.homeChamber.provinceCode)
 }
+
+export { hasHomeCommunity as hasHomeChamber }
 
 export function isPremiumMember(me: MeResponse | null | undefined): boolean {
   return Boolean(me?.isPremium)

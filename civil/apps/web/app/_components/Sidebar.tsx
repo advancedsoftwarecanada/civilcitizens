@@ -44,7 +44,7 @@ export type SidebarNavItem = {
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
-  { key: 'chat', label: 'Chat', href: '/chat', icon: HiOutlineChatBubbleLeftRight },
+  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleLeftRight },
   {
     key: 'organizations',
     label: 'Organizations',
@@ -56,8 +56,8 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineBriefcase },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: HiOutlineWallet },
   {
-    key: 'community',
-    label: 'Community',
+    key: 'communities',
+    label: 'Communities',
     href: '/communities',
     icon: HiOutlineBuildingOffice2,
   },
@@ -82,8 +82,8 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const normalizedActive =
     active === 'profile' || active === 'settings'
       ? 'account'
-      : active === 'chambers' || active === 'communities'
-        ? 'community'
+      : active === 'community' || active === 'chambers'
+        ? 'communities'
         : active
   const displayName = me?.name?.trim() || 'Civil Citizen'
   const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
@@ -131,13 +131,6 @@ export default function Sidebar({ me, active }: SidebarProps) {
       className="hidden lg:flex lg:h-screen lg:w-72 lg:flex-col lg:border-r lg:border-slate-200 lg:bg-white lg:px-6 lg:pt-4 lg:pb-8 lg:sticky lg:top-0 lg:[--sidebar-offset:-2rem] xl:w-80 xl:[--sidebar-offset:-3rem]"
       style={sidebarBleedStyle}
     >
-      <div className="flex items-center">
-        <Link href="/home" className="inline-flex items-center rounded-2xl border border-slate-100 bg-white px-3 py-2 shadow-sm">
-          <Image src="/logo.svg" alt="Civil Citizens" width={120} height={32} className="h-8 w-auto" priority />
-        </Link>
-        <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Beta</span>
-      </div>
-
       <Link
         href={profileHref}
         className="mt-6 flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 transition hover:border-slate-200"

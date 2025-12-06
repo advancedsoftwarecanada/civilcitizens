@@ -38,6 +38,8 @@ type UserProfile = {
   experiences?: UserExperience[]
   isPremium?: boolean
   isVerified?: boolean
+  followerCount?: number
+  followingCount?: number
 }
 
 type UserExperience = {
@@ -50,6 +52,29 @@ type UserExperience = {
   current?: boolean
   description?: string | null
   position?: number
+}
+
+type ProfileRelationship = {
+  friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
+  friendshipId?: string
+  friendshipSince?: string | null
+  following: boolean
+}
+
+type FriendRequestPayload = {
+  id: string
+  direction: 'incoming' | 'outgoing'
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED'
+  requestedAt: string
+  respondedAt: string | null
+}
+
+type FriendAcceptResponse = {
+  friend?: {
+    id: string
+    since?: string | null
+  }
+  error?: string
 }
 
 function formatDate(iso?: string) {
@@ -75,6 +100,11 @@ function formatExperienceRange(exp: UserExperience) {
   return 'Dates not provided'
 }
 
+function formatCount(value?: number | null) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '0'
+  return value.toLocaleString()
+}
+
 type PageProps = {
   params: {
     handle: string
@@ -91,6 +121,9 @@ export default function UserPostsPage({ params }: PageProps) {
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
+  const [relationship, setRelationship] = useState<ProfileRelationship | null>(null)
+  const [friendshipAction, setFriendshipAction] = useState<'send' | 'accept' | 'reject' | null>(null)
+  const [followLoading, setFollowLoading] = useState(false)
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -130,10 +163,12 @@ export default function UserPostsPage({ params }: PageProps) {
         if (res.status === 404) {
           setProfile(null)
           setPosts([])
+          setRelationship(null)
           setError('User not found')
           return
         }
         if (!res.ok) {
+          setRelationship(null)
           setError('Unable to load posts right now.')
           return
         }
@@ -141,6 +176,7 @@ export default function UserPostsPage({ params }: PageProps) {
         const data: {
           user?: UserProfile
           items?: ApiPost[]
+          relationship?: ProfileRelationship | null
         } = await res.json()
 
         const userPayload = data.user
@@ -152,10 +188,12 @@ export default function UserPostsPage({ params }: PageProps) {
               }
             : null,
         )
+        setRelationship(data.relationship ?? null)
         setPosts(Array.isArray(data.items) ? data.items : [])
       } catch (err) {
         console.error('Failed loading user posts', err)
         setError('Unable to load posts right now.')
+        setRelationship(null)
       } finally {
         setLoading(false)
       }
@@ -225,6 +263,76 @@ export default function UserPostsPage({ params }: PageProps) {
   const ownerInitials = viewer?.name ?? viewer?.handle ?? 'C'
   const isViewerVerified = Boolean(viewer?.isVerified)
   const isViewerBusiness = Boolean(viewer?.isPremium)
+  const resolvedRelationship: ProfileRelationship =
+    relationship ?? {
+      friendshipStatus: isOwner ? 'self' : 'none',
+      friendshipId: undefined,
+      friendshipSince: null,
+      following: false,
+    }
+  const followerCount = profile?.followerCount ?? 0
+  const followingCount = profile?.followingCount ?? 0
+  const isSendingFriendRequest = friendshipAction === 'send'
+  const isAcceptingFriendRequest = friendshipAction === 'accept'
+  const isRejectingFriendRequest = friendshipAction === 'reject'
+  const renderFriendshipPrimaryCta = () => {
+    switch (resolvedRelationship.friendshipStatus) {
+      case 'incoming':
+        return (
+          <div className="flex flex-col gap-2 text-sm font-semibold">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-center text-amber-700">
+              This person sent you a friend request.
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleAcceptFriendRequest}
+                disabled={!relationship?.friendshipId || isAcceptingFriendRequest}
+              >
+                Accept request
+              </button>
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleRejectFriendRequest}
+                disabled={!relationship?.friendshipId || isRejectingFriendRequest}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )
+      case 'outgoing':
+        return (
+          <div className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-amber-50 px-5 py-2 text-sm font-semibold text-amber-700">
+            Request sent
+          </div>
+        )
+      case 'friends':
+        return (
+          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700">
+            <span role="img" aria-label="Handshake">
+              🤝
+            </span>
+            Friends since {resolvedRelationship.friendshipSince ? formatDate(resolvedRelationship.friendshipSince) : 'today'}
+          </div>
+        )
+      case 'self':
+        return null
+      default:
+        return (
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={handleSendFriendRequest}
+            disabled={isSendingFriendRequest}
+          >
+            Add friend
+          </button>
+        )
+    }
+  }
   const rightRailContent = (
     <div className="sticky top-8 space-y-4">
       <RightRail />
@@ -238,6 +346,159 @@ export default function UserPostsPage({ params }: PageProps) {
 
   const handleComingSoon = (label: string) => {
     pushToast(`${label} creation is coming soon.`, 'info')
+  }
+
+  const requireAuthToken = () => {
+    if (typeof window === 'undefined') return null
+    const token = localStorage.getItem('token')
+    if (!token) {
+      redirectToAuthModal('login')
+      return null
+    }
+    return token
+  }
+
+  const handleSendFriendRequest = async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+    setFriendshipAction('send')
+    try {
+      const res = await fetch(buildApiUrl('/friends/requests'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: profile.id }),
+      })
+      const payload = (await res.json().catch(() => null)) as { request?: FriendRequestPayload; error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to send friend request right now.', 'error')
+        return
+      }
+      setRelationship((prev) => ({
+        friendshipStatus: 'outgoing',
+        friendshipId: payload?.request?.id ?? prev?.friendshipId,
+        friendshipSince: null,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Friend request sent.', 'success')
+    } catch (err) {
+      console.error('Failed to send friend request', err)
+      pushToast('Unable to send friend request right now.', 'error')
+    } finally {
+      setFriendshipAction(null)
+    }
+  }
+
+  const handleAcceptFriendRequest = async () => {
+    if (!relationship?.friendshipId) return
+    const token = requireAuthToken()
+    if (!token) return
+    setFriendshipAction('accept')
+    try {
+      const res = await fetch(buildApiUrl(`/friends/requests/${relationship.friendshipId}/accept`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as FriendAcceptResponse | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to accept friend request.', 'error')
+        return
+      }
+      const sinceIso = payload?.friend?.since ? new Date(payload.friend.since).toISOString() : new Date().toISOString()
+      setRelationship((prev) => ({
+        friendshipStatus: 'friends',
+        friendshipId: payload?.friend?.id ?? prev?.friendshipId ?? relationship.friendshipId,
+        friendshipSince: sinceIso,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Friend request accepted.', 'success')
+    } catch (err) {
+      console.error('Failed to accept friend request', err)
+      pushToast('Unable to accept friend request.', 'error')
+    } finally {
+      setFriendshipAction(null)
+    }
+  }
+
+  const handleRejectFriendRequest = async () => {
+    if (!relationship?.friendshipId) return
+    const token = requireAuthToken()
+    if (!token) return
+    setFriendshipAction('reject')
+    try {
+      const res = await fetch(buildApiUrl(`/friends/requests/${relationship.friendshipId}/reject`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to dismiss friend request.', 'error')
+        return
+      }
+      setRelationship((prev) => ({
+        friendshipStatus: 'none',
+        friendshipId: undefined,
+        friendshipSince: null,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Friend request dismissed.', 'info')
+    } catch (err) {
+      console.error('Failed to reject friend request', err)
+      pushToast('Unable to dismiss friend request.', 'error')
+    } finally {
+      setFriendshipAction(null)
+    }
+  }
+
+  const handleToggleFollow = async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+    const currentlyFollowing = relationship?.following ?? false
+    setFollowLoading(true)
+    try {
+      const res = await fetch(buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/follow`), {
+        method: currentlyFollowing ? 'DELETE' : 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to update follow right now.', 'error')
+        return
+      }
+      setRelationship((prev) => {
+        if (prev) {
+          return { ...prev, following: !currentlyFollowing }
+        }
+        return {
+          friendshipStatus: isOwner ? 'self' : 'none',
+          friendshipId: undefined,
+          friendshipSince: null,
+          following: !currentlyFollowing,
+        }
+      })
+      setProfile((prev) => {
+        if (!prev) return prev
+        const delta = currentlyFollowing ? -1 : 1
+        const nextCount = Math.max(0, (prev.followerCount ?? 0) + delta)
+        return { ...prev, followerCount: nextCount }
+      })
+      pushToast(currentlyFollowing ? 'Unfollowed.' : 'Now following this citizen.', 'success')
+    } catch (err) {
+      console.error('Unable to toggle follow state', err)
+      pushToast('Unable to update follow right now.', 'error')
+    } finally {
+      setFollowLoading(false)
+    }
   }
 
   return (
@@ -305,7 +566,24 @@ export default function UserPostsPage({ params }: PageProps) {
                     >
                       Edit profile
                     </a>
-                  ) : null}
+                  ) : (
+                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
+                      {renderFriendshipPrimaryCta()}
+                      <button
+                        type="button"
+                        className={clsx(
+                          'inline-flex items-center justify-center rounded-full px-5 py-2 font-semibold transition',
+                          resolvedRelationship.following
+                            ? 'bg-slate-900 text-white shadow-lg hover:brightness-110'
+                            : 'border border-slate-900/10 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900',
+                        )}
+                        onClick={handleToggleFollow}
+                        disabled={followLoading}
+                      >
+                        {resolvedRelationship.following ? 'Following' : 'Follow'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 gap-4 text-center text-slate-600 sm:grid-cols-3">
@@ -321,6 +599,14 @@ export default function UserPostsPage({ params }: PageProps) {
                     <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Member since</p>
                     <p className="mt-1 text-lg font-semibold text-slate-900">{formatDate(profile.createdAt) || '—'}</p>
                   </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-4 text-sm font-semibold text-slate-600">
+                  <span>
+                    <span className="text-base text-slate-900">{formatCount(followerCount)}</span> Followers
+                  </span>
+                  <span>
+                    <span className="text-base text-slate-900">{formatCount(followingCount)}</span> Following
+                  </span>
                 </div>
               </>
             ) : loading ? (
@@ -479,6 +765,7 @@ export default function UserPostsPage({ params }: PageProps) {
                 key={post.id}
                 post={post}
                 onVote={handleVote}
+                viewerId={viewer?.id ?? null}
                 viewerIsVerified={isViewerVerified || isViewerBusiness}
               />
             ))
