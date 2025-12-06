@@ -6,7 +6,7 @@ import Sidebar from '../../_components/Sidebar'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { buildApiUrl } from '../../_lib/api'
-import { hasHomeChamber, type MeResponse } from '../../_lib/me'
+import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
 import DashboardShell from '../../_components/DashboardShell'
 import { CheckoutModal, type CheckoutSessionConfig } from './CheckoutModal'
 import { ManageSubscriptionModal } from './ManageSubscriptionModal'
@@ -202,7 +202,7 @@ export default function BillingSettingsPage() {
           return
         }
         const data: MeResponse = await res.json()
-        if (!hasHomeChamber(data)) {
+        if (!hasHomeCommunity(data)) {
           window.location.replace('/welcome')
           return
         }

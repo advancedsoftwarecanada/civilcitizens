@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Optional, Sequence
+from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 ROOT_DIR = Path(__file__).resolve().parent
 COMPOSE_DIR = ROOT_DIR / "civil"
@@ -194,6 +194,7 @@ def run_helper(
     default_env_candidates: Iterable[Path | str],
     default_project_name: str,
     default_command: Optional[str],
+    post_command: Optional[Callable[[str, Mapping[str, str]], None]] = None,
 ) -> None:
     ensure_docker()
     args = parse_args(default_command)
@@ -256,6 +257,8 @@ def run_helper(
     handler = command_map[args.command]
     try:
         handler(compose_cmd, overrides)
+        if post_command:
+            post_command(args.command, dict(overrides))
         print("✔ Done")
     except subprocess.CalledProcessError as exc:
         print(f"✖ Command failed (exit code {exc.returncode})", file=sys.stderr)

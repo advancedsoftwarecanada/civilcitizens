@@ -45,7 +45,7 @@ export type ApiPost = {
   }
 }
 
-type ChamberTarget = {
+type CommunityTarget = {
   provinceCode: string
   chamberSlug: string
   chamberName?: string | null
@@ -61,7 +61,7 @@ type PostComposerProps = {
   } | null
   className?: string
   defaultPostType?: PostType
-  chamberTarget?: ChamberTarget | null
+  communityTarget?: CommunityTarget | null
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
 }
@@ -71,7 +71,7 @@ const MIN_ARTICLE_TITLE_LENGTH = 3
 const MIN_ARTICLE_BODY_LENGTH = 100
 
 export const JURISDICTION_LABELS: Record<Jurisdiction, string> = {
-  citizen: 'Citizen',
+  self: 'Self',
   municipal: 'Municipal',
   provincial: 'Provincial',
   federal: 'Federal',
@@ -84,7 +84,7 @@ function stripHtml(html: string) {
 export default function PostComposer({
   className,
   defaultPostType = 'post',
-  chamberTarget = null,
+  communityTarget = null,
   onPostCreated,
   variant = 'card',
 }: PostComposerProps) {
@@ -95,7 +95,8 @@ export default function PostComposer({
   const [articleBody, setArticleBody] = useState('<p></p>')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const jurisdiction: Jurisdiction = 'citizen'
+  const baseJurisdiction: Jurisdiction = communityTarget ? 'municipal' : 'self'
+  const [selectedJurisdiction, setSelectedJurisdiction] = useState<Jurisdiction>(baseJurisdiction)
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
 
@@ -115,8 +116,9 @@ export default function PostComposer({
     setArticleTitle('')
     setArticleBody('<p></p>')
     setPostType(defaultPostType)
+    setSelectedJurisdiction(baseJurisdiction)
     setError(null)
-  }, [defaultPostType])
+  }, [baseJurisdiction, defaultPostType])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -135,14 +137,13 @@ export default function PostComposer({
           ? { type: 'post', body: draft }
           : { type: 'article', title: articleTitle.trim(), body: articleBody }
 
-      if (chamberTarget) {
-        payload.chamberProvince = chamberTarget.provinceCode
-        payload.chamberSlug = chamberTarget.chamberSlug
+      if (communityTarget) {
+        payload.chamberProvince = communityTarget.provinceCode
+        payload.chamberSlug = communityTarget.chamberSlug
       }
+      payload.jurisdiction = selectedJurisdiction
 
-      payload.jurisdiction = jurisdiction
-
-  const res = await fetch(buildApiUrl('/posts'), {
+      const res = await fetch(buildApiUrl('/posts'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -180,7 +181,11 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [articleBody, articleTitle, canSubmit, chamberTarget, draft, jurisdiction, onPostCreated, postType, resetComposer, submitting])
+  }, [articleBody, articleTitle, canSubmit, communityTarget, draft, onPostCreated, postType, resetComposer, selectedJurisdiction, submitting])
+
+  useEffect(() => {
+    setSelectedJurisdiction(baseJurisdiction)
+  }, [baseJurisdiction])
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -211,13 +216,19 @@ export default function PostComposer({
       <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Share something new</p>
-          <h2 className="text-lg font-semibold text-slate-900">What&apos;s happening in your chamber?</h2>
+          <h2 className="text-lg font-semibold text-slate-900">What&apos;s happening in your community?</h2>
           <p className="text-sm text-slate-500">Toggle between quick updates and long-form articles whenever inspiration hits.</p>
-          {chamberTarget ? (
+          <div className="mt-3 inline-flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+            <span>Audience</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] tracking-wide text-slate-600">
+              {communityTarget ? 'Community Feed' : 'Friends Only'}
+            </span>
+          </div>
+          {communityTarget ? (
             <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
               <span>Posting to</span>
-              <span className="text-slate-900">{chamberTarget.chamberName ?? chamberTarget.chamberSlug}</span>
-              <span className="uppercase tracking-wide text-slate-400">{chamberTarget.provinceCode}</span>
+              <span className="text-slate-900">{communityTarget.chamberName ?? communityTarget.chamberSlug}</span>
+              <span className="uppercase tracking-wide text-slate-400">{communityTarget.provinceCode}</span>
             </div>
           ) : null}
         </div>

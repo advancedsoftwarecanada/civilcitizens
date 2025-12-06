@@ -3,9 +3,16 @@
 import { useEffect, useState } from 'react'
 import { redirectToAuthModal } from './authModal'
 import { buildApiUrl } from './api'
-import { hasHomeChamber, type MeResponse } from './me'
+import { hasHomeCommunity, type MeResponse } from './me'
 
 export type UseAuthedMeOptions = {
+  /**
+   * Require the viewer to have a home community configured before allowing access.
+   */
+  requireHomeCommunity?: boolean
+  /**
+   * @deprecated Use requireHomeCommunity instead.
+   */
   requireHomeChamber?: boolean
 }
 
@@ -21,12 +28,12 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
       return
     }
 
-    const requireHomeChamber = options?.requireHomeChamber ?? true
+    const requireHomeCommunity = options?.requireHomeCommunity ?? options?.requireHomeChamber ?? true
 
     fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : Promise.reject('unauthorized')))
       .then((data: MeResponse) => {
-        if (requireHomeChamber && !hasHomeChamber(data)) {
+        if (requireHomeCommunity && !hasHomeCommunity(data)) {
           window.location.replace('/welcome')
           return
         }
@@ -37,7 +44,7 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
         redirectToAuthModal('login')
       })
       .finally(() => setLoading(false))
-  }, [options?.requireHomeChamber])
+  }, [options?.requireHomeChamber, options?.requireHomeCommunity])
 
   return { me, loading }
 }

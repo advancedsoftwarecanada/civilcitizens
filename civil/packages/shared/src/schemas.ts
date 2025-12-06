@@ -3,7 +3,7 @@ import { normalizeProvinceCode } from './chambers.js'
 
 export const PostTypeEnum = z.enum(['post', 'article'])
 
-export const JurisdictionEnum = z.enum(['citizen', 'municipal', 'provincial', 'federal'])
+export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])
 export type Jurisdiction = z.infer<typeof JurisdictionEnum>
 
 export const CreatePostInput = z
@@ -146,24 +146,24 @@ export const ResetPasswordInput = z.object({
 })
 export type ResetPasswordInput = z.infer<typeof ResetPasswordInput>
 
-export const SetHomeChamberInput = z.object({
+export const SetHomeCommunityInput = z.object({
   provinceCode: z.string().min(2).max(2),
   chamberSlug: z.string().min(1).max(120),
 })
-export type SetHomeChamberInput = z.infer<typeof SetHomeChamberInput>
+export type SetHomeCommunityInput = z.infer<typeof SetHomeCommunityInput>
 
-export const FollowChamberInput = z.object({
+export const FollowCommunityInput = z.object({
   provinceCode: z.string().min(2).max(2),
   chamberSlug: z.string().min(1).max(120),
   setAsHome: z.boolean().optional(),
 })
-export type FollowChamberInput = z.infer<typeof FollowChamberInput>
+export type FollowCommunityInput = z.infer<typeof FollowCommunityInput>
 
-export const UnfollowChamberInput = z.object({
+export const UnfollowCommunityInput = z.object({
   provinceCode: z.string().min(2).max(2),
   chamberSlug: z.string().min(1).max(120),
 })
-export type UnfollowChamberInput = z.infer<typeof UnfollowChamberInput>
+export type UnfollowCommunityInput = z.infer<typeof UnfollowCommunityInput>
 
 export const CitySummarySchema = z.object({
   name: z.string().min(1).max(160),
@@ -179,7 +179,7 @@ export const CitySummarySchema = z.object({
 })
 export type CitySummary = z.infer<typeof CitySummarySchema>
 
-export const ChamberGeoMatchSchema = z.object({
+export const CommunityGeoMatchSchema = z.object({
   province: z.string().min(2).max(2),
   chamberSlug: z.string().min(1).max(160),
   chamberName: z.string().min(1).max(160),
@@ -188,11 +188,11 @@ export const ChamberGeoMatchSchema = z.object({
   distanceKm: z.number().nonnegative().optional(),
   city: CitySummarySchema.optional(),
 })
-export type ChamberGeoMatch = z.infer<typeof ChamberGeoMatchSchema>
+export type CommunityGeoMatch = z.infer<typeof CommunityGeoMatchSchema>
 
-export const ChamberGeolocateResponseSchema = z.object({
-  primary: ChamberGeoMatchSchema.nullable(),
-  alternatives: z.array(ChamberGeoMatchSchema),
+export const CommunityGeolocateResponseSchema = z.object({
+  primary: CommunityGeoMatchSchema.nullable(),
+  alternatives: z.array(CommunityGeoMatchSchema),
   meta: z
     .object({
       source: z.string().default('elections_canada'),
@@ -202,15 +202,23 @@ export const ChamberGeolocateResponseSchema = z.object({
     })
     .optional(),
 })
-export type ChamberGeolocateResponse = z.infer<typeof ChamberGeolocateResponseSchema>
+export type CommunityGeolocateResponse = z.infer<typeof CommunityGeolocateResponseSchema>
 
-export const ChamberGeolocateInput = z.object({
+export const CommunityGeolocateInput = z.object({
   lat: z.coerce.number().min(-90).max(90),
   lng: z.coerce.number().min(-180).max(180),
   limit: z.coerce.number().int().min(1).max(25).default(8).optional(),
   bboxPaddingDegrees: z.coerce.number().min(0).max(5).default(0.25).optional(),
 })
-export type ChamberGeolocateInput = z.infer<typeof ChamberGeolocateInput>
+export type CommunityGeolocateInput = z.infer<typeof CommunityGeolocateInput>
+
+export const PostalGeolocateInput = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  limit: z.coerce.number().int().min(1).max(25).default(8).optional(),
+  bboxPaddingDegrees: z.coerce.number().min(0).max(5).default(0.25).optional(),
+})
+export type PostalGeolocateInput = z.infer<typeof PostalGeolocateInput>
 
 export const PostalLookupInput = z.object({
   postalCode: z.string().trim().min(3).max(12),
@@ -232,10 +240,24 @@ export const PostalLookupResponseSchema = z.object({
       defaultChamberName: z.string().nullable(),
     })
     .nullable(),
-  primary: ChamberGeoMatchSchema.nullable(),
-  alternatives: z.array(ChamberGeoMatchSchema),
+  primary: CommunityGeoMatchSchema.nullable(),
+  alternatives: z.array(CommunityGeoMatchSchema),
 })
 export type PostalLookupResponse = z.infer<typeof PostalLookupResponseSchema>
+
+// Legacy chamber aliases (remove when clients migrate)
+export const SetHomeChamberInput = SetHomeCommunityInput
+export type SetHomeChamberInput = SetHomeCommunityInput
+export const FollowChamberInput = FollowCommunityInput
+export type FollowChamberInput = FollowCommunityInput
+export const UnfollowChamberInput = UnfollowCommunityInput
+export type UnfollowChamberInput = UnfollowCommunityInput
+export const ChamberGeoMatchSchema = CommunityGeoMatchSchema
+export type ChamberGeoMatch = CommunityGeoMatch
+export const ChamberGeolocateResponseSchema = CommunityGeolocateResponseSchema
+export type ChamberGeolocateResponse = CommunityGeolocateResponse
+export const ChamberGeolocateInput = CommunityGeolocateInput
+export type ChamberGeolocateInput = CommunityGeolocateInput
 
 export const ExperienceInput = z
   .object({
@@ -306,3 +328,43 @@ export const CompleteMediaUploadInput = z.object({
   checksum: z.string().trim().max(160).optional(),
 })
 export type CompleteMediaUploadInput = z.infer<typeof CompleteMediaUploadInput>
+
+// Messaging
+export const CreateDirectThreadInput = z.object({
+  userId: z.string().cuid(),
+})
+export type CreateDirectThreadInput = z.infer<typeof CreateDirectThreadInput>
+
+export const SendMessageInput = z
+  .object({
+    body: z
+      .string()
+      .trim()
+      .max(4000, { message: 'Message must be 4,000 characters or fewer' })
+      .optional()
+      .transform((value) => (value ? value.trim() : value)),
+    attachments: z.array(MediaAssetIdSchema).min(1).max(5).optional(),
+  })
+  .refine((value) => {
+    const hasBody = typeof value.body === 'string' && value.body.length > 0
+    const hasAttachments = Boolean(value.attachments?.length)
+    return hasBody || hasAttachments
+  }, { message: 'message_empty', path: ['body'] })
+export type SendMessageInput = z.infer<typeof SendMessageInput>
+
+export const MessageThreadListQuery = z.object({
+  cursor: z.string().cuid().optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+})
+export type MessageThreadListQuery = z.infer<typeof MessageThreadListQuery>
+
+export const MessageListQuery = z.object({
+  cursor: z.string().cuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
+export type MessageListQuery = z.infer<typeof MessageListQuery>
+
+export const ThreadReadInput = z.object({
+  messageId: z.string().cuid().optional(),
+})
+export type ThreadReadInput = z.infer<typeof ThreadReadInput>

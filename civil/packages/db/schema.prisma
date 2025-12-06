@@ -57,6 +57,10 @@ model User {
   avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
   coverMedia                MediaAsset?          @relation("CoverMedia", fields: [coverMediaId], references: [id])
   votes                     Vote[]
+  friendshipsRequested      Friendship[]         @relation("friendshipsRequested")
+  friendshipsReceived       Friendship[]         @relation("friendshipsReceived")
+  messageParticipants       MessageParticipant[]
+  messagesSent              Message[]
   communityMeta             Json?
 }
 
@@ -68,7 +72,7 @@ model Post {
   type           String        @default("post")
   mediaUrl       String?
   seoSlug        String?       @unique
-  jurisdiction   String        @default("citizen")
+  jurisdiction   String        @default("self")
   provinceCode   String?
   chamberSlug    String?
   createdAt      DateTime      @default(now())
@@ -153,10 +157,80 @@ model Notification {
   type      String
   actorId   String
   postId    String?
+  payload   Json?
   readAt    DateTime?
   createdAt DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+model Friendship {
+  id           String           @id @default(cuid())
+  requesterId  String
+  addresseeId  String
+  status       FriendshipStatus @default(PENDING)
+  requestedAt  DateTime         @default(now())
+  respondedAt  DateTime?
+
+  requester User @relation("friendshipsRequested", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("friendshipsReceived", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+}
+
+model MessageThread {
+  id           String             @id @default(cuid())
+  type         MessageThreadType  @default(direct)
+  uniqueKey    String?            @unique
+  contextType  String?
+  contextId    String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  lastMessageAt DateTime?         @default(now())
+  messages     Message[]
+  participants MessageParticipant[]
+
+  @@index([lastMessageAt])
+}
+
+model MessageParticipant {
+  threadId       String
+  userId         String
+  role           MessageParticipantRole @default(member)
+  joinedAt       DateTime                @default(now())
+  lastReadAt     DateTime?
+  mutedUntil     DateTime?
+  lastActivityAt DateTime                @default(now())
+  thread         MessageThread           @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([threadId, userId])
+  @@index([userId])
+  @@index([threadId, lastActivityAt])
+}
+
+model Message {
+  id          String      @id @default(cuid())
+  threadId    String
+  senderId    String
+  body        String?
+  attachments Json?
+  messageType MessageType @default(text)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+  thread      MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender      User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
 }
 
 model FeedEntry {
@@ -476,4 +550,23 @@ enum StripeWebhookStatus {
   PROCESSED
   FAILED
   IGNORED
+}
+
+enum MessageThreadType {
+  direct
+  group
+  order
+  job
+  support
+}
+
+enum MessageParticipantRole {
+  member
+  admin
+  system
+}
+
+enum MessageType {
+  text
+  system
 }

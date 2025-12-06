@@ -90,7 +90,7 @@ export function RightRail() {
       const key = `${city.provinceCode}:${city.chamberSlug}`
       setFollowingKey(key)
       try {
-        const res = await fetch(buildApiUrl('/chambers/follows'), {
+        const res = await fetch(buildApiUrl('/communities/follows'), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -106,7 +106,7 @@ export function RightRail() {
           throw new Error('follow_failed')
         }
         pushToast(`Following ${city.name}.`, 'success')
-          await loadSummary({ silent: true })
+        await loadSummary({ silent: true })
       } catch (error) {
         console.error('Failed to follow community', error)
         pushToast('Unable to follow that community right now.', 'error')

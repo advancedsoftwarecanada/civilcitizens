@@ -7,7 +7,7 @@ import { RightRail } from '../_components/RightRail'
 import type { Jurisdiction } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeChamber, type MeResponse } from '../_lib/me'
+import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 import PostFeedItem from '../_components/PostFeedItem'
 import DashboardShell from '../_components/DashboardShell'
 import Modal from '../_components/Modal'
@@ -24,7 +24,7 @@ const JURISDICTION_FILTERS: Array<{ value: 'all' | Jurisdiction; label: string }
   { value: 'federal', label: JURISDICTION_LABELS.federal },
   { value: 'provincial', label: JURISDICTION_LABELS.provincial },
   { value: 'municipal', label: JURISDICTION_LABELS.municipal },
-  { value: 'citizen', label: JURISDICTION_LABELS.citizen },
+  { value: 'self', label: JURISDICTION_LABELS.self },
 ]
 
 export default function HomePage() {
@@ -47,9 +47,23 @@ export default function HomePage() {
   }, [activeFilter, sortMode])
 
   const refreshPosts = useCallback(async () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
     setLoading(true)
     try {
-      const response = await fetch(buildApiUrl(`/posts${filterQuery}`))
+      const response = await fetch(buildApiUrl(`/posts${filterQuery}`), {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      if (response.status === 401) {
+        localStorage.removeItem('token')
+        redirectToAuthModal('login')
+        return
+      }
       const data = await response.json().catch(() => ({ items: [] }))
       setPosts(Array.isArray(data.items) ? data.items : [])
     } finally {
@@ -75,7 +89,7 @@ export default function HomePage() {
     fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       .then((r) => (r.ok ? r.json() : Promise.reject('unauthorized')))
       .then((data: MeResponse) => {
-        if (!hasHomeChamber(data)) {
+        if (!hasHomeCommunity(data)) {
           window.location.replace('/welcome')
           return
         }
@@ -251,6 +265,7 @@ export default function HomePage() {
               key={p.id}
               post={p}
               onVote={handleVote}
+              viewerId={me?.id ?? null}
               viewerIsVerified={isVerifiedUser || isBusinessUser}
             />
           ))

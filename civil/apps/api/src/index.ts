@@ -8,9 +8,18 @@ import { Queue } from 'bullmq'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
-import proj4 from 'proj4'
 import { prisma } from '@civil/db'
-import { Prisma, MediaCategory, PremiumStatus, BusinessStatus, StripeWebhookStatus } from '@prisma/client'
+import {
+  Prisma,
+  MediaCategory,
+  PremiumStatus,
+  BusinessStatus,
+  StripeWebhookStatus,
+  FriendshipStatus,
+  MessageThreadType,
+  MessageType,
+  MessageParticipantRole,
+} from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
 import {
   CreatePostInput,
@@ -19,9 +28,9 @@ import {
   LoginInput,
   ForgotPasswordInput,
   ResetPasswordInput,
-  SetHomeChamberInput,
-  FollowChamberInput,
-  UnfollowChamberInput,
+  SetHomeCommunityInput,
+  FollowCommunityInput,
+  UnfollowCommunityInput,
   UpdateProfileInput,
   CursorQuery,
   HandleParam,
@@ -30,26 +39,34 @@ import {
   PostSortEnum,
   CommentSortEnum,
   PROVINCES,
-  getChambersByProvince,
-  findChamber,
+  getCommunitiesByProvince,
+  findCommunity,
   normalizeProvinceCode,
   getProvinceDisplayName,
   buildHandleBase,
   JurisdictionEnum,
-  ChamberGeolocateInput,
+  CommunityGeolocateInput,
+  PostalGeolocateInput,
   PostalLookupInput,
   RequestMediaUploadInput,
   CompleteMediaUploadInput,
   MediaAssetIdSchema,
   CitySummarySchema,
-  slugifyChamberName,
+  CreateDirectThreadInput,
+  SendMessageInput,
+  MessageThreadListQuery,
+  MessageListQuery,
+  ThreadReadInput,
+  slugifyCommunityName,
 } from '@civil/shared'
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import Stripe from 'stripe'
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { createHash, randomUUID } from 'crypto'
-import { locateChamberFromPoint } from './geodata.js'
+import { locateChamberFromPoint, getChamberCentroid } from './geodata.js'
+import { locateFsaFromPoint } from './fsaLocator.js'
+import { statsCanPointToWgs84 } from './statscan.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
@@ -79,6 +96,7 @@ const MAX_BUSINESSES_PER_USER = 5
 const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
 const COMMUNITY_FOLLOW_TARGET = 3
 const COMMUNITY_SUGGESTION_CACHE_LIMIT = 10
+const NOTIFICATION_CHANNEL_PREFIX = 'chan:notify:'
 
 type CitySummaryType = z.infer<typeof CitySummarySchema>
 
@@ -425,6 +443,18 @@ const app = Fastify({
   trustProxy: true, // behind Nginx/Cloudflare
 })
 
+type ChamberRouteMethod = 'delete' | 'get' | 'patch' | 'post' | 'put'
+type ChamberRouteHandler = (req: FastifyRequest, reply: FastifyReply) => unknown
+
+function registerChamberCommunityRoute(method: ChamberRouteMethod, path: string, handler: ChamberRouteHandler) {
+  if (!path.startsWith('/chambers')) {
+    throw new Error(`registerChamberCommunityRoute requires /chambers path, received: ${path}`)
+  }
+  ;(app as any)[method](path, handler)
+  const communityPath = path.replace('/chambers', '/communities')
+  ;(app as any)[method](communityPath, handler)
+}
+
 for (const mime of BINARY_UPLOAD_MIME_TYPES) {
   app.addContentTypeParser(mime, { parseAs: 'buffer' }, (request, payload, done) => {
     done(null, payload)
@@ -441,10 +471,6 @@ function haversineDistanceKm(lat1: number, lng1: number, lat2: number, lng2: num
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
   return EARTH_RADIUS_KM * c
 }
-
-const STATS_CAN_LAMBERT =
-  '+proj=lcc +lat_1=49 +lat_2=77 +lat_0=63.390675 +lon_0=-91.8666666666667 +x_0=6200000 +y_0=3000000 +ellps=GRS80 +units=m +no_defs'
-const statsCanToWgs84 = proj4(STATS_CAN_LAMBERT, 'EPSG:4326')
 
 const POSTAL_SANITIZE_RE = /[^A-Z0-9]/g
 const POSTAL_FSA_REGEX = /^[ABCEGHJKLMNPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]$/
@@ -464,20 +490,6 @@ function normalizePostalCodeInput(value?: string | null): NormalizedPostal | nul
   const full = sanitized.slice(0, 6)
   const postal = POSTAL_FULL_REGEX.test(full) ? full : fsa
   return { postal, fsa }
-}
-
-function statsCanPointToWgs84(lat?: number | null, lng?: number | null) {
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-  try {
-    const [convertedLng, convertedLat] = statsCanToWgs84.forward([Number(lng), Number(lat)])
-    if (!Number.isFinite(convertedLat) || !Number.isFinite(convertedLng)) return null
-    return {
-      lat: Number(convertedLat.toFixed(6)),
-      lng: Number(convertedLng.toFixed(6)),
-    }
-  } catch {
-    return null
-  }
 }
 
 type ProvinceCodeLiteral = (typeof PROVINCES)[number]['code']
@@ -643,6 +655,48 @@ async function enrichMatchesWithCities(matches: RawGeoMatchOrNull[], lat: number
   }) as EnrichedGeoMatchOrNull[]
 }
 
+async function citySummaryFromGeoMatch(match: EnrichedGeoMatch): Promise<CitySummaryType | null> {
+  if (!match) return null
+  if (match.city) return match.city
+  const centroid = await getChamberCentroid(match.province, match.chamberSlug)
+  if (!centroid) return null
+  const provinceName = getProvinceDisplayName(match.province as ProvinceCodeLiteral) ?? match.province.toUpperCase()
+  return {
+    name: match.chamberName,
+    slug: match.chamberSlug,
+    provinceCode: match.province,
+    provinceName,
+    chamberSlug: match.chamberSlug,
+    chamberName: match.chamberName,
+    latitude: centroid.lat,
+    longitude: centroid.lng,
+    population: match.city?.population ?? null,
+    distanceKm: typeof match.distanceKm === 'number' ? Number(match.distanceKm.toFixed(1)) : undefined,
+  }
+}
+
+async function computeGeodataFallbackSuggestions(
+  referenceFollow: { provinceCode: string; chamberSlug: string },
+  excludeKeys: Set<string>,
+  limit = COMMUNITY_SUGGESTION_CACHE_LIMIT,
+): Promise<CitySummaryType[]> {
+  const centroid = await getChamberCentroid(referenceFollow.provinceCode, referenceFollow.chamberSlug)
+  if (!centroid) return []
+  const locateResult = await locateChamberFromPoint(centroid.lat, centroid.lng, { limit })
+  const enriched = await enrichMatchesWithCities([locateResult.primary, ...locateResult.alternatives], centroid.lat, centroid.lng)
+  const suggestions: CitySummaryType[] = []
+  for (const match of enriched) {
+    if (!match) continue
+    const key = buildFollowKey(match.province, match.chamberSlug)
+    if (excludeKeys.has(key)) continue
+    const summary = await citySummaryFromGeoMatch(match)
+    if (!summary) continue
+    suggestions.push(summary)
+    if (suggestions.length >= limit) break
+  }
+  return suggestions
+}
+
 await app.register(cors, { origin: true, credentials: true })
 await app.register(jwt, { secret: JWT_SECRET })
 await app.register(sse as any)
@@ -662,9 +716,336 @@ const mediaQueue = new Queue('media', {
   },
 })
 
+const FRIEND_USER_SELECT = {
+  id: true,
+  handle: true,
+  name: true,
+  avatarUrl: true,
+  premiumStatus: true,
+} satisfies Prisma.UserSelect
+
+type FriendUser = Prisma.UserGetPayload<{ select: typeof FRIEND_USER_SELECT }>
+
+function formatFriendUser(user: FriendUser) {
+  return {
+    id: user.id,
+    handle: user.handle,
+    name: user.name,
+    avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+    isPremium: isPremium(user.premiumStatus),
+    isVerified: isPremium(user.premiumStatus),
+  }
+}
+
+const FRIENDSHIP_WITH_USERS_INCLUDE = {
+  requester: { select: FRIEND_USER_SELECT },
+  addressee: { select: FRIEND_USER_SELECT },
+} satisfies Prisma.FriendshipInclude
+
+type FriendshipWithUsers = Prisma.FriendshipGetPayload<{ include: typeof FRIENDSHIP_WITH_USERS_INCLUDE }>
+
+const NOTIFICATION_SELECT = {
+  id: true,
+  userId: true,
+  actorId: true,
+  type: true,
+  postId: true,
+  payload: true,
+  readAt: true,
+  createdAt: true,
+} satisfies Prisma.NotificationSelect
+
+type NotificationRecord = Prisma.NotificationGetPayload<{ select: typeof NOTIFICATION_SELECT }>
+
+function formatNotification(record: NotificationRecord) {
+  return {
+    id: record.id,
+    type: record.type,
+    actorId: record.actorId,
+    postId: record.postId ?? null,
+    payload: record.payload ?? null,
+    readAt: record.readAt ?? null,
+    createdAt: record.createdAt,
+    unread: !record.readAt,
+  }
+}
+
+async function dispatchRealtimeEvent(userId: string, payload: { type: string; data: unknown }) {
+  const channel = `${NOTIFICATION_CHANNEL_PREFIX}${userId}`
+  try {
+    await redis.publish(channel, JSON.stringify(payload))
+  } catch (err) {
+    console.error('failed to publish realtime payload', err)
+  }
+}
+
+async function dispatchNotification(record: NotificationRecord) {
+  await dispatchRealtimeEvent(record.userId, { type: 'notification', data: formatNotification(record) })
+}
+
+async function createNotificationRecord(data: {
+  userId: string
+  actorId: string
+  type: string
+  postId?: string | null
+  payload?: Prisma.InputJsonValue
+}) {
+  const notification = await prisma.notification.create({
+    data: {
+      userId: data.userId,
+      actorId: data.actorId,
+      type: data.type,
+      postId: data.postId ?? null,
+      payload: data.payload ?? undefined,
+    },
+    select: NOTIFICATION_SELECT,
+  })
+  await dispatchNotification(notification)
+  return notification
+}
+
+async function resolveStreamUserId(req: FastifyRequest): Promise<string | null> {
+  if (!(req as any).user?.id) {
+    try {
+      await req.jwtVerify()
+    } catch {
+      // Authorization header missing or invalid; fall back to token param.
+    }
+  }
+  const headerUserId = (req as any).user?.id
+  if (headerUserId) return headerUserId
+  const query = (req.query ?? {}) as { token?: string }
+  const tokenParam = typeof query.token === 'string' && query.token.trim().length > 0 ? query.token.trim() : undefined
+  if (!tokenParam) return null
+  try {
+    const payload = await app.jwt.verify<{ sub?: string }>(tokenParam)
+    if (payload && typeof payload.sub === 'string' && payload.sub) {
+      return payload.sub
+    }
+  } catch (err) {
+    app.log.warn({ err }, 'notifications_stream_token_invalid')
+  }
+  return null
+}
+
+const FRIEND_NOTIFICATION_TYPES = {
+  REQUEST: 'friend_request',
+  ACCEPT: 'friend_accept',
+} as const
+
+async function notifyFriendRequest(friendshipId: string, requesterId: string, addresseeId: string) {
+  await createNotificationRecord({
+    userId: addresseeId,
+    actorId: requesterId,
+    type: FRIEND_NOTIFICATION_TYPES.REQUEST,
+    payload: { friendshipId },
+  })
+}
+
+async function notifyFriendAcceptance(friendshipId: string, requesterId: string, addresseeId: string) {
+  await createNotificationRecord({
+    userId: requesterId,
+    actorId: addresseeId,
+    type: FRIEND_NOTIFICATION_TYPES.ACCEPT,
+    payload: { friendshipId },
+  })
+}
+
+async function loadAcceptedFriendIds(userId: string): Promise<string[]> {
+  const rows: Pick<Prisma.FriendshipGetPayload<{ select: { requesterId: true; addresseeId: true } }>, 'requesterId' | 'addresseeId'>[] =
+    await prisma.friendship.findMany({
+    where: {
+      status: FriendshipStatus.ACCEPTED,
+      OR: [{ requesterId: userId }, { addresseeId: userId }],
+    },
+    select: { requesterId: true, addresseeId: true },
+  })
+  const result = new Set<string>()
+  for (const row of rows) {
+    result.add(row.requesterId === userId ? row.addresseeId : row.requesterId)
+  }
+  return [...result]
+}
+
+function formatFriendRequest(friendship: FriendshipWithUsers, viewerId: string) {
+  const direction = friendship.requesterId === viewerId ? 'outgoing' : 'incoming'
+  const counterpart = direction === 'outgoing' ? friendship.addressee : friendship.requester
+  return {
+    id: friendship.id,
+    status: friendship.status,
+    direction,
+    requestedAt: friendship.requestedAt,
+    respondedAt: friendship.respondedAt ?? null,
+    user: formatFriendUser(counterpart),
+  }
+}
+
+function formatFriendship(friendship: FriendshipWithUsers, viewerId: string) {
+  const counterpart = friendship.requesterId === viewerId ? friendship.addressee : friendship.requester
+  return {
+    id: friendship.id,
+    status: friendship.status,
+    since: friendship.respondedAt ?? friendship.requestedAt,
+    user: formatFriendUser(counterpart),
+  }
+}
+
+const MESSAGE_SELECT = {
+  id: true,
+  threadId: true,
+  senderId: true,
+  body: true,
+  attachments: true,
+  messageType: true,
+  createdAt: true,
+  updatedAt: true,
+  deletedAt: true,
+  sender: { select: FRIEND_USER_SELECT },
+} satisfies Prisma.MessageSelect
+
+const THREAD_PARTICIPANT_SELECT = {
+  userId: true,
+  role: true,
+  joinedAt: true,
+  lastReadAt: true,
+  mutedUntil: true,
+  lastActivityAt: true,
+  user: { select: FRIEND_USER_SELECT },
+} satisfies Prisma.MessageParticipantSelect
+
+const THREAD_WITH_PARTICIPANTS_INCLUDE = {
+  participants: { select: THREAD_PARTICIPANT_SELECT },
+} satisfies Prisma.MessageThreadInclude
+
+const THREAD_SUMMARY_INCLUDE = {
+  ...THREAD_WITH_PARTICIPANTS_INCLUDE,
+  messages: {
+    select: MESSAGE_SELECT,
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+  },
+} satisfies Prisma.MessageThreadInclude
+
+type MessageRecord = Prisma.MessageGetPayload<{ select: typeof MESSAGE_SELECT }>
+type ThreadParticipantRecord = Prisma.MessageParticipantGetPayload<{ select: typeof THREAD_PARTICIPANT_SELECT }>
+type ThreadWithParticipants = Prisma.MessageThreadGetPayload<{ include: typeof THREAD_WITH_PARTICIPANTS_INCLUDE }>
+type ThreadSummaryRecord = Prisma.MessageThreadGetPayload<{ include: typeof THREAD_SUMMARY_INCLUDE }>
+
+function normalizeAttachmentList(value: Prisma.JsonValue | null | undefined): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string')
+}
+
+function formatMessage(record: MessageRecord, viewerId: string) {
+  return {
+    id: record.id,
+    threadId: record.threadId,
+    body: record.body ?? null,
+    attachments: normalizeAttachmentList(record.attachments),
+    messageType: record.messageType,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    deletedAt: record.deletedAt ?? null,
+    senderId: record.senderId,
+    sender: formatFriendUser(record.sender),
+    isMine: record.senderId === viewerId,
+  }
+}
+
+function formatThreadParticipant(participant: ThreadParticipantRecord, viewerId: string) {
+  return {
+    userId: participant.userId,
+    role: participant.role,
+    joinedAt: participant.joinedAt,
+    lastReadAt: participant.lastReadAt ?? null,
+    mutedUntil: participant.mutedUntil ?? null,
+    lastActivityAt: participant.lastActivityAt,
+    user: formatFriendUser(participant.user),
+    isViewer: participant.userId === viewerId,
+  }
+}
+
+function formatThreadBase(thread: ThreadWithParticipants, viewerId: string) {
+  return {
+    id: thread.id,
+    type: thread.type,
+    contextType: thread.contextType ?? null,
+    contextId: thread.contextId ?? null,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    lastMessageAt: thread.lastMessageAt ?? thread.createdAt,
+    participants: thread.participants.map((participant) => formatThreadParticipant(participant, viewerId)),
+  }
+}
+
+function formatThreadSummaryRecord(thread: ThreadSummaryRecord, viewerId: string) {
+  const base = formatThreadBase(thread, viewerId)
+  const lastMessage = thread.messages[0] ? formatMessage(thread.messages[0], viewerId) : null
+  return {
+    ...base,
+    lastMessage,
+  }
+}
+
+function buildDirectThreadKey(userA: string, userB: string): string {
+  const [first, second] = [userA, userB].sort()
+  return `direct:${first}:${second}`
+}
+
+async function usersAreFriends(userId: string, targetUserId: string): Promise<boolean> {
+  const friendship = await prisma.friendship.findFirst({
+    where: {
+      status: FriendshipStatus.ACCEPTED,
+      OR: [
+        { requesterId: userId, addresseeId: targetUserId },
+        { requesterId: targetUserId, addresseeId: userId },
+      ],
+    },
+    select: { id: true },
+  })
+  return Boolean(friendship)
+}
+
+async function loadThreadForUser(threadId: string, userId: string) {
+  return prisma.messageThread.findFirst({
+    where: {
+      id: threadId,
+      participants: {
+        some: { userId },
+      },
+    },
+    include: THREAD_WITH_PARTICIPANTS_INCLUDE,
+  })
+}
+
+async function fetchThreadMessages(
+  threadId: string,
+  limit: number,
+  cursor?: string,
+): Promise<{ rows: MessageRecord[]; nextCursor?: string }> {
+  const rows = await prisma.message.findMany({
+    where: { threadId },
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    select: MESSAGE_SELECT,
+  })
+
+  let nextCursor: string | undefined
+  if (rows.length > limit) {
+    const next = rows.pop()!
+    nextCursor = next.id
+  }
+
+  return {
+    rows: rows.reverse(),
+    nextCursor,
+  }
+}
+
 type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
 type Jurisdiction = z.infer<typeof JurisdictionEnum>
-const DEFAULT_JURISDICTION: Jurisdiction = 'citizen'
+const DEFAULT_JURISDICTION: Jurisdiction = 'self'
 const REDDIT_EPOCH_SECONDS = 1134028003
 
 const SCHEMA_MISMATCH_MESSAGE =
@@ -679,6 +1060,195 @@ function isSchemaOutOfDateError(err: unknown): boolean {
 }
 
 const MediaAssetParam = z.object({ id: MediaAssetIdSchema })
+const FriendRequestInput = z.object({ userId: z.string().trim().min(1).max(120) })
+const FriendshipIdParam = z.object({ id: z.string().cuid() })
+const MessageThreadIdParam = z.object({ id: z.string().cuid() })
+const NotificationAckInput = z
+  .object({
+    ids: z.array(z.string().cuid()).min(1).max(50).optional(),
+    before: z.coerce.date().optional(),
+  })
+  .refine((value) => Boolean(value.ids?.length || value.before), {
+    message: 'ids_or_before_required',
+    path: ['ids'],
+  })
+
+const NotificationListQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+  cursor: z.string().cuid().optional(),
+})
+
+const UserSearchQuery = z.object({
+  q: z.string().trim().min(1).max(120),
+  limit: z.coerce.number().int().min(1).max(50).default(30),
+})
+
+const SearchTypeEnum = z.enum(['people', 'communities', 'all'])
+
+const CombinedSearchQuery = z.object({
+  q: z.string().trim().min(1).max(120),
+  type: SearchTypeEnum.default('people'),
+  limit: z.coerce.number().int().min(1).max(50).default(30),
+  peopleLimit: z.coerce.number().int().min(1).max(10).default(3),
+  communityLimit: z.coerce.number().int().min(1).max(10).default(3),
+})
+
+function normalizeSearchTerm(value: string): string {
+  return value.trim().replace(/\s+/g, ' ')
+}
+
+type UserSearchRecord = {
+  id: string
+  name: string | null
+  handle: string
+  avatarUrl: string | null
+  premiumStatus: PremiumStatus | null
+}
+
+type UserSearchResultPayload = {
+  id: string
+  name: string | null
+  handle: string
+  avatarUrl: string | null
+  isPremium: boolean
+  isVerified: boolean
+  homeChamber: {
+    provinceCode: string
+    provinceName: string | null
+    chamberSlug: string
+    chamberName: string | null
+  } | null
+}
+
+async function searchUsersForQuery({
+  viewerId,
+  query,
+  limit,
+}: {
+  viewerId: string
+  query: string
+  limit: number
+}): Promise<UserSearchResultPayload[]> {
+  const normalizedQuery = normalizeSearchTerm(query)
+  if (!normalizedQuery) return []
+
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+  const normalizedHandle = normalizedQuery.replace(/^@/, '')
+
+  const where: Prisma.UserWhereInput = {
+    NOT: { id: viewerId },
+    OR: [
+      tokens.length
+        ? {
+            AND: tokens.map((token) => ({ name: { contains: token, mode: 'insensitive' } })),
+          }
+        : { name: { contains: normalizedQuery, mode: 'insensitive' } },
+      { handle: { contains: normalizedHandle, mode: 'insensitive' } },
+    ],
+  }
+
+  const users = (await prisma.user.findMany({
+    where,
+    orderBy: [{ name: 'asc' }, { handle: 'asc' }],
+    take: limit,
+    select: {
+      id: true,
+      name: true,
+      handle: true,
+      avatarUrl: true,
+      premiumStatus: true,
+    },
+  })) as UserSearchRecord[]
+
+  const userIds = users.map((user) => user.id)
+  const homeFollows = userIds.length
+    ? await prisma.chamberFollow.findMany({
+        where: { userId: { in: userIds }, home: true },
+        select: {
+          userId: true,
+          provinceCode: true,
+          chamberSlug: true,
+        },
+      })
+    : []
+
+  const homeMap = new Map<
+    string,
+    { provinceCode: string; provinceName: string | null; chamberSlug: string; chamberName: string | null }
+  >()
+  for (const follow of homeFollows) {
+    const community = findCommunity(follow.provinceCode, follow.chamberSlug)
+    const provinceName = getProvinceDisplayName(follow.provinceCode as ProvinceCodeLiteral)
+    homeMap.set(follow.userId, {
+      provinceCode: follow.provinceCode,
+      provinceName,
+      chamberSlug: follow.chamberSlug,
+      chamberName: community?.name ?? follow.chamberSlug,
+    })
+  }
+
+  return users.map((user) => ({
+    id: user.id,
+    name: user.name,
+    handle: user.handle,
+    avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+    isPremium: isPremium(user.premiumStatus),
+    isVerified: isPremium(user.premiumStatus),
+    homeChamber: homeMap.get(user.id) ?? null,
+  }))
+}
+
+async function searchCommunitiesForQuery(query: string, limit: number): Promise<CitySummaryType[]> {
+  const normalizedQuery = normalizeSearchTerm(query)
+  if (!normalizedQuery) return []
+
+  const slugQuery = slugifyCommunityName(normalizedQuery)
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+
+  const insensitiveMode = Prisma.QueryMode.insensitive
+
+  const buildFieldCondition = (field: 'name' | 'chamberName'): Prisma.CityWhereInput => {
+    if (!tokens.length) {
+      return {
+        [field]: {
+          contains: normalizedQuery,
+          mode: insensitiveMode,
+        },
+      }
+    }
+    return {
+      AND: tokens.map(
+        (token) =>
+          ({
+            [field]: {
+              contains: token,
+              mode: insensitiveMode,
+            },
+          }) as Prisma.CityWhereInput,
+      ),
+    }
+  }
+
+  const nameCondition = buildFieldCondition('name')
+  const chamberCondition = buildFieldCondition('chamberName')
+
+  const where: Prisma.CityWhereInput = {
+    OR: [
+      nameCondition,
+      chamberCondition,
+      { slug: { contains: slugQuery, mode: insensitiveMode } },
+      { chamberSlug: { contains: slugQuery, mode: insensitiveMode } },
+    ],
+  }
+
+  const cities = await prisma.city.findMany({
+    where,
+    orderBy: [{ population: 'desc' }, { name: 'asc' }],
+    take: limit,
+  })
+
+  return cities.map((city: CityModel) => formatCitySummary(city))
+}
 
 async function loadAuthenticatedUser(req: FastifyRequest) {
   const payload = await (req as any).jwtVerify()
@@ -1132,7 +1702,7 @@ type PostWithAuthor = Prisma.PostGetPayload<{
 }>
 
 function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null } = {}) {
-  const chamber = post.provinceCode && post.chamberSlug ? findChamber(post.provinceCode, post.chamberSlug) : null
+  const chamber = post.provinceCode && post.chamberSlug ? findCommunity(post.provinceCode, post.chamberSlug) : null
   const provinceName = chamber ? getProvinceDisplayName(chamber.province as any) : null
   return {
     id: post.id,
@@ -1219,139 +1789,142 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
 })
 
 // Auth: login
-app.get('/chambers/:province/:chamber/posts', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const params = z
-      .object({
-        province: z.string().min(2).max(64),
-        chamber: z.string().min(1).max(160),
-      })
-      .safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+registerChamberCommunityRoute(
+  'get',
+  '/chambers/:province/:chamber/posts',
+  async (req: FastifyRequest, reply: FastifyReply) =>
+    withSchemaGuard(req, reply, async () => {
+      const params = z
+        .object({
+          province: z.string().min(2).max(64),
+          chamber: z.string().min(1).max(160),
+        })
+        .safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
-    const province = normalizeProvinceCode(params.data.province)
-    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const province = normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
 
-    const chamberRecord = findChamber(province, params.data.chamber)
-    if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
+      const chamberRecord = findCommunity(province, params.data.chamber)
+      if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
 
-    const query = CursorQuery.extend({
-      jurisdiction: JurisdictionEnum.optional(),
-      sort: PostSortEnum.optional(),
-    }).safeParse(req.query)
-    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+      const query = CursorQuery.extend({
+        jurisdiction: JurisdictionEnum.optional(),
+        sort: PostSortEnum.optional(),
+      }).safeParse(req.query)
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-    const { cursor, limit, jurisdiction, sort } = query.data
-    const viewerId = (req as any).user?.id as string | undefined
-    const sortMode = sort ?? 'new'
+      const { cursor, limit, jurisdiction, sort } = query.data
+      const viewerId = (req as any).user?.id as string | undefined
+      const sortMode = sort ?? 'new'
 
-    const where: Prisma.PostWhereInput = {
-      provinceCode: chamberRecord.province,
-      chamberSlug: chamberRecord.slug,
-      ...(jurisdiction ? { jurisdiction } : {}),
-    }
+      const where: Prisma.PostWhereInput = {
+        provinceCode: chamberRecord.province,
+        chamberSlug: chamberRecord.slug,
+        ...(jurisdiction ? { jurisdiction } : {}),
+      }
 
-    let items: PostWithAuthor[] = []
-    let nextCursor: string | undefined
+      let items: PostWithAuthor[] = []
+      let nextCursor: string | undefined
 
-    if (sortMode === 'hot') {
-      items = await prisma.post.findMany({
-        where,
-        take: limit,
-        orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
+      if (sortMode === 'hot') {
+        items = await prisma.post.findMany({
+          where,
+          take: limit,
+          orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
+          include: {
+            author: {
+              select: {
+                id: true,
+                handle: true,
+                name: true,
+                avatarUrl: true,
+                premiumStatus: true,
+              },
             },
           },
-        },
-      })
-    } else {
-      const queryResult = await prisma.post.findMany({
-        where,
-        take: limit + 1,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
+        })
+      } else {
+        const queryResult = await prisma.post.findMany({
+          where,
+          take: limit + 1,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: {
+              select: {
+                id: true,
+                handle: true,
+                name: true,
+                avatarUrl: true,
+                premiumStatus: true,
+              },
             },
           },
-        },
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      })
-      if (queryResult.length > limit) {
-        const next = queryResult.pop()!
-        nextCursor = next.id
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        })
+        if (queryResult.length > limit) {
+          const next = queryResult.pop()!
+          nextCursor = next.id
+        }
+        items = queryResult
       }
-      items = queryResult
-    }
 
-    let votesByPost: Record<string, number> = {}
-    if (viewerId && items.length) {
-      const votes = await prisma.vote.findMany({
-        where: { userId: viewerId, postId: { in: items.map((item) => item.id) } },
-        select: { postId: true, value: true },
-      })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.postId] = vote.value
+      let votesByPost: Record<string, number> = {}
+      if (viewerId && items.length) {
+        const votes = await prisma.vote.findMany({
+          where: { userId: viewerId, postId: { in: items.map((item) => item.id) } },
+          select: { postId: true, value: true },
+        })
+        const voteMap: Record<string, number> = {}
+        for (const vote of votes) {
+          voteMap[vote.postId] = vote.value
+        }
+        votesByPost = voteMap
       }
-      votesByPost = voteMap
-    }
 
-    return {
-      chamber: chamberRecord,
-      items: items.map((item) => formatPost(item, { viewerVote: votesByPost[item.id] ?? null })),
-      nextCursor,
-    }
-  }),
+      return {
+        chamber: chamberRecord,
+        items: items.map((item) => formatPost(item, { viewerVote: votesByPost[item.id] ?? null })),
+        nextCursor,
+      }
+    }),
 )
 
-app.get('/chambers/:province', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('get', '/chambers/:province', async (req: FastifyRequest, reply: FastifyReply) => {
   const params = z.object({ province: z.string().min(2).max(64) }).safeParse(req.params)
   if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
   const province = normalizeProvinceCode(params.data.province)
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
 
-  const chambers = getChambersByProvince(province)
+  const chambers = getCommunitiesByProvince(province)
   return reply.send({ items: chambers })
 })
 
 // Chambers - get current home chamber
-app.get('/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('get', '/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
   const follow = await prisma.chamberFollow.findFirst({ where: { userId, home: true } })
   if (!follow) return reply.send({ home: null })
-  const chamber = findChamber(follow.provinceCode, follow.chamberSlug)
+  const chamber = findCommunity(follow.provinceCode, follow.chamberSlug)
   return reply.send({
     home: chamber ? { ...chamber } : { province: follow.provinceCode, slug: follow.chamberSlug },
   })
 })
 
 // Chambers - set home chamber
-app.post('/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('post', '/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const parse = SetHomeChamberInput.safeParse(req.body)
+  const parse = SetHomeCommunityInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
   const province = normalizeProvinceCode(parse.data.provinceCode)
   if (!province) return reply.code(400).send({ error: 'invalid_province' })
 
-  const chamber = findChamber(province, parse.data.chamberSlug)
+  const chamber = findCommunity(province, parse.data.chamberSlug)
   if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
 
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -1382,7 +1955,7 @@ app.post('/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
 })
 
 // Chambers - get follows list
-app.get('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('get', '/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -1392,7 +1965,7 @@ app.get('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) =>
   })
 
   const items = follows.map((follow: { provinceCode: string; chamberSlug: string; home: boolean; createdAt: Date }) => {
-    const chamber = findChamber(follow.provinceCode, follow.chamberSlug)
+    const chamber = findCommunity(follow.provinceCode, follow.chamberSlug)
     return {
       province: follow.provinceCode,
       chamberSlug: follow.chamberSlug,
@@ -1436,19 +2009,42 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
   let suggestions = filterCachedSuggestions(communityMeta?.nearbyCommunities, followKeys)
 
   if (!suggestions.length) {
-    const computed = await computeNearbyCommunitySuggestions(referenceCity, followKeys)
-    suggestions = computed.slice()
+    let computed: CitySummaryType[] = []
+    let computedReference: CommunityMetaPayload['reference'] = null
+
+    if (referenceCity) {
+      const nearest = await computeNearbyCommunitySuggestions(referenceCity, followKeys)
+      if (nearest.length) {
+        computed = nearest
+        computedReference = {
+          provinceCode: referenceCity.provinceCode,
+          chamberSlug: referenceCity.chamberSlug,
+          cityName: referenceCity.name,
+        }
+      }
+    }
+
+    if (!computed.length && referenceFollow) {
+      const fallback = await computeGeodataFallbackSuggestions(
+        { provinceCode: referenceFollow.provinceCode, chamberSlug: referenceFollow.chamberSlug },
+        followKeys,
+      )
+      if (fallback.length) {
+        computed = fallback
+        computedReference = {
+          provinceCode: referenceFollow.provinceCode,
+          chamberSlug: referenceFollow.chamberSlug,
+          cityName: referenceCity?.name ?? null,
+        }
+      }
+    }
+
     if (computed.length) {
+      suggestions = computed.slice()
       const payload: CommunityMetaPayload = {
         nearbyCommunities: computed,
         computedAt: new Date().toISOString(),
-        reference: referenceCity
-          ? {
-              provinceCode: referenceCity.provinceCode,
-              chamberSlug: referenceCity.chamberSlug,
-              cityName: referenceCity.name,
-            }
-          : null,
+        reference: computedReference,
       }
       try {
         await prisma.user.update({ where: { id: userId }, data: { communityMeta: payload } })
@@ -1492,17 +2088,17 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
 })
 
 // Chambers - follow additional chamber
-app.post('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('post', '/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const parse = FollowChamberInput.safeParse(req.body)
+  const parse = FollowCommunityInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
   const province = normalizeProvinceCode(parse.data.provinceCode)
   if (!province) return reply.code(400).send({ error: 'invalid_province' })
 
-  const chamber = findChamber(province, parse.data.chamberSlug)
+  const chamber = findCommunity(province, parse.data.chamberSlug)
   if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
 
   const setAsHome = parse.data.setAsHome === true
@@ -1546,11 +2142,11 @@ app.post('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) =
 })
 
 // Chambers - unfollow
-app.delete('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('delete', '/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const parse = UnfollowChamberInput.safeParse(req.body)
+  const parse = UnfollowCommunityInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
   const province = normalizeProvinceCode(parse.data.provinceCode)
@@ -1583,11 +2179,11 @@ app.delete('/chambers/follows', async (req: FastifyRequest, reply: FastifyReply)
   return reply.send({ ok: true })
 })
 
-app.post('/chambers/geolocate', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('post', '/chambers/geolocate', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const parse = ChamberGeolocateInput.safeParse(req.body)
+  const parse = CommunityGeolocateInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
   try {
@@ -1609,7 +2205,51 @@ app.post('/chambers/geolocate', async (req: FastifyRequest, reply: FastifyReply)
   }
 })
 
-app.post('/chambers/postal-lookup', async (req: FastifyRequest, reply: FastifyReply) => {
+app.post('/postal/geolocate', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = PostalGeolocateInput.safeParse(req.body)
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  try {
+    const { lat, lng, limit, bboxPaddingDegrees } = parse.data
+    const fsaResult = await locateFsaFromPoint(lat, lng, {
+      paddingDegrees: bboxPaddingDegrees ?? undefined,
+    })
+    if (!fsaResult.match) {
+      return reply.code(404).send({ error: 'fsa_not_found' })
+    }
+
+    const chamberMatches = await locateChamberFromPoint(lat, lng, {
+      limit: limit ?? undefined,
+      paddingDegrees: bboxPaddingDegrees ?? undefined,
+    })
+    const enriched = await enrichMatchesWithCities([chamberMatches.primary, ...chamberMatches.alternatives], lat, lng)
+    const [primary, ...alternativeMatches] = enriched
+
+    return reply.send({
+      postalCode: fsaResult.match.code,
+      fsa: {
+        code: fsaResult.match.code,
+        provinceCode: fsaResult.match.provinceCode ?? null,
+        subdivisionId: fsaResult.match.subdivisionId ?? null,
+        subdivisionName: fsaResult.match.subdivisionName ?? null,
+        centroidLat: fsaResult.match.centroidLat ?? null,
+        centroidLng: fsaResult.match.centroidLng ?? null,
+        defaultChamberSlug: fsaResult.match.defaultChamberSlug ?? null,
+        defaultChamberName: fsaResult.match.defaultChamberName ?? null,
+      },
+      primary: primary ?? null,
+      alternatives: alternativeMatches.filter((entry): entry is EnrichedGeoMatch => Boolean(entry)),
+    })
+  } catch (error) {
+    req.log.error({ err: error }, 'postal_geolocate_failed')
+    return reply.code(500).send({ error: 'postal_geolocate_failed' })
+  }
+})
+
+registerChamberCommunityRoute('post', '/chambers/postal-lookup', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -1773,7 +2413,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
 
   let homeChamber: Record<string, any> | null = null
   if (homeFollow) {
-    const chamber = findChamber(homeFollow.provinceCode, homeFollow.chamberSlug)
+    const chamber = findCommunity(homeFollow.provinceCode, homeFollow.chamberSlug)
     const provinceName = getProvinceDisplayName(homeFollow.provinceCode as any)
     homeChamber = {
       provinceCode: homeFollow.provinceCode,
@@ -2113,7 +2753,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       if (!normalizedProvince) {
         return reply.code(400).send({ error: 'invalid_province' })
       }
-      const chamber = findChamber(normalizedProvince, parse.data.chamberSlug)
+      const chamber = findCommunity(normalizedProvince, parse.data.chamberSlug)
       if (!chamber) {
         return reply.code(404).send({ error: 'chamber_not_found' })
       }
@@ -2217,7 +2857,7 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     } = null
 
     if (homeFollow) {
-      const chamber = findChamber(homeFollow.provinceCode, homeFollow.chamberSlug)
+      const chamber = findCommunity(homeFollow.provinceCode, homeFollow.chamberSlug)
       const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
       homeChamber = {
         provinceCode: normalizedProvince ?? homeFollow.provinceCode,
@@ -2242,6 +2882,503 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     return reply.code(401).send({ error: 'unauthorized' })
   }
 })
+
+app.get('/friends', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const rows: FriendshipWithUsers[] = await prisma.friendship.findMany({
+      where: {
+        status: FriendshipStatus.ACCEPTED,
+        OR: [{ requesterId: userId }, { addresseeId: userId }],
+      },
+      orderBy: [{ respondedAt: 'desc' }, { requestedAt: 'desc' }],
+      include: FRIENDSHIP_WITH_USERS_INCLUDE,
+    })
+
+    return reply.send({ items: rows.map((row) => formatFriendship(row, userId)) })
+  }),
+)
+
+app.get('/friends/requests', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const rows: FriendshipWithUsers[] = await prisma.friendship.findMany({
+      where: {
+        status: FriendshipStatus.PENDING,
+        OR: [{ requesterId: userId }, { addresseeId: userId }],
+      },
+      orderBy: { requestedAt: 'asc' },
+      include: FRIENDSHIP_WITH_USERS_INCLUDE,
+    })
+
+    const incoming: ReturnType<typeof formatFriendRequest>[] = []
+    const outgoing: ReturnType<typeof formatFriendRequest>[] = []
+    for (const row of rows) {
+      if (row.addresseeId === userId) {
+        incoming.push(formatFriendRequest(row, userId))
+      } else {
+        outgoing.push(formatFriendRequest(row, userId))
+      }
+    }
+
+    return reply.send({ incoming, outgoing })
+  }),
+)
+
+app.post('/friends/requests', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = FriendRequestInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const targetUserId = parse.data.userId
+    if (targetUserId === userId) {
+      return reply.code(400).send({ error: 'cannot_friend_self' })
+    }
+
+    const targetExists = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
+    if (!targetExists) {
+      return reply.code(404).send({ error: 'user_not_found' })
+    }
+
+    const existing = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: userId, addresseeId: targetUserId },
+          { requesterId: targetUserId, addresseeId: userId },
+        ],
+      },
+      select: { id: true, requesterId: true, addresseeId: true, status: true },
+    })
+
+    let friendship: FriendshipWithUsers
+    if (existing) {
+      if (existing.status === FriendshipStatus.ACCEPTED) {
+        return reply.code(409).send({ error: 'already_friends' })
+      }
+      if (existing.status === FriendshipStatus.PENDING) {
+        const direction = existing.requesterId === userId ? 'outgoing' : 'incoming'
+        return reply.code(409).send({ error: 'friendship_pending', direction })
+      }
+      friendship = await prisma.friendship.update({
+        where: { id: existing.id },
+        data: {
+          requesterId: userId,
+          addresseeId: targetUserId,
+          status: FriendshipStatus.PENDING,
+          requestedAt: new Date(),
+          respondedAt: null,
+        },
+        include: FRIENDSHIP_WITH_USERS_INCLUDE,
+      })
+    } else {
+      friendship = await prisma.friendship.create({
+        data: {
+          requesterId: userId,
+          addresseeId: targetUserId,
+        },
+        include: FRIENDSHIP_WITH_USERS_INCLUDE,
+      })
+    }
+
+    await notifyFriendRequest(friendship.id, friendship.requesterId, friendship.addresseeId)
+
+    return reply.code(201).send({ request: formatFriendRequest(friendship, userId) })
+  }),
+)
+
+app.post('/friends/requests/:id/accept', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = FriendshipIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const friendship = await prisma.friendship.findUnique({
+      where: { id: params.data.id },
+      include: FRIENDSHIP_WITH_USERS_INCLUDE,
+    })
+    if (!friendship) return reply.code(404).send({ error: 'friendship_not_found' })
+    if (friendship.addresseeId !== userId) return reply.code(403).send({ error: 'not_addressee' })
+    if (friendship.status !== FriendshipStatus.PENDING) {
+      return reply.code(409).send({ error: 'friendship_not_pending' })
+    }
+
+    const updated = await prisma.friendship.update({
+      where: { id: friendship.id },
+      data: { status: FriendshipStatus.ACCEPTED, respondedAt: new Date() },
+      include: FRIENDSHIP_WITH_USERS_INCLUDE,
+    })
+
+    await notifyFriendAcceptance(updated.id, updated.requesterId, updated.addresseeId)
+
+    return reply.send({ friend: formatFriendship(updated, userId) })
+  }),
+)
+
+app.post('/friends/requests/:id/reject', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = FriendshipIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const friendship = await prisma.friendship.findUnique({
+      where: { id: params.data.id },
+      include: FRIENDSHIP_WITH_USERS_INCLUDE,
+    })
+    if (!friendship) return reply.code(404).send({ error: 'friendship_not_found' })
+    if (friendship.addresseeId !== userId) return reply.code(403).send({ error: 'not_addressee' })
+    if (friendship.status !== FriendshipStatus.PENDING) {
+      return reply.code(409).send({ error: 'friendship_not_pending' })
+    }
+
+    const updated = await prisma.friendship.update({
+      where: { id: friendship.id },
+      data: { status: FriendshipStatus.REJECTED, respondedAt: new Date() },
+      include: FRIENDSHIP_WITH_USERS_INCLUDE,
+    })
+
+    return reply.send({ request: formatFriendRequest(updated, userId) })
+  }),
+)
+
+app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = MessageThreadListQuery.safeParse(req.query ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { limit, cursor } = parse.data
+    const rows: ThreadSummaryRecord[] = await prisma.messageThread.findMany({
+      where: { participants: { some: { userId } } },
+      orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+
+    let nextCursor: string | undefined
+    if (rows.length > limit) {
+      const next = rows.pop()!
+      nextCursor = next.id
+    }
+
+    return reply.send({
+      items: rows.map((thread) => formatThreadSummaryRecord(thread, userId)),
+      nextCursor,
+    })
+  }),
+)
+
+app.post('/messages/threads/direct', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = CreateDirectThreadInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const targetUserId = parse.data.userId
+    if (targetUserId === userId) {
+      return reply.code(400).send({ error: 'cannot_message_self' })
+    }
+
+    const targetExists = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
+    if (!targetExists) return reply.code(404).send({ error: 'user_not_found' })
+
+    const friendStatus = await usersAreFriends(userId, targetUserId)
+    if (!friendStatus) {
+      return reply.code(403).send({ error: 'not_friends' })
+    }
+
+    const uniqueKey = buildDirectThreadKey(userId, targetUserId)
+    let thread = await prisma.messageThread.findUnique({ where: { uniqueKey }, include: THREAD_SUMMARY_INCLUDE })
+    if (!thread) {
+      const now = new Date()
+      thread = await prisma.messageThread.create({
+        data: {
+          type: MessageThreadType.direct,
+          uniqueKey,
+          lastMessageAt: now,
+          participants: {
+            create: [
+              { userId, role: MessageParticipantRole.member, lastReadAt: now, lastActivityAt: now },
+              { userId: targetUserId, role: MessageParticipantRole.member, lastActivityAt: now },
+            ],
+          },
+        },
+        include: THREAD_SUMMARY_INCLUDE,
+      })
+    }
+
+    if (!thread) {
+      return reply.code(500).send({ error: 'thread_creation_failed' })
+    }
+
+    await Promise.all(
+      thread.participants
+        .filter((participant: ThreadParticipantRecord) => participant.userId !== userId)
+        .map((participant: ThreadParticipantRecord) =>
+          dispatchRealtimeEvent(participant.userId, {
+            type: 'thread.created',
+            data: { thread: formatThreadSummaryRecord(thread, participant.userId) },
+          }),
+        ),
+    )
+
+    return reply.send({ thread: formatThreadSummaryRecord(thread, userId) })
+  }),
+)
+
+app.get('/messages/threads/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const thread = await loadThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    const query = MessageListQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const { rows, nextCursor } = await fetchThreadMessages(thread.id, query.data.limit, query.data.cursor)
+
+    return reply.send({
+      thread: formatThreadBase(thread, userId),
+      messages: rows.map((message: MessageRecord) => formatMessage(message, userId)),
+      nextCursor,
+    })
+  }),
+)
+
+app.get('/messages/threads/:id/messages', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const membership = await prisma.messageParticipant.findUnique({
+      where: {
+        threadId_userId: {
+          threadId: params.data.id,
+          userId,
+        },
+      },
+      select: { threadId: true },
+    })
+    if (!membership) return reply.code(404).send({ error: 'thread_not_found' })
+
+    const query = MessageListQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const { rows, nextCursor } = await fetchThreadMessages(params.data.id, query.data.limit, query.data.cursor)
+
+    return reply.send({
+      items: rows.map((message: MessageRecord) => formatMessage(message, userId)),
+      nextCursor,
+    })
+  }),
+)
+
+app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const parse = SendMessageInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const thread = await prisma.messageThread.findFirst({
+      where: {
+        id: params.data.id,
+        participants: { some: { userId } },
+      },
+      select: {
+        id: true,
+        participants: { select: { userId: true } },
+      },
+    })
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    const messageRecord = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const created = await tx.message.create({
+        data: {
+          threadId: thread.id,
+          senderId: userId,
+          body: parse.data.body ?? null,
+          attachments: parse.data.attachments ?? undefined,
+          messageType: MessageType.text,
+        },
+        select: MESSAGE_SELECT,
+      })
+
+      await tx.messageThread.update({
+        where: { id: thread.id },
+        data: { lastMessageAt: created.createdAt },
+      })
+
+      await tx.messageParticipant.update({
+        where: {
+          threadId_userId: {
+            threadId: thread.id,
+            userId,
+          },
+        },
+        data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
+      })
+
+      await tx.messageParticipant.updateMany({
+        where: {
+          threadId: thread.id,
+          userId: { not: userId },
+        },
+        data: { lastActivityAt: created.createdAt },
+      })
+
+      return created
+    })
+
+    await Promise.all(
+      thread.participants.map((participant: { userId: string }) =>
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'message.created',
+          data: {
+            threadId: thread.id,
+            message: formatMessage(messageRecord, participant.userId),
+          },
+        }),
+      ),
+    )
+
+    return reply.code(201).send({ message: formatMessage(messageRecord, userId) })
+  }),
+)
+
+app.post('/messages/threads/:id/read', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const membership = await prisma.messageParticipant.findUnique({
+      where: {
+        threadId_userId: {
+          threadId: params.data.id,
+          userId,
+        },
+      },
+      select: { threadId: true },
+    })
+    if (!membership) return reply.code(404).send({ error: 'thread_not_found' })
+
+    const parse = ThreadReadInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    let readAt = new Date()
+    if (parse.data.messageId) {
+      const message = await prisma.message.findUnique({
+        where: { id: parse.data.messageId },
+        select: { threadId: true, createdAt: true },
+      })
+      if (!message || message.threadId !== params.data.id) {
+        return reply.code(400).send({ error: 'invalid_message' })
+      }
+      readAt = message.createdAt
+    }
+
+    await prisma.messageParticipant.update({
+      where: {
+        threadId_userId: {
+          threadId: params.data.id,
+          userId,
+        },
+      },
+      data: { lastReadAt: readAt },
+    })
+
+    return reply.send({ lastReadAt: readAt })
+  }),
+)
+
+app.post('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const target = await prisma.user.findUnique({ where: { handle }, select: { id: true } })
+    if (!target) return reply.code(404).send({ error: 'user_not_found' })
+    if (target.id === userId) return reply.code(400).send({ error: 'cannot_follow_self' })
+
+    const existing = await prisma.follow.findUnique({
+      where: {
+        followerId_targetId: {
+          followerId: userId,
+          targetId: target.id,
+        },
+      },
+    })
+
+    if (existing) {
+      return reply.send({ ok: true })
+    }
+
+    await prisma.follow.create({ data: { followerId: userId, targetId: target.id } })
+    return reply.code(201).send({ ok: true })
+  }),
+)
+
+app.delete('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const target = await prisma.user.findUnique({ where: { handle }, select: { id: true } })
+    if (!target) return reply.code(404).send({ error: 'user_not_found' })
+    if (target.id === userId) return reply.code(400).send({ error: 'cannot_follow_self' })
+
+    await prisma.follow
+      .delete({
+        where: {
+          followerId_targetId: {
+            followerId: userId,
+            targetId: target.id,
+          },
+        },
+      })
+      .catch(() => null)
+
+    return reply.send({ ok: true })
+  }),
+)
 
 // Auth: logout (client discards token; endpoint for symmetry)
 app.post('/auth/logout', async (_req: FastifyRequest, reply: FastifyReply) => reply.send({ ok: true }))
@@ -2272,15 +3409,17 @@ app.post('/auth/reset', async (req: FastifyRequest, reply: FastifyReply) => {
 })
 
 // Chambers - provinces list
-app.get('/chambers/provinces', async (_req: FastifyRequest, reply: FastifyReply) => reply.send({ items: PROVINCES }))
+registerChamberCommunityRoute('get', '/chambers/provinces', async (_req: FastifyRequest, reply: FastifyReply) =>
+  reply.send({ items: PROVINCES }),
+)
 
 // Chambers - list within a province
-app.get('/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
+registerChamberCommunityRoute('get', '/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = z.object({ province: z.string().min(2) }).safeParse(req.query)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
   const province = normalizeProvinceCode(parse.data.province)
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
-  const chambers = getChambersByProvince(province)
+  const chambers = getCommunitiesByProvince(province)
   return reply.send({ items: chambers })
 })
 
@@ -2303,11 +3442,11 @@ app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
     where.provinceCode = province
   }
   if (chamberSlug) {
-    where.chamberSlug = slugifyChamberName(chamberSlug)
+    where.chamberSlug = slugifyCommunityName(chamberSlug)
   }
   const trimmedQuery = q?.trim()
   if (trimmedQuery) {
-    const slugQuery = slugifyChamberName(trimmedQuery)
+    const slugQuery = slugifyCommunityName(trimmedQuery)
     where.OR = [
       { name: { contains: trimmedQuery, mode: 'insensitive' } },
       { slug: { contains: slugQuery, mode: 'insensitive' } },
@@ -2481,6 +3620,40 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       where.jurisdiction = jurisdiction
     }
     const viewerId = (req as any).user?.id as string | undefined
+
+    if (viewerId) {
+      const follows = await prisma.chamberFollow.findMany({
+        where: { userId: viewerId },
+        select: { provinceCode: true, chamberSlug: true },
+      })
+
+      const followFilters: Prisma.PostWhereInput[] = []
+      const seenKeys = new Set<string>()
+      for (const follow of follows) {
+        if (!follow.provinceCode || !follow.chamberSlug) continue
+        const key = `${follow.provinceCode}:${follow.chamberSlug}`
+        if (seenKeys.has(key)) continue
+        seenKeys.add(key)
+        followFilters.push({ provinceCode: follow.provinceCode, chamberSlug: follow.chamberSlug })
+      }
+
+      const accessibleFilters: Prisma.PostWhereInput[] = []
+      const friendIds = await loadAcceptedFriendIds(viewerId)
+      const allowedAuthorIds = new Set<string>([viewerId, ...friendIds])
+      if (allowedAuthorIds.size) {
+        accessibleFilters.push({ authorId: { in: [...allowedAuthorIds] } })
+      }
+      accessibleFilters.push(...followFilters)
+
+      if (accessibleFilters.length) {
+        const existingAnd = Array.isArray(where.AND)
+          ? where.AND
+          : where.AND
+            ? [where.AND]
+            : []
+        where.AND = [...existingAnd, { OR: accessibleFilters }]
+      }
+    }
     const sortMode = sort ?? 'new'
 
     let items: PostWithAuthor[] = []
@@ -3018,6 +4191,9 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
     if (!userRecord) return reply.code(404).send({ error: 'user_not_found' })
 
+    const followerCountPromise = prisma.follow.count({ where: { targetId: userRecord.id } })
+    const followingCountPromise = prisma.follow.count({ where: { followerId: userRecord.id } })
+
     let experiences: Array<{
       id: string
       title: string
@@ -3059,10 +4235,13 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     }) as typeof userRecord & { experiences: typeof mappedExperiences }
 
     const { premiumStatus, ...restProfile } = normalizedProfile
+    const [followersCount, followingCount] = await Promise.all([followerCountPromise, followingCountPromise])
     const user = {
       ...restProfile,
       isPremium: isPremium(premiumStatus),
       isVerified: isPremium(premiumStatus),
+      followerCount: followersCount,
+      followingCount,
     }
 
     const query = CursorQuery.extend({
@@ -3084,6 +4263,68 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       municipality,
     } = query.data
     const viewerId = (req as any).user?.id as string | undefined
+    let relationship: {
+      friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
+      friendshipId?: string
+      friendshipSince?: string | null
+      following: boolean
+    } | null = null
+
+    if (viewerId) {
+      if (viewerId === user.id) {
+        relationship = { friendshipStatus: 'self', friendshipId: undefined, friendshipSince: null, following: false }
+      } else {
+        const [friendship, followRecord] = await Promise.all([
+          prisma.friendship.findFirst({
+            where: {
+              OR: [
+                { requesterId: viewerId, addresseeId: user.id },
+                { requesterId: user.id, addresseeId: viewerId },
+              ],
+            },
+            select: {
+              id: true,
+              requesterId: true,
+              addresseeId: true,
+              status: true,
+              requestedAt: true,
+              respondedAt: true,
+            },
+          }),
+          prisma.follow.findUnique({
+            where: {
+              followerId_targetId: {
+                followerId: viewerId,
+                targetId: user.id,
+              },
+            },
+            select: { followerId: true },
+          }),
+        ])
+
+        let friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none' = 'none'
+        let friendshipId: string | undefined
+        let friendshipSince: string | null = null
+
+        if (friendship) {
+          friendshipId = friendship.id
+          if (friendship.status === FriendshipStatus.ACCEPTED) {
+            friendshipStatus = 'friends'
+            const since = friendship.respondedAt ?? friendship.requestedAt
+            friendshipSince = since ? since.toISOString() : null
+          } else if (friendship.status === FriendshipStatus.PENDING) {
+            friendshipStatus = friendship.requesterId === viewerId ? 'outgoing' : 'incoming'
+          }
+        }
+
+        relationship = {
+          friendshipStatus,
+          friendshipId,
+          friendshipSince,
+          following: Boolean(followRecord),
+        }
+      }
+    }
     const sortMode = sort ?? 'new'
 
     const where: Prisma.PostWhereInput = {
@@ -3104,7 +4345,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       return reply.code(400).send({ error: 'province_required_for_municipality' })
     }
 
-    let chamberSlugFilter = chamberParam ? slugifyChamberName(chamberParam) : null
+    let chamberSlugFilter = chamberParam ? slugifyCommunityName(chamberParam) : null
 
     if (!chamberSlugFilter && municipalitySlug && province) {
       const cityMatch = await prisma.city.findFirst({
@@ -3188,6 +4429,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
     return {
       user,
+      relationship,
       items: posts.map((post) => formatPost(post, { viewerVote: votesByPost[post.id] ?? null })),
       nextCursor,
     }
@@ -4369,14 +5611,155 @@ app.get('/admin/geodata', async (req: FastifyRequest, reply: FastifyReply) => {
   })
 })
 
+app.get('/notifications', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = NotificationListQuery.safeParse(req.query)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { limit, cursor } = parse.data
+    const baseWhere: Prisma.NotificationWhereInput = { userId }
+
+    const [rows, unreadCount] = await Promise.all<[NotificationRecord[], number]>([
+      prisma.notification.findMany({
+        where: baseWhere,
+        orderBy: { createdAt: 'desc' },
+        take: limit + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        select: NOTIFICATION_SELECT,
+      }),
+      prisma.notification.count({ where: { userId, readAt: null } }),
+    ])
+
+    const actorIds = Array.from(new Set(rows.map((row) => row.actorId).filter((id): id is string => Boolean(id))))
+    const actors: FriendUser[] = actorIds.length
+      ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: FRIEND_USER_SELECT })
+      : []
+    const actorMap = new Map(actors.map((actor) => [actor.id, formatFriendUser(actor)]))
+
+    let nextCursor: string | undefined
+    if (rows.length > limit) {
+      const next = rows.pop()!
+      nextCursor = next.id
+    }
+
+    return reply.send({
+      items: rows.map((record) => ({
+        ...formatNotification(record),
+        actor: record.actorId ? actorMap.get(record.actorId) ?? null : null,
+      })),
+      nextCursor,
+      unreadCount,
+    })
+  }),
+)
+
+app.get('/search/users', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = UserSearchQuery.safeParse(req.query)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { q, limit } = parse.data
+    const normalizedQuery = normalizeSearchTerm(q)
+    if (!normalizedQuery) {
+      return reply.send({ items: [] })
+    }
+
+    const results = await searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit })
+
+    return reply.send({
+      items: results,
+    })
+  }),
+)
+
+app.get('/search', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = CombinedSearchQuery.safeParse(req.query)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { q, type, limit, peopleLimit, communityLimit } = parse.data
+    const normalizedQuery = normalizeSearchTerm(q)
+    if (!normalizedQuery) {
+      return reply.send({ people: [], communities: [], meta: { type } })
+    }
+
+    if (type === 'people') {
+      const take = limit + 1
+      const peopleResults = await searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit: take })
+      const peopleHasMore = peopleResults.length > limit
+      const trimmedPeople = peopleHasMore ? peopleResults.slice(0, limit) : peopleResults
+      return reply.send({ people: trimmedPeople, meta: { type, peopleHasMore } })
+    }
+
+    if (type === 'communities') {
+      const take = limit + 1
+      const communityResults = await searchCommunitiesForQuery(normalizedQuery, take)
+      const communitiesHasMore = communityResults.length > limit
+      const trimmedCommunities = communitiesHasMore ? communityResults.slice(0, limit) : communityResults
+      return reply.send({ communities: trimmedCommunities, meta: { type, communitiesHasMore } })
+    }
+
+    const peopleTake = peopleLimit + 1
+    const communityTake = communityLimit + 1
+    const [peopleResults, communityResults] = await Promise.all([
+      searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit: peopleTake }),
+      searchCommunitiesForQuery(normalizedQuery, communityTake),
+    ])
+
+    const peopleHasMore = peopleResults.length > peopleLimit
+    const communitiesHasMore = communityResults.length > communityLimit
+
+    return reply.send({
+      people: peopleHasMore ? peopleResults.slice(0, peopleLimit) : peopleResults,
+      communities: communitiesHasMore ? communityResults.slice(0, communityLimit) : communityResults,
+      meta: {
+        type,
+        peopleHasMore,
+        communitiesHasMore,
+      },
+    })
+  }),
+)
+
+app.post('/notifications/ack', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = NotificationAckInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { ids, before } = parse.data
+    const where: Prisma.NotificationWhereInput = { userId }
+    if (ids?.length) {
+      where.id = { in: ids }
+    }
+    if (before) {
+      where.createdAt = { lte: before }
+    }
+
+    const result = await prisma.notification.updateMany({ where, data: { readAt: new Date() } })
+    return reply.send({ updated: result.count })
+  }),
+)
+
 // SSE notifications (skeleton)
 app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
+  const userId = await resolveStreamUserId(req)
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
   const sub = new IORedis(REDIS_URL)
-  const channel = `chan:notify:${userId}`
+  const channel = `${NOTIFICATION_CHANNEL_PREFIX}${userId}`
   await sub.subscribe(channel)
-  reply.sse({ data: JSON.stringify({ hello: 'world' }) })
+  reply.sse({ data: JSON.stringify({ type: 'connected' }) })
   sub.on('message', (_chan: string, message: string) => {
     reply.sse({ data: message })
   })

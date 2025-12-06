@@ -6,7 +6,7 @@ import PostComposer, { ApiPost } from '../../../_components/PostComposer'
 import type { ProvinceCode } from '@civil/shared'
 import { getProvinceDisplayName } from '@civil/shared'
 import { buildApiUrl } from '../../../_lib/api'
-import { hasHomeChamber, type MeResponse } from '../../../_lib/me'
+import { hasHomeCommunity, type MeResponse } from '../../../_lib/me'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import PostFeedItem from '../../../_components/PostFeedItem'
 import { RightRail } from '../../../_components/RightRail'
@@ -72,7 +72,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
         return
       }
       const data = (await res.json()) as MeResponse
-      if (!hasHomeChamber(data)) {
+      if (!hasHomeCommunity(data)) {
         window.location.replace('/welcome')
         return
       }
@@ -121,7 +121,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
     })
   }, [loadChamberPosts])
 
-  const chamberTarget = useMemo(() => {
+  const communityTarget = useMemo(() => {
     if (!chamber) return null
     const provinceName = getProvinceDisplayName(chamber.province)
     return {
@@ -187,7 +187,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
             <section className="surface-card px-6 py-5 shadow-subtle">
               {chamber ? (
                 <div className="flex flex-col gap-2">
-                  <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Chamber of Citizens</div>
+                  <div className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Community Feed</div>
                   <h1 className="text-xl font-semibold text-slate-900">{chamber.name}</h1>
                   <div className="text-sm text-slate-600">
                     Province: {getProvinceDisplayName(chamber.province)} ({chamber.province.toUpperCase()})
@@ -199,11 +199,11 @@ export default function ChamberFeedPage({ params }: PageProps) {
               ) : error ? (
                 <div className="text-sm text-red-600">{error}</div>
               ) : (
-                <div className="text-sm text-slate-500">Loading chamber information…</div>
+                <div className="text-sm text-slate-500">Loading community information…</div>
               )}
             </section>
 
-            {viewer && chamberTarget ? <PostComposer chamberTarget={chamberTarget} onPostCreated={handlePostCreated} /> : null}
+            {viewer && communityTarget ? <PostComposer communityTarget={communityTarget} onPostCreated={handlePostCreated} /> : null}
 
             <section className="surface-card px-6 py-4 shadow-subtle">
               <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
@@ -233,7 +233,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
                 <section className="surface-card px-6 py-5 text-center text-sm text-red-600">{error}</section>
               ) : posts.length === 0 ? (
                 <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
-                  {loading ? 'Loading posts…' : 'No posts in this chamber yet. Be the first to start the conversation!'}
+                  {loading ? 'Loading posts…' : 'No posts in this community yet. Be the first to start the conversation!'}
                 </section>
               ) : (
                 posts.map((post) => (
@@ -241,6 +241,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
                     key={post.id}
                     post={post}
                     onVote={handleVote}
+                    viewerId={viewer?.id ?? null}
                     viewerIsVerified={Boolean(viewer?.isVerified || viewer?.isPremium)}
                   />
                 ))
@@ -258,7 +259,7 @@ export default function ChamberFeedPage({ params }: PageProps) {
                     <p className="text-sm text-slate-500">{getProvinceDisplayName(chamber.province)}</p>
                   </div>
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-                    Currently tracking {posts.length} post{posts.length === 1 ? '' : 's'} inside this chamber feed.
+                    Currently tracking {posts.length} post{posts.length === 1 ? '' : 's'} inside this community feed.
                   </div>
                 </section>
               ) : null}

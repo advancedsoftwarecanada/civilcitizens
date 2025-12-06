@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
 import type { ChamberGeoMatch, ChamberGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
+import { HiMiniStar } from 'react-icons/hi2'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import Sidebar from '../_components/Sidebar'
@@ -11,9 +12,7 @@ import DashboardShell from '../_components/DashboardShell'
 import type { MeResponse } from '../_lib/me'
 import {
   GEOLOCATION_POSTAL_SENTINEL,
-  clearStoredPostalCode,
   formatStoredPostalCode,
-  isGeolocationPostalSentinel,
   readStoredPostalCode,
   writeStoredPostalCode,
 } from '../_lib/postalRequirement'
@@ -37,7 +36,7 @@ const provincesFallback = [
 type CommunitiesPageMode = 'default' | 'welcome'
 
 type Province = { code: string; name: string }
-type Chamber = {
+type CommunityOption = {
   code?: number
   name?: string
   slug: string
@@ -47,12 +46,12 @@ type Chamber = {
   cityPopulation?: number | null
 }
 
-type ChamberFollow = {
+type CommunityFollow = {
   province: string
   chamberSlug: string
   home: boolean
   followedAt?: string
-  chamber?: Chamber
+  chamber?: CommunityOption
 }
 
 type ItemsResponse<T> = {
@@ -60,11 +59,15 @@ type ItemsResponse<T> = {
 }
 
 type HomeResponse = {
-  home?: Chamber | null
+  home?: CommunityOption | null
 }
 
 type ErrorResponse = {
   error?: unknown
+}
+
+type CommunitiesDashboardResponse = {
+  suggestions?: CitySummary[]
 }
 
 const populationFormatter = new Intl.NumberFormat('en-CA')
@@ -82,7 +85,7 @@ function formatPopulation(value?: number | null) {
   return populationFormatter.format(value)
 }
 
-function buildCityOptionValue(entry: Pick<Chamber, 'province' | 'citySlug' | 'slug'>) {
+function buildCityOptionValue(entry: Pick<CommunityOption, 'province' | 'citySlug' | 'slug'>) {
   return `${entry.province}:${entry.citySlug ?? entry.slug}`
 }
 
@@ -92,7 +95,7 @@ function extractCitySlugFromKey(key: string) {
   return citySlug || null
 }
 
-function formatCityOptionLabel(entry: Chamber) {
+function formatCityOptionLabel(entry: CommunityOption) {
   const base = entry.cityName ?? entry.name ?? entry.slug
   const edaLabel = entry.cityName ? ` · ${entry.name ?? entry.slug}` : ''
   const population = formatPopulation(entry.cityPopulation)
@@ -132,18 +135,21 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMode }) {
+
   const [me, setMe] = useState<MeResponse | null>(null)
   const [provinces, setProvinces] = useState<Province[]>(provincesFallback)
-  const [chambers, setChambers] = useState<Chamber[]>([])
+  const [communityOptions, setCommunityOptions] = useState<CommunityOption[]>([])
   const [selectedProvince, setSelectedProvince] = useState('')
-  const [selectedChamber, setSelectedChamber] = useState('')
+  const [selectedCommunitySlug, setSelectedCommunitySlug] = useState('')
   const [selectedCityKey, setSelectedCityKey] = useState('')
-  const [home, setHome] = useState<Chamber | null>(null)
-  const [follows, setFollows] = useState<ChamberFollow[]>([])
+  const [homeCommunity, setHomeCommunityState] = useState<CommunityOption | null>(null)
+  const [follows, setFollows] = useState<CommunityFollow[]>([])
   const [loadingCities, setLoadingCities] = useState(false)
   const [savingHome, setSavingHome] = useState(false)
   const [followSaving, setFollowSaving] = useState(false)
   const [loadingFollows, setLoadingFollows] = useState(true)
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true)
+  const [suggestedCommunities, setSuggestedCommunities] = useState<CitySummary[]>([])
   const [managingFollow, setManagingFollow] = useState<string | null>(null)
   const [bootstrapped, setBootstrapped] = useState(false)
   const [geoBusy, setGeoBusy] = useState(false)
@@ -164,105 +170,23 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [assistUnlocked, setAssistUnlocked] = useState(false)
   const [welcomeAutoSaving, setWelcomeAutoSaving] = useState(false)
   const [postalOwnerId, setPostalOwnerId] = useState<string | null>(null)
+  const [suggestionSavingKey, setSuggestionSavingKey] = useState<string | null>(null)
+
   const isWelcomeMode = mode === 'welcome'
   const provinceSelectRef = useRef<HTMLSelectElement | null>(null)
   const latestPostalSelectionRef = useRef<string | null>(null)
   const router = useRouter()
   const activePostalOwnerId = postalOwnerId ?? me?.id ?? null
 
-  useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      redirectToAuthModal('login')
-      return
-    }
-
-    async function bootstrap() {
-      try {
-        const [meRes, provRes, homeRes, followsRes] = await Promise.all([
-            fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
-            fetch(buildApiUrl('/chambers/provinces')),
-            fetch(buildApiUrl('/chambers/home'), { headers: { authorization: `Bearer ${token}` } }),
-            fetch(buildApiUrl('/chambers/follows'), { headers: { authorization: `Bearer ${token}` } }),
-        ])
-
-        const meData = await jsonOrThrow<MeResponse>(meRes)
-        setMe(meData)
-        setPostalOwnerId(meData.id ?? null)
-        const storedPostalRaw = readStoredPostalCode(meData.id)
-        const storedPostalIsGeo = isGeolocationPostalSentinel(storedPostalRaw)
-        if (storedPostalRaw) {
-          const formatted = formatStoredPostalCode(storedPostalRaw)
-          if (formatted) {
-            setPostalNormalized(formatted)
-          }
-          latestPostalSelectionRef.current = storedPostalRaw
-        }
-        const hasValidStoredPostal = Boolean(storedPostalRaw && !storedPostalIsGeo)
-
-        let provData: ItemsResponse<Province> | null = null
-        try {
-          provData = await jsonOrThrow<ItemsResponse<Province>>(provRes)
-        } catch {
-          provData = { items: provincesFallback }
-        }
-        if (Array.isArray(provData?.items) && provData.items.length) {
-          setProvinces(provData.items)
-        }
-
-        const followsData = (await safeJson<ItemsResponse<ChamberFollow>>(followsRes)) ?? { items: [] }
-        const followItems = Array.isArray(followsData.items) ? followsData.items : []
-        setFollows(followItems)
-
-        const homeData = (await safeJson<HomeResponse>(homeRes)) ?? { home: null }
-        let homeChamber: Chamber | null = null
-        if (homeData?.home?.slug) {
-          homeChamber = homeData.home
-        } else {
-          const fallback = followItems.find((item) => item.home && item.chamber)
-          if (fallback?.chamber) homeChamber = fallback.chamber
-        }
-
-        if (homeChamber?.slug) {
-          setHome(homeChamber)
-          setSelectedProvince(homeChamber.province)
-          setSelectedChamber(homeChamber.slug)
-          await loadCitiesForProvince(homeChamber.province, homeChamber.slug)
-        } else if (!isWelcomeMode) {
-          router.replace('/welcome')
-          return
-        }
-
-        if (!hasValidStoredPostal && !isWelcomeMode) {
-          if (storedPostalIsGeo) {
-            clearStoredPostalCode(meData.id)
-          }
-          router.replace('/welcome')
-          return
-        }
-      } catch (err) {
-        console.error('Failed bootstrapping chambers screen', err)
-        localStorage.removeItem('token')
-        redirectToAuthModal('login')
-      } finally {
-        setLoadingFollows(false)
-        setBootstrapped(true)
-      }
-    }
-
-    bootstrap()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  async function loadCitiesForProvince(province: string, preselectChamber?: string, preselectCitySlug?: string | null) {
+  async function loadCitiesForProvince(province: string, preselectCommunity?: string, preselectCitySlug?: string | null) {
     if (!province) {
-      setChambers([])
+      setCommunityOptions([])
       setSelectedCityKey('')
       return
     }
     setLoadingCities(true)
     try {
-      let items: Chamber[] = []
+      let items: CommunityOption[] = []
       try {
         const res = await fetch(buildApiUrl(`/cities?province=${encodeURIComponent(province)}&limit=500`))
         const data = await jsonOrThrow<ItemsResponse<CitySummary>>(res)
@@ -282,18 +206,18 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       }
 
       if (!items.length) {
-        const res = await fetch(buildApiUrl(`/chambers?province=${encodeURIComponent(province)}`))
-        const data = await jsonOrThrow<ItemsResponse<Chamber>>(res)
+        const res = await fetch(buildApiUrl(`/communities?province=${encodeURIComponent(province)}`))
+        const data = await jsonOrThrow<ItemsResponse<CommunityOption>>(res)
         items = Array.isArray(data.items) ? data.items : []
       }
 
-      setChambers(items)
-      if (preselectChamber) {
+      setCommunityOptions(items)
+      if (preselectCommunity) {
         const match = items.find(
-          (entry) => entry.slug === preselectChamber && (!preselectCitySlug || entry.citySlug === preselectCitySlug)
+          (entry) => entry.slug === preselectCommunity && (!preselectCitySlug || entry.citySlug === preselectCitySlug)
         )
         if (match) {
-          setSelectedChamber(match.slug)
+          setSelectedCommunitySlug(match.slug)
           setSelectedCityKey(buildCityOptionValue(match))
         } else {
           setSelectedCityKey('')
@@ -303,9 +227,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       }
     } catch (error) {
       console.error('Failed loading cities', error)
-      pushToast('Unable to load cities right now. Please try again later.', 'error')
-      setChambers([])
-      setSelectedCityKey('')
+        pushToast('Unable to load cities right now. Please try again later.', 'error')
+        setCommunityOptions([])
+        setSelectedCityKey('')
     } finally {
       setLoadingCities(false)
     }
@@ -314,12 +238,12 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const handleProvinceChange = async (evt: ChangeEvent<HTMLSelectElement>) => {
     const value = evt.target.value
     setSelectedProvince(value)
-    setSelectedChamber('')
+    setSelectedCommunitySlug('')
     setSelectedCityKey('')
     if (value) {
       await loadCitiesForProvince(value)
     } else {
-      setChambers([])
+        setCommunityOptions([])
     }
   }
 
@@ -327,14 +251,14 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     const value = evt.target.value
     setSelectedCityKey(value)
     if (!value) {
-      setSelectedChamber('')
+      setSelectedCommunitySlug('')
       return
     }
-    const match = chambers.find((entry) => buildCityOptionValue(entry) === value)
+    const match = communityOptions.find((entry) => buildCityOptionValue(entry) === value)
     if (match) {
-      setSelectedChamber(match.slug)
+      setSelectedCommunitySlug(match.slug)
     } else {
-      setSelectedChamber('')
+      setSelectedCommunitySlug('')
     }
   }
 
@@ -377,7 +301,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     setPostalFsa(null)
     setPostalNormalized(null)
     try {
-      const res = await fetch(buildApiUrl('/chambers/postal-lookup'), {
+      const res = await fetch(buildApiUrl('/communities/postal-lookup'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -429,25 +353,113 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     }
   }
 
-  async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}): Promise<ChamberFollow[]> {
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    async function bootstrap() {
+      setSuggestionsLoading(true)
+      try {
+        const [meRes, provRes, homeRes, followsRes, dashboardRes] = await Promise.all([
+          fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
+          fetch(buildApiUrl('/communities/provinces')),
+          fetch(buildApiUrl('/communities/home'), { headers: { authorization: `Bearer ${token}` } }),
+          fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }),
+          fetch(buildApiUrl('/communities/dashboard'), { headers: { authorization: `Bearer ${token}` } }),
+        ])
+
+        const meData = await jsonOrThrow<MeResponse>(meRes)
+        setMe(meData)
+        setPostalOwnerId(meData.id ?? null)
+        const storedPostalRaw = readStoredPostalCode(meData.id)
+        if (storedPostalRaw) {
+          const formatted = formatStoredPostalCode(storedPostalRaw)
+          if (formatted) {
+            setPostalNormalized(formatted)
+          }
+          latestPostalSelectionRef.current = storedPostalRaw
+        }
+        const hasStoredPostal = Boolean(storedPostalRaw)
+
+        let provData: ItemsResponse<Province> | null = null
+        try {
+          provData = await jsonOrThrow<ItemsResponse<Province>>(provRes)
+        } catch {
+          provData = { items: provincesFallback }
+        }
+        if (Array.isArray(provData?.items) && provData.items.length) {
+          setProvinces(provData.items)
+        }
+
+        const followsData = (await safeJson<ItemsResponse<CommunityFollow>>(followsRes)) ?? { items: [] }
+        const followItems = Array.isArray(followsData.items) ? followsData.items : []
+        setFollows(followItems)
+
+        const homeData = (await safeJson<HomeResponse>(homeRes)) ?? { home: null }
+        let nextHome = homeData.home ?? null
+        if (!nextHome) {
+          const fallback = followItems.find((item) => item.home && item.chamber)
+          if (fallback?.chamber) {
+            nextHome = fallback.chamber
+          }
+        }
+
+        if (nextHome?.slug) {
+          setHomeCommunityState(nextHome)
+          setSelectedProvince(nextHome.province)
+          setSelectedCommunitySlug(nextHome.slug)
+          await loadCitiesForProvince(nextHome.province, nextHome.slug)
+        } else if (!isWelcomeMode) {
+          router.replace('/welcome')
+          return
+        }
+
+        if (!hasStoredPostal && !isWelcomeMode && !nextHome?.slug) {
+          router.replace('/welcome')
+          return
+        }
+
+        const dashboardData = await safeJson<CommunitiesDashboardResponse>(dashboardRes)
+        if (dashboardData?.suggestions && Array.isArray(dashboardData.suggestions)) {
+          setSuggestedCommunities(dashboardData.suggestions.slice(0, 8))
+        } else {
+          setSuggestedCommunities([])
+        }
+      } catch (err) {
+        console.error('Failed bootstrapping communities screen', err)
+        localStorage.removeItem('token')
+        redirectToAuthModal('login')
+      } finally {
+        setLoadingFollows(false)
+        setSuggestionsLoading(false)
+        setBootstrapped(true)
+      }
+    }
+
+    bootstrap()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}): Promise<CommunityFollow[]> {
     const token = options.token ?? localStorage.getItem('token')
     if (!token) return []
     setLoadingFollows(true)
     try {
-        const res = await fetch(buildApiUrl('/chambers/follows'), {
-        headers: {
-          authorization: `Bearer ${token}`,
-        },
+      const res = await fetch(buildApiUrl('/communities/follows'), {
+        headers: { authorization: `Bearer ${token}` },
       })
-      const data = await jsonOrThrow<ItemsResponse<ChamberFollow>>(res)
+      const data = await jsonOrThrow<ItemsResponse<CommunityFollow>>(res)
       const items = Array.isArray(data.items) ? data.items : []
       setFollows(items)
       if (options.syncHome) {
         const nextHome = items.find((item) => item.home && item.chamber)
         if (nextHome?.chamber) {
-          setHome(nextHome.chamber)
+          setHomeCommunityState(nextHome.chamber)
         } else if (!items.some((item) => item.home)) {
-          setHome(null)
+          setHomeCommunityState(null)
         }
       }
       return items
@@ -474,7 +486,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       if (!isWelcomeMode) {
         await loadCitiesForProvince(match.province, match.chamberSlug, match.city?.slug ?? null)
       }
-      setSelectedChamber(match.chamberSlug)
+      setSelectedCommunitySlug(match.chamberSlug)
       setSelectedCityKey(buildMatchCityKey(match))
       const matchLabel = formatMatchCityLabel(match)
       const contextMessage =
@@ -507,20 +519,20 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         }
       }
       if (isWelcomeMode) {
-        await setHomeChamber(match.province, match.chamberSlug, 'welcome', { skipCityLoad: true })
+        await setHomeCommunity(match.province, match.chamberSlug, 'welcome', { skipCityLoad: true })
       }
     } catch (error) {
       console.error('Failed applying geolocation match', error)
       setGeoError(
         isWelcomeMode
           ? 'We found a nearby city but could not select it automatically. Pick one of the suggestions above to continue.'
-          : 'We found a nearby city but could not select it automatically. Please choose from the lists above.'
+          : 'We found a nearby city but could not select it automatically. Please choose from the lists above.',
       )
       pushToast(
         isWelcomeMode
           ? 'We found a nearby city but could not auto-select it. Pick one of the suggestions above.'
           : 'We found a nearby city but could not auto-select it. Pick it manually.',
-        'error'
+        'error',
       )
     }
   }
@@ -542,7 +554,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         isWelcomeMode
           ? 'Your browser does not support location detection. Use the postal search above instead.'
           : 'Your browser does not support location detection. Please pick your city manually.',
-        'error'
+        'error',
       )
       return
     }
@@ -560,7 +572,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         setGeoStatus('Matching your city…')
         try {
           const { latitude, longitude } = pos.coords
-          const res = await fetch(buildApiUrl('/chambers/geolocate'), {
+          const res = await fetch(buildApiUrl('/communities/geolocate'), {
             method: 'POST',
             headers: {
               'content-type': 'application/json',
@@ -602,50 +614,55 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           setGeoError(
             isWelcomeMode
               ? 'Enable location permissions in your browser and try again, or enter your postal code above to continue.'
-              : 'Enable location permissions in your browser to auto-detect your city, or select it manually.'
+              : 'Enable location permissions in your browser to auto-detect your city, or select it manually.',
           )
           pushToast(
             isWelcomeMode
               ? 'Location permission denied. Adjust permissions or use the postal search above.'
               : 'Location permission denied. Select your city manually.',
-            'error'
+            'error',
           )
         } else if (err.code === 3) {
           setGeoStatus('Location lookup timed out.')
           setGeoError(
             isWelcomeMode
               ? 'We could not get a fix. Adjust permissions or search by postal code above to move forward.'
-              : 'Try again from a spot with better reception, or pick your city manually.'
+              : 'Try again from a spot with better reception, or pick your city manually.',
           )
           pushToast(
             isWelcomeMode
               ? 'Location lookup timed out. Try again after adjusting permissions or search by postal code.'
               : 'Location lookup timed out. Try again or choose manually.',
-            'error'
+            'error',
           )
         } else {
           setGeoStatus('We could not retrieve your location.')
           setGeoError(
             isWelcomeMode
               ? 'We could not retrieve your location. Adjust permissions and retry, or enter your postal code above.'
-              : 'Please select your province and city manually.'
+              : 'Please select your province and city manually.',
           )
           pushToast(
             isWelcomeMode
               ? 'We could not retrieve your location. Adjust permissions or use the postal search above.'
               : 'We could not retrieve your location. Select your city manually.',
-            'error'
+            'error',
           )
         }
       },
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 }
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 },
     )
   }
 
   type HomeSetSource = 'picker' | 'list' | 'welcome'
 
-  async function setHomeChamber(provinceCode: string, chamberSlug: string, source: HomeSetSource, options?: { skipCityLoad?: boolean }) {
-    if (!provinceCode || !chamberSlug) return
+  async function setHomeCommunity(
+    provinceCode: string,
+    communitySlug: string,
+    source: HomeSetSource,
+    options?: { skipCityLoad?: boolean },
+  ) {
+    if (!provinceCode || !communitySlug) return
     if (source === 'welcome' && welcomeAutoSaving) return
     const token = localStorage.getItem('token')
     if (!token) {
@@ -658,24 +675,24 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     } else if (source === 'welcome') {
       setWelcomeAutoSaving(true)
     } else {
-      setManagingFollow(`${provinceCode}:${chamberSlug}:home`)
+      setManagingFollow(`${provinceCode}:${communitySlug}:home`)
     }
     try {
-        const res = await fetch(buildApiUrl('/chambers/home'), {
+      const res = await fetch(buildApiUrl('/communities/home'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ provinceCode, chamberSlug }),
+        body: JSON.stringify({ provinceCode, chamberSlug: communitySlug }),
       })
       const data = await jsonOrThrow<HomeResponse>(res)
-      const nextHome = data.home ?? { province: provinceCode, slug: chamberSlug }
-      setHome(nextHome)
+      const nextHome = data.home ?? { province: provinceCode, slug: communitySlug }
+      setHomeCommunityState(nextHome)
       setSelectedProvince(provinceCode)
-      setSelectedChamber(chamberSlug)
+      setSelectedCommunitySlug(communitySlug)
       if (!options?.skipCityLoad) {
-        await loadCitiesForProvince(provinceCode, chamberSlug, selectedCitySlug)
+        await loadCitiesForProvince(provinceCode, communitySlug, selectedCitySlug)
       }
       await refreshFollows({ token, syncHome: true })
       const message = source === 'list' ? 'Home city updated.' : 'Home city set. Welcome home!'
@@ -703,22 +720,25 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     }
   }
 
-  async function handleFollowSelected() {
-    if (!selectedProvince || !selectedChamber) return
+  async function followCommunity(provinceCode: string, communitySlug: string, options?: { savingKey?: string }) {
     const token = localStorage.getItem('token')
     if (!token) {
       redirectToAuthModal('login')
       return
     }
-    setFollowSaving(true)
+    if (options?.savingKey) {
+      setSuggestionSavingKey(options.savingKey)
+    } else {
+      setFollowSaving(true)
+    }
     try {
-  const res = await fetch(buildApiUrl('/chambers/follows'), {
+      const res = await fetch(buildApiUrl('/communities/follows'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ provinceCode: selectedProvince, chamberSlug: selectedChamber }),
+        body: JSON.stringify({ provinceCode, chamberSlug: communitySlug }),
       })
       await jsonOrThrow<unknown>(res)
       await refreshFollows({ token, syncHome: true })
@@ -734,11 +754,26 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             : 'Unable to follow this city right now.'
       pushToast(friendly, 'error')
     } finally {
-      setFollowSaving(false)
+      if (options?.savingKey) {
+        setSuggestionSavingKey(null)
+      } else {
+        setFollowSaving(false)
+      }
     }
   }
 
-  async function handleUnfollow(follow: ChamberFollow) {
+  async function handleFollowSelected() {
+    if (!selectedProvince || !selectedCommunitySlug) return
+    await followCommunity(selectedProvince, selectedCommunitySlug)
+  }
+
+  async function handleFollowSuggestion(city: CitySummary) {
+    if (!city.chamberSlug) return
+    const key = `${city.provinceCode}:${city.chamberSlug}`
+    await followCommunity(city.provinceCode, city.chamberSlug, { savingKey: key })
+  }
+
+  async function handleUnfollow(follow: CommunityFollow) {
     const token = localStorage.getItem('token')
     if (!token) {
       redirectToAuthModal('login')
@@ -747,7 +782,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     const key = `${follow.province}:${follow.chamberSlug}:remove`
     setManagingFollow(key)
     try {
-  const res = await fetch(buildApiUrl('/chambers/follows'), {
+      const res = await fetch(buildApiUrl('/communities/follows'), {
         method: 'DELETE',
         headers: {
           'content-type': 'application/json',
@@ -760,10 +795,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       pushToast('City removed from your list.', 'success')
       const homeStillExists = items.some((item) => item.home)
       if (!homeStillExists) {
-        setHome(null)
+        setHomeCommunityState(null)
         setSelectedProvince('')
-        setSelectedChamber('')
-        setChambers([])
+        setSelectedCommunitySlug('')
+        setCommunityOptions([])
       }
     } catch (error) {
       console.error('Failed unfollowing city', error)
@@ -776,153 +811,84 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }
 
   const canSave = useMemo(() => {
-    if (!selectedProvince || !selectedChamber) return false
-    if (!home) return true
-    return !(home.province === selectedProvince && home.slug === selectedChamber)
-  }, [selectedProvince, selectedChamber, home])
+    if (!selectedProvince || !selectedCommunitySlug) return false
+    if (!homeCommunity) return true
+    return !(homeCommunity.province === selectedProvince && homeCommunity.slug === selectedCommunitySlug)
+  }, [homeCommunity, selectedCommunitySlug, selectedProvince])
 
   const alreadyFollowingSelected = useMemo(() => {
-    if (!selectedProvince || !selectedChamber) return false
-    return follows.some((item) => item.province === selectedProvince && item.chamberSlug === selectedChamber)
-  }, [follows, selectedProvince, selectedChamber])
+    if (!selectedProvince || !selectedCommunitySlug) return false
+    return follows.some((item) => item.province === selectedProvince && item.chamberSlug === selectedCommunitySlug)
+  }, [follows, selectedCommunitySlug, selectedProvince])
 
   const additionalFollows = useMemo(() => follows.filter((item) => !item.home), [follows])
 
   const homeFollow = useMemo(() => follows.find((item) => item.home), [follows])
 
-  const homeProvinceName = useMemo(() => {
-    if (!home) return ''
-    const found = provinces.find((p) => p.code === home.province)
-    return found?.name || home.province.toUpperCase()
-  }, [home, provinces])
+  const orderedFollows = useMemo(() => (homeFollow ? [homeFollow, ...additionalFollows] : additionalFollows), [homeFollow, additionalFollows])
 
-  const homeFollowKey = homeFollow ? `${homeFollow.province}:${homeFollow.chamberSlug}` : null
-  const homeRemoving = homeFollowKey ? managingFollow === `${homeFollowKey}:remove` : false
+  const nearbyCommunities = useMemo(() => suggestedCommunities.slice(0, 6), [suggestedCommunities])
 
   const followButtonClass = 'border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
   const visitButtonClass = 'border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
   const locationButtonClass = 'inline-flex items-center justify-center border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
   const tabButtonBaseClass = 'inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60'
-  const postalCodeDisplay = postalNormalized ?? postalFsa?.code ?? ''
-  const postalRegionLabel = postalFsa?.subdivisionName ?? postalFsa?.defaultChamberName ?? null
-  const postalCommunities = postalMatches.slice(0, 6)
 
   const manageSection = (
-    <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
-      <h1 className="text-2xl font-bold text-gray-900">Your home postal code is</h1>
-      <p className="mt-2 text-sm text-gray-600">
-        Enter your code to list nearby municipalities, electoral districts, and neighbourhood alerts. This is how we tune
-        your unified feed into hyperlocal news while still mapping to your federal riding.
-      </p>
-      <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-        <div className="text-xs uppercase tracking-wide text-gray-500">Postal region</div>
-        <div className="text-lg font-semibold text-gray-900">{postalCodeDisplay || 'Not set yet'}</div>
-        <p className="text-sm text-gray-500">
-          {postalRegionLabel ? `Serving ${postalRegionLabel}` : 'Add your postal code below to reveal nearby communities.'}
-        </p>
+    <section className="surface-card space-y-6 px-6 py-5 shadow-subtle">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Communities you follow</h1>
+        <p className="mt-2 text-sm text-gray-600">Stay connected to your home district and add nearby communities to your feed.</p>
       </div>
-      {postalCommunities.length ? (
-        <div className="mt-2">
-          <p className="text-sm font-semibold uppercase tracking-wide text-gray-600">Nearby communities</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {postalCommunities.map((match) => {
-              const label = formatMatchCityLabel(match)
-              const href = `/${match.province.toLowerCase()}/${match.chamberSlug.toLowerCase()}`
-              return (
-                <div key={buildMatchCityKey(match)} className="rounded-2xl border border-slate-200 p-4">
-                  <div className="text-sm font-semibold text-gray-900">{label}</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Link className={visitButtonClass} href={href}>
-                      Visit
-                    </Link>
-                    <button
-                      type="button"
-                      className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-                      onClick={() => applyGeolocationMatch(match, 'postal', { postalCode: latestPostalSelectionRef.current })}
-                      disabled={savingHome || welcomeAutoSaving}
-                    >
-                      Tune in
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      ) : (
-        <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          Run the postal lookup below to see nearby municipalities, EDAs, and neighbourhood feeds you can follow instantly.
-        </div>
-      )}
-      {home ? (
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-subtle">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-gray-500">Home City</div>
-              <div className="text-lg font-semibold text-gray-900">{home.name}</div>
-              <div className="text-sm text-gray-500">Province: {homeProvinceName}</div>
-            </div>
-            {homeFollow && (
-              <div className="flex flex-wrap items-center gap-2">
-                <Link className={visitButtonClass} href={`/${home.province.toLowerCase()}/${home.slug.toLowerCase()}`}>
-                  Visit
-                </Link>
-                <button
-                  type="button"
-                  className="border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => handleUnfollow(homeFollow)}
-                  disabled={homeRemoving}
-                >
-                  {homeRemoving ? 'Removing…' : 'Remove'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      ) : bootstrapped ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          You haven't set a home city yet. Choose your province and city to get started.
-        </div>
-      ) : (
-        <div className="mt-4 text-sm text-gray-500">Loading your city data…</div>
-      )}
-      <div className="mt-6">
+
+      <div>
         <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Cities you follow</div>
         {loadingFollows ? (
           <div className="mt-3 text-sm text-gray-500">Loading your followed cities…</div>
-        ) : additionalFollows.length === 0 ? (
+        ) : orderedFollows.length === 0 ? (
           <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-            {home
-              ? "You're currently following your home city. Explore other Civil cities below to keep an eye on more communities."
-              : "You haven't followed any cities yet. Choose one below to get started."}
+            You haven't followed any communities yet. Use the "All communities" picker below to get started.
           </div>
         ) : (
           <div className="mt-3 space-y-3">
-            {additionalFollows.map((follow) => {
+            {orderedFollows.map((follow) => {
               const chamber = follow.chamber ?? { slug: follow.chamberSlug, province: follow.province }
               const key = `${follow.province}:${follow.chamberSlug}`
               const provinceName = provinces.find((p) => p.code === chamber.province)?.name || chamber.province.toUpperCase()
               const visitHref = `/${chamber.province.toLowerCase()}/${chamber.slug.toLowerCase()}`
+              const isHome = Boolean(follow.home)
               const isUpdating = managingFollow === `${key}:home`
               const isRemoving = managingFollow === `${key}:remove`
+              const cityLabel = chamber.name || follow.chamberSlug.replace(/-/g, ' ')
+              const avatarInitial = cityLabel?.[0]?.toUpperCase() ?? '#'
               return (
-                <div key={key} className="flex flex-col gap-2 rounded-2xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-base font-semibold text-gray-900">{chamber.name || follow.chamberSlug.replace(/-/g, ' ')}</div>
-                    <div className="text-sm text-gray-500">Province: {provinceName}</div>
+                <div key={key} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className={`flex h-9 w-9 items-center justify-center rounded-full ${isHome ? 'bg-amber-100' : 'bg-slate-100'}`}>
+                        {isHome ? <HiMiniStar className="h-4 w-4 text-amber-700" /> : <span className="text-xs font-semibold text-slate-500">{avatarInitial}</span>}
+                      </span>
+                      <div>
+                        <div className="text-base font-semibold text-gray-900">{cityLabel}</div>
+                        <div className="text-sm text-gray-500">Province: {provinceName}</div>
+                      </div>
+                    </div>
+                    {isHome ? <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">Home</span> : null}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
                     <Link className={visitButtonClass} href={visitHref}>
                       Visit
                     </Link>
-                    <button
-                      type="button"
-                      className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-                      onClick={() => setHomeChamber(chamber.province, chamber.slug, 'list')}
-                      disabled={isUpdating}
-                    >
-                      {isUpdating ? 'Setting…' : 'Set as home city'}
-                    </button>
+                    {!isHome ? (
+                      <button
+                        type="button"
+                        className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                        onClick={() => setHomeCommunity(chamber.province, chamber.slug, 'list')}
+                        disabled={isUpdating}
+                      >
+                        {isUpdating ? 'Setting…' : 'Set as home'}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -938,13 +904,132 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           </div>
         )}
       </div>
+
+      <div>
+        <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">Nearby communities</div>
+        {suggestionsLoading ? (
+          <div className="mt-3 text-sm text-gray-500">Loading nearby communities…</div>
+        ) : nearbyCommunities.length === 0 ? (
+          <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            We couldn't surface nearby suggestions yet. Follow additional communities or rerun the welcome flow to refresh your matches.
+          </div>
+        ) : (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {nearbyCommunities.map((city) => {
+              const key = `${city.provinceCode}:${city.chamberSlug}`
+              const visitHref = city.chamberSlug ? `/${city.provinceCode.toLowerCase()}/${city.chamberSlug.toLowerCase()}` : '#'
+              const isFollowing = follows.some((follow) => follow.province === city.provinceCode && follow.chamberSlug === city.chamberSlug)
+              const isSaving = suggestionSavingKey === key
+              const distanceLabel = typeof city.distanceKm === 'number' ? `${city.distanceKm.toFixed(1)} km away` : null
+              return (
+                <div key={key} className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-sm font-semibold text-gray-900">{city.name}</div>
+                  <div className="text-xs uppercase tracking-wide text-gray-500">{city.provinceName}</div>
+                  {distanceLabel ? <div className="text-xs text-gray-400">{distanceLabel}</div> : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Link className={visitButtonClass} href={visitHref}>
+                      Visit
+                    </Link>
+                    <button
+                      type="button"
+                      className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                      onClick={() => handleFollowSuggestion(city)}
+                      disabled={isFollowing || isSaving}
+                    >
+                      {isFollowing ? 'Following' : isSaving ? 'Following…' : 'Follow'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="text-sm font-semibold uppercase tracking-wide text-gray-600">All communities</div>
+        <p className="mt-1 text-sm text-gray-600">Jump anywhere in Canada by picking a province and community.</p>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="text-sm font-medium text-gray-700">Province or territory</label>
+            <select
+              className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+              ref={provinceSelectRef}
+              value={selectedProvince}
+              onChange={handleProvinceChange}
+              disabled={loadingCities && !communityOptions.length}
+            >
+              <option value="">Select your province / territory</option>
+              {provinces.map((prov) => (
+                <option key={prov.code} value={prov.code}>
+                  {prov.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700">Community</label>
+            <select
+              className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+              value={selectedCityKey}
+              onChange={handleCityChange}
+              disabled={!selectedProvince || loadingCities}
+            >
+              <option value="">{loadingCities ? 'Loading communities…' : 'Select a community'}</option>
+              {communityOptions.map((ch) => {
+                const optionValue = buildCityOptionValue(ch)
+                return (
+                  <option key={optionValue} value={optionValue}>
+                    {formatCityOptionLabel(ch)}
+                  </option>
+                )
+              })}
+            </select>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Link
+            className={`${visitButtonClass} flex-shrink-0 text-center sm:min-w-[120px]`}
+            href={selectedProvince && selectedCommunitySlug ? `/${selectedProvince.toLowerCase()}/${selectedCommunitySlug.toLowerCase()}` : '#'}
+            aria-disabled={!selectedProvince || !selectedCommunitySlug}
+            tabIndex={!selectedProvince || !selectedCommunitySlug ? -1 : 0}
+            onClick={(event) => {
+              if (!selectedProvince || !selectedCommunitySlug) {
+                event.preventDefault()
+              }
+            }}
+          >
+            Visit
+          </Link>
+          <button
+            type="button"
+            className={followButtonClass}
+            onClick={handleFollowSelected}
+            disabled={!selectedProvince || !selectedCommunitySlug || followSaving || alreadyFollowingSelected}
+          >
+            {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this community'}
+          </button>
+          <button
+            type="button"
+            className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+            onClick={() => setHomeCommunity(selectedProvince, selectedCommunitySlug, 'picker')}
+            disabled={!canSave || savingHome}
+          >
+            {savingHome ? 'Saving…' : homeCommunity ? 'Set as home community' : 'Set home community'}
+          </button>
+        </div>
+        {homeCommunity && !canSave ? (
+          <span className="text-xs text-gray-500">This community is already set as your home.</span>
+        ) : null}
+      </div>
     </section>
   )
+
 
   const renderPickerSection = (variant: 'default' | 'welcome') => {
     const isWelcome = variant === 'welcome'
     const sectionClasses = isWelcome ? 'surface-card px-8 py-8 shadow-panel' : 'surface-card px-6 py-5 shadow-subtle'
-    const heading = isWelcome ? 'Enter your Postal Code' : home ? 'Explore more Civil cities' : 'Find your city'
+    const heading = isWelcome ? 'Enter your Postal Code' : 'Look up another community'
     const isLocked = isWelcome && welcomeAutoSaving
 
     const showFullPicker = !isWelcome
@@ -993,30 +1078,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               To finish your account, just enter your postal code to connect with Citizens near you! Only the first three characters are needed to get started.
             </p>
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <button type="button" className={assistButtonClass} onClick={handleAssistStart} disabled={isLocked}>
-                Detect my postal code automatically
-              </button>
+              <p className="text-sm text-gray-600">
+                Prefer automatic matching? Use the welcome flow to detect your city via GPS.
+              </p>
             </div>
-            {welcomePickerView === 'assist' ? (
-              <div className="mt-6 space-y-3 rounded-md border border-dashed border-[var(--cc-border)] bg-slate-50/60 p-4 text-sm text-gray-700">
-                <div className="text-sm font-semibold text-gray-800">
-                  {geoBusy ? 'Detecting the closest city to your postal area…' : "We're surfacing nearby matches below."}
-                </div>
-                <p className="text-sm text-gray-600">
-                  We'll use your current location to find the closest city and match it to the right Electoral District Association. We already asked for permission—retry below if you need another attempt.
-                </p>
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    className={`${locationButtonClass} w-full sm:w-auto`}
-                    onClick={handleAssistGeolocate}
-                    disabled={geoBusy || isLocked}
-                  >
-                    {geoBusy ? 'Detecting…' : assistUnlocked ? 'Retry detection' : 'Detect now'}
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </>
         ) : null}
         {isWelcome && welcomeAutoSaving ? (
@@ -1031,11 +1096,47 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           </div>
         ) : null}
         <div className={pickerContainerClass}>
+          {isWelcome ? (
+            <div className="rounded-2xl border border-[var(--cc-border)] bg-white/85 p-4 shadow-subtle">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">Let Civil detect your community</div>
+                  <p className="text-xs text-gray-500">Allow a one-time location lookup to match the closest electoral district automatically.</p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    type="button"
+                    className={locationButtonClass}
+                    onClick={handleAssistStart}
+                    disabled={geoBusy || isLocked}
+                  >
+                    {geoBusy ? 'Detecting…' : 'Use my location'}
+                  </button>
+                  {assistUnlocked ? (
+                    <button
+                      type="button"
+                      className="border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleAssistGeolocate}
+                      disabled={geoBusy || isLocked}
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {(geoStatus || geoError) && (
+                <div className="mt-3 space-y-1 text-xs">
+                  {geoStatus ? <div className="text-gray-700">{geoStatus}</div> : null}
+                  {geoError ? <div className="text-red-500">{geoError}</div> : null}
+                </div>
+              )}
+            </div>
+          ) : null}
           <div className="rounded-2xl border border-[var(--cc-border)] bg-white/80 p-4 shadow-subtle">
             <form className="space-y-3" onSubmit={handlePostalLookupSubmit}>
               <div className="flex flex-col gap-1">
                 <label className="text-sm font-medium text-gray-800">Postal code</label>
-                <p className="text-xs text-gray-500">Enter the first six characters (e.g., M5V-2T6). We auto-format as you type.</p>
+                <p className="text-xs text-gray-500">Enter the first six characters (e.g., M5V-2T6) to reveal matching communities.</p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <input
@@ -1097,85 +1198,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
 
           {(showAssistPanel || suggestionMatches.length > 0) && (
             <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="font-semibold text-gray-700">Need a hand?</div>
-                  <div className="text-xs text-gray-500">Let us detect your city automatically or pick from suggested matches below.</div>
-                </div>
-                {showAssistPanel ? (
-                  <button
-                    type="button"
-                    className={locationButtonClass}
-                    onClick={handleAutoDetect}
-                    disabled={geoBusy || isLocked}
-                  >
-                    {geoBusy ? 'Detecting…' : 'Use my location'}
-                  </button>
-                ) : null}
+              <div className="text-xs text-gray-500">
+                Need another city? Search by province/community below or use the postal lookup to surface more matches.
               </div>
-              {(geoStatus || geoError || activeGeoMatch) && (
-                <div className="mt-3 space-y-2 text-xs">
-                  {activeGeoMatch && (
-                    <div className="border border-green-200 bg-green-50 px-3 py-2 text-green-700">
-                      Matched <span className="font-semibold">{formatMatchCityLabel(activeGeoMatch)}</span> ({activeGeoMatch.province.toUpperCase()})
-                      {activeGeoMatch.method === 'geofenced'
-                        ? ' using Elections Canada boundaries.'
-                        : activeGeoMatch.method
-                          ? ' as the closest city to you.'
-                          : '.'}
-                    </div>
-                  )}
-                  {geoStatus && !geoStatus.startsWith('Ready to continue') && (
-                    <div className="text-gray-600">{geoStatus}</div>
-                  )}
-                  {geoError && <div className="text-red-500">{geoError}</div>}
-                </div>
-              )}
-              {suggestionMatches.length > 0 && (
-                <div className="mt-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    {isWelcome ? 'Tap a city to continue' : 'Tap a city to switch'}
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {suggestionMatches.map((match) => {
-                      const key = `${match.province}:${match.chamberSlug}`
-                      const isActive = selectedProvince === match.province && selectedChamber === match.chamberSlug
-                      const isDetected = Boolean(
-                        geoDetected &&
-                        geoDetected.province === match.province &&
-                        geoDetected.chamberSlug === match.chamberSlug
-                      )
-                      const matchLabel = formatMatchCityLabel(match)
-                      const distanceValue = typeof match.city?.distanceKm === 'number' ? match.city.distanceKm : match.distanceKm
-                      const buttonClass = isActive
-                        ? 'border border-red-500 bg-red-50 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60'
-                        : 'border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
-                      const isPostal = isPostalSuggestion(match)
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          className={buttonClass}
-                          onClick={() => handleSuggestionSelect(match)}
-                          disabled={isLocked}
-                          aria-pressed={isActive}
-                        >
-                          {matchLabel}
-                          {typeof distanceValue === 'number' ? (
-                            <span className="ml-1 text-[11px] text-gray-500">({distanceValue} km)</span>
-                          ) : null}
-                          {isDetected ? (
-                            <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Detected</span>
-                          ) : null}
-                          {isPostal ? (
-                            <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Postal</span>
-                          ) : null}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -1208,7 +1233,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                   disabled={welcomePickerView === 'assist' ? !assistUnlocked : !selectedProvince || loadingCities}
                 >
                   <option value="">{loadingCities ? 'Loading cities…' : 'Select your city'}</option>
-                  {chambers.map((ch) => {
+                  {communityOptions.map((ch) => {
                     const optionValue = buildCityOptionValue(ch)
                     return (
                       <option key={optionValue} value={optionValue}>
@@ -1225,23 +1250,23 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
               <Link
                 className={`${visitButtonClass} flex-shrink-0 text-center sm:min-w-[120px]`}
-                href={selectedProvince && selectedChamber ? `/${selectedProvince.toLowerCase()}/${selectedChamber.toLowerCase()}` : '#'}
-                aria-disabled={!selectedProvince || !selectedChamber}
-                tabIndex={!selectedProvince || !selectedChamber ? -1 : 0}
+                href={selectedProvince && selectedCommunitySlug ? `/${selectedProvince.toLowerCase()}/${selectedCommunitySlug.toLowerCase()}` : '#'}
+                aria-disabled={!selectedProvince || !selectedCommunitySlug}
+                tabIndex={!selectedProvince || !selectedCommunitySlug ? -1 : 0}
                 onClick={(event) => {
-                  if (!selectedProvince || !selectedChamber) {
+                  if (!selectedProvince || !selectedCommunitySlug) {
                     event.preventDefault()
                   }
                 }}
               >
                 Visit
               </Link>
-              {home ? (
+              {homeCommunity ? (
                 <button
                   type="button"
                   className={followButtonClass}
                   onClick={handleFollowSelected}
-                  disabled={!selectedProvince || !selectedChamber || followSaving || alreadyFollowingSelected}
+                  disabled={!selectedProvince || !selectedCommunitySlug || followSaving || alreadyFollowingSelected}
                 >
                   {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this city'}
                 </button>
@@ -1249,14 +1274,52 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               <button
                 type="button"
                 className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-                onClick={() => setHomeChamber(selectedProvince, selectedChamber, 'picker')}
+                onClick={() => setHomeCommunity(selectedProvince, selectedCommunitySlug, 'picker')}
                 disabled={!canSave || savingHome}
               >
-                {savingHome ? 'Saving…' : home ? 'Set as home city' : 'Set home city & follow'}
+                {savingHome ? 'Saving…' : homeCommunity ? 'Set as home city' : 'Set home city & follow'}
               </button>
-              {home && !canSave && (
+              {homeCommunity && !canSave && (
                 <span className="text-xs text-gray-500">This city is already set as your home.</span>
               )}
+            </div>
+          ) : null}
+
+          {isWelcome && suggestionMatches.length > 0 ? (
+            <div className="rounded-2xl border border-[var(--cc-border)] bg-white/80 p-4 shadow-subtle">
+              <div className="text-sm font-semibold text-gray-900">Detected communities</div>
+              <p className="text-xs text-gray-500">Pick the best match if the automatic selection isn’t perfect.</p>
+              <div className="mt-3 space-y-3">
+                {suggestionMatches.map((match) => {
+                  const key = buildMatchCityKey(match)
+                  const isPostal = isPostalSuggestion(match)
+                  const details: string[] = []
+                  if (typeof match.distanceKm === 'number') {
+                    details.push(`${match.distanceKm.toFixed(1)} km away`)
+                  }
+                  details.push(match.method === 'geofenced' ? 'Exact boundary match' : 'Nearest district')
+                  if (isPostal) {
+                    details.push('From your postal code')
+                  }
+                  return (
+                    <div key={key} className="rounded-xl border border-[var(--cc-border)] bg-white px-3 py-3">
+                      <div className="text-sm font-semibold text-gray-900">{formatMatchCityLabel(match)}</div>
+                      <div className="text-xs text-gray-500">{details.join(' • ')}</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="bg-[var(--cc-primary)] px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                          onClick={() => handleSuggestionSelect(match)}
+                          disabled={isLocked || geoBusy}
+                        >
+                          Choose this community
+                        </button>
+                        {isPostal ? <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Postal match</span> : null}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           ) : null}
         </div>
@@ -1267,7 +1330,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const mainContent = (
     <div className="space-y-6">
       {manageSection}
-      {renderPickerSection('default')}
     </div>
   )
 
