@@ -93,7 +93,13 @@ export default function ForgotPasswordPage() {
   )
 
   return (
-    <AuthScreen title="Reset your password" subtitle="Enter your email or Civil handle and we’ll send you a secure reset link." footer={footer}>
+    <AuthScreen
+      title="Reset your password"
+      subtitle="Enter your email or Civil handle and we’ll send you a secure reset link."
+      footer={footer}
+      hideSidePanel
+      useWallpaper
+    >
       <form onSubmit={handleSubmit} className="space-y-5">
         <label className="block text-sm font-medium text-slate-700">
           Email or handle
