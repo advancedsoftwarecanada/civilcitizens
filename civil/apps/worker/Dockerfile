@@ -5,7 +5,7 @@ WORKDIR /app
 FROM base AS deps
 RUN corepack enable && corepack prepare pnpm@9 --activate
 RUN apk add --no-cache python3 make g++
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml tsconfig.base.json pnpm-lock.yaml ./
 COPY packages ./packages
 COPY apps/worker/package.json ./apps/worker/package.json
 RUN pnpm install --recursive --frozen-lockfile || pnpm install --recursive

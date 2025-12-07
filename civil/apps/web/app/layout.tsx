@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import Toasts from './_components/Toasts'
 import MobileDock from './_components/MobileDock'
-import TopNav from './_components/TopNav'
+import TopNavVisibility from './_components/TopNavVisibility'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -55,7 +55,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
   return (
     <html lang="en">
       <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
-        <TopNav />
+        <TopNavVisibility />
         <div className="min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-0">
           {children}
           {modal}
