@@ -19,10 +19,22 @@ def run_admin_bootstrap(command: str, overrides: Mapping[str, str]) -> None:
 
     env = os.environ.copy()
     env.update(overrides)
+    env.setdefault(
+        "DATABASE_URL",
+        f"postgresql://postgres:postgres@localhost:{env.get('POSTGRES_HOST_PORT', '5432')}/civil",
+    )
+
+    # Prefer explicit pnpm override or fall back to nvm's Node 20 bin if present to avoid missing-shim errors
+    pnpm_bin = env.get("PNPM_BIN", "pnpm")
+    nvm_node20 = Path.home() / ".nvm/versions/node/v20.19.6/bin"
+    if nvm_node20.exists():
+        env["PATH"] = f"{nvm_node20}:{env.get('PATH','')}"
+
     bootstrap_cmd = [
-        "pnpm",
+        pnpm_bin,
         "--filter",
         "@civil/api",
+        "exec",
         "tsx",
         "scripts/bootstrap-admin.ts",
     ]

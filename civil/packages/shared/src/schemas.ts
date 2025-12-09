@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { normalizeProvinceCode } from './chambers.js'
 
-export const PostTypeEnum = z.enum(['post', 'article'])
+export const PostTypeEnum = z.enum(['post', 'article', 'photo'])
 
 export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])
 export type Jurisdiction = z.infer<typeof JurisdictionEnum>
@@ -15,32 +15,32 @@ export const CreatePostInput = z
       .min(3, { message: 'Title must be at least 3 characters' })
       .max(160, { message: 'Title is too long' })
       .optional(),
-    body: z.string().min(1).max(20000),
+    body: z.string().max(20000).optional(),
     mediaUrl: z.string().url().optional(),
     hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
-    chamberProvince: z.string().trim().min(2).max(32).optional(),
-    chamberSlug: z.string().trim().min(1).max(160).optional(),
+    communityProvince: z.string().trim().min(2).max(32).optional(),
+    communitySlug: z.string().trim().min(1).max(160).optional(),
     jurisdiction: JurisdictionEnum.optional(),
   })
   .superRefine((data, ctx) => {
-    const hasProvince = typeof data.chamberProvince === 'string' && data.chamberProvince.trim().length > 0
-    const hasChamberSlug = typeof data.chamberSlug === 'string' && data.chamberSlug.trim().length > 0
+    const hasProvince = typeof data.communityProvince === 'string' && data.communityProvince.trim().length > 0
+    const hasCommunitySlug = typeof data.communitySlug === 'string' && data.communitySlug.trim().length > 0
 
-    if (hasProvince !== hasChamberSlug) {
+    if (hasProvince !== hasCommunitySlug) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Chamber province and slug must both be provided to target a chamber',
-        path: hasProvince ? ['chamberSlug'] : ['chamberProvince'],
+        message: 'Community province and slug must both be provided to target a community',
+        path: hasProvince ? ['communitySlug'] : ['communityProvince'],
       })
     }
 
     if (hasProvince) {
-      const normalized = normalizeProvinceCode(data.chamberProvince)
+      const normalized = normalizeProvinceCode(data.communityProvince)
       if (!normalized) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Province code is not recognized',
-          path: ['chamberProvince'],
+          path: ['communityProvince'],
         })
       }
     }
@@ -53,7 +53,8 @@ export const CreatePostInput = z
           path: ['title'],
         })
       }
-      const plain = data.body.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim()
+      const bodyValue = data.body ?? ''
+      const plain = bodyValue.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').trim()
       if (plain.length < 100) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -61,8 +62,32 @@ export const CreatePostInput = z
           path: ['body'],
         })
       }
+    } else if (data.type === 'photo') {
+      if (!data.mediaUrl) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Photo posts require an image',
+          path: ['mediaUrl'],
+        })
+      }
+      const captionLength = (data.body ?? '').trim().length
+      if (captionLength > 5000) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Captions must be 5000 characters or less',
+          path: ['body'],
+        })
+      }
     } else {
-      if (data.body.length > 5000) {
+      const bodyLength = (data.body ?? '').length
+      if (bodyLength < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Posts must include some text',
+          path: ['body'],
+        })
+      }
+      if (bodyLength > 5000) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Posts must be 5000 characters or less',
@@ -76,14 +101,17 @@ export type CreatePostInput = z.infer<typeof CreatePostInput>
 
 export type PostType = z.infer<typeof PostTypeEnum>
 
+export const ReactionTypeEnum = z.enum(['maple', 'heart', 'haha', 'wow', 'sad', 'fire'])
+export type ReactionType = z.infer<typeof ReactionTypeEnum>
+
+export const ReactPostInput = z.object({
+  postId: z.string().cuid(),
+  reaction: ReactionTypeEnum.nullable(),
+})
+export type ReactPostInput = z.infer<typeof ReactPostInput>
+
 export const VoteValueSchema = z.union([z.literal(-1), z.literal(0), z.literal(1)])
 export type VoteValue = z.infer<typeof VoteValueSchema>
-
-export const VotePostInput = z.object({
-  postId: z.string().cuid(),
-  value: VoteValueSchema,
-})
-export type VotePostInput = z.infer<typeof VotePostInput>
 
 export const VoteCommentInput = z.object({
   commentId: z.string().cuid(),
@@ -148,20 +176,20 @@ export type ResetPasswordInput = z.infer<typeof ResetPasswordInput>
 
 export const SetHomeCommunityInput = z.object({
   provinceCode: z.string().min(2).max(2),
-  chamberSlug: z.string().min(1).max(120),
+  communitySlug: z.string().min(1).max(120),
 })
 export type SetHomeCommunityInput = z.infer<typeof SetHomeCommunityInput>
 
 export const FollowCommunityInput = z.object({
   provinceCode: z.string().min(2).max(2),
-  chamberSlug: z.string().min(1).max(120),
+  communitySlug: z.string().min(1).max(120),
   setAsHome: z.boolean().optional(),
 })
 export type FollowCommunityInput = z.infer<typeof FollowCommunityInput>
 
 export const UnfollowCommunityInput = z.object({
   provinceCode: z.string().min(2).max(2),
-  chamberSlug: z.string().min(1).max(120),
+  communitySlug: z.string().min(1).max(120),
 })
 export type UnfollowCommunityInput = z.infer<typeof UnfollowCommunityInput>
 
@@ -170,8 +198,8 @@ export const CitySummarySchema = z.object({
   slug: z.string().min(1).max(160),
   provinceCode: z.string().min(2).max(2),
   provinceName: z.string().min(1).max(160),
-  chamberSlug: z.string().min(1).max(160),
-  chamberName: z.string().min(1).max(160),
+  communitySlug: z.string().min(1).max(160),
+  communityName: z.string().min(1).max(160),
   latitude: z.number(),
   longitude: z.number(),
   population: z.number().int().nonnegative().nullable(),
@@ -181,8 +209,8 @@ export type CitySummary = z.infer<typeof CitySummarySchema>
 
 export const CommunityGeoMatchSchema = z.object({
   province: z.string().min(2).max(2),
-  chamberSlug: z.string().min(1).max(160),
-  chamberName: z.string().min(1).max(160),
+  communitySlug: z.string().min(1).max(160),
+  communityName: z.string().min(1).max(160),
   method: z.enum(['geofenced', 'nearest']),
   confidence: z.enum(['high', 'medium', 'low']).default('medium'),
   distanceKm: z.number().nonnegative().optional(),
@@ -236,28 +264,14 @@ export const PostalLookupResponseSchema = z.object({
       subdivisionName: z.string().nullable(),
       centroidLat: z.number().nullable(),
       centroidLng: z.number().nullable(),
-      defaultChamberSlug: z.string().nullable(),
-      defaultChamberName: z.string().nullable(),
+      defaultCommunitySlug: z.string().nullable(),
+      defaultCommunityName: z.string().nullable(),
     })
     .nullable(),
   primary: CommunityGeoMatchSchema.nullable(),
   alternatives: z.array(CommunityGeoMatchSchema),
 })
 export type PostalLookupResponse = z.infer<typeof PostalLookupResponseSchema>
-
-// Legacy chamber aliases (remove when clients migrate)
-export const SetHomeChamberInput = SetHomeCommunityInput
-export type SetHomeChamberInput = SetHomeCommunityInput
-export const FollowChamberInput = FollowCommunityInput
-export type FollowChamberInput = FollowCommunityInput
-export const UnfollowChamberInput = UnfollowCommunityInput
-export type UnfollowChamberInput = UnfollowCommunityInput
-export const ChamberGeoMatchSchema = CommunityGeoMatchSchema
-export type ChamberGeoMatch = CommunityGeoMatch
-export const ChamberGeolocateResponseSchema = CommunityGeolocateResponseSchema
-export type ChamberGeolocateResponse = CommunityGeolocateResponse
-export const ChamberGeolocateInput = CommunityGeolocateInput
-export type ChamberGeolocateInput = CommunityGeolocateInput
 
 export const ExperienceInput = z
   .object({
@@ -295,6 +309,9 @@ export const ExperienceInput = z
   })
 export type ExperienceInput = z.infer<typeof ExperienceInput>
 
+export const MediaAssetIdSchema = z.string().uuid().or(z.string().cuid())
+export type MediaAssetId = z.infer<typeof MediaAssetIdSchema>
+
 export const UpdateProfileInput = z.object({
   firstName: z.string().trim().min(1).max(40),
   lastName: z.string().trim().min(1).max(60),
@@ -303,10 +320,22 @@ export const UpdateProfileInput = z.object({
     .max(10000, { message: 'Bio must be 10,000 characters or fewer' })
     .optional(),
   experiences: z.array(ExperienceInput).max(50, { message: 'experience_limit' }).optional(),
-  avatarMediaId: z.string().cuid().optional(),
-  coverMediaId: z.string().cuid().optional(),
+  avatarMediaId: MediaAssetIdSchema.optional(),
+  coverMediaId: MediaAssetIdSchema.optional(),
 })
 export type UpdateProfileInput = z.infer<typeof UpdateProfileInput>
+
+export const UpdateProfilePhotoInput = z.object({
+  category: z.enum(['avatar', 'cover']),
+  displayAssetId: MediaAssetIdSchema,
+  fullAssetId: MediaAssetIdSchema,
+  caption: z
+    .string()
+    .trim()
+    .max(5000, { message: 'caption_too_long' })
+    .optional(),
+})
+export type UpdateProfilePhotoInput = z.infer<typeof UpdateProfilePhotoInput>
 
 export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'post_image', 'attachment'])
 export type MediaCategory = z.infer<typeof MediaCategoryEnum>
@@ -319,8 +348,6 @@ export const RequestMediaUploadInput = z.object({
 })
 export type RequestMediaUploadInput = z.infer<typeof RequestMediaUploadInput>
 
-export const MediaAssetIdSchema = z.string().uuid().or(z.string().cuid())
-
 export const CompleteMediaUploadInput = z.object({
   assetId: MediaAssetIdSchema,
   width: z.number().int().positive().max(10000).optional(),
@@ -331,7 +358,8 @@ export type CompleteMediaUploadInput = z.infer<typeof CompleteMediaUploadInput>
 
 // Messaging
 export const CreateDirectThreadInput = z.object({
-  userId: z.string().cuid(),
+  // Accept cuid or uuid to stay compatible with legacy user ids
+  userId: z.string().cuid().or(z.string().uuid()),
 })
 export type CreateDirectThreadInput = z.infer<typeof CreateDirectThreadInput>
 

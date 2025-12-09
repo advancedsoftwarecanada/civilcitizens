@@ -1,0 +1,23 @@
+# Exclude dependency and build outputs from Docker context
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.turbo
+**/coverage
+**/.vercel
+
+# Git and editor junk
+.git
+.gitignore
+.vscode
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+
+# Local env and runtime files
+.env*
+*.local
+/tmp
+logs

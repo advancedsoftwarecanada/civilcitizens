@@ -12,11 +12,11 @@ const MIN_QUERY_LENGTH = 2
 const PEOPLE_LIMIT = 3
 const COMMUNITY_LIMIT = 3
 
-type HomeChamber = {
+type HomeCommunity = {
   provinceCode: string
   provinceName: string | null
-  chamberSlug: string
-  chamberName: string | null
+  communitySlug: string
+  communityName: string | null
 }
 
 type UserSearchResult = {
@@ -26,7 +26,7 @@ type UserSearchResult = {
   avatarUrl: string | null
   isPremium: boolean
   isVerified: boolean
-  homeChamber: HomeChamber | null
+  homeCommunity: HomeCommunity | null
 }
 
 type CommunitySearchResult = {
@@ -34,8 +34,8 @@ type CommunitySearchResult = {
   name: string
   provinceCode: string
   provinceName: string
-  chamberSlug: string
-  chamberName: string
+  communitySlug: string
+  communityName: string
   population: number | null
   distanceKm?: number
 }
@@ -151,10 +151,10 @@ export function SearchResults({ query, open }: SearchResultsProps) {
 
   if (!showPanel) return null
 
-  const renderHomeCommunity = (home: HomeChamber | null) => {
+  const renderHomeCommunity = (home: HomeCommunity | null) => {
     if (!home) return 'No home community yet'
     const provinceLabel = home.provinceName ?? home.provinceCode.toUpperCase()
-    const chamberLabel = home.chamberName ?? home.chamberSlug
+    const chamberLabel = home.communityName ?? home.communitySlug
     return `${provinceLabel} / ${chamberLabel}`
   }
 
@@ -194,7 +194,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
                         <span className="truncate font-semibold">{person.name ?? `@${person.handle}`}</span>
                         <span className="truncate text-xs text-slate-500">@{person.handle}</span>
                       </div>
-                      <p className="truncate text-xs text-slate-500">{renderHomeCommunity(person.homeChamber)}</p>
+                      <p className="truncate text-xs text-slate-500">{renderHomeCommunity(person.homeCommunity)}</p>
                     </div>
                   </Link>
                 </li>
@@ -230,7 +230,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-slate-900">
-                        <span className="truncate font-semibold">{community.chamberName}</span>
+                        <span className="truncate font-semibold">{community.communityName}</span>
                       </div>
                       <p className="truncate text-xs text-slate-500">
                         {community.provinceName} • {community.name}

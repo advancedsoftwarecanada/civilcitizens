@@ -22,6 +22,8 @@ model User {
   createdAt                 DateTime             @default(now())
   avatarMediaId             String?              @unique
   coverMediaId              String?              @unique
+  avatarPostId              String?              @unique
+  coverPostId               String?              @unique
   billingAddress1           String?
   billingAddress2           String?
   billingCity               String?
@@ -46,7 +48,7 @@ model User {
   stripeSubscriptionId      String?              @unique
   businesses                Business[]
   businessMemberships       BusinessMembership[]
-  chamberFollows            ChamberFollow[]
+  communityFollows          CommunityFollow[]
   comments                  Comment[]
   commentVotes              CommentVote[]
   experiences               Experience[]
@@ -56,7 +58,10 @@ model User {
   posts                     Post[]
   avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
   coverMedia                MediaAsset?          @relation("CoverMedia", fields: [coverMediaId], references: [id])
+  avatarPost                Post?                @relation("AvatarPost", fields: [avatarPostId], references: [id])
+  coverPost                 Post?                @relation("CoverPost", fields: [coverPostId], references: [id])
   votes                     Vote[]
+  postReactions             PostReaction[]
   friendshipsRequested      Friendship[]         @relation("friendshipsRequested")
   friendshipsReceived       Friendship[]         @relation("friendshipsReceived")
   messageParticipants       MessageParticipant[]
@@ -74,7 +79,7 @@ model Post {
   seoSlug        String?       @unique
   jurisdiction   String        @default("self")
   provinceCode   String?
-  chamberSlug    String?
+  communitySlug  String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   upvotes        Int           @default(0)
@@ -82,14 +87,25 @@ model Post {
   score          Int           @default(0)
   commentCount   Int           @default(0)
   hotScore       Float         @default(0)
+  reactionMaple  Int           @default(0)
+  reactionHeart  Int           @default(0)
+  reactionHaha   Int           @default(0)
+  reactionWow    Int           @default(0)
+  reactionSad    Int           @default(0)
+  reactionFire   Int           @default(0)
+  reactionTotal  Int           @default(0)
+  recentPositive Int           @default(0)
   lastActivityAt DateTime      @default(now())
   comments       Comment[]
   author         User          @relation(fields: [authorId], references: [id])
+  avatarOwner    User?         @relation("AvatarPost")
+  coverOwner     User?         @relation("CoverPost")
   hashtags       PostHashtag[]
   votes          Vote[]
+  reactions      PostReaction[]
 
   @@index([authorId, createdAt])
-  @@index([provinceCode, chamberSlug, createdAt])
+  @@index([provinceCode, communitySlug, createdAt])
   @@index([jurisdiction, createdAt])
 }
 
@@ -140,6 +156,21 @@ model Vote {
   @@index([postId])
 }
 
+model PostReaction {
+  userId    String
+  postId    String
+  type      ReactionType
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId])
+  @@index([type])
+  @@index([postId, createdAt])
+}
+
 model Follow {
   followerId String
   targetId   String
@@ -162,6 +193,18 @@ model Notification {
   createdAt DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+model PageView {
+  id        String   @id @default(cuid())
+  userId    String?
+  path      String
+  postId    String?
+  referrer  String?
+  createdAt DateTime @default(now())
+
+  @@index([path, createdAt])
+  @@index([postId, createdAt])
 }
 
 model Friendship {
@@ -233,6 +276,15 @@ enum FriendshipStatus {
   REJECTED
 }
 
+enum ReactionType {
+  maple
+  heart
+  haha
+  wow
+  sad
+  fire
+}
+
 model FeedEntry {
   userId    String
   postId    String
@@ -242,19 +294,19 @@ model FeedEntry {
   @@index([userId, createdAt])
 }
 
-model ChamberFollow {
+model CommunityFollow {
   id           String   @id @default(cuid())
   userId       String
   provinceCode String
-  chamberSlug  String
+  communitySlug  String
   home         Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, provinceCode, chamberSlug])
+  @@unique([userId, provinceCode, communitySlug])
   @@index([userId])
-  @@index([provinceCode, chamberSlug])
+  @@index([provinceCode, communitySlug])
 }
 
 model Province {
@@ -303,8 +355,8 @@ model CensusSubdivision {
   centroidLng         Float?
   bbox                Json?
   geometry            Json?
-  defaultChamberSlug  String?
-  defaultChamberName  String?
+  defaultCommunitySlug  String?
+  defaultCommunityName  String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   province            Province       @relation(fields: [provinceCode], references: [code])
@@ -327,8 +379,8 @@ model ForwardSortationArea {
   centroidLng        Float?
   bbox               Json?
   geometry           Json?
-  defaultChamberSlug String?
-  defaultChamberName String?
+  defaultCommunitySlug String?
+  defaultCommunityName String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   province           Province?        @relation(fields: [provinceCode], references: [code])
@@ -345,8 +397,8 @@ model City {
   provinceCode    String
   name            String
   slug            String
-  chamberSlug     String
-  chamberName     String
+  communitySlug   String
+  communityName   String
   latitude        Float
   longitude       Float
   population      Int?
@@ -365,7 +417,7 @@ model City {
 
   @@unique([provinceCode, slug])
   @@unique([source, sourceId])
-  @@index([chamberSlug])
+  @@index([communitySlug])
   @@index([provinceCode])
   @@index([latitude, longitude])
   @@index([censusSubdivisionId])

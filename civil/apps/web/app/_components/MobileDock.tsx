@@ -2,31 +2,42 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
-  HiOutlineBell,
+  HiOutlineBars3,
+  HiOutlineBellAlert,
   HiOutlineEnvelope,
-  HiOutlineHome,
   HiOutlineMagnifyingGlass,
+  HiOutlineSquares2X2,
+  HiOutlineWallet,
   HiOutlineXMark,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import VerifiedAvatar from './VerifiedAvatar'
-import { PRIMARY_NAV, ADMIN_NAV, type SidebarNavItem } from './Sidebar'
+import { PRIMARY_NAV, type SidebarNavItem } from './Sidebar'
 import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
-import { pushToast } from './useToasts'
-import { isSuperAdmin } from '../_lib/admin'
+import { RightRail } from './RightRail'
+import FriendsRightRail from './FriendsRightRail'
 
-const NAV_BUTTONS: Array<{ key: 'home' | 'search' | 'notifications' | 'messages'; label: string; icon: IconType }> = [
-  { key: 'home', label: 'Menu', icon: HiOutlineHome },
+const NAV_BUTTONS: Array<{
+  key: 'menu' | 'search' | 'notifications' | 'messages' | 'wallet' | 'more'
+  label: string
+  icon: IconType
+}> = [
+  { key: 'menu', label: 'Menu', icon: HiOutlineBars3 },
   { key: 'search', label: 'Search', icon: HiOutlineMagnifyingGlass },
-  { key: 'notifications', label: 'Alerts', icon: HiOutlineBell },
+  { key: 'notifications', label: 'Alerts', icon: HiOutlineBellAlert },
   { key: 'messages', label: 'Messages', icon: HiOutlineEnvelope },
+  { key: 'wallet', label: 'Wallet', icon: HiOutlineWallet },
+  { key: 'more', label: 'More', icon: HiOutlineSquares2X2 },
 ] as const
 
 const DRAWER_TRANSITION_MS = 320
+const EDGE_SWIPE_THRESHOLD = 36
+const SWIPE_DISTANCE_THRESHOLD = 60
+const MAX_SWIPE_VERTICAL_DELTA = 80
 
 type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
 
@@ -35,11 +46,15 @@ export default function MobileDock() {
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuMounted, setMenuMounted] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [moreMounted, setMoreMounted] = useState(false)
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [hasSession, setHasSession] = useState(false)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const moreCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuMountedRef = useRef(false)
+  const moreMountedRef = useRef(false)
 
   useEffect(() => {
     setHydrated(true)
@@ -77,13 +92,13 @@ export default function MobileDock() {
   }, [])
 
   useEffect(() => {
-    if (!menuMounted) return undefined
+    if (!menuMounted && !moreMounted) return undefined
     const original = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
       document.body.style.overflow = original
     }
-  }, [menuMounted])
+  }, [menuMounted, moreMounted])
 
   const handleCloseMenu = useCallback(() => {
     setMenuOpen(false)
@@ -105,19 +120,51 @@ export default function MobileDock() {
     requestAnimationFrame(() => setMenuOpen(true))
   }, [])
 
+  const handleCloseMore = useCallback(() => {
+    setMoreOpen(false)
+    if (moreCloseTimeoutRef.current) {
+      clearTimeout(moreCloseTimeoutRef.current)
+    }
+    moreCloseTimeoutRef.current = setTimeout(() => {
+      setMoreMounted(false)
+      moreCloseTimeoutRef.current = null
+    }, DRAWER_TRANSITION_MS)
+  }, [])
+
+  const handleOpenMore = useCallback(() => {
+    if (moreCloseTimeoutRef.current) {
+      clearTimeout(moreCloseTimeoutRef.current)
+      moreCloseTimeoutRef.current = null
+    }
+    setMoreMounted(true)
+    requestAnimationFrame(() => setMoreOpen(true))
+  }, [])
+
   useEffect(() => {
     menuMountedRef.current = menuMounted
   }, [menuMounted])
+
+  useEffect(() => {
+    moreMountedRef.current = moreMounted
+  }, [moreMounted])
 
   useEffect(() => {
     if (!menuMountedRef.current) return
     handleCloseMenu()
   }, [pathname, handleCloseMenu])
 
+  useEffect(() => {
+    if (!moreMountedRef.current) return
+    handleCloseMore()
+  }, [pathname, handleCloseMore])
+
   useEffect(
     () => () => {
       if (closeTimeoutRef.current) {
         clearTimeout(closeTimeoutRef.current)
+      }
+      if (moreCloseTimeoutRef.current) {
+        clearTimeout(moreCloseTimeoutRef.current)
       }
     },
     [],
@@ -125,29 +172,101 @@ export default function MobileDock() {
 
   const handleButtonPress = useCallback(
     (key: NavButtonKey) => {
-      if (key === 'home') {
+      if (key === 'menu') {
         handleOpenMenu()
+        return
+      }
+      if (key === 'search') {
+        router.push('/search')
+        return
+      }
+      if (key === 'notifications') {
+        router.push('/notifications')
         return
       }
       if (key === 'messages') {
         router.push('/messages')
         return
       }
-      const friendlyLabel = key === 'notifications' ? 'Notifications' : 'Search'
-      pushToast(`${friendlyLabel} is coming soon.`, 'info', 3500)
+      if (key === 'wallet') {
+        router.push('/wallet')
+        return
+      }
+      if (key === 'more') {
+        handleOpenMore()
+        return
+      }
     },
-    [handleOpenMenu, router],
+    [handleOpenMenu, handleOpenMore, router],
   )
 
-  const navGroups = useMemo(() => {
-    const groups: Array<{ title: string; items: SidebarNavItem[] }> = [
-      { title: 'Navigate', items: PRIMARY_NAV },
-    ]
-    if (isSuperAdmin(viewer)) {
-      groups.push({ title: 'Admin', items: ADMIN_NAV })
+  const navGroups = useMemo(() => [{ title: '', items: PRIMARY_NAV }], [])
+
+  const drawerSpacingVars = useMemo<CSSProperties>(
+      () =>
+        ({
+          '--drawer-pad': 'clamp(12px, 1.4vh, 15px)',
+          '--drawer-gap': 'clamp(6px, 0.7vh, 8px)',
+          '--drawer-top-gap': 'clamp(6px, 0.9vh, 10px)',
+          '--drawer-item-pad': 'clamp(10px, 1.8vh, 12px)',
+          '--drawer-item-radius': 'clamp(15px, 1.9vw, 19px)',
+          '--drawer-icon-pad': 'clamp(12px, 1.6vh, 14px)',
+          '--drawer-icon-size': 'clamp(32px, 4vh, 46px)',
+        } as CSSProperties),
+      [],
+    )
+
+  const navGridStyle = useMemo<CSSProperties>(() => ({
+    gridTemplateColumns: `repeat(${NAV_BUTTONS.length}, minmax(0, 1fr))`,
+  }), [])
+
+  const morePanelContent = useMemo(() => {
+    if (pathname?.startsWith('/friends')) {
+      return <FriendsRightRail />
     }
-    return groups
-  }, [viewer])
+    return <RightRail />
+  }, [pathname])
+
+  useEffect(() => {
+    if (!hydrated || !hasSession) return undefined
+    let tracking = false
+    let startX = 0
+    let startY = 0
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return
+      const touch = event.touches.item(0)
+      if (!touch) return
+      startX = touch.clientX
+      startY = touch.clientY
+      tracking = true
+    }
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      if (!tracking) return
+      tracking = false
+      if (event.changedTouches.length === 0) return
+      const touch = event.changedTouches.item(0)
+      if (!touch) return
+      const deltaX = touch.clientX - startX
+      const deltaY = touch.clientY - startY
+      if (Math.abs(deltaY) > MAX_SWIPE_VERTICAL_DELTA) return
+      if (startX <= EDGE_SWIPE_THRESHOLD && deltaX > SWIPE_DISTANCE_THRESHOLD) {
+        handleOpenMenu()
+        return
+      }
+      if (typeof window !== 'undefined' && startX >= window.innerWidth - EDGE_SWIPE_THRESHOLD && deltaX < -SWIPE_DISTANCE_THRESHOLD) {
+        handleOpenMore()
+      }
+    }
+
+    window.addEventListener('touchstart', handleTouchStart)
+    window.addEventListener('touchend', handleTouchEnd)
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart)
+      window.removeEventListener('touchend', handleTouchEnd)
+    }
+  }, [hasSession, hydrated, handleOpenMenu, handleOpenMore])
 
   if (!hydrated || !hasSession) {
     return null
@@ -156,32 +275,34 @@ export default function MobileDock() {
   return (
     <>
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 text-[var(--cc-primary)] shadow-[0_-12px_30px_rgba(0,0,0,0.08)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] lg:hidden"
         role="navigation"
         aria-label="Mobile navigation"
       >
-        <div className="flex items-center justify-around gap-2">
+        <div className="grid gap-0.5" style={navGridStyle}>
           {NAV_BUTTONS.map((item) => {
             const Icon = item.icon
             const isActive =
-              item.key !== 'home' &&
-              ((item.key === 'search' && pathname?.startsWith('/search')) ||
-                (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
-                (item.key === 'messages' && pathname?.startsWith('/messages')))
+              (item.key === 'menu' && menuOpen) ||
+              (item.key === 'search' && pathname?.startsWith('/search')) ||
+              (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
+              (item.key === 'messages' && pathname?.startsWith('/messages')) ||
+              (item.key === 'wallet' && pathname?.startsWith('/wallet')) ||
+              (item.key === 'more' && moreOpen)
             return (
               <button
                 key={item.key}
                 type="button"
                 onClick={() => handleButtonPress(item.key)}
                 className={clsx(
-                  'flex flex-1 flex-col items-center gap-0.5 rounded-2xl px-3 py-2 text-[11px] font-semibold uppercase tracking-wide transition-colors',
+                  'flex w-full items-center justify-center rounded-2xl px-3 py-2 transition-colors',
                   isActive
                     ? 'bg-[var(--cc-primary)] text-white shadow shadow-[var(--cc-primary)]/30'
                     : 'text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10',
                 )}
+                aria-label={item.label}
               >
-                <Icon className="text-2xl" />
-                <span>{item.label}</span>
+                <Icon className="text-xl leading-none" />
               </button>
             )
           })}
@@ -201,23 +322,47 @@ export default function MobileDock() {
           />
           <div
             className={clsx(
-              'absolute inset-y-0 left-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-6 shadow-2xl transition-transform duration-300',
+              'absolute inset-y-0 left-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-[var(--drawer-pad)] pb-[calc(env(safe-area-inset-bottom)+var(--drawer-pad))] pt-[calc(var(--drawer-pad)*0.85)] shadow-2xl transition-transform duration-300',
               menuOpen ? 'translate-x-0' : '-translate-x-full',
             )}
+            style={drawerSpacingVars}
           >
-            <div className="flex items-center gap-3">
-              <VerifiedAvatar
-                src={viewer?.avatarUrl ?? null}
-                alt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
-                initials={viewer?.name ?? viewer?.handle ?? 'C'}
-                size={56}
-                isVerified={Boolean(viewer?.isVerified)}
-                isBusiness={Boolean(viewer?.isPremium)}
-              />
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-slate-900">{viewer?.name ?? 'Civil Citizen'}</p>
-                <p className="text-xs text-slate-500">@{viewer?.handle ?? 'civil'}</p>
-              </div>
+            <div className="flex items-center gap-2">
+              {viewer?.handle ? (
+                <Link
+                  href={`/u/${viewer.handle}`}
+                  onClick={handleCloseMenu}
+                  className="flex flex-1 items-center gap-2 rounded-[var(--drawer-item-radius)] p-1 transition hover:bg-slate-100"
+                >
+                  <VerifiedAvatar
+                    src={viewer?.avatarUrl ?? null}
+                    alt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
+                    initials={viewer?.name ?? viewer?.handle ?? 'C'}
+                    size={48}
+                    isVerified={Boolean(viewer?.isVerified)}
+                    isBusiness={Boolean(viewer?.isPremium)}
+                  />
+                  <div className="flex-1">
+                    <p className="text-[clamp(13px,3.4vw,14px)] font-semibold text-slate-900 leading-tight">{viewer?.name ?? 'Civil Citizen'}</p>
+                    <p className="text-[12px] text-slate-500">@{viewer?.handle ?? 'civil'}</p>
+                  </div>
+                </Link>
+              ) : (
+                <div className="flex flex-1 items-center gap-2">
+                  <VerifiedAvatar
+                    src={viewer?.avatarUrl ?? null}
+                    alt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
+                    initials={viewer?.name ?? viewer?.handle ?? 'C'}
+                    size={48}
+                    isVerified={Boolean(viewer?.isVerified)}
+                    isBusiness={Boolean(viewer?.isPremium)}
+                  />
+                  <div className="flex-1">
+                    <p className="text-[clamp(13px,3.4vw,14px)] font-semibold text-slate-900 leading-tight">{viewer?.name ?? 'Civil Citizen'}</p>
+                    <p className="text-[12px] text-slate-500">@{viewer?.handle ?? 'civil'}</p>
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 className="rounded-full border border-slate-200 p-2 text-slate-500"
@@ -227,11 +372,10 @@ export default function MobileDock() {
                 <HiOutlineXMark className="text-lg" />
               </button>
             </div>
-            <div className="mt-6 flex-1 overflow-y-auto pb-6">
+            <div className="mt-[var(--drawer-top-gap)] flex-1 overflow-y-auto pb-[calc(var(--drawer-pad)*0.85)]">
               {navGroups.map((group, index) => (
-                <div key={group.title} className={index === 0 ? undefined : 'mt-6'}>
-                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">{group.title}</p>
-                  <div className="mt-3 space-y-2">
+                <div key={index} className={index === 0 ? undefined : 'mt-[calc(var(--drawer-top-gap)*0.9)]'}>
+                  <div className="grid grid-cols-3 gap-[var(--drawer-gap)]">
                     {group.items.map((item) => {
                       const Icon = item.icon
                       const active = pathname ? pathname.startsWith(item.href) : false
@@ -241,22 +385,60 @@ export default function MobileDock() {
                           href={item.href}
                           onClick={handleCloseMenu}
                           className={clsx(
-                            'flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm font-semibold transition',
+                            'flex h-full flex-col items-center justify-center gap-1.5 rounded-[var(--drawer-item-radius)] border px-3 py-[var(--drawer-item-pad)] text-[clamp(10.5px,2.3vw,12px)] font-semibold leading-tight text-center transition',
                             active
-                              ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5 text-[var(--cc-primary)]'
+                              ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/8 text-[var(--cc-primary)]'
                               : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:text-slate-900',
                           )}
                         >
-                          <span className="rounded-xl bg-slate-100 p-2 text-base text-slate-600">
-                            <Icon />
+                          <span className="rounded-2xl bg-slate-100 p-[var(--drawer-icon-pad)] text-[var(--drawer-icon-size)] text-slate-600 shadow-sm">
+                            <Icon className="h-[var(--drawer-icon-size)] w-[var(--drawer-icon-size)]" />
                           </span>
-                          <span>{item.label}</span>
+                          <span className="leading-tight">{item.label}</span>
                         </Link>
                       )
                     })}
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {moreMounted ? (
+        <div className="fixed inset-0 z-50 lg:hidden" aria-modal="true" role="dialog">
+          <button
+            type="button"
+            aria-label="Close more panel"
+            className={clsx(
+              'absolute inset-0 bg-slate-900/60 backdrop-blur transition-opacity duration-300',
+              moreOpen ? 'opacity-100' : 'opacity-0',
+            )}
+            onClick={handleCloseMore}
+          />
+          <div
+            className={clsx(
+              'absolute inset-y-0 right-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-6 shadow-2xl transition-transform duration-300',
+              moreOpen ? 'translate-x-0' : 'translate-x-full',
+            )}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">More</p>
+                <p className="text-sm font-semibold text-slate-900">Communities & shortcuts</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 p-2 text-slate-500"
+                onClick={handleCloseMore}
+                aria-label="Close more panel"
+              >
+                <HiOutlineXMark className="text-lg" />
+              </button>
+            </div>
+            <div className="mt-6 flex-1 overflow-y-auto pb-12">
+              {morePanelContent}
             </div>
           </div>
         </div>

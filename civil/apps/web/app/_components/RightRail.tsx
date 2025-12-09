@@ -8,8 +8,8 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { pushToast } from './useToasts'
 
 const exploreLinks = [
-  { label: 'Browse Cities', href: '/communities', description: 'Find your city and explore civic activity.' },
-  { label: 'Update your profile', href: '/profile', description: 'Add a bio, avatar, and city details.' },
+  { label: 'Browse Communities', href: '/communities/settings', description: 'Find your community and explore civic activity.' },
+  { label: 'Update your profile', href: '/profile/edit', description: 'Add a bio, avatar, and city details.' },
 ]
 
 const LOADING_PLACEHOLDER_ITEMS = Array.from({ length: 3 }, (_, idx) => idx)
@@ -21,8 +21,8 @@ type CommunitiesDashboardResponse = {
   suggestions: CitySummary[]
   home: {
     provinceCode: string
-    chamberSlug: string
-    chamberName: string | null
+    communitySlug: string
+    communityName: string | null
     cityName: string
   } | null
 }
@@ -86,8 +86,8 @@ export function RightRail() {
         redirectToAuthModal('login')
         return
       }
-      if (!city.chamberSlug) return
-      const key = `${city.provinceCode}:${city.chamberSlug}`
+      if (!city.communitySlug) return
+      const key = `${city.provinceCode}:${city.communitySlug}`
       setFollowingKey(key)
       try {
         const res = await fetch(buildApiUrl('/communities/follows'), {
@@ -96,7 +96,7 @@ export function RightRail() {
             'content-type': 'application/json',
             authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ provinceCode: city.provinceCode, chamberSlug: city.chamberSlug }),
+          body: JSON.stringify({ provinceCode: city.provinceCode, communitySlug: city.communitySlug }),
         })
         if (res.status === 401) {
           redirectToAuthModal('login')
@@ -134,7 +134,7 @@ export function RightRail() {
     if (!summary?.suggestions?.length) {
       return (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-          No nearby recommendations yet. Visit <Link href="/communities" className="font-semibold text-[var(--cc-primary)] hover:underline">Communities</Link> to browse the full map.
+          No nearby recommendations yet. Visit <Link href="/communities/settings" className="font-semibold text-[var(--cc-primary)] hover:underline">Community Settings</Link> to browse the full map.
         </div>
       )
     }
@@ -142,7 +142,7 @@ export function RightRail() {
     return (
       <ul className="space-y-2">
         {summary.suggestions.map((city) => {
-          const key = `${city.provinceCode}:${city.chamberSlug}`
+          const key = `${city.provinceCode}:${city.communitySlug}`
           return (
             <li key={key} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2">
               <div className="min-w-0">
@@ -207,12 +207,33 @@ export function RightRail() {
     }
 
     const postsToday = summary?.postsToday ?? 0
+    const followedCommunities = [
+      { name: 'Keswick', count: 12 },
+      { name: 'Aurora', count: 44 },
+      { name: 'Richmond Hill', count: 23 },
+    ]
+
     return (
       <div className="space-y-3">
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
           <div className="text-3xl font-bold text-slate-800">{postsToday.toLocaleString()}</div>
           <p className="text-sm text-slate-600">new posts since midnight across your Communities.</p>
           <p className="text-[11px] uppercase tracking-wide text-slate-400">Updates refresh hourly.</p>
+        </div>
+        <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Following</p>
+          <ul className="mt-3 space-y-2 text-sm text-slate-700">
+            {followedCommunities.map((community) => (
+              <li key={community.name} className="flex items-center justify-between">
+                <span>{community.name}</span>
+                <span className="text-xs font-semibold text-slate-500">{community.count.toLocaleString()} posts</span>
+              </li>
+            ))}
+          </ul>
+          <Link href="/communities/settings" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-[var(--cc-primary)]">
+            View all communities
+            <span aria-hidden>→</span>
+          </Link>
         </div>
         <p className="text-xs text-slate-500">Keep sharing updates to grow civic conversations in your region.</p>
       </div>

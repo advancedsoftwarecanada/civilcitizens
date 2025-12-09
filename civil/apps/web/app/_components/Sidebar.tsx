@@ -1,25 +1,28 @@
 'use client'
 
-import Image from 'next/image'
 import Link from 'next/link'
-import { useMemo, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
 import {
   HiOutlineHome,
   HiOutlineBuildingOffice2,
   HiOutlineUserCircle,
-  HiOutlineShieldCheck,
   HiOutlineChatBubbleLeftRight,
   HiOutlineBuildingLibrary,
   HiOutlineCalendarDays,
   HiOutlineShoppingBag,
   HiOutlineWallet,
   HiOutlineBriefcase,
+  HiOutlineUserGroup,
+  HiOutlineNewspaper,
+  HiOutlineMicrophone,
+  HiOutlineMusicalNote,
+  HiOutlineVideoCamera,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
-import { isEmailSuperAdmin } from '../_lib/admin'
 import VerifiedAvatar from './VerifiedAvatar'
+import { formatDisplayName } from '../_lib/text'
 
 type SidebarProps = {
   me?: {
@@ -44,6 +47,13 @@ export type SidebarNavItem = {
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
+  { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUserGroup },
+  {
+    key: 'communities',
+    label: 'Communities',
+    href: '/communities',
+    icon: HiOutlineBuildingOffice2,
+  },
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleLeftRight },
   {
     key: 'organizations',
@@ -55,22 +65,18 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineBriefcase },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: HiOutlineWallet },
-  {
-    key: 'communities',
-    label: 'Communities',
-    href: '/communities',
-    icon: HiOutlineBuildingOffice2,
-  },
-  { key: 'account', label: 'Account Settings', href: '/profile', icon: HiOutlineUserCircle },
+  { key: 'news', label: 'News', href: '/news', icon: HiOutlineNewspaper },
+  { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: HiOutlineMicrophone },
+  { key: 'music', label: 'Music', href: '/music', icon: HiOutlineMusicalNote },
+  { key: 'video', label: 'Video', href: '/video', icon: HiOutlineVideoCamera },
+  { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
 ]
 
-export const ADMIN_NAV: SidebarNavItem[] = [
-  { key: 'admin', label: 'Admin', href: '/admin', icon: HiOutlineShieldCheck },
-]
+const MIN_NAV_SCALE = 0.72
 
 function navItemClasses(active: boolean) {
   return clsx(
-    'group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
+    'group flex items-center gap-2 rounded-[var(--nav-radius)] px-[var(--nav-pad-x)] py-[var(--nav-pad-y)] text-[clamp(12px,0.95vw,13.5px)] font-semibold leading-tight transition-colors',
     active
       ? 'bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20'
       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
@@ -78,6 +84,10 @@ function navItemClasses(active: boolean) {
 }
 
 export default function Sidebar({ me, active }: SidebarProps) {
+  const sidebarRef = useRef<HTMLElement | null>(null)
+  const navRef = useRef<HTMLElement | null>(null)
+  const profileRef = useRef<HTMLAnchorElement | null>(null)
+  const [navScale, setNavScale] = useState(1)
   const pathname = usePathname()
   const normalizedActive =
     active === 'profile' || active === 'settings'
@@ -85,19 +95,35 @@ export default function Sidebar({ me, active }: SidebarProps) {
       : active === 'community' || active === 'chambers'
         ? 'communities'
         : active
-  const displayName = me?.name?.trim() || 'Civil Citizen'
+  const displayName = formatDisplayName(me?.name ?? null) || 'Civil Citizen'
+  const avatarInitials = displayName || me?.handle || 'C'
   const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
-  const profileHref = me?.handle ? `/u/${me.handle}` : '/profile'
+  const profileHref = me?.handle ? `/u/${me.handle}` : '/profile/edit'
   const verified = Boolean(me?.isVerified)
   const business = Boolean(me?.isPremium)
-  const isSuperAdmin = isEmailSuperAdmin(me?.email)
+  const scaled = (value: number, minFactor = 0.72) => {
+    // scaled(px) = max(base * navScale, base * minFactor)
+    const scaledValue = value * navScale
+    const minValue = value * minFactor
+    return `${Math.max(scaledValue, minValue)}px`
+  }
+  const spacingVars = {
+    '--sidebar-pad': '10px',
+    '--sidebar-gap': scaled(6, 0.7),
+    '--sidebar-top-gap': '14px',
+    '--profile-card-gap': '10px',
+    '--nav-pad-x': scaled(11, 0.7),
+    '--nav-pad-y': scaled(7, 0.7),
+    '--nav-icon-pad': scaled(8, 0.7),
+    '--nav-icon-size': scaled(20, 0.7),
+    '--nav-radius': scaled(12, 0.7),
+  } as CSSProperties
   const sidebarBleedStyle: CSSProperties = {
-    marginLeft: 'calc((100vw - min(100vw, 96rem)) / -2 + var(--sidebar-offset, 0px))',
+    marginLeft: 0,
   }
   const derivedActiveKey = useMemo(() => {
     if (normalizedActive) return normalizedActive
-    const allNav = [...PRIMARY_NAV, ...ADMIN_NAV]
-    return allNav.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
+    return PRIMARY_NAV.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
   }, [normalizedActive, pathname])
 
   const navContent = (items: SidebarNavItem[]) =>
@@ -108,7 +134,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
         <Link key={item.key} href={item.href} className={navItemClasses(activeMatch)} aria-current={activeMatch ? 'page' : undefined}>
           <span
             className={clsx(
-              'rounded-lg p-2 text-base transition-colors',
+              'rounded-lg p-[var(--nav-icon-pad)] text-[var(--nav-icon-size)] transition-colors',
               activeMatch
                 ? 'bg-white/25 text-white'
                 : 'text-slate-400 group-hover:bg-[var(--cc-primary)]/10 group-hover:text-[var(--cc-primary)]',
@@ -117,7 +143,9 @@ export default function Sidebar({ me, active }: SidebarProps) {
             <Icon />
           </span>
           <div className="flex-1">
-            <span className="block">{item.label}</span>
+            <span className="block leading-tight" style={{ fontSize: scaled(13, 0.78) }}>
+              {item.label}
+            </span>
           </div>
           {item.badge ? (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{item.badge}</span>
@@ -126,20 +154,47 @@ export default function Sidebar({ me, active }: SidebarProps) {
       )
     })
 
+  useEffect(() => {
+    const measure = () => {
+      const sidebar = sidebarRef.current
+      const nav = navRef.current
+      if (!sidebar || !nav) return
+      const sidebarRect = sidebar.getBoundingClientRect()
+      const navRect = nav.getBoundingClientRect()
+      const styles = getComputedStyle(sidebar)
+      const padBottom = parseFloat(styles.paddingBottom) || 0
+      const available = sidebar.clientHeight - (navRect.top - sidebarRect.top) - padBottom
+      const needed = nav.scrollHeight
+      if (needed === 0 || available <= 0) return
+      const rawScale = available / needed
+      const nextScale = Math.min(1, Math.max(MIN_NAV_SCALE, rawScale))
+      sidebar.dataset.navScaleEquation = `scale = clamp(${available.toFixed(0)} / ${needed.toFixed(0)}, ${MIN_NAV_SCALE.toFixed(2)}, 1)`
+      sidebar.dataset.navScale = nextScale.toFixed(3)
+      sidebar.dataset.navRawScale = rawScale.toFixed(3)
+      if (Math.abs(nextScale - navScale) > 0.02) setNavScale(nextScale)
+    }
+
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [navScale])
+
   return (
     <aside
-      className="hidden lg:flex lg:h-screen lg:w-72 lg:flex-col lg:border-r lg:border-slate-200 lg:bg-white lg:px-6 lg:pt-4 lg:pb-8 lg:sticky lg:top-0 lg:[--sidebar-offset:-2rem] xl:w-80 xl:[--sidebar-offset:-3rem]"
-      style={sidebarBleedStyle}
+      className="hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pt-[clamp(60px,8vh,80px)] lg:pb-[calc(var(--sidebar-pad)*1.02)] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]"
+      style={{ ...spacingVars, ...sidebarBleedStyle }}
+      ref={sidebarRef}
     >
       <Link
         href={profileHref}
-        className="mt-6 flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 transition hover:border-slate-200"
+        className="mt-[var(--profile-card-gap)] flex items-center gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 px-[clamp(8px,0.8vw,10px)] py-[clamp(6px,0.8vh,8px)] transition hover:border-slate-200"
+        ref={profileRef}
       >
         <VerifiedAvatar
           src={me?.avatarUrl ?? null}
           alt={displayName}
-          initials={me?.name ?? me?.handle ?? 'C'}
-          size={48}
+          initials={avatarInitials}
+          size={36}
           isVerified={verified}
           isBusiness={business}
         />
@@ -149,16 +204,9 @@ export default function Sidebar({ me, active }: SidebarProps) {
         </div>
       </Link>
 
-      <nav className="mt-4 flex flex-1 flex-col gap-1">{navContent(PRIMARY_NAV)}</nav>
-
-      <div className="mt-auto w-full">
-        {isSuperAdmin ? (
-          <div className="border-t border-slate-200 pt-6">
-            <p className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Admin</p>
-            <nav className="mt-2 flex flex-col gap-1">{navContent(ADMIN_NAV)}</nav>
-          </div>
-        ) : null}
-      </div>
+      <nav className="mt-[var(--sidebar-top-gap)] flex flex-1 flex-col gap-[var(--sidebar-gap)] pb-2" ref={navRef}>
+        {navContent(PRIMARY_NAV)}
+      </nav>
     </aside>
   )
 }

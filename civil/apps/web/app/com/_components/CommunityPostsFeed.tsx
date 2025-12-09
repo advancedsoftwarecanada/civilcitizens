@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { type ReactionType } from '@civil/shared'
 import PostComposer, { type ApiPost } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
 import { buildApiUrl } from '../../_lib/api'
@@ -26,26 +27,24 @@ export default function CommunityPostsFeed() {
   const [viewerIsVerified, setViewerIsVerified] = useState(false)
   const [viewerId, setViewerId] = useState<string | null>(null)
 
-  const queryDescriptor = useMemo(() => {
-    const base = new URLSearchParams()
-    base.set('province', community.provinceCode)
-    if (community.chamberSlug) {
-      base.set('chamber', community.chamberSlug)
-    } else {
-      base.set('municipality', community.municipalitySlug)
-    }
-    return base
-  }, [community.chamberSlug, community.municipalitySlug, community.provinceCode])
-
   const loadPosts = useCallback(async () => {
     setLoading(true)
     setError(null)
 
     try {
-      const params = new URLSearchParams(queryDescriptor)
+      if (!community.communitySlug) {
+        setError('Community not available yet.')
+        setPosts([])
+        return
+      }
+      const params = new URLSearchParams()
       params.set('sort', sortMode)
       const query = params.toString()
-      const target = buildApiUrl(`/posts${query ? `?${query}` : ''}`)
+      const target = buildApiUrl(
+        `/communities/${encodeURIComponent(community.provinceCode)}/${encodeURIComponent(community.communitySlug)}/posts${
+          query ? `?${query}` : ''
+        }`,
+      )
       const res = await fetch(target, { cache: 'no-store' })
       if (!res.ok) {
         setError(res.status === 404 ? 'Community not found.' : 'Unable to load posts right now.')
@@ -62,7 +61,7 @@ export default function CommunityPostsFeed() {
     } finally {
       setLoading(false)
     }
-  }, [queryDescriptor, sortMode])
+  }, [community.communitySlug, community.provinceCode, sortMode])
 
   useEffect(() => {
     loadPosts().catch(() => {
@@ -87,14 +86,14 @@ export default function CommunityPostsFeed() {
   }, [])
 
   const communityTarget = useMemo(() => {
-    if (!community.chamberSlug) return null
+    if (!community.communitySlug) return null
     return {
       provinceCode: community.provinceCode,
-      chamberSlug: community.chamberSlug,
-      chamberName: community.chamberName ?? community.regionLabel ?? community.municipalityName,
+      communitySlug: community.communitySlug,
+      communityName: community.communityName ?? community.regionLabel ?? community.municipalityName,
       provinceName: community.provinceName,
     }
-  }, [community.chamberName, community.chamberSlug, community.municipalityName, community.provinceCode, community.provinceName, community.regionLabel])
+  }, [community.communityName, community.communitySlug, community.municipalityName, community.provinceCode, community.provinceName, community.regionLabel])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
@@ -106,23 +105,23 @@ export default function CommunityPostsFeed() {
     [],
   )
 
-  const handleVote = useCallback(async (postId: string, value: -1 | 0 | 1) => {
+  const handleReact = useCallback(async (postId: string, reaction: ReactionType | null) => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
       return
     }
     try {
-      const res = await fetch(buildApiUrl('/posts/vote'), {
+      const res = await fetch(buildApiUrl('/posts/react'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ postId, value }),
+        body: JSON.stringify({ postId, reaction }),
       })
       if (!res.ok) {
-        console.error('Vote request failed', await res.text())
+        console.error('Reaction request failed', await res.text())
         return
       }
       const data = await res.json().catch(() => null)
@@ -131,7 +130,7 @@ export default function CommunityPostsFeed() {
         setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
       }
     } catch (err) {
-      console.error('Unable to vote on community post', err)
+      console.error('Unable to react to community post', err)
     }
   }, [])
 
@@ -184,8 +183,7 @@ export default function CommunityPostsFeed() {
             <PostFeedItem
               key={post.id}
               post={post}
-              onVote={handleVote}
-              viewerId={viewerId}
+              onReact={handleReact}
               viewerIsVerified={viewerIsVerified}
             />
           ))

@@ -1,3 +1,4 @@
+import { formatDisplayName } from '../../_lib/text'
 export type NotificationActor = {
   id: string
   handle: string
@@ -48,20 +49,25 @@ export function getFriendshipId(notification: NotificationItem) {
   return typeof raw === 'string' ? raw : null
 }
 
+export function getFriendRequestStatus(notification: NotificationItem) {
+  const raw = notification.payload?.status
+  if (raw === 'accepted' || raw === 'rejected') return raw
+  return 'pending'
+}
+
 export function getActorDisplayName(notification: NotificationItem) {
-  if (notification.actor?.name?.trim()) return notification.actor.name
-  if (notification.actor?.handle) return `@${notification.actor.handle}`
-  return 'Someone'
+  if (notification.actor?.name?.trim()) return formatDisplayName(notification.actor.name)
+  if (notification.actor?.handle) return notification.actor.handle
+  return 'Civil citizen'
 }
 
 export function getNotificationMessage(notification: NotificationItem) {
-  const actorName = getActorDisplayName(notification)
   switch (notification.type) {
     case 'friend_request':
-      return `${actorName} sent you a friend request`
+      return 'sent you a friend request'
     case 'friend_accept':
-      return `${actorName} accepted your friend request`
+      return 'accepted your friend request'
     default:
-      return 'New activity update'
+      return 'shared an update'
   }
 }

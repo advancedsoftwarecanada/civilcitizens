@@ -1,6 +1,7 @@
 "use client"
 
 import Image from 'next/image'
+import Link from 'next/link'
 import clsx from 'clsx'
 
 export type VerifiedAvatarProps = {
@@ -13,6 +14,7 @@ export type VerifiedAvatarProps = {
   className?: string
   badgeSize?: number
   hideBadge?: boolean
+  href?: string
 }
 
 function deriveInitials(source?: string | null) {
@@ -35,6 +37,7 @@ export default function VerifiedAvatar({
   className,
   badgeSize,
   hideBadge = false,
+  href,
 }: VerifiedAvatarProps) {
   const dimension = Math.max(24, Math.round(size))
   const fallback = deriveInitials(initials ?? alt)
@@ -43,15 +46,20 @@ export default function VerifiedAvatar({
   const badgeVariant = isVerified ? 'verified' : isBusiness ? 'business' : null
   const ringClass =
     badgeVariant === 'business'
-      ? 'ring-2 ring-amber-500 ring-offset-2 ring-offset-white'
+      ? 'ring-1 ring-amber-500 ring-offset-1 ring-offset-white'
       : badgeVariant === 'verified'
-        ? 'ring-2 ring-[var(--cc-primary)] ring-offset-2 ring-offset-white'
+        ? 'ring-1 ring-[var(--cc-primary)] ring-offset-1 ring-offset-white'
         : ''
   const badgeImage = badgeVariant === 'business' ? '/business.png' : '/verified.png'
   const badgeAlt = badgeVariant === 'business' ? 'Business badge' : badgeVariant === 'verified' ? 'Verified badge' : undefined
 
-  return (
-    <div className={clsx('relative inline-flex items-center justify-center', className)} style={{ width: dimension, height: dimension }}>
+  const wrapperProps = {
+    className: clsx('relative inline-flex items-center justify-center', className),
+    style: { width: dimension, height: dimension },
+  }
+
+  const avatarCore = (
+    <>
       <div
         className={clsx(
           'relative inline-flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-200 text-slate-600',
@@ -67,10 +75,24 @@ export default function VerifiedAvatar({
         )}
       </div>
       {badgeVariant && !hideBadge ? (
-        <span className="pointer-events-none absolute -top-1.5 -right-1 z-10 drop-shadow-lg">
+        <span className="pointer-events-none absolute -bottom-1.5 -right-1 z-10 drop-shadow-lg">
           <Image src={badgeImage} alt={badgeAlt ?? 'Status badge'} width={pinSize} height={pinSize} className="block" priority={false} />
         </span>
       ) : null}
+    </>
+  )
+
+  if (href) {
+    return (
+      <Link href={href} aria-label={alt} {...wrapperProps}>
+        {avatarCore}
+      </Link>
+    )
+  }
+
+  return (
+    <div {...wrapperProps}>
+      {avatarCore}
     </div>
   )
 }

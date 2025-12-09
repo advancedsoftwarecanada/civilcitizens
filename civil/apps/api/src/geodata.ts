@@ -6,11 +6,11 @@ type Polygon = { type: 'Polygon'; coordinates: any[] }
 type MultiPolygon = { type: 'MultiPolygon'; coordinates: any[] }
 type Feature<G = any, P = GeoJsonProperties> = { type: 'Feature'; geometry: G | null; properties: P }
 type FeatureCollection = { type: 'FeatureCollection'; features: Array<Feature<Polygon | MultiPolygon, any>> }
-import { findChamber, findChamberByCode, findChambersBySlug, normalizeProvinceCode, slugifyChamberName } from '@civil/shared'
+import { findCommunity, findCommunityByCode, findCommunitiesBySlug, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 // Use local structural types to avoid cross-package type resolution issues in Docker builds
 type ProvinceCodeLocal =
   | 'nl' | 'pe' | 'ns' | 'nb' | 'qc' | 'on' | 'mb' | 'sk' | 'ab' | 'bc' | 'yt' | 'nt' | 'nu'
-type ChamberRecordLocal = { code: number; name: string; slug: string; province: ProvinceCodeLocal }
+type CommunityRecordLocal = { code: number; name: string; slug: string; province: ProvinceCodeLocal }
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const unzipper = require('unzipper') as typeof import('unzipper')
@@ -75,7 +75,7 @@ const PROVINCE_BY_PRUID: Record<string, ProvinceCodeLocal> = {
 }
 
 type ProcessedFeature = {
-  chamber: ChamberRecordLocal
+  community: CommunityRecordLocal
   slug: string
   geometry: Polygon | MultiPolygon
   feature: Feature<Polygon | MultiPolygon, GeoJsonProperties>
@@ -205,25 +205,25 @@ function provinceFromProperties(props: GeoJsonProperties | null | undefined): Pr
   return null
 }
 
-function resolveChamberForFeature(feature: Feature, slug: string): ChamberRecordLocal | null {
+function resolveCommunityForFeature(feature: Feature, slug: string): CommunityRecordLocal | null {
   const props = feature.properties ?? null
   const code = props ? parseNumeric(props.ED_UID ?? props.FEDUID ?? props.ED_CODE ?? props.FED_ID ?? props.EDNUMBER) : null
   if (code !== null) {
-    const match = findChamberByCode(code)
+    const match = findCommunityByCode(code)
     if (match) return match
   }
 
   const provinceFromFeature = provinceFromProperties(props)
-  const normalizedSlug = slugifyChamberName(slug)
+  const normalizedSlug = slugifyCommunityName(slug)
   if (provinceFromFeature) {
-    const candidate = findChamber(provinceFromFeature, normalizedSlug)
+    const candidate = findCommunity(provinceFromFeature, normalizedSlug)
     if (candidate) return candidate
   }
 
-  const all = findChambersBySlug(normalizedSlug)
+  const all = findCommunitiesBySlug(normalizedSlug)
   if (all.length === 1) return all[0] ?? null
   if (all.length > 1 && provinceFromFeature) {
-    return all.find((entry: ChamberRecordLocal) => entry.province === provinceFromFeature) ?? null
+    return all.find((entry: CommunityRecordLocal) => entry.province === provinceFromFeature) ?? null
   }
   return all.length > 0 ? all[0]! : null
 }
@@ -243,10 +243,10 @@ async function buildGeoCache(): Promise<GeoCache> {
 
     const nameCandidate = normalizeName(feature.properties?.ED_NAMEE ?? feature.properties?.FEDENAME ?? feature.properties?.FEDENAMEE ?? feature.properties?.FEDENAMEF ?? feature.properties?.EDNAMEE)
     if (!nameCandidate) continue
-    const slug = slugifyChamberName(nameCandidate)
+    const slug = slugifyCommunityName(nameCandidate)
 
-    const chamber = resolveChamberForFeature(feature, slug)
-    if (!chamber) {
+    const community = resolveCommunityForFeature(feature, slug)
+    if (!community) {
       continue
     }
 
@@ -277,7 +277,7 @@ async function buildGeoCache(): Promise<GeoCache> {
   const [centroidLng, centroidLat] = centroidGeometry.coordinates as [number, number]
 
     features.push({
-      chamber,
+      community,
       slug,
       geometry,
       feature: turfFeature,
@@ -327,8 +327,8 @@ type LocateOptions = {
 
 type GeoMatch = {
   province: ProvinceCodeLocal
-  chamberSlug: string
-  chamberName: string
+  communitySlug: string
+  communityName: string
   method: 'geofenced' | 'nearest'
   confidence: 'high' | 'medium' | 'low'
   distanceKm?: number
@@ -336,16 +336,16 @@ type GeoMatch = {
 
 function buildMatch(feature: ProcessedFeature, method: 'geofenced' | 'nearest', distanceKm: number | undefined): GeoMatch {
   return {
-    province: feature.chamber.province,
-    chamberSlug: feature.chamber.slug,
-    chamberName: feature.chamber.name,
+    province: feature.community.province,
+    communitySlug: feature.community.slug,
+    communityName: feature.community.name,
     method,
     confidence: confidenceFromDistance(distanceKm ?? 0, method),
     distanceKm: distanceKm !== undefined ? Number(distanceKm.toFixed(1)) : undefined,
   }
 }
 
-export async function locateChamberFromPoint(lat: number, lng: number, options: LocateOptions = {}) {
+export async function locateCommunityFromPoint(lat: number, lng: number, options: LocateOptions = {}) {
   const { features, fetchedAt, sourceUrl, cached } = await ensureGeoCache()
   const limit = Math.max(1, Math.min(options.limit ?? 8, 25))
   const targetPoint = point([lng, lat])
@@ -427,14 +427,14 @@ export async function locateChamberFromPoint(lat: number, lng: number, options: 
   }
 }
 
-export type ChamberCentroid = { lat: number; lng: number }
+export type CommunityCentroid = { lat: number; lng: number }
 
-export async function getChamberCentroid(provinceInput: string, slugInput: string): Promise<ChamberCentroid | null> {
+export async function getCommunityCentroid(provinceInput: string, slugInput: string): Promise<CommunityCentroid | null> {
   const province = normalizeProvinceCode(provinceInput)
   if (!province) return null
-  const slug = slugifyChamberName(slugInput)
+  const slug = slugifyCommunityName(slugInput)
   const { features } = await ensureGeoCache()
-  const match = features.find((entry) => entry.chamber.province === province && entry.chamber.slug === slug)
+  const match = features.find((entry) => entry.community.province === province && entry.community.slug === slug)
   if (!match) return null
   return { ...match.centroid }
 }

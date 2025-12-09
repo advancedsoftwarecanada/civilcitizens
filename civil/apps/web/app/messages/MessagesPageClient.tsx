@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import Sidebar from '../_components/Sidebar'
-import { RightRail } from '../_components/RightRail'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
@@ -84,6 +83,10 @@ type RealtimePayload = {
   data?: Record<string, unknown>
 }
 
+type MessagesPageClientProps = {
+  initialThreadId?: string
+}
+
 function normalizeHeaders(input?: HeadersInit): Record<string, string> {
   if (!input) return {}
   if (input instanceof Headers) {
@@ -129,18 +132,19 @@ const threadHasUnread = (thread: ThreadSummary) => {
   return new Date(thread.lastMessage.createdAt).getTime() > new Date(viewer.lastReadAt).getTime()
 }
 
-export default function MessagesPageClient() {
+export default function MessagesPageClient({ initialThreadId }: MessagesPageClientProps) {
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
-  const selectedThreadRef = useRef<string | null>(null)
+  const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
+  const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
   const [authReady, setAuthReady] = useState(false)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadCursor, setThreadCursor] = useState<string | null>(null)
   const [threadsLoading, setThreadsLoading] = useState(false)
   const [threadsError, setThreadsError] = useState<string | null>(null)
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(initialThreadId ?? null)
   const [messagesByThread, setMessagesByThread] = useState<Record<string, MessagePayload[]>>({})
   const [messageCursors, setMessageCursors] = useState<Record<string, string | null>>({})
   const [loadingThreadId, setLoadingThreadId] = useState<string | null>(null)
@@ -325,11 +329,12 @@ export default function MessagesPageClient() {
           base.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime())
           return base
         })
-        if (!selectedThreadRef.current && payload.items.length > 0) {
-          const firstThread = payload.items[0]
-          if (firstThread) {
-            setSelectedThreadId(firstThread.id)
+        if (!selectedThreadRef.current) {
+          const nextSelection = initialThreadIdRef.current ?? payload.items[0]?.id ?? null
+          if (nextSelection) {
+            setSelectedThreadId(nextSelection)
           }
+          initialThreadIdRef.current = null
         }
       } catch (err) {
         console.error('Failed to load threads', err)
@@ -402,6 +407,13 @@ export default function MessagesPageClient() {
     },
     [authedFetch, messageCursors],
   )
+
+  useEffect(() => {
+    if (!selectedThreadId) return
+    if (messagesByThread[selectedThreadId]) return
+    if (loadingThreadId === selectedThreadId) return
+    void fetchThreadDetail(selectedThreadId)
+  }, [selectedThreadId, messagesByThread, loadingThreadId, fetchThreadDetail])
 
   const sendMessage = useCallback(
     async (threadId: string) => {
@@ -652,7 +664,7 @@ export default function MessagesPageClient() {
   ) : null
 
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="messages" />} rightRail={<RightRail />} mainClassName="space-y-6">
+    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="messages" />} mainClassName="space-y-6">
       <section className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr]">
         <div className="flex flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">

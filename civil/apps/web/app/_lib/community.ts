@@ -9,8 +9,8 @@ export type CommunitySummary = {
   municipalityName: string
   population?: number | null
   regionLabel?: string | null
-  chamberSlug?: string | null
-  chamberName?: string | null
+  communitySlug?: string | null
+  communityName?: string | null
   censusSubdivision?: {
     slug: string
     name: string
@@ -35,8 +35,8 @@ const buildFallbackSummary = (provinceCode: ProvinceCode, municipalitySlug: stri
     municipalityName,
     population: null,
     regionLabel: null,
-    chamberSlug: null,
-    chamberName: null,
+    communitySlug: null,
+    communityName: null,
     censusSubdivision: null,
     source: null,
     dataSource: 'fallback',
@@ -66,8 +66,8 @@ export async function fetchCommunitySummary(provinceParam: string, municipalityP
         municipalityName: payload.municipalityName || titleCase(municipalitySlug),
         population: payload.population ?? null,
         regionLabel: payload.regionLabel ?? null,
-        chamberSlug: payload.chamberSlug ?? null,
-        chamberName: payload.chamberName ?? null,
+        communitySlug: payload.communitySlug ?? null,
+        communityName: payload.communityName ?? null,
         censusSubdivision: payload.censusSubdivision ?? null,
         source: payload.source ?? null,
         dataSource: 'api',

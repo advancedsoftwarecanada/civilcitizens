@@ -1,13 +1,23 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
-import type { Jurisdiction } from '@civil/shared'
+import type { Jurisdiction, ReactionType } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
+import { pushToast } from './useToasts'
 
-export type PostType = 'post' | 'article'
+export type PostType = 'post' | 'article' | 'photo'
+
+const POST_TYPE_CHOICES: Array<{ type: PostType | 'poll' | 'link' | 'video'; label: string; icon: string; comingSoon?: boolean }> = [
+  { type: 'post', label: 'Post', icon: '📝' },
+  { type: 'article', label: 'Article', icon: '📄' },
+  { type: 'poll', label: 'Poll', icon: '📊', comingSoon: true },
+  { type: 'link', label: 'Link', icon: '🔗', comingSoon: true },
+  { type: 'video', label: 'Video', icon: '🎥', comingSoon: true },
+  { type: 'photo', label: 'Photos', icon: '📷' },
+]
 
 export type ApiPost = {
   id: string
@@ -21,8 +31,8 @@ export type ApiPost = {
   jurisdiction: Jurisdiction
   provinceCode?: string | null
   provinceName?: string | null
-  chamberSlug?: string | null
-  chamberName?: string | null
+  communitySlug?: string | null
+  communityName?: string | null
   author: {
     id: string
     handle: string
@@ -32,24 +42,34 @@ export type ApiPost = {
     isVerified?: boolean
   }
   counts?: {
-    upvotes: number
-    downvotes: number
-    score: number
     commentCount: number
+    reactions?: number
+    recentPositive?: number
+  }
+  reactions?: {
+    maple: number
+    heart: number
+    haha: number
+    wow: number
+    sad: number
+    fire: number
+    total: number
+    positive: number
   }
   metrics?: {
     hotScore: number
   }
   viewer?: {
-    vote: number | null
+    reaction: ReactionType | null
   }
 }
 
-type CommunityTarget = {
+export type CommunityTarget = {
   provinceCode: string
-  chamberSlug: string
-  chamberName?: string | null
+  communitySlug: string
+  communityName?: string | null
   provinceName?: string | null
+  isHome?: boolean
 }
 
 type PostComposerProps = {
@@ -62,13 +82,51 @@ type PostComposerProps = {
   className?: string
   defaultPostType?: PostType
   communityTarget?: CommunityTarget | null
+  communityOptions?: CommunityTarget[]
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
+  defaultAudience?: 'friends' | 'community'
 }
 
 const MAX_POST_LENGTH = 5000
 const MIN_ARTICLE_TITLE_LENGTH = 3
 const MIN_ARTICLE_BODY_LENGTH = 100
+const PHOTO_MAX_BYTES = 25 * 1024 * 1024
+const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
+const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
+
+const FRIENDS_VALUE = 'friends'
+const COMMUNITY_PREFIX = 'community:'
+const COMMUNITY_PROMPT_VALUE = `${COMMUNITY_PREFIX}__prompt`
+
+const buildCommunityKey = (target: CommunityTarget) => `${target.provinceCode}:${target.communitySlug}`
+const buildCommunityValue = (target: CommunityTarget) => `${COMMUNITY_PREFIX}${buildCommunityKey(target)}`
+
+const formatCommunityLabel = (target: CommunityTarget) => {
+  const name = target.communityName ?? target.communitySlug
+  const location = target.provinceCode?.toUpperCase() ?? target.provinceName ?? ''
+  const suffix = target.isHome ? ' (Home)' : ''
+  const locationLabel = location ? ` - ${location}` : ''
+  return `${name}${locationLabel}${suffix}`
+}
+
+const deriveInitialAudienceSelection = (
+  currentTarget: CommunityTarget | null,
+  defaultAudience: 'friends' | 'community',
+  options: CommunityTarget[],
+) => {
+  if (currentTarget) return buildCommunityValue(currentTarget)
+  if (defaultAudience === 'community') {
+    if (options.length === 1) {
+      const firstOption = options[0]
+      if (firstOption) {
+        return buildCommunityValue(firstOption)
+      }
+    }
+    return COMMUNITY_PROMPT_VALUE
+  }
+  return FRIENDS_VALUE
+}
 
 export const JURISDICTION_LABELS: Record<Jurisdiction, string> = {
   self: 'Self',
@@ -81,26 +139,248 @@ function stripHtml(html: string) {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
 }
 
+const pickPhotoVariantUrl = (variants?: Record<string, { url?: string | null } | null>) => {
+  if (!variants) return null
+  const preference = ['post-xl', 'post-lg', 'post-md', 'cover-xl', 'cover-lg', 'cover-md', 'avatar@2x', 'avatar@1x']
+  for (const key of preference) {
+    const candidate = variants[key]?.url
+    if (candidate) return candidate
+  }
+  const fallback = Object.values(variants).find((variant) => variant?.url)
+  return fallback?.url ?? null
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const MAX_IMAGE_DIMENSION = 8000
+const MAX_IMAGE_MEGA_PIXELS = 40
+
+const readImageDimensions = async (file: File): Promise<{ width: number; height: number } | null> => {
+  try {
+    const objectUrl = URL.createObjectURL(file)
+    return await new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
+        URL.revokeObjectURL(objectUrl)
+      }
+      img.onerror = () => {
+        resolve(null)
+        URL.revokeObjectURL(objectUrl)
+      }
+      img.src = objectUrl
+    })
+  } catch {
+    return null
+  }
+}
+
 export default function PostComposer({
   className,
   defaultPostType = 'post',
   communityTarget = null,
+  communityOptions = [],
   onPostCreated,
   variant = 'card',
+  defaultAudience = 'friends',
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [postType, setPostType] = useState<PostType>(defaultPostType)
   const [draft, setDraft] = useState('')
   const [articleTitle, setArticleTitle] = useState('')
   const [articleBody, setArticleBody] = useState('<p></p>')
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null)
+  const [photoAssetId, setPhotoAssetId] = useState<string | null>(null)
+  const [photoMediaUrl, setPhotoMediaUrl] = useState<string | null>(null)
+  const [photoStatus, setPhotoStatus] = useState<'idle' | 'uploading' | 'processing' | 'ready' | 'error'>('idle')
+  const [photoError, setPhotoError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const baseJurisdiction: Jurisdiction = communityTarget ? 'municipal' : 'self'
-  const [selectedJurisdiction, setSelectedJurisdiction] = useState<Jurisdiction>(baseJurisdiction)
+  const normalizedCommunityOptions = useMemo(() => {
+    return communityOptions.map((option) => ({
+      ...option,
+      communityName: option.communityName ?? option.communitySlug,
+      provinceName: option.provinceName ?? option.provinceCode?.toUpperCase(),
+    }))
+  }, [communityOptions])
+
+  const [audienceSelection, setAudienceSelection] = useState(() =>
+    deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions),
+  )
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
 
+  const audienceLocked = Boolean(communityTarget)
+  const isPromptSelected = audienceSelection === COMMUNITY_PROMPT_VALUE
+  const audienceBlocked = !communityTarget && isPromptSelected
+  const activeCommunity = useMemo(() => {
+    if (communityTarget) return communityTarget
+    if (!audienceSelection.startsWith(COMMUNITY_PREFIX) || isPromptSelected) return null
+    const key = audienceSelection.slice(COMMUNITY_PREFIX.length)
+    return normalizedCommunityOptions.find((option) => buildCommunityKey(option) === key) ?? null
+  }, [audienceSelection, communityTarget, isPromptSelected, normalizedCommunityOptions])
+
+  useEffect(() => {
+    if (communityTarget) {
+      setAudienceSelection(buildCommunityValue(communityTarget))
+      return
+    }
+    setAudienceSelection((prev) => {
+      if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience !== 'community') {
+        return FRIENDS_VALUE
+      }
+      if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience === 'community' && normalizedCommunityOptions.length === 1) {
+        const firstOption = normalizedCommunityOptions[0]
+        if (firstOption) {
+          return buildCommunityValue(firstOption)
+        }
+      }
+      if (prev.startsWith(COMMUNITY_PREFIX) && prev !== COMMUNITY_PROMPT_VALUE) {
+        const key = prev.slice(COMMUNITY_PREFIX.length)
+        const match = normalizedCommunityOptions.some((option) => buildCommunityKey(option) === key)
+        if (!match) {
+          if (defaultAudience === 'community' && normalizedCommunityOptions.length === 1) {
+            const firstOption = normalizedCommunityOptions[0]
+            if (firstOption) {
+              return buildCommunityValue(firstOption)
+            }
+          }
+          return FRIENDS_VALUE
+        }
+      }
+      return prev
+    })
+  }, [communityTarget, defaultAudience, normalizedCommunityOptions])
+
+  const startPhotoUpload = useCallback(async (file: File) => {
+    setPhotoError(null)
+    setPhotoStatus('uploading')
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      setPhotoStatus('error')
+      setPhotoError('Sign in to upload a photo.')
+      return
+    }
+
+    try {
+      const initRes = await fetch(buildApiUrl('/media/uploads'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          category: 'post_image',
+          mime: file.type || 'application/octet-stream',
+          byteSize: file.size,
+          filename: file.name,
+        }),
+      })
+
+      if (!initRes.ok) {
+        const payload = await initRes.json().catch(() => ({}))
+        const reason = typeof payload?.error === 'string' ? payload.error : 'upload_init_failed'
+        throw new Error(reason)
+      }
+
+      const initPayload = await initRes.json()
+      const assetId: string = initPayload.assetId
+      const upload: { url?: string; method?: string; headers?: Record<string, string> } = initPayload.upload || {}
+      const proxyPath: string | null = typeof initPayload?.proxyPath === 'string' ? initPayload.proxyPath : null
+
+      const tryDirect = async () => {
+        if (!upload.url) return false
+        const res = await fetch(upload.url, {
+          method: upload.method || 'PUT',
+          headers: upload.headers,
+          body: file,
+        })
+        return res.ok
+      }
+
+      const tryProxy = async () => {
+        if (!proxyPath) return false
+        const res = await fetch(buildApiUrl(proxyPath), {
+          method: 'PUT',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': file.type || 'application/octet-stream',
+            'x-upload-byte-size': String(file.size),
+          },
+          body: file,
+        })
+        return res.ok
+      }
+
+      const directOk = upload.url ? await tryDirect().catch(() => false) : false
+      const proxyOk = directOk ? true : await tryProxy().catch(() => false)
+      if (!directOk && !proxyOk) {
+        throw new Error('upload_failed')
+      }
+
+      const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ assetId }),
+      })
+
+      if (!completeRes.ok) {
+        throw new Error('processing_not_scheduled')
+      }
+
+      setPhotoAssetId(assetId)
+      setPhotoStatus('processing')
+
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const res = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        }).catch((err) => {
+          lastError = err
+          return null
+        })
+
+        if (res && res.ok) {
+          const payload = await res.json().catch(() => ({}))
+          const asset = payload?.asset
+          if (asset?.status === 'ready') {
+            const variantUrl = pickPhotoVariantUrl(asset.variants)
+            if (!variantUrl) {
+              throw new Error('variant_missing')
+            }
+            setPhotoMediaUrl(variantUrl)
+            setPhotoStatus('ready')
+            return
+          }
+          if (asset?.status === 'failed') {
+            throw new Error(asset.failureReason ?? 'processing_failed')
+          }
+        }
+        await wait(2000)
+      }
+
+      throw lastError ?? new Error('processing_timeout')
+    } catch (err) {
+      console.error('Photo upload failed', err)
+      setPhotoStatus('error')
+      setPhotoError(err instanceof Error ? err.message : 'Upload failed')
+      setPhotoAssetId(null)
+      setPhotoMediaUrl(null)
+    }
+  }, [])
+
   const canSubmit = useMemo(() => {
+    if (postType === 'photo') {
+      const captionOk = draft.trim().length <= MAX_POST_LENGTH
+      return photoStatus === 'ready' && Boolean(photoMediaUrl) && captionOk && !submitting
+    }
     if (postType === 'post') {
       const trimmed = draft.trim()
       return trimmed.length > 0 && trimmed.length <= MAX_POST_LENGTH
@@ -109,16 +389,24 @@ export default function PostComposer({
     const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
     const bodyOk = articleBodyPlain.length >= MIN_ARTICLE_BODY_LENGTH
     return titleOk && bodyOk
-  }, [articleBodyPlain, articleTitle, draft, postType])
+  }, [articleBodyPlain, articleTitle, draft, photoMediaUrl, photoStatus, postType, submitting])
 
   const resetComposer = useCallback(() => {
     setDraft('')
     setArticleTitle('')
     setArticleBody('<p></p>')
     setPostType(defaultPostType)
-    setSelectedJurisdiction(baseJurisdiction)
+    setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions))
     setError(null)
-  }, [baseJurisdiction, defaultPostType])
+    if (photoPreviewUrl) {
+      URL.revokeObjectURL(photoPreviewUrl)
+    }
+    setPhotoPreviewUrl(null)
+    setPhotoAssetId(null)
+    setPhotoMediaUrl(null)
+    setPhotoStatus('idle')
+    setPhotoError(null)
+  }, [communityTarget, defaultAudience, defaultPostType, normalizedCommunityOptions, photoPreviewUrl])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -128,20 +416,31 @@ export default function PostComposer({
     }
     if (!canSubmit || submitting) return
 
+    if (!communityTarget && audienceSelection.startsWith(COMMUNITY_PREFIX) && !activeCommunity) {
+      setError('Pick a community to publish to the community feed.')
+      return
+    }
+
     setSubmitting(true)
     setError(null)
 
     try {
-      const payload: Record<string, unknown> =
-        postType === 'post'
-          ? { type: 'post', body: draft }
-          : { type: 'article', title: articleTitle.trim(), body: articleBody }
+      const payload: Record<string, unknown> = (() => {
+        if (postType === 'photo') {
+          return { type: 'photo', body: draft.trim(), mediaUrl: photoMediaUrl }
+        }
+        if (postType === 'post') {
+          return { type: 'post', body: draft }
+        }
+        return { type: 'article', title: articleTitle.trim(), body: articleBody }
+      })()
 
-      if (communityTarget) {
-        payload.chamberProvince = communityTarget.provinceCode
-        payload.chamberSlug = communityTarget.chamberSlug
+      const targetCommunity = communityTarget ?? activeCommunity
+      if (targetCommunity) {
+        payload.communityProvince = targetCommunity.provinceCode
+        payload.communitySlug = targetCommunity.communitySlug
       }
-      payload.jurisdiction = selectedJurisdiction
+      payload.jurisdiction = targetCommunity ? 'municipal' : 'self'
 
       const res = await fetch(buildApiUrl('/posts'), {
         method: 'POST',
@@ -181,11 +480,60 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [articleBody, articleTitle, canSubmit, communityTarget, draft, onPostCreated, postType, resetComposer, selectedJurisdiction, submitting])
+  }, [activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, onPostCreated, photoMediaUrl, postType, resetComposer, submitting])
+
+  const handlePhotoFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+
+      if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+        setPhotoError('Please choose an image file (JPG, PNG, WebP, AVIF, HEIC, HEIF).')
+        setPhotoStatus('error')
+        return
+      }
+
+      if (file.size > PHOTO_MAX_BYTES) {
+        setPhotoError('Photo must be 25 MB or smaller.')
+        setPhotoStatus('error')
+        return
+      }
+
+      const dims = await readImageDimensions(file)
+      if (!dims) {
+        setPhotoError('Could not read that image. Please pick a different file.')
+        setPhotoStatus('error')
+        return
+      }
+      const megaPixels = (dims.width * dims.height) / 1_000_000
+      if (dims.width > MAX_IMAGE_DIMENSION || dims.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
+        setPhotoError('Image is too large. Please upload something under 8k resolution (~40MP) or smaller.')
+        setPhotoStatus('error')
+        return
+      }
+
+      if (photoPreviewUrl) {
+        URL.revokeObjectURL(photoPreviewUrl)
+      }
+      const nextPreview = URL.createObjectURL(file)
+      setPhotoPreviewUrl(nextPreview)
+      setPhotoStatus('uploading')
+      setPhotoMediaUrl(null)
+      setPhotoAssetId(null)
+
+      await startPhotoUpload(file)
+    },
+    [photoPreviewUrl, startPhotoUpload],
+  )
 
   useEffect(() => {
-    setSelectedJurisdiction(baseJurisdiction)
-  }, [baseJurisdiction])
+    return () => {
+      if (photoPreviewUrl) {
+        URL.revokeObjectURL(photoPreviewUrl)
+      }
+    }
+  }, [photoPreviewUrl])
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -211,50 +559,77 @@ export default function PostComposer({
     className,
   )
 
+  const handleComingSoon = useCallback((label: string) => {
+    pushToast(`${label} creation is coming soon.`, 'info')
+  }, [])
+
+  const showCommunityWarning = !communityTarget && !normalizedCommunityOptions.length
+
   return (
     <section ref={containerRef} className={containerClasses}>
-      <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Share something new</p>
-          <h2 className="text-lg font-semibold text-slate-900">What&apos;s happening in your community?</h2>
-          <p className="text-sm text-slate-500">Toggle between quick updates and long-form articles whenever inspiration hits.</p>
-          <div className="mt-3 inline-flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
-            <span>Audience</span>
-            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] tracking-wide text-slate-600">
-              {communityTarget ? 'Community Feed' : 'Friends Only'}
-            </span>
-          </div>
-          {communityTarget ? (
-            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
-              <span>Posting to</span>
-              <span className="text-slate-900">{communityTarget.chamberName ?? communityTarget.chamberSlug}</span>
-              <span className="uppercase tracking-wide text-slate-400">{communityTarget.provinceCode}</span>
-            </div>
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
+          <select
+            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
+            value={audienceLocked && activeCommunity ? buildCommunityValue(activeCommunity) : audienceSelection}
+            onChange={(event) => setAudienceSelection(event.target.value)}
+            disabled={audienceLocked}
+          >
+            <option value={FRIENDS_VALUE}>Friends</option>
+            {!communityTarget && isPromptSelected ? (
+              <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
+                Select a community
+              </option>
+            ) : null}
+            {communityTarget ? (
+              <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
+            ) : null}
+            {!communityTarget
+              ? normalizedCommunityOptions.map((option) => (
+                  <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
+                    {formatCommunityLabel(option)}
+                  </option>
+                ))
+              : null}
+          </select>
+          {showCommunityWarning ? (
+            <p className="text-xs text-slate-500">Follow a community to publish in its public feed.</p>
+          ) : null}
+          {isPromptSelected ? (
+            <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
+          ) : null}
+          {activeCommunity && !audienceLocked && !isPromptSelected ? (
+            <p className="text-xs text-slate-500">
+              Posting to {activeCommunity.communityName ?? activeCommunity.communitySlug}
+            </p>
           ) : null}
         </div>
         <div className="inline-flex rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500">
-          <button
-            type="button"
-            className={clsx(
-              'rounded-full px-4 py-1 transition',
-              postType === 'post' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
-            )}
-            onClick={() => setPostType('post')}
-            disabled={submitting}
-          >
-            Post
-          </button>
-          <button
-            type="button"
-            className={clsx(
-              'rounded-full px-4 py-1 transition',
-              postType === 'article' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
-            )}
-            onClick={() => setPostType('article')}
-            disabled={submitting}
-          >
-            Article
-          </button>
+          {POST_TYPE_CHOICES.map((choice) => {
+            const isActive = !choice.comingSoon && postType === choice.type
+            const isComingSoon = Boolean(choice.comingSoon)
+            return (
+              <button
+                key={choice.type}
+                type="button"
+                className={clsx(
+                  'flex items-center gap-2 rounded-full px-4 py-1 transition',
+                  isActive ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  isComingSoon ? 'text-slate-400 hover:text-slate-500' : '',
+                )}
+                onClick={() =>
+                  isComingSoon ? handleComingSoon(choice.label) : setPostType(choice.type as PostType)
+                }
+                disabled={submitting}
+              >
+                <span role="img" aria-label={choice.label}>
+                  {choice.icon}
+                </span>
+                {choice.label}
+              </button>
+            )
+          })}
         </div>
       </header>
 
@@ -272,12 +647,13 @@ export default function PostComposer({
               maxLength={MAX_POST_LENGTH}
               disabled={submitting}
             />
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>Quick thoughts shine here.</span>
-              <span>{draft.trim().length}/{MAX_POST_LENGTH}</span>
+            <div className="flex items-center justify-end text-xs text-slate-500">
+              <span>
+                {draft.trim().length}/{MAX_POST_LENGTH}
+              </span>
             </div>
           </div>
-        ) : (
+        ) : postType === 'article' ? (
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-semibold text-slate-600" htmlFor="article-title">
@@ -309,21 +685,76 @@ export default function PostComposer({
               </div>
             </div>
           </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600">Add a photo and an optional caption.</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={submitting || photoStatus === 'uploading' || photoStatus === 'processing'}
+                >
+                  {photoStatus === 'uploading' ? 'Uploading…' : photoStatus === 'processing' ? 'Processing…' : photoStatus === 'ready' ? 'Replace photo' : 'Upload photo'}
+                </button>
+                {photoError ? <span className="text-sm text-red-600">{photoError}</span> : null}
+              </div>
+              {photoPreviewUrl || photoMediaUrl ? (
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photoMediaUrl ?? photoPreviewUrl ?? ''}
+                    alt="Post upload"
+                    className="max-h-[360px] w-full object-contain"
+                  />
+                </div>
+              ) : null}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_IMAGE_TYPES}
+                className="hidden"
+                onChange={handlePhotoFile}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-600" htmlFor="photo-caption">
+                Caption (optional)
+              </label>
+              <textarea
+                id="photo-caption"
+                className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
+                placeholder="Add a short caption"
+                rows={3}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                maxLength={MAX_POST_LENGTH}
+                disabled={submitting || photoStatus === 'uploading' || photoStatus === 'processing'}
+              />
+              <div className="flex items-center justify-end text-xs text-slate-500">
+                <span>
+                  {draft.trim().length}/{MAX_POST_LENGTH}
+                </span>
+              </div>
+            </div>
+            {photoStatus !== 'ready' && photoStatus !== 'idle' ? (
+              <p className="text-xs text-slate-500">
+                {photoStatus === 'uploading'
+                  ? 'Uploading…'
+                  : photoStatus === 'processing'
+                  ? 'Processing your image…'
+                  : photoError ?? ''}
+              </p>
+            ) : null}
+          </div>
         )}
 
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="rounded-full px-4 py-2 text-sm font-semibold text-slate-500 hover:text-slate-900"
-            onClick={resetComposer}
-            disabled={submitting}
-          >
-            Clear
-          </button>
+        <div className="flex items-center justify-end">
           <button
             className="rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-slate-400"
             onClick={submitPost}
-            disabled={!canSubmit || submitting}
+            disabled={!canSubmit || submitting || audienceBlocked}
           >
             {submitting ? 'Publishing…' : postType === 'article' ? 'Publish article' : 'Post'}
           </button>
