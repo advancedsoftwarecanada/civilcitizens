@@ -5,6 +5,14 @@ export const metadata: Metadata = {
   title: 'Messages',
 }
 
-export default function MessagesPage() {
-  return <MessagesPageClient />
+type MessagesPageProps = {
+  searchParams?: {
+    thread?: string | string[]
+  }
+}
+
+export default function MessagesPage({ searchParams }: MessagesPageProps) {
+  const threadParam = searchParams?.thread
+  const initialThreadId = typeof threadParam === 'string' ? threadParam : undefined
+  return <MessagesPageClient initialThreadId={initialThreadId} />
 }

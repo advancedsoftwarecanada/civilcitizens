@@ -263,6 +263,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
             isVerified={Boolean(comment.author.isVerified)}
             isBusiness={Boolean(comment.author.isPremium)}
             className="shrink-0"
+            href={`/u/${comment.author.handle}`}
           />
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">

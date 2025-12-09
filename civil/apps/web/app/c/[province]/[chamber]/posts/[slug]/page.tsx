@@ -2,6 +2,10 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
+import Image from 'next/image'
+import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
+import type { IconBaseProps, IconType } from 'react-icons'
+import { type ReactionType } from '@civil/shared'
 import Sidebar from '../../../../../_components/Sidebar'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
@@ -10,7 +14,8 @@ import { buildApiUrl } from '../../../../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
-import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
+import DashboardShell from '../../../../../_components/DashboardShell'
+import { useRegisterPageView } from '../../../../../_components/AnalyticsTracker'
 
 type Viewer = {
   id: string
@@ -23,7 +28,7 @@ type Viewer = {
 
 type CanonicalPaths = {
   user: string
-  chamber: string | null
+  community: string | null
   legacy: string
 }
 
@@ -39,6 +44,59 @@ const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
   { value: 'new', label: 'New' },
 ]
+
+type ReactionOption = {
+  type: ReactionType
+  label: string
+  icon: IconType
+  activeIcon?: IconType
+  accentClass: string
+}
+
+const MapleIconNeutral: IconType = ({ className, size = 16 }: IconBaseProps) => (
+  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
+)
+
+const MapleIconActive: IconType = ({ className, size = 16 }: IconBaseProps) => (
+  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
+)
+
+const REACTION_OPTIONS: ReactionOption[] = [
+  { type: 'maple', label: 'Like', icon: MapleIconNeutral, activeIcon: MapleIconActive, accentClass: 'border-red-200 bg-red-50 text-red-700' },
+  { type: 'heart', label: 'Heart', icon: LuHeart, accentClass: 'border-rose-200 bg-rose-50 text-rose-700' },
+  { type: 'haha', label: 'Haha', icon: LuLaugh, accentClass: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
+  { type: 'wow', label: 'Wow', icon: LuSparkles, accentClass: 'border-sky-200 bg-sky-50 text-sky-700' },
+  { type: 'sad', label: 'Support', icon: LuFrown, accentClass: 'border-slate-200 bg-slate-50 text-slate-700' },
+  { type: 'fire', label: 'Fire', icon: LuFlame, accentClass: 'border-orange-200 bg-orange-50 text-orange-700' },
+]
+
+type ReactionButtonProps = {
+  option: ReactionOption
+  count: number
+  active: boolean
+  blocked: boolean
+  disabled: boolean
+  onClick: () => void
+}
+
+function ReactionButton({ option, count, active, blocked, disabled, onClick }: ReactionButtonProps) {
+  const Icon = active && option.activeIcon ? option.activeIcon : option.icon
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2 ${active ? option.accentClass : blocked ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-800 focus:ring-[var(--cc-primary)]'} ${disabled ? 'pointer-events-none opacity-60' : ''}`}
+      onClick={() => {
+        if (disabled || blocked) return
+        onClick()
+      }}
+      aria-label={`${option.label} reaction`}
+      disabled={disabled || blocked}
+    >
+      <Icon className="h-4 w-4" aria-hidden="true" />
+      {count > 0 ? <span>{count}</span> : <span className="text-[11px] font-normal text-slate-500">{option.label}</span>}
+    </button>
+  )
+}
 
 function formatDateTime(iso: string) {
   const date = new Date(iso)
@@ -64,6 +122,9 @@ export default function ChamberPostPage({ params }: PageProps) {
   const [comments, setComments] = useState<ApiComment[]>([])
   const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
   const [appliedCommentSort, setAppliedCommentSort] = useState<'hot' | 'new'>('hot')
+  const [pendingReaction, setPendingReaction] = useState(false)
+
+  const viewerIsVerified = Boolean(viewer?.isVerified || viewer?.isPremium)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -103,13 +164,25 @@ export default function ChamberPostPage({ params }: PageProps) {
     setStatus('loading')
     setComments([])
     try {
-      const res = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}?commentSort=${sortMode}`)
-      if (!res.ok) {
-        setStatus(res.status === 404 ? 'not-found' : 'error')
+      const slugRes = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}?commentSort=${sortMode}`)
+
+      let data: any = null
+      if (slugRes.ok) {
+        data = await slugRes.json()
+      } else if (slugRes.status === 404) {
+        const idRes = await fetch(`/api/posts/${encodeURIComponent(slugParam)}`)
+        if (!idRes.ok) {
+          setStatus(idRes.status === 404 ? 'not-found' : 'error')
+          setComments([])
+          return
+        }
+        data = await idRes.json()
+      } else {
+        setStatus('error')
         setComments([])
         return
       }
-      const data = await res.json()
+
       const retrievedPost = data.post as ApiPost
       const canonical = data.paths as CanonicalPaths
       const commentTree = normalizeCommentTree((data as { comments?: ApiComment[] }).comments ?? [])
@@ -117,11 +190,11 @@ export default function ChamberPostPage({ params }: PageProps) {
       setPaths(canonical)
 
       const provinceMatches = retrievedPost.provinceCode?.toLowerCase() === provinceParam.toLowerCase()
-      const chamberMatches = retrievedPost.chamberSlug?.toLowerCase() === chamberParam.toLowerCase()
+      const communityMatches = retrievedPost.communitySlug?.toLowerCase() === chamberParam.toLowerCase()
 
-      if (!provinceMatches || !chamberMatches) {
-        if (canonical?.chamber) {
-          window.location.replace(canonical.chamber)
+      if (!provinceMatches || !communityMatches) {
+        if (canonical?.community) {
+          window.location.replace(canonical.community)
           return
         }
       }
@@ -138,6 +211,11 @@ export default function ChamberPostPage({ params }: PageProps) {
   }, [chamberParam, provinceParam, slugParam])
 
   const postId = post?.id
+  useRegisterPageView(postId)
+  const reactionCounts =
+    post?.reactions ?? { maple: 0, heart: 0, haha: 0, wow: 0, sad: 0, fire: 0, total: 0, positive: 0 }
+  const currentReaction = (post?.viewer?.reaction ?? null) as ReactionType | null
+  const totalReactions = reactionCounts.total ?? 0
 
   const loadComments = useCallback(
     async (sortMode: 'hot' | 'new') => {
@@ -157,6 +235,47 @@ export default function ChamberPostPage({ params }: PageProps) {
       }
     },
     [postId],
+  )
+
+  const handleReact = useCallback(
+    async (nextReaction: ReactionType | null) => {
+      if (!post?.id) return
+      if (pendingReaction) return
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!viewerIsVerified) {
+        redirectToAuthModal('login')
+        return
+      }
+      setPendingReaction(true)
+      try {
+        const res = await fetch('/api/posts/react', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ postId: post.id, reaction: nextReaction }),
+        })
+        if (!res.ok) {
+          console.error('Reaction request failed', await res.text())
+          return
+        }
+        const data = await res.json().catch(() => null)
+        const updated = (data as { post?: ApiPost })?.post
+        if (updated) {
+          setPost(updated)
+        }
+      } catch (err) {
+        console.error('Unable to react to post', err)
+      } finally {
+        setPendingReaction(false)
+      }
+    },
+    [pendingReaction, post?.id, viewerIsVerified],
   )
 
   useEffect(() => {
@@ -251,163 +370,169 @@ export default function ChamberPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
-  return (
-    <div className="w-full">
-      <div className="border-b bg-white py-4 shadow-sm lg:hidden">
-        <div className="mx-auto max-w-6xl px-4">
-          <Sidebar me={viewer ?? undefined} active="community" />
-        </div>
+  const rightRail = (
+    <div className="space-y-4">
+      <div className="rounded border bg-white p-4 shadow-sm">
+        <div className="text-sm font-semibold text-gray-900">Keep exploring</div>
+        <p className="mt-2 text-sm text-gray-600">
+          Jump back to the community feed or browse neighbouring ridings to see how other citizens are weighing in.
+        </p>
+        <Link
+          href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`}
+          className="mt-3 inline-flex items-center justify-center rounded bg-[var(--cc-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--cc-primary-700)]"
+        >
+          Return to community
+        </Link>
       </div>
-
-    <div className="mx-auto w-full max-w-5xl px-4 pb-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)_220px] lg:gap-0 lg:px-0 xl:max-w-6xl xl:grid-cols-[240px_minmax(0,1fr)_260px] xl:gap-0">
-        <Sidebar me={viewer ?? undefined} active="community" />
-
-  <main className="space-y-5 lg:min-h-[calc(100vh-48px)] lg:px-0">
-          {status === 'loading' ? (
-            <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading post…</div>
-          ) : status === 'not-found' ? (
-            <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Post not found.</div>
-          ) : status === 'error' ? (
-            <div className="rounded border bg-white p-6 text-sm text-red-600 shadow-sm">Unable to load this post right now.</div>
-          ) : post ? (
-            <article className="rounded border bg-white p-6 shadow-sm">
-              <nav className="mb-4 text-xs text-gray-500">
-                <Link href="/home" className="hover:underline">
-                  Home
-                </Link>
-                <span className="mx-1">/</span>
-                <Link href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`} className="hover:underline">
-                  Chamber feed
-                </Link>
-                <span className="mx-1">/</span>
-                <Link href={`/u/${post.author.handle}`} className="hover:underline">
-                  @{post.author.handle}
-                </Link>
-              </nav>
-
-              <header className="flex items-start gap-3">
-                <VerifiedAvatar
-                  src={post.author.avatarUrl}
-                  alt={post.author.name ?? post.author.handle}
-                  initials={post.author.name ?? post.author.handle}
-                  size={48}
-                  isVerified={Boolean(post.author.isVerified)}
-                  isBusiness={Boolean(post.author.isPremium)}
-                  className="shrink-0"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
-                    <Link href={`/u/${post.author.handle}`} className="font-semibold text-gray-900 hover:underline">
-                      {post.author.name ?? post.author.handle}
-                    </Link>
-                    <span>@{post.author.handle}</span>
-                    <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
-                      {JURISDICTION_LABELS[post.jurisdiction]}
-                    </span>
-                    {post.provinceCode && post.chamberSlug ? (
-                      <Link
-                        href={`/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`}
-                        className="rounded-full border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50"
-                      >
-                        {post.chamberName ?? post.chamberSlug}
-                      </Link>
-                    ) : null}
-                  </div>
-                  <div className="mt-4 space-y-4 text-[16px] leading-7 text-gray-900">
-                    {post.type === 'article' && post.title ? (
-                      <h1 className="text-2xl font-semibold text-gray-900">{post.title}</h1>
-                    ) : null}
-                    {post.type === 'article' ? (
-                      <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
-                    ) : (
-                      <div className="whitespace-pre-wrap">{post.body}</div>
-                    )}
-                  </div>
-                </div>
-              </header>
-
-              <footer className="mt-6 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-                {post.counts ? (
-                  <span>{post.counts.score} points • {post.counts.commentCount} comments</span>
-                ) : null}
-                <span>Canonical: {paths?.chamber ?? buildLegacyPath(post)}</span>
-              </footer>
-
-              <section className="mt-8 border-t border-gray-200 pt-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-gray-900">Comments</h2>
-                  {post.counts ? <span className="text-sm text-gray-500">{post.counts.commentCount} total</span> : null}
-                </div>
-
-                <div className="mt-4 flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
-                  <div className="flex gap-3 font-semibold">
-                    {COMMENT_SORT_OPTIONS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`pb-1 transition ${
-                          commentSort === option.value
-                            ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
-                            : 'text-gray-400 hover:text-[var(--cc-primary)]'
-                        }`}
-                        onClick={() => setCommentSort(option.value)}
-                        disabled={commentSort === option.value}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {viewer ? (
-                  <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
-                ) : (
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-                    <span>Sign in to join the conversation.</span>
-                    <button
-                      type="button"
-                      onClick={() => redirectToAuthModal('login')}
-                      className="inline-flex items-center bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)]"
-                    >
-                      Sign in
-                    </button>
-                  </div>
-                )}
-
-                <div className="mt-6">
-                  <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
-                </div>
-              </section>
-            </article>
-          ) : null}
-        </main>
-
-        <aside className="hidden lg:flex lg:min-h-[calc(100vh-48px)] lg:w-[220px] lg:flex-col lg:border-l lg:border-gray-200 lg:bg-white xl:w-[260px]">
-          <div className="sticky top-4 space-y-4 px-5 py-4">
-            <div className="rounded border bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-gray-900">Keep exploring</div>
-              <p className="mt-2 text-sm text-gray-600">
-                Jump back to the chamber feed or browse neighbouring ridings to see how other citizens are weighing in.
-              </p>
-              <Link
-                href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`}
-                className="mt-3 inline-flex items-center justify-center rounded bg-[var(--cc-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--cc-primary-700)]"
-              >
-                Return to chamber
-              </Link>
-            </div>
-            <div className="rounded border bg-white p-4 shadow-sm text-sm text-gray-600">
-              Share thoughtful updates and tag your chamber to reach neighbours faster. Articles support full formatting for
-              deeper dives.
-            </div>
-          </div>
-        </aside>
+      <div className="rounded border bg-white p-4 shadow-sm text-sm text-gray-600">
+        Share thoughtful updates and tag your community to reach neighbours faster. Articles support full formatting for deeper dives.
       </div>
     </div>
   )
-}
 
-function buildLegacyPath(post: ApiPost) {
-  return `/post/${post.id}`
+  return (
+    <DashboardShell
+      sidebar={<Sidebar me={viewer ?? undefined} active="community" />}
+      rightRail={rightRail}
+      mainClassName="space-y-5 lg:min-h-[calc(100vh-48px)]"
+    >
+      {status === 'loading' ? (
+        <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading post…</div>
+      ) : status === 'not-found' ? (
+        <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Post not found.</div>
+      ) : status === 'error' ? (
+        <div className="rounded border bg-white p-6 text-sm text-red-600 shadow-sm">Unable to load this post right now.</div>
+      ) : post ? (
+        <article className="rounded border bg-white p-6 shadow-sm">
+          <nav className="mb-4 text-xs text-gray-500">
+            <Link href="/home" className="hover:underline">
+              Home
+            </Link>
+            <span className="mx-1">/</span>
+            <Link
+              href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`}
+              className="hover:underline"
+            >
+              Community feed
+            </Link>
+            <span className="mx-1">/</span>
+            <span className="text-gray-700">Post</span>
+          </nav>
+
+          <header className="border-b border-gray-100 pb-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
+              <span className="font-semibold text-gray-900">@{post.author.handle}</span>
+              <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                {JURISDICTION_LABELS[post.jurisdiction]}
+              </span>
+              {post.provinceCode && post.communitySlug ? (
+                <Link
+                  href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
+                  className="rounded-full border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50"
+                >
+                  {post.communityName ?? post.communitySlug}
+                </Link>
+              ) : null}
+            </div>
+
+            <div className="mt-4 space-y-4 text-[16px] leading-7 text-gray-900">
+              {post.mediaUrl ? (
+                <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={post.mediaUrl}
+                    alt={post.title || post.body || 'Post image'}
+                    className="h-auto w-full max-h-[75vh] object-contain bg-gray-900/5"
+                    loading="lazy"
+                  />
+                </div>
+              ) : null}
+              {post.type === 'article' && post.title ? (
+                <h1 className="text-2xl font-semibold text-gray-900">{post.title}</h1>
+              ) : null}
+              {post.type === 'article' ? (
+                <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
+              ) : (
+                <div className="whitespace-pre-wrap">{post.body}</div>
+              )}
+            </div>
+          </header>
+
+          <footer className="mt-6 space-y-3 text-xs text-gray-500">
+            <div className="flex flex-wrap items-center gap-2">
+              {REACTION_OPTIONS.map((option) => (
+                <ReactionButton
+                  key={option.type}
+                  option={option}
+                  count={(reactionCounts as Record<ReactionType, number>)[option.type] ?? 0}
+                  active={currentReaction === option.type && viewerIsVerified}
+                  blocked={!viewerIsVerified}
+                  disabled={pendingReaction}
+                  onClick={() => handleReact(currentReaction === option.type ? null : option.type)}
+                />
+              ))}
+              {!viewerIsVerified ? <span className="text-[11px] text-gray-500">Only verified members can react.</span> : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="font-semibold text-gray-700">
+                {totalReactions === 1 ? '1 reaction' : `${totalReactions} reactions`}
+              </span>
+              {post.counts ? (
+                <span>
+                  {post.counts.commentCount === 1 ? '1 comment' : `${post.counts.commentCount} comments`}
+                </span>
+              ) : null}
+            </div>
+          </footer>
+
+          <section className="mt-8 border-t border-gray-200 pt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">Comments</h2>
+              {post.counts ? <span className="text-sm text-gray-500">{post.counts.commentCount} total</span> : null}
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
+              <div className="flex gap-3 font-semibold">
+                {COMMENT_SORT_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`pb-1 transition ${
+                      commentSort === option.value
+                        ? 'border-b-2 border-[var(--cc-primary)] text-[var(--cc-primary)]'
+                        : 'text-gray-400 hover:text-[var(--cc-primary)]'
+                    }`}
+                    onClick={() => setCommentSort(option.value)}
+                    disabled={commentSort === option.value}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {viewer ? (
+              <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
+            ) : (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+                <span>Sign in to join the conversation.</span>
+                <button
+                  type="button"
+                  onClick={() => redirectToAuthModal('login')}
+                  className="inline-flex items-center bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)]"
+                >
+                  Sign in
+                </button>
+              </div>
+            )}
+
+            <div className="mt-6">
+              <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
+            </div>
+          </section>
+        </article>
+      ) : null}
+    </DashboardShell>
+  )
 }

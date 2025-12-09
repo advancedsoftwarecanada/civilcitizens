@@ -10,6 +10,8 @@ import type { MeResponse } from '../_lib/me'
 import { NotificationCard } from '../_components/notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from '../_components/notifications/notificationUtils'
 import { getFriendshipId } from '../_components/notifications/notificationUtils'
+import { emitNotificationsMarkedReadEvent, NOTIFICATIONS_MARKED_READ_EVENT, type NotificationsMarkedReadDetail } from '../_components/notifications/notificationEvents'
+import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from '../_components/notifications/notificationStream'
 import { pushToast } from '../_components/useToasts'
 
 const PAGE_SIZE = 30
@@ -34,6 +36,68 @@ export default function NotificationsClient() {
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [friendActionState, setFriendActionState] = useState<FriendActionState | null>(null)
   const loadMoreRef = useRef<HTMLDivElement | null>(null)
+
+  const markLocalNotificationsRead = useCallback(() => {
+    const timestamp = new Date().toISOString()
+    setNotifications((prev) => prev.map((notification) => (notification.unread ? { ...notification, unread: false, readAt: notification.readAt ?? timestamp } : notification)))
+  }, [])
+
+  const acknowledgeNotifications = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) return
+    try {
+      const res = await fetch(buildApiUrl('/notifications/ack'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ before: new Date().toISOString() }),
+      })
+      if (res.status === 401) {
+        window.localStorage.removeItem('token')
+        redirectToAuthModal('login')
+        return
+      }
+      if (!res.ok) {
+        return
+      }
+      markLocalNotificationsRead()
+      emitNotificationsMarkedReadEvent('notifications-page')
+    } catch (err) {
+      console.error('Unable to acknowledge notifications', err)
+    }
+  }, [markLocalNotificationsRead])
+
+  const handleRealtimeNotification = useCallback((payload: RealtimePayload) => {
+    if (!isNotificationPayload(payload)) return
+    const data: NotificationRealtimeData = payload.data
+    const payloadValue = data.payload
+    const normalizedPayload =
+      payloadValue && typeof payloadValue === 'object' && !Array.isArray(payloadValue)
+        ? (payloadValue as Record<string, unknown>)
+        : null
+    const incoming = {
+      id: data.id,
+      type: data.type,
+      actorId: data.actorId,
+      postId: data.postId,
+      payload: normalizedPayload,
+      readAt: data.readAt,
+      createdAt: data.createdAt,
+      unread: data.unread,
+    }
+    setNotifications((prev) => {
+      const existing = prev.find((item) => item.id === incoming.id)
+      const nextActor = data.actor ?? existing?.actor ?? null
+      const merged: NotificationItem = {
+        ...incoming,
+        actor: nextActor,
+      }
+      const next = [merged, ...prev.filter((item) => item.id !== incoming.id)]
+      return next
+    })
+  }, [])
 
   const loadNotifications = useCallback(
     async (cursor?: string) => {
@@ -108,11 +172,32 @@ export default function NotificationsClient() {
       }
     }
     void loadMe()
-    void loadNotifications()
+    void (async () => {
+      await loadNotifications()
+      await acknowledgeNotifications()
+    })()
     return () => {
       cancelled = true
     }
-  }, [loadNotifications])
+  }, [loadNotifications, acknowledgeNotifications])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const handleMarkedRead = (event: Event) => {
+      const detail = (event as CustomEvent<NotificationsMarkedReadDetail>).detail
+      if (detail?.source === 'notifications-page') return
+      markLocalNotificationsRead()
+    }
+    window.addEventListener(NOTIFICATIONS_MARKED_READ_EVENT, handleMarkedRead as EventListener)
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_MARKED_READ_EVENT, handleMarkedRead as EventListener)
+    }
+  }, [markLocalNotificationsRead])
+
+  useEffect(() => {
+    const unsubscribe = subscribeToNotificationsStream(handleRealtimeNotification)
+    return unsubscribe
+  }, [handleRealtimeNotification])
 
   useEffect(() => {
     if (!nextCursor) return undefined
@@ -150,10 +235,50 @@ export default function NotificationsClient() {
         })
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
         if (!res.ok) {
+          if (res.status === 409 && payload?.error === 'friendship_not_pending') {
+            const timestamp = new Date().toISOString()
+            setNotifications((prev) =>
+              prev.map((item) => {
+                if (item.id !== notification.id) return item
+                const nextPayload = {
+                  ...((item.payload ?? {}) as Record<string, unknown>),
+                  status: action === 'accept' ? 'accepted' : 'rejected',
+                }
+                return {
+                  ...item,
+                  unread: false,
+                  readAt: item.readAt ?? timestamp,
+                  payload: nextPayload,
+                }
+              }),
+            )
+            pushToast('Friend request already resolved.', 'info')
+            return
+          }
+          if (res.status === 404) {
+            setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
+            pushToast('That friend request is no longer available.', 'info')
+            return
+          }
           pushToast(payload?.error ?? 'Unable to update friend request right now.', 'error')
           return
         }
-        setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
+        const timestamp = new Date().toISOString()
+        setNotifications((prev) =>
+          prev.map((item) => {
+            if (item.id !== notification.id) return item
+            const nextPayload = {
+              ...((item.payload ?? {}) as Record<string, unknown>),
+              status: action === 'accept' ? 'accepted' : 'rejected',
+            }
+            return {
+              ...item,
+              unread: false,
+              readAt: item.readAt ?? timestamp,
+              payload: nextPayload,
+            }
+          }),
+        )
         pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
       } catch (err) {
         console.error('Failed to respond to friend request', err)

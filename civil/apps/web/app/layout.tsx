@@ -1,10 +1,12 @@
 import './globals.css'
-import { ReactNode } from 'react'
-import type { Metadata } from 'next'
+import { ReactNode, Suspense } from 'react'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import Toasts from './_components/Toasts'
 import MobileDock from './_components/MobileDock'
 import TopNavVisibility from './_components/TopNavVisibility'
+import ScrollManager from './_components/ScrollManager'
+import AnalyticsTracker from './_components/AnalyticsTracker'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -25,7 +27,6 @@ export const metadata: Metadata = {
     shortcut: '/favicon.png',
     apple: '/favicon.png',
   },
-  themeColor: '#CA052D',
   openGraph: {
     title: 'Civil Citizens',
     description:
@@ -51,11 +52,21 @@ export const metadata: Metadata = {
   },
 }
 
+export const viewport: Viewport = {
+  themeColor: '#CA052D',
+}
+
 export default function RootLayout({ children, modal }: { children: ReactNode; modal: ReactNode }) {
   return (
     <html lang="en">
       <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
         <TopNavVisibility />
+        <Suspense fallback={null}>
+          <AnalyticsTracker />
+        </Suspense>
+        <Suspense fallback={null}>
+          <ScrollManager />
+        </Suspense>
         <div className="min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-0">
           {children}
           {modal}

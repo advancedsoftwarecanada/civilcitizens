@@ -22,16 +22,15 @@ export default function DashboardShell({
   mainClassName,
   rightRailClassName,
 }: DashboardShellProps) {
+  const gridTemplate = rightRail
+    ? 'grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-10'
+    : 'grid gap-5 grid-cols-1'
+
   return (
     <div className={clsx('min-h-screen', className)}>
-      <div className={clsx('mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pr-0 xl:pl-12 xl:pr-0', containerClassName)}>
-        <div
-          className={clsx(
-            'grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px] xl:gap-10',
-            gridClassName,
-          )}
-        >
-          <aside className="hidden lg:block">{sidebar}</aside>
+      <div className="hidden lg:block">{sidebar}</div>
+      <div className={clsx('mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pl-[18rem] lg:pr-0 xl:pl-[20rem] xl:pr-0', containerClassName)}>
+        <div className={clsx(gridTemplate, gridClassName)}>
           <main className={clsx('pt-8', mainClassName)}>{children}</main>
           {rightRail ? (
             <aside className={clsx('hidden pt-8 lg:block', rightRailClassName)}>{rightRail}</aside>

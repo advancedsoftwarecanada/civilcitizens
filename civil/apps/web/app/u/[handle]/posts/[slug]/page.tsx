@@ -2,6 +2,10 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
+import Image from 'next/image'
+import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
+import type { IconBaseProps, IconType } from 'react-icons'
+import { type ReactionType } from '@civil/shared'
 import Sidebar from '../../../../_components/Sidebar'
 import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
@@ -10,6 +14,7 @@ import CommentThread, { type ApiComment } from '../../../../_components/CommentT
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
 import VerifiedAvatar from '../../../../_components/VerifiedAvatar'
+import { useRegisterPageView } from '../../../../_components/AnalyticsTracker'
 
 type Viewer = {
   id: string
@@ -22,7 +27,7 @@ type Viewer = {
 
 type CanonicalPaths = {
   user: string
-  chamber: string | null
+  community: string | null
   legacy: string
 }
 
@@ -37,6 +42,59 @@ const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
   { value: 'new', label: 'New' },
 ]
+
+type ReactionOption = {
+  type: ReactionType
+  label: string
+  icon: IconType
+  activeIcon?: IconType
+  accentClass: string
+}
+
+const MapleIconNeutral: IconType = ({ className, size = 16 }: IconBaseProps) => (
+  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
+)
+
+const MapleIconActive: IconType = ({ className, size = 16 }: IconBaseProps) => (
+  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
+)
+
+const REACTION_OPTIONS: ReactionOption[] = [
+  { type: 'maple', label: 'Like', icon: MapleIconNeutral, activeIcon: MapleIconActive, accentClass: 'border-red-200 bg-red-50 text-red-700' },
+  { type: 'heart', label: 'Heart', icon: LuHeart, accentClass: 'border-rose-200 bg-rose-50 text-rose-700' },
+  { type: 'haha', label: 'Haha', icon: LuLaugh, accentClass: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
+  { type: 'wow', label: 'Wow', icon: LuSparkles, accentClass: 'border-sky-200 bg-sky-50 text-sky-700' },
+  { type: 'sad', label: 'Support', icon: LuFrown, accentClass: 'border-slate-200 bg-slate-50 text-slate-700' },
+  { type: 'fire', label: 'Fire', icon: LuFlame, accentClass: 'border-orange-200 bg-orange-50 text-orange-700' },
+]
+
+type ReactionButtonProps = {
+  option: ReactionOption
+  count: number
+  active: boolean
+  blocked: boolean
+  disabled: boolean
+  onClick: () => void
+}
+
+function ReactionButton({ option, count, active, blocked, disabled, onClick }: ReactionButtonProps) {
+  const Icon = active && option.activeIcon ? option.activeIcon : option.icon
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2 ${active ? option.accentClass : blocked ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-800 focus:ring-[var(--cc-primary)]'} ${disabled ? 'pointer-events-none opacity-60' : ''}`}
+      onClick={() => {
+        if (disabled || blocked) return
+        onClick()
+      }}
+      aria-label={`${option.label} reaction`}
+      disabled={disabled || blocked}
+    >
+      <Icon className="h-4 w-4" aria-hidden="true" />
+      {count > 0 ? <span>{count}</span> : <span className="text-[11px] font-normal text-slate-500">{option.label}</span>}
+    </button>
+  )
+}
 
 function formatDateTime(iso: string) {
   const date = new Date(iso)
@@ -61,6 +119,9 @@ export default function UserPostPage({ params }: PageProps) {
   const [comments, setComments] = useState<ApiComment[]>([])
   const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
   const [appliedCommentSort, setAppliedCommentSort] = useState<'hot' | 'new'>('hot')
+  const [pendingReaction, setPendingReaction] = useState(false)
+
+  const viewerIsVerified = Boolean(viewer?.isVerified || viewer?.isPremium)
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
@@ -79,13 +140,25 @@ export default function UserPostPage({ params }: PageProps) {
     setStatus('loading')
     setComments([])
     try {
-      const res = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}?commentSort=${sortMode}`)
-      if (!res.ok) {
-        setStatus(res.status === 404 ? 'not-found' : 'error')
+      const slugRes = await fetch(`/api/posts/slug/${encodeURIComponent(slugParam)}?commentSort=${sortMode}`)
+
+      let data: any = null
+      if (slugRes.ok) {
+        data = await slugRes.json()
+      } else if (slugRes.status === 404) {
+        const idRes = await fetch(`/api/posts/${encodeURIComponent(slugParam)}`)
+        if (!idRes.ok) {
+          setStatus(idRes.status === 404 ? 'not-found' : 'error')
+          setComments([])
+          return
+        }
+        data = await idRes.json()
+      } else {
+        setStatus('error')
         setComments([])
         return
       }
-      const data = await res.json()
+
       const retrievedPost = data.post as ApiPost
       const canonical = data.paths as CanonicalPaths
       const commentTree = normalizeCommentTree((data as { comments?: ApiComment[] }).comments ?? [])
@@ -111,6 +184,11 @@ export default function UserPostPage({ params }: PageProps) {
   }, [handleParam, slugParam])
 
   const postId = post?.id
+  useRegisterPageView(postId)
+  const reactionCounts =
+    post?.reactions ?? { maple: 0, heart: 0, haha: 0, wow: 0, sad: 0, fire: 0, total: 0, positive: 0 }
+  const currentReaction = (post?.viewer?.reaction ?? null) as ReactionType | null
+  const totalReactions = reactionCounts.total ?? 0
 
   const loadComments = useCallback(
     async (sortMode: 'hot' | 'new') => {
@@ -130,6 +208,47 @@ export default function UserPostPage({ params }: PageProps) {
       }
     },
     [postId],
+  )
+
+  const handleReact = useCallback(
+    async (nextReaction: ReactionType | null) => {
+      if (!post?.id) return
+      if (pendingReaction) return
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!viewerIsVerified) {
+        redirectToAuthModal('login')
+        return
+      }
+      setPendingReaction(true)
+      try {
+        const res = await fetch('/api/posts/react', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ postId: post.id, reaction: nextReaction }),
+        })
+        if (!res.ok) {
+          console.error('Reaction request failed', await res.text())
+          return
+        }
+        const data = await res.json().catch(() => null)
+        const updated = (data as { post?: ApiPost })?.post
+        if (updated) {
+          setPost(updated)
+        }
+      } catch (err) {
+        console.error('Unable to react to post', err)
+      } finally {
+        setPendingReaction(false)
+      }
+    },
+    [pendingReaction, post?.id, viewerIsVerified],
   )
 
   useEffect(() => {
@@ -255,11 +374,11 @@ export default function UserPostPage({ params }: PageProps) {
                 <Link href={`/u/${post.author.handle}`} className="hover:underline">
                   @{post.author.handle}
                 </Link>
-                {paths?.chamber ? (
+                {paths?.community ? (
                   <>
                     <span className="mx-1">/</span>
-                    <Link href={paths.chamber} className="hover:underline">
-                      {post.chamberName ?? post.chamberSlug}
+                    <Link href={paths.community} className="hover:underline">
+                      {post.communityName ?? post.communitySlug}
                     </Link>
                   </>
                 ) : null}
@@ -274,6 +393,7 @@ export default function UserPostPage({ params }: PageProps) {
                     isVerified={Boolean(post.author.isVerified)}
                     isBusiness={Boolean(post.author.isPremium)}
                     className="shrink-0"
+                    href={`/u/${post.author.handle}`}
                   />
                   <div className="min-w-0 flex-1 space-y-4">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
@@ -285,16 +405,27 @@ export default function UserPostPage({ params }: PageProps) {
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
                         {JURISDICTION_LABELS[post.jurisdiction]}
                       </span>
-                      {post.provinceCode && post.chamberSlug ? (
+                      {post.provinceCode && post.communitySlug ? (
                         <Link
-                          href={`/${post.provinceCode.toLowerCase()}/${post.chamberSlug.toLowerCase()}`}
+                          href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
                           className="rounded-full border border-slate-200 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-500 hover:bg-slate-50"
                         >
-                          {post.chamberName ?? post.chamberSlug}
+                          {post.communityName ?? post.communitySlug}
                         </Link>
                       ) : null}
                     </div>
                     <div className="text-[16px] leading-7 text-slate-900">
+                      {post.mediaUrl ? (
+                        <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={post.mediaUrl}
+                            alt={post.title || post.body || 'Post image'}
+                            className="h-auto w-full max-h-[75vh] object-contain bg-slate-900/5"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : null}
                       {post.type === 'article' && post.title ? (
                         <h1 className="text-3xl font-semibold text-slate-900">{post.title}</h1>
                       ) : null}
@@ -309,13 +440,30 @@ export default function UserPostPage({ params }: PageProps) {
                   </div>
                 </header>
 
-                <footer className="mt-6 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                  {post.counts ? (
-                    <span>
-                      {post.counts.score} points • {post.counts.commentCount} comments
+                <footer className="mt-6 space-y-3 text-xs text-slate-500">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {REACTION_OPTIONS.map((option) => (
+                      <ReactionButton
+                        key={option.type}
+                        option={option}
+                        count={(reactionCounts as Record<ReactionType, number>)[option.type] ?? 0}
+                        active={currentReaction === option.type && viewerIsVerified}
+                        blocked={!viewerIsVerified}
+                        disabled={pendingReaction}
+                        onClick={() => handleReact(currentReaction === option.type ? null : option.type)}
+                      />
+                    ))}
+                    {!viewerIsVerified ? <span className="text-[11px] text-slate-500">Only verified members can react.</span> : null}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-semibold text-slate-700">
+                      {totalReactions === 1 ? '1 reaction' : `${totalReactions} reactions`}
                     </span>
-                  ) : null}
-                  <span>Canonical: {paths?.user ?? buildLegacyPath(post)}</span>
+                    {post.counts ? (
+                      <span>{post.counts.commentCount === 1 ? '1 comment' : `${post.counts.commentCount} comments`}</span>
+                    ) : null}
+                    <span>Canonical: {paths?.user ?? buildLegacyPath(post)}</span>
+                  </div>
                 </footer>
 
                 <section className="mt-8 rounded-[28px] border border-white/70 bg-white/95 p-5 shadow-subtle">

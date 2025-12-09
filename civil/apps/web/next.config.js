@@ -5,6 +5,15 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'dev.civilcitizens.ca',
+        pathname: '/media/**',
+      },
+    ],
+  },
   webpack: (config) => {
     config.resolve = config.resolve || {}
     config.resolve.extensionAlias = {

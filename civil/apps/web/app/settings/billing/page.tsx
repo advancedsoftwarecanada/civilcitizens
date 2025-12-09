@@ -1,6 +1,7 @@
 "use client"
 
 import Image from 'next/image'
+import Link from 'next/link'
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../_components/Sidebar'
 import { pushToast } from '../../_components/useToasts'
@@ -594,6 +595,11 @@ export default function BillingSettingsPage() {
         rightRailClassName="space-y-4"
         mainClassName="space-y-6"
       >
+        <div>
+          <Link href="/settings" className="text-sm font-semibold text-[var(--cc-primary)] hover:underline">
+            Back
+          </Link>
+        </div>
         <section id="billing-profile" className="surface-card px-6 py-5 shadow-subtle">
           <header className="flex flex-col gap-3 border-b border-slate-100 pb-4 md:flex-row md:items-center md:justify-between">
             <div>

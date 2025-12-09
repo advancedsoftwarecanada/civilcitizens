@@ -1,7 +1,14 @@
 import clsx from 'clsx'
+import Link from 'next/link'
 import VerifiedAvatar from '../VerifiedAvatar'
 import type { FriendActionState, NotificationItem } from './notificationUtils'
-import { formatRelativeTime, getFriendshipId, getNotificationMessage } from './notificationUtils'
+import {
+  formatRelativeTime,
+  getActorDisplayName,
+  getFriendshipId,
+  getFriendRequestStatus,
+  getNotificationMessage,
+} from './notificationUtils'
 
 export type NotificationCardProps = {
   notification: NotificationItem
@@ -11,10 +18,15 @@ export type NotificationCardProps = {
 
 export function NotificationCard({ notification, onFriendAction, friendActionState }: NotificationCardProps) {
   const friendshipId = getFriendshipId(notification)
+  const requestStatus = notification.type === 'friend_request' ? getFriendRequestStatus(notification) : null
+  const allowResponse = requestStatus === 'pending'
   const isResponding = friendActionState?.notificationId === notification.id
   const isAccepting = isResponding && friendActionState?.action === 'accept'
   const isRejecting = isResponding && friendActionState?.action === 'reject'
-  const initials = notification.actor?.name ?? notification.actor?.handle ?? 'C'
+  const profileHref = notification.actor?.handle ? `/u/${notification.actor.handle}` : null
+  const actorName = notification.actor ? getActorDisplayName(notification) : null
+  const initials = actorName ?? 'C'
+  const message = getNotificationMessage(notification)
 
   return (
     <div
@@ -33,6 +45,7 @@ export function NotificationCard({ notification, onFriendAction, friendActionSta
             isVerified={Boolean(notification.actor.isVerified)}
             isBusiness={Boolean(notification.actor.isPremium)}
             className="shrink-0"
+            href={profileHref ?? undefined}
           />
         ) : (
           <div className="mt-1 h-10 w-10 shrink-0 rounded-full bg-slate-100" aria-hidden="true" />
@@ -40,11 +53,23 @@ export function NotificationCard({ notification, onFriendAction, friendActionSta
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <span className={clsx('h-2 w-2 rounded-full', notification.unread ? 'bg-[var(--cc-primary)]' : 'bg-slate-300')} aria-hidden="true" />
-            <p className="font-semibold text-slate-900">{getNotificationMessage(notification)}</p>
+            {actorName ? (
+              <div className="flex flex-wrap items-baseline gap-1 text-sm">
+                {profileHref ? (
+                  <Link href={profileHref} className="font-semibold text-slate-900 hover:underline">
+                    {actorName}
+                  </Link>
+                ) : (
+                  <span className="font-semibold text-slate-900">{actorName}</span>
+                )}
+                <span className="text-slate-600">{message}</span>
+              </div>
+            ) : (
+              <p className="font-semibold text-slate-900">{message}</p>
+            )}
           </div>
-          {notification.actor?.handle ? <p className="text-xs text-slate-500">@{notification.actor.handle}</p> : null}
           <p className="mt-1 text-xs text-slate-500">{formatRelativeTime(notification.createdAt)}</p>
-          {notification.type === 'friend_request' && onFriendAction ? (
+          {notification.type === 'friend_request' && onFriendAction && allowResponse ? (
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -62,6 +87,11 @@ export function NotificationCard({ notification, onFriendAction, friendActionSta
               >
                 {isRejecting ? 'Declining…' : 'Decline'}
               </button>
+            </div>
+          ) : null}
+          {notification.type === 'friend_request' && requestStatus && !allowResponse ? (
+            <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
+              {requestStatus === 'accepted' ? 'Friend request accepted' : 'Friend request dismissed'}
             </div>
           ) : null}
         </div>

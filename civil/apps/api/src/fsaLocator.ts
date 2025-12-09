@@ -15,8 +15,8 @@ type CachedFsa = {
   provinceCode: string | null
   subdivisionId: string | null
   subdivisionName: string | null
-  defaultChamberSlug: string | null
-  defaultChamberName: string | null
+  defaultCommunitySlug: string | null
+  defaultCommunityName: string | null
   centroid: { lat: number; lng: number } | null
   feature: Feature<Polygon | MultiPolygon>
   bbox: [number, number, number, number]
@@ -51,8 +51,8 @@ type LocatedFsa = {
   subdivisionName: string | null
   centroidLat: number | null
   centroidLng: number | null
-  defaultChamberSlug: string | null
-  defaultChamberName: string | null
+  defaultCommunitySlug: string | null
+  defaultCommunityName: string | null
   distanceKm: number | null
   method: 'polygon' | 'nearest'
 }
@@ -108,8 +108,8 @@ async function buildFsaCache(): Promise<FsaCache> {
       centroidLng: true,
       geometry: true,
       bbox: true,
-      defaultChamberSlug: true,
-      defaultChamberName: true,
+      defaultCommunitySlug: true,
+      defaultCommunityName: true,
     },
     orderBy: { code: 'asc' },
   })
@@ -146,8 +146,8 @@ async function buildFsaCache(): Promise<FsaCache> {
       provinceCode: row.provinceCode ?? null,
       subdivisionId: row.subdivisionId ?? null,
       subdivisionName: row.subdivisionName ?? null,
-      defaultChamberSlug: row.defaultChamberSlug ?? null,
-      defaultChamberName: row.defaultChamberName ?? null,
+      defaultCommunitySlug: row.defaultCommunitySlug ?? null,
+      defaultCommunityName: row.defaultCommunityName ?? null,
       centroid: centroidPoint ?? null,
       feature: geoFeature,
       bbox,
@@ -242,8 +242,8 @@ export async function locateFsaFromPoint(lat: number, lng: number, options: Loca
     subdivisionName: winner.feature.subdivisionName,
     centroidLat,
     centroidLng,
-    defaultChamberSlug: winner.feature.defaultChamberSlug,
-    defaultChamberName: winner.feature.defaultChamberName,
+    defaultCommunitySlug: winner.feature.defaultCommunitySlug,
+    defaultCommunityName: winner.feature.defaultCommunityName,
     distanceKm: winner.inside ? null : Number(winner.distanceKm.toFixed(2)),
     method: winner.inside ? 'polygon' : 'nearest',
   }

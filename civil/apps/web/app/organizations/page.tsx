@@ -1,33 +1,13 @@
-import FeatureScaffold from '../_components/FeatureScaffold'
-
-const ORG_HIGHLIGHTS = [
-  {
-    title: 'Organization HQ',
-    description: 'Manage members, publish updates, and run civic programs from a single dashboard.',
-    status: 'ready' as const,
-    actions: [{ label: 'Create organization', href: '/settings/billing#business-create' }],
-  },
-  {
-    title: 'Seat management',
-    description: 'Assign billing seats, roles, and verification badges to your team.',
-    status: 'soon' as const,
-  },
-]
-
-const ORG_ROADMAP = [
-  { title: 'Sponsorship tools', detail: 'Sell placements and manage applications with Stripe-native payouts.' },
-  { title: 'Civic workflows', detail: 'Templates for petitions, volunteer drives, and policy submissions.' },
-]
+import ComingSoon from '../_components/ComingSoon'
 
 export default function OrganizationsPage() {
   return (
-    <FeatureScaffold
+    <ComingSoon
       activeNavKey="organizations"
-      title="Organizations"
-      description="Civic teams, non-profits, and businesses can operate directly inside Civil Citizens."
-      heroBadge="Studio"
-      highlights={ORG_HIGHLIGHTS}
-      roadmap={ORG_ROADMAP}
+      title="Organizations are coming soon"
+      message="Organization tools are being refreshed. Check back soon for team management and billing seats."
+      secondaryHref="/settings/billing#business-create"
+      secondaryLabel="Create organization"
     />
   )
 }

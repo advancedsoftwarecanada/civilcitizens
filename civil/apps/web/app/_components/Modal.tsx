@@ -1,5 +1,6 @@
 "use client"
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 type ModalProps = {
   open: boolean
@@ -10,12 +11,30 @@ type ModalProps = {
 }
 
 export default function Modal({ open, onClose, children, title, maxWidthClassName }: ModalProps) {
+  const [portalEl, setPortalEl] = useState<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return undefined
+    const container = document.createElement('div')
+    container.dataset.ccModalMount = 'true'
+    document.body.appendChild(container)
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    setPortalEl(container)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      container.remove()
+      setPortalEl(null)
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+
   // Intercept auth link clicks inside modal to avoid hard navigation
   const onCaptureClick: React.MouseEventHandler<HTMLDivElement> = (e) => {
     const el = e.target as HTMLElement | null
@@ -32,10 +51,10 @@ export default function Modal({ open, onClose, children, title, maxWidthClassNam
     const openEvent = url.pathname === '/login' ? 'openLoginModal' : url.pathname === '/register' ? 'openRegisterModal' : 'openForgotModal'
     window.dispatchEvent(new CustomEvent(openEvent))
   }
-  if (!open) return null
+  if (!open || !portalEl) return null
   const widthClass = maxWidthClassName ?? 'max-w-md'
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose} onClickCapture={onCaptureClick} data-cc-modal-root>
       <div className="absolute inset-0 bg-black/50" />
       <div className={`relative w-full ${widthClass} mx-4 rounded-lg bg-white shadow-xl`} onClick={(e) => e.stopPropagation()}>
@@ -47,6 +66,7 @@ export default function Modal({ open, onClose, children, title, maxWidthClassNam
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    portalEl,
   )
 }

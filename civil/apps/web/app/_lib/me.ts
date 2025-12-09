@@ -1,9 +1,12 @@
-export type HomeChamberSummary = {
+export type HomeCommunitySummary = {
   provinceCode: string
   provinceName: string
-  chamberSlug: string
-  chamberName: string
+  communitySlug: string
+  communityName: string
 }
+
+// Legacy alias for backwards compatibility
+export type HomeChamberSummary = HomeCommunitySummary
 
 export type MeResponse = {
   id: string
@@ -11,6 +14,7 @@ export type MeResponse = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  homeCommunity?: HomeCommunitySummary | null
   homeChamber?: HomeChamberSummary | null
   isPremium?: boolean
   isVerified?: boolean
@@ -19,7 +23,8 @@ export type MeResponse = {
 }
 
 export function hasHomeCommunity(me: MeResponse | null | undefined): boolean {
-  return Boolean(me?.homeChamber && me.homeChamber.chamberSlug && me.homeChamber.provinceCode)
+  const home = me?.homeCommunity ?? me?.homeChamber
+  return Boolean(home && home.communitySlug && home.provinceCode)
 }
 
 export { hasHomeCommunity as hasHomeChamber }

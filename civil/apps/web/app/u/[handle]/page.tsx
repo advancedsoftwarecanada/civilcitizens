@@ -1,6 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
@@ -12,6 +14,7 @@ import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
+import { type ReactionType } from '@civil/shared'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -34,6 +37,8 @@ type UserProfile = {
   bio?: string | null
   avatarUrl?: string | null
   coverUrl?: string | null
+  avatarPostId?: string | null
+  coverPostId?: string | null
   createdAt?: string
   experiences?: UserExperience[]
   isPremium?: boolean
@@ -111,11 +116,22 @@ type PageProps = {
   }
 }
 
+function buildPostUrl(post: ApiPost) {
+  const slug = post.seoSlug ?? post.id
+  if (post.provinceCode && post.communitySlug) {
+    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
+  }
+  return `/u/${post.author.handle}/posts/${slug}`
+}
+
 export default function UserPostsPage({ params }: PageProps) {
   const handleParam = decodeURIComponent(params.handle)
+  const router = useRouter()
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
+  const [mediaLookupPosts, setMediaLookupPosts] = useState<ApiPost[]>([])
+  const [mediaLookupFetched, setMediaLookupFetched] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
@@ -124,6 +140,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [relationship, setRelationship] = useState<ProfileRelationship | null>(null)
   const [friendshipAction, setFriendshipAction] = useState<'send' | 'accept' | 'reject' | null>(null)
   const [followLoading, setFollowLoading] = useState(false)
+  const [messageLoading, setMessageLoading] = useState(false)
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -189,7 +206,9 @@ export default function UserPostsPage({ params }: PageProps) {
             : null,
         )
         setRelationship(data.relationship ?? null)
-        setPosts(Array.isArray(data.items) ? data.items : [])
+        const fetchedPosts = Array.isArray(data.items) ? data.items : []
+        setPosts(fetchedPosts)
+        setMediaLookupPosts(fetchedPosts)
       } catch (err) {
         console.error('Failed loading user posts', err)
         setError('Unable to load posts right now.')
@@ -208,6 +227,11 @@ export default function UserPostsPage({ params }: PageProps) {
   }, [loadViewer])
 
   useEffect(() => {
+    setMediaLookupFetched(false)
+    setMediaLookupPosts([])
+  }, [handleParam])
+
+  useEffect(() => {
     loadProfilePosts(sortMode).catch(() => {
       /* noop */
     })
@@ -223,8 +247,8 @@ export default function UserPostsPage({ params }: PageProps) {
     [],
   )
 
-  const handleVote = useCallback(
-    async (postId: string, value: -1 | 0 | 1) => {
+  const handleReact = useCallback(
+    async (postId: string, reaction: ReactionType | null) => {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       if (!token) {
         redirectToAuthModal('login')
@@ -232,16 +256,16 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       try {
-        const res = await fetch(buildApiUrl('/posts/vote'), {
+        const res = await fetch(buildApiUrl('/posts/react'), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ postId, value }),
+          body: JSON.stringify({ postId, reaction }),
         })
         if (!res.ok) {
-          console.error('Vote request failed', await res.text())
+          console.error('Reaction request failed', await res.text())
           return
         }
         const data = await res.json().catch(() => null)
@@ -250,7 +274,7 @@ export default function UserPostsPage({ params }: PageProps) {
           setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
         }
       } catch (err) {
-        console.error('Unable to vote on post', err)
+        console.error('Unable to react to post', err)
       }
     },
     [],
@@ -259,6 +283,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const isOwner = viewer && profile && viewer.handle === profile.handle
   const experienceCount = profile?.experiences?.length ?? 0
   const coverDisplayUrl = profile?.coverUrl ?? null
+  const editCoverHref = '/profile/edit?photo=cover#photos'
+  const editAvatarHref = '/profile/edit?photo=avatar#photos'
   const ownerFirstName = viewer?.name?.split(' ')[0] ?? viewer?.handle ?? 'Citizen'
   const ownerInitials = viewer?.name ?? viewer?.handle ?? 'C'
   const isViewerVerified = Boolean(viewer?.isVerified)
@@ -501,6 +527,143 @@ export default function UserPostsPage({ params }: PageProps) {
     }
   }
 
+  const handleStartDirectMessage = async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+
+    const isValidUserId = (value: string) => {
+      const trimmed = value.trim()
+      const cuidPattern = /^c[a-z0-9]{24,}$/i
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      return cuidPattern.test(trimmed) || uuidPattern.test(trimmed)
+    }
+
+    const resolveTargetId = async () => {
+      const localId = typeof profile.id === 'string' ? profile.id.trim() : ''
+      if (isValidUserId(localId)) return localId
+
+      // Fallback: re-fetch profile to get a clean id
+      try {
+        const res = await fetch(buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/posts?limit=1`), {
+          headers: { authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) return localId
+        const data = (await res.json().catch(() => null)) as { user?: { id?: string } | null }
+        const refreshedId = typeof data?.user?.id === 'string' ? data.user.id.trim() : ''
+        return refreshedId || localId
+      } catch (err) {
+        console.warn('Fallback user id lookup failed', err)
+        return localId
+      }
+    }
+
+    setMessageLoading(true)
+    try {
+      const targetId = await resolveTargetId()
+      if (!targetId) {
+        pushToast('Unable to start a conversation: missing user id.', 'error')
+        return
+      }
+      if (!isValidUserId(targetId)) {
+        pushToast('Unable to start a conversation: profile id is not valid.', 'error')
+        return
+      }
+
+      const res = await fetch(buildApiUrl('/messages/threads/direct'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: targetId }),
+      })
+      const payload = (await res.json().catch(() => null)) as { thread?: { id: string } | null; error?: string } | null
+      if (!res.ok || !payload?.thread?.id) {
+        const message = payload?.error ?? (res.status === 400 ? 'Unable to start a conversation: invalid user id.' : 'Unable to start a conversation right now.')
+        pushToast(message, 'error')
+        return
+      }
+      router.push(`/messages?thread=${payload.thread.id}`)
+    } catch (err) {
+      console.error('Failed to start direct message', err)
+      pushToast('Unable to start a conversation right now.', 'error')
+    } finally {
+      setMessageLoading(false)
+    }
+  }
+
+  const combinedPostsForMedia = useMemo(() => {
+    const seen = new Set<string>()
+    const merged: ApiPost[] = []
+    for (const post of [...posts, ...mediaLookupPosts]) {
+      if (seen.has(post.id)) continue
+      seen.add(post.id)
+      merged.push(post)
+    }
+    return merged
+  }, [mediaLookupPosts, posts])
+
+  useEffect(() => {
+    if (!profile) return
+    if (mediaLookupFetched) return
+
+    const needsAvatar = profile.avatarUrl && !combinedPostsForMedia.some((post) => post.mediaUrl === profile.avatarUrl)
+    const needsCover = profile.coverUrl && !combinedPostsForMedia.some((post) => post.mediaUrl === profile.coverUrl)
+    if (!needsAvatar && !needsCover) return
+
+    const fetchLatest = async () => {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      const params = new URLSearchParams({ sort: 'new', limit: '50' })
+      const url = buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/posts?${params.toString()}`)
+      try {
+        const res = await fetch(
+          url,
+          token
+            ? {
+                headers: {
+                  authorization: `Bearer ${token}`,
+                },
+              }
+            : undefined,
+        )
+        if (!res.ok) return
+        const data = (await res.json().catch(() => null)) as { items?: ApiPost[] } | null
+        if (Array.isArray(data?.items)) {
+          setMediaLookupPosts(data.items)
+        }
+      } finally {
+        setMediaLookupFetched(true)
+      }
+    }
+
+    fetchLatest().catch(() => {
+      /* ignore */
+    })
+  }, [combinedPostsForMedia, mediaLookupFetched, profile])
+
+  const avatarPost = useMemo(
+    () => combinedPostsForMedia.find((post) => profile?.avatarUrl && post.mediaUrl === profile.avatarUrl) ?? null,
+    [combinedPostsForMedia, profile?.avatarUrl],
+  )
+
+  const coverPost = useMemo(
+    () => combinedPostsForMedia.find((post) => profile?.coverUrl && post.mediaUrl === profile.coverUrl) ?? null,
+    [combinedPostsForMedia, profile?.coverUrl],
+  )
+
+  const avatarPostUrl = avatarPost ? buildPostUrl(avatarPost) : null
+  const coverPostUrl = coverPost ? buildPostUrl(coverPost) : null
+  const buildFallbackThreadUrl = (postId?: string | null) => {
+    if (!postId) return null
+    if (profile?.handle) {
+      return `/u/${profile.handle}/posts/${postId}`
+    }
+    return `/post/${postId}`
+  }
+  const avatarThreadUrl = avatarPostUrl ?? buildFallbackThreadUrl(profile?.avatarPostId)
+  const coverThreadUrl = coverPostUrl ?? buildFallbackThreadUrl(profile?.coverPostId)
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
       <div className="border-b border-white/60 bg-white/70 py-4 shadow-sm backdrop-blur lg:hidden">
@@ -519,16 +682,57 @@ export default function UserPostsPage({ params }: PageProps) {
         <div className={profile ? 'space-y-0' : undefined}>
           {profile ? (
             <section className="relative rounded-[36px] rounded-b-none border border-white/60 bg-white/40 shadow-[0_35px_120px_rgba(15,23,42,0.12)]">
-              <div className="relative h-48 w-full overflow-hidden rounded-t-[36px] sm:h-60">
-                {coverDisplayUrl ? (
-                  <>
-                    <img src={coverDisplayUrl} alt={`${profile.name ?? profile.handle} cover`} className="absolute inset-0 h-full w-full object-cover" />
+              {coverThreadUrl ? (
+                <Link
+                  href={coverThreadUrl}
+                  className="relative block h-48 w-full overflow-hidden rounded-t-[36px] transition hover:brightness-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-primary)] sm:h-60"
+                  aria-label="View the cover photo post"
+                >
+                  <div className="absolute inset-0">
+                    {coverDisplayUrl ? (
+                      <img src={coverDisplayUrl} alt={`${profile.name ?? profile.handle} cover`} className="absolute inset-0 h-full w-full object-cover" />
+                    ) : (
+                      <div className="absolute inset-0 bg-gradient-to-r from-[#fde2d7] via-[#f7f0ff] to-[#dff3ff]" />
+                    )}
                     <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/0 to-black/20" />
-                  </>
-                ) : (
-                  <div className="absolute inset-0 bg-gradient-to-r from-[#fde2d7] via-[#f7f0ff] to-[#dff3ff]" />
-                )}
-              </div>
+                    {isOwner ? (
+                      <Link
+                        href={editCoverHref}
+                        className="absolute bottom-3 left-3 inline-flex items-center justify-center rounded-full border border-white/70 bg-gray-900/85 p-2 text-white shadow-md backdrop-blur transition hover:brightness-110"
+                        aria-label="Update your cover photo"
+                      >
+                        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                          <circle cx="12" cy="13" r="3" />
+                        </svg>
+                      </Link>
+                    ) : null}
+                  </div>
+                </Link>
+              ) : (
+                <div className="relative h-48 w-full overflow-hidden rounded-t-[36px] sm:h-60">
+                  {coverDisplayUrl ? (
+                    <>
+                      <img src={coverDisplayUrl} alt={`${profile.name ?? profile.handle} cover`} className="absolute inset-0 h-full w-full object-cover" />
+                      <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/0 to-black/20" />
+                    </>
+                  ) : (
+                    <div className="absolute inset-0 bg-gradient-to-r from-[#fde2d7] via-[#f7f0ff] to-[#dff3ff]" />
+                  )}
+                  {isOwner ? (
+                    <Link
+                      href={editCoverHref}
+                      className="absolute bottom-3 left-3 inline-flex items-center justify-center rounded-full border border-white/70 bg-gray-900/85 p-2 text-white shadow-md backdrop-blur transition hover:brightness-110"
+                      aria-label="Update your cover photo"
+                    >
+                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                        <circle cx="12" cy="13" r="3" />
+                      </svg>
+                    </Link>
+                  ) : null}
+                </div>
+              )}
             </section>
           ) : null}
           <section
@@ -551,17 +755,29 @@ export default function UserPostsPage({ params }: PageProps) {
                         isVerified={Boolean(profile.isVerified)}
                         isBusiness={Boolean(profile.isPremium)}
                         className="relative border-4 border-white"
+                        href={avatarThreadUrl ?? undefined}
                       />
+                      {isOwner ? (
+                        <Link
+                          href={editAvatarHref}
+                          className="absolute bottom-0 left-0 inline-flex translate-x-[-30%] translate-y-[30%] items-center justify-center rounded-full border border-white/80 bg-gray-900/85 p-2 text-white shadow-md backdrop-blur transition hover:brightness-110"
+                          aria-label="Update your profile photo"
+                        >
+                          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                            <circle cx="12" cy="13" r="3" />
+                          </svg>
+                        </Link>
+                      ) : null}
                     </div>
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[var(--cc-primary)]">Civic Identity</p>
                       <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{profile.name ?? profile.handle}</h1>
                       <p className="text-sm text-slate-500">@{profile.handle} · Joined {formatDate(profile.createdAt) || '—'}</p>
                     </div>
                   </div>
                   {isOwner ? (
                     <a
-                      href="/settings/profile"
+                      href="/profile/edit"
                       className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
                     >
                       Edit profile
@@ -569,19 +785,30 @@ export default function UserPostsPage({ params }: PageProps) {
                   ) : (
                     <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
                       {renderFriendshipPrimaryCta()}
-                      <button
-                        type="button"
-                        className={clsx(
-                          'inline-flex items-center justify-center rounded-full px-5 py-2 font-semibold transition',
-                          resolvedRelationship.following
-                            ? 'bg-slate-900 text-white shadow-lg hover:brightness-110'
-                            : 'border border-slate-900/10 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900',
-                        )}
-                        onClick={handleToggleFollow}
-                        disabled={followLoading}
-                      >
-                        {resolvedRelationship.following ? 'Following' : 'Follow'}
-                      </button>
+                      {resolvedRelationship.friendshipStatus === 'friends' ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={handleStartDirectMessage}
+                          disabled={messageLoading}
+                        >
+                          {messageLoading ? 'Opening...' : 'Message'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className={clsx(
+                            'inline-flex items-center justify-center rounded-full px-5 py-2 font-semibold transition',
+                            resolvedRelationship.following
+                              ? 'bg-slate-900 text-white shadow-lg hover:brightness-110'
+                              : 'border border-slate-900/10 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900',
+                          )}
+                          onClick={handleToggleFollow}
+                          disabled={followLoading}
+                        >
+                          {resolvedRelationship.following ? 'Following' : 'Follow'}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -657,6 +884,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   isVerified={isViewerVerified}
                   isBusiness={isViewerBusiness}
                   className="shrink-0"
+                  href={viewer?.handle ? `/u/${viewer.handle}` : undefined}
                 />
                 <button
                   type="button"
@@ -683,7 +911,11 @@ export default function UserPostsPage({ params }: PageProps) {
                   <span role="img" aria-label="Link">🔗</span>
                   Link
                 </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Photos')}>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Video')}>
+                  <span role="img" aria-label="Video">🎥</span>
+                  Video
+                </button>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('photo')}>
                   <span role="img" aria-label="Photos">📷</span>
                   Photos
                 </button>
@@ -697,24 +929,6 @@ export default function UserPostsPage({ params }: PageProps) {
               key={composerDefaultType}
               maxWidthClassName="max-w-3xl"
             >
-              <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
-                <span className="text-slate-700">Create:</span>
-                <button type="button" className={`rounded-full px-3 py-1 ${composerDefaultType === 'post' ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-700'}`} onClick={() => setComposerDefaultType('post')}>
-                  Post
-                </button>
-                <button type="button" className={`rounded-full px-3 py-1 ${composerDefaultType === 'article' ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-700'}`} onClick={() => setComposerDefaultType('article')}>
-                  Article
-                </button>
-                <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Poll')}>
-                  Poll
-                </button>
-                <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Link')}>
-                  Link
-                </button>
-                <button type="button" className="rounded-full px-3 py-1 text-slate-400" onClick={() => handleComingSoon('Photos')}>
-                  Photos
-                </button>
-              </div>
               <PostComposer
                 me={viewer}
                 defaultPostType={composerDefaultType}
@@ -764,7 +978,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <PostFeedItem
                 key={post.id}
                 post={post}
-                onVote={handleVote}
+                onReact={handleReact}
                 viewerId={viewer?.id ?? null}
                 viewerIsVerified={isViewerVerified || isViewerBusiness}
               />

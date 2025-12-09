@@ -1,6 +1,6 @@
 "use client"
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
-import type { ChamberGeoMatch, ChamberGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
+import type { CommunityGeoMatch, CommunityGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
 import { HiMiniStar } from 'react-icons/hi2'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -48,7 +48,7 @@ type CommunityOption = {
 
 type CommunityFollow = {
   province: string
-  chamberSlug: string
+  communitySlug: string
   home: boolean
   followedAt?: string
   chamber?: CommunityOption
@@ -103,14 +103,14 @@ function formatCityOptionLabel(entry: CommunityOption) {
   return `${base}${edaLabel}${populationLabel}`
 }
 
-function formatMatchCityLabel(match: ChamberGeoMatch) {
-  const cityName = match.city?.name ?? match.chamberName
-  const suffix = match.city?.name ? ` (EDA ${match.chamberName})` : ''
+function formatMatchCityLabel(match: CommunityGeoMatch) {
+  const cityName = match.city?.name ?? match.communityName
+  const suffix = match.city?.name ? ` (EDA ${match.communityName})` : ''
   return `${cityName}${suffix}`
 }
 
-function buildMatchCityKey(match: ChamberGeoMatch) {
-  return `${match.province}:${match.city?.slug ?? match.chamberSlug}`
+function buildMatchCityKey(match: CommunityGeoMatch) {
+  return `${match.province}:${match.city?.slug ?? match.communitySlug}`
 }
 
 function getErrorMessage(error: unknown): string | undefined {
@@ -155,15 +155,15 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [geoBusy, setGeoBusy] = useState(false)
   const [geoStatus, setGeoStatus] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
-  const [geoDetected, setGeoDetected] = useState<ChamberGeoMatch | null>(null)
-  const [geoSelected, setGeoSelected] = useState<ChamberGeoMatch | null>(null)
-  const [geoAlternatives, setGeoAlternatives] = useState<ChamberGeoMatch[]>([])
+  const [geoDetected, setGeoDetected] = useState<CommunityGeoMatch | null>(null)
+  const [geoSelected, setGeoSelected] = useState<CommunityGeoMatch | null>(null)
+  const [geoAlternatives, setGeoAlternatives] = useState<CommunityGeoMatch[]>([])
   const [showGeoOverlay, setShowGeoOverlay] = useState(false)
   const [postalCodeInput, setPostalCodeInput] = useState('')
   const [postalBusy, setPostalBusy] = useState(false)
   const [postalStatus, setPostalStatus] = useState('')
   const [postalError, setPostalError] = useState<string | null>(null)
-  const [postalMatches, setPostalMatches] = useState<ChamberGeoMatch[]>([])
+  const [postalMatches, setPostalMatches] = useState<CommunityGeoMatch[]>([])
   const [postalFsa, setPostalFsa] = useState<PostalLookupResponse['fsa'] | null>(null)
   const [postalNormalized, setPostalNormalized] = useState<string | null>(null)
   const [welcomePickerView, setWelcomePickerView] = useState<'options' | 'manual' | 'assist'>(() => (mode === 'welcome' ? 'options' : 'manual'))
@@ -193,9 +193,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         const cityItems = Array.isArray(data.items) ? data.items : []
         if (cityItems.length) {
           items = cityItems.map((city) => ({
-            slug: city.chamberSlug,
+            slug: city.communitySlug,
             province: city.provinceCode,
-            name: city.chamberName,
+            name: city.communityName,
             cityName: city.name,
             citySlug: city.slug,
             cityPopulation: city.population ?? null,
@@ -311,7 +311,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       })
       const data = await jsonOrThrow<PostalLookupResponse>(res)
       const matches = [data.primary, ...(Array.isArray(data.alternatives) ? data.alternatives : [])].filter(
-        (entry): entry is ChamberGeoMatch => Boolean(entry)
+        (entry): entry is CommunityGeoMatch => Boolean(entry)
       )
       setPostalMatches(matches)
       setPostalFsa(data.fsa ?? null)
@@ -322,8 +322,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       if (primaryMatch) {
         await applyGeolocationMatch(primaryMatch, 'postal', { postalCode: resolvedPostal })
         setPostalStatus(`Matched ${formatMatchCityLabel(primaryMatch)} using your postal code.`)
-      } else if (data.fsa?.defaultChamberName) {
-        setPostalStatus(`Matched ${data.fsa.defaultChamberName}. Choose it below to continue.`)
+      } else if (data.fsa?.defaultCommunityName) {
+        setPostalStatus(`Matched ${data.fsa.defaultCommunityName}. Choose it below to continue.`)
       } else {
         setPostalStatus('We found your postal region but need you to pick a city below.')
         setPostalError(
@@ -473,7 +473,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }
 
   async function applyGeolocationMatch(
-    match: ChamberGeoMatch,
+    match: CommunityGeoMatch,
     reason: 'auto' | 'suggestion' | 'postal',
     options?: { postalCode?: string | null },
   ) {
@@ -484,9 +484,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       setGeoSelected(match)
       setSelectedProvince(match.province)
       if (!isWelcomeMode) {
-        await loadCitiesForProvince(match.province, match.chamberSlug, match.city?.slug ?? null)
+        await loadCitiesForProvince(match.province, match.communitySlug, match.city?.slug ?? null)
       }
-      setSelectedCommunitySlug(match.chamberSlug)
+      setSelectedCommunitySlug(match.communitySlug)
       setSelectedCityKey(buildMatchCityKey(match))
       const matchLabel = formatMatchCityLabel(match)
       const contextMessage =
@@ -519,7 +519,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         }
       }
       if (isWelcomeMode) {
-        await setHomeCommunity(match.province, match.chamberSlug, 'welcome', { skipCityLoad: true })
+        await setHomeCommunity(match.province, match.communitySlug, 'welcome', { skipCityLoad: true })
       }
     } catch (error) {
       console.error('Failed applying geolocation match', error)
@@ -537,7 +537,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     }
   }
 
-  function handleSuggestionSelect(match: ChamberGeoMatch) {
+  function handleSuggestionSelect(match: CommunityGeoMatch) {
     if (isWelcomeMode && welcomeAutoSaving) return
     void applyGeolocationMatch(match, 'suggestion')
   }
@@ -580,7 +580,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             },
             body: JSON.stringify({ lat: latitude, lng: longitude, limit: 8 }),
           })
-          const data = await jsonOrThrow<ChamberGeolocateResponse>(res)
+          const data = await jsonOrThrow<CommunityGeolocateResponse>(res)
           const primary = data.primary ?? null
           const alternatives = Array.isArray(data.alternatives) ? data.alternatives : []
           setGeoAlternatives(alternatives)
@@ -684,7 +684,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ provinceCode, chamberSlug: communitySlug }),
+        body: JSON.stringify({ provinceCode, communitySlug: communitySlug }),
       })
       const data = await jsonOrThrow<HomeResponse>(res)
       const nextHome = data.home ?? { province: provinceCode, slug: communitySlug }
@@ -738,7 +738,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ provinceCode, chamberSlug: communitySlug }),
+        body: JSON.stringify({ provinceCode, communitySlug: communitySlug }),
       })
       await jsonOrThrow<unknown>(res)
       await refreshFollows({ token, syncHome: true })
@@ -768,9 +768,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }
 
   async function handleFollowSuggestion(city: CitySummary) {
-    if (!city.chamberSlug) return
-    const key = `${city.provinceCode}:${city.chamberSlug}`
-    await followCommunity(city.provinceCode, city.chamberSlug, { savingKey: key })
+    if (!city.communitySlug) return
+    const key = `${city.provinceCode}:${city.communitySlug}`
+    await followCommunity(city.provinceCode, city.communitySlug, { savingKey: key })
   }
 
   async function handleUnfollow(follow: CommunityFollow) {
@@ -779,7 +779,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       redirectToAuthModal('login')
       return
     }
-    const key = `${follow.province}:${follow.chamberSlug}:remove`
+    const key = `${follow.province}:${follow.communitySlug}:remove`
     setManagingFollow(key)
     try {
       const res = await fetch(buildApiUrl('/communities/follows'), {
@@ -788,7 +788,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ provinceCode: follow.province, chamberSlug: follow.chamberSlug }),
+        body: JSON.stringify({ provinceCode: follow.province, communitySlug: follow.communitySlug }),
       })
       await jsonOrThrow<unknown>(res)
       const items = await refreshFollows({ token, syncHome: true })
@@ -818,7 +818,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
 
   const alreadyFollowingSelected = useMemo(() => {
     if (!selectedProvince || !selectedCommunitySlug) return false
-    return follows.some((item) => item.province === selectedProvince && item.chamberSlug === selectedCommunitySlug)
+    return follows.some((item) => item.province === selectedProvince && item.communitySlug === selectedCommunitySlug)
   }, [follows, selectedCommunitySlug, selectedProvince])
 
   const additionalFollows = useMemo(() => follows.filter((item) => !item.home), [follows])
@@ -852,14 +852,14 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         ) : (
           <div className="mt-3 space-y-3">
             {orderedFollows.map((follow) => {
-              const chamber = follow.chamber ?? { slug: follow.chamberSlug, province: follow.province }
-              const key = `${follow.province}:${follow.chamberSlug}`
+              const chamber = follow.chamber ?? { slug: follow.communitySlug, province: follow.province }
+              const key = `${follow.province}:${follow.communitySlug}`
               const provinceName = provinces.find((p) => p.code === chamber.province)?.name || chamber.province.toUpperCase()
               const visitHref = `/${chamber.province.toLowerCase()}/${chamber.slug.toLowerCase()}`
               const isHome = Boolean(follow.home)
               const isUpdating = managingFollow === `${key}:home`
               const isRemoving = managingFollow === `${key}:remove`
-              const cityLabel = chamber.name || follow.chamberSlug.replace(/-/g, ' ')
+              const cityLabel = chamber.name || follow.communitySlug.replace(/-/g, ' ')
               const avatarInitial = cityLabel?.[0]?.toUpperCase() ?? '#'
               return (
                 <div key={key} className="rounded-2xl border border-slate-200 p-4">
@@ -916,9 +916,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         ) : (
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {nearbyCommunities.map((city) => {
-              const key = `${city.provinceCode}:${city.chamberSlug}`
-              const visitHref = city.chamberSlug ? `/${city.provinceCode.toLowerCase()}/${city.chamberSlug.toLowerCase()}` : '#'
-              const isFollowing = follows.some((follow) => follow.province === city.provinceCode && follow.chamberSlug === city.chamberSlug)
+              const key = `${city.provinceCode}:${city.communitySlug}`
+              const visitHref = city.communitySlug ? `/${city.provinceCode.toLowerCase()}/${city.communitySlug.toLowerCase()}` : '#'
+              const isFollowing = follows.some((follow) => follow.province === city.provinceCode && follow.communitySlug === city.communitySlug)
               const isSaving = suggestionSavingKey === key
               const distanceLabel = typeof city.distanceKm === 'number' ? `${city.distanceKm.toFixed(1)} km away` : null
               return (
@@ -1036,11 +1036,11 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     const showManualPickers = !isWelcome
     const pickerContainerClass = `${isWelcome ? 'mt-4' : 'mt-6'} space-y-4`
     const activeGeoMatch = geoSelected ?? geoDetected
-    const suggestionMatches: ChamberGeoMatch[] = []
+    const suggestionMatches: CommunityGeoMatch[] = []
     const seenMatches = new Set<string>()
-    const addSuggestion = (match: ChamberGeoMatch | null | undefined) => {
+    const addSuggestion = (match: CommunityGeoMatch | null | undefined) => {
       if (!match) return
-      const key = `${match.province}:${match.chamberSlug}`
+      const key = `${match.province}:${match.communitySlug}`
       if (seenMatches.has(key)) return
       seenMatches.add(key)
       suggestionMatches.push(match)
@@ -1049,8 +1049,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     addSuggestion(geoDetected)
     geoAlternatives.forEach((alt) => addSuggestion(alt))
     postalMatches.forEach((match) => addSuggestion(match))
-    const isPostalSuggestion = (match: ChamberGeoMatch) =>
-      postalMatches.some((entry) => entry.province === match.province && entry.chamberSlug === match.chamberSlug)
+    const isPostalSuggestion = (match: CommunityGeoMatch) =>
+      postalMatches.some((entry) => entry.province === match.province && entry.communitySlug === match.communitySlug)
     const showAssistPanel = !isWelcome || welcomePickerView === 'assist' || assistUnlocked || postalMatches.length > 0
     const assistButtonClass = `${tabButtonBaseClass} w-full sm:w-auto ${isWelcome && welcomePickerView === 'assist' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm' : 'border-[var(--cc-primary)] text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10'}`
 
@@ -1328,7 +1328,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }
 
   const mainContent = (
-    <div className="space-y-6">
+    <div className="w-full space-y-6">
+      <Link href="/settings" className="text-sm font-semibold text-[var(--cc-primary)] hover:underline">
+        Back
+      </Link>
       {manageSection}
     </div>
   )
@@ -1373,7 +1376,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       <DashboardShell
         className="min-h-screen"
         sidebar={<Sidebar me={me ?? undefined} active="community" />}
-        gridClassName="lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]"
         mainClassName="space-y-6"
       >
         {mainContent}

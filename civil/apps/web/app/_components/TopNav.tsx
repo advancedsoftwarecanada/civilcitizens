@@ -11,6 +11,8 @@ import { getStoredToken } from '../_lib/tokenStorage'
 import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
 import { getFriendshipId } from './notifications/notificationUtils'
+import { emitNotificationsMarkedReadEvent, NOTIFICATIONS_MARKED_READ_EVENT, type NotificationsMarkedReadDetail } from './notifications/notificationEvents'
+import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from './notifications/notificationStream'
 import { pushToast } from './useToasts'
 import { SearchResults } from './search/SearchResults'
 const MAX_VISIBLE_NOTIFICATIONS = 7
@@ -32,6 +34,11 @@ export default function TopNav() {
 
   useEffect(() => () => {
     if (searchBlurTimeout.current) clearTimeout(searchBlurTimeout.current)
+  }, [])
+
+  const applyLocalReadState = useCallback(() => {
+    const timestamp = new Date().toISOString()
+    setNotifications((prev) => prev.map((notification) => (notification.unread ? { ...notification, unread: false, readAt: notification.readAt ?? timestamp } : notification)))
   }, [])
 
   const fetchNotifications = useCallback(async () => {
@@ -75,6 +82,81 @@ export default function TopNav() {
     }
   }, [])
 
+  const acknowledgeNotifications = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) {
+      return false
+    }
+    try {
+      const res = await fetch(buildApiUrl('/notifications/ack'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ before: new Date().toISOString() }),
+      })
+      if (res.status === 401) {
+        window.localStorage.removeItem('token')
+        setNotifications([])
+        setUnreadCount(0)
+        setDropdownOpen(false)
+        redirectToAuthModal('login')
+        return false
+      }
+      if (!res.ok) {
+        return false
+      }
+      setUnreadCount(0)
+      applyLocalReadState()
+      emitNotificationsMarkedReadEvent('top-nav')
+      return true
+    } catch (err) {
+      console.error('Unable to acknowledge notifications', err)
+      return false
+    }
+  }, [applyLocalReadState])
+
+  const handleRealtimeNotification = useCallback(
+    (payload: RealtimePayload) => {
+      if (!isNotificationPayload(payload)) return
+      const data: NotificationRealtimeData = payload.data
+      const payloadValue = data.payload
+      const normalizedPayload =
+        payloadValue && typeof payloadValue === 'object' && !Array.isArray(payloadValue)
+          ? (payloadValue as Record<string, unknown>)
+          : null
+      const incoming = {
+        id: data.id,
+        type: data.type,
+        actorId: data.actorId,
+        postId: data.postId,
+        payload: normalizedPayload,
+        readAt: data.readAt,
+        createdAt: data.createdAt,
+        unread: data.unread,
+      }
+      let unreadDelta = 0
+      setNotifications((prev) => {
+        const existing = prev.find((item) => item.id === incoming.id)
+        const nextActor = data.actor ?? existing?.actor ?? null
+        const merged: NotificationItem = {
+          ...incoming,
+          actor: nextActor,
+        }
+        if (merged.unread && (!existing || !existing.unread)) {
+          unreadDelta = 1
+        }
+        const next = [merged, ...prev.filter((item) => item.id !== incoming.id)]
+        return next.slice(0, MAX_VISIBLE_NOTIFICATIONS)
+      })
+      if (unreadDelta > 0) {
+        setUnreadCount((prev) => prev + unreadDelta)
+      }
+    },
+    [],
+  )
+
   useEffect(() => {
     const token = getStoredToken()
     if (!token) return
@@ -113,8 +195,30 @@ export default function TopNav() {
       return
     }
     setDropdownOpen(true)
-    void fetchNotifications()
-  }, [dropdownOpen, fetchNotifications])
+    void (async () => {
+      await fetchNotifications()
+      await acknowledgeNotifications()
+    })()
+  }, [dropdownOpen, fetchNotifications, acknowledgeNotifications])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const handleMarkedRead = (event: Event) => {
+      const detail = (event as CustomEvent<NotificationsMarkedReadDetail>).detail
+      if (detail?.source === 'top-nav') return
+      setUnreadCount(0)
+      applyLocalReadState()
+    }
+    window.addEventListener(NOTIFICATIONS_MARKED_READ_EVENT, handleMarkedRead as EventListener)
+    return () => {
+      window.removeEventListener(NOTIFICATIONS_MARKED_READ_EVENT, handleMarkedRead as EventListener)
+    }
+  }, [applyLocalReadState])
+
+  useEffect(() => {
+    const unsubscribe = subscribeToNotificationsStream(handleRealtimeNotification)
+    return unsubscribe
+  }, [handleRealtimeNotification])
 
   const handleSearchFocus = useCallback(() => {
     if (searchBlurTimeout.current) {
@@ -150,11 +254,59 @@ export default function TopNav() {
         })
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
         if (!res.ok) {
+          if (res.status === 409 && payload?.error === 'friendship_not_pending') {
+            const timestamp = new Date().toISOString()
+            setNotifications((prev) =>
+              prev.map((item) => {
+                if (item.id !== notification.id) return item
+                const nextPayload = {
+                  ...((item.payload ?? {}) as Record<string, unknown>),
+                  status: action === 'accept' ? 'accepted' : 'rejected',
+                }
+                return {
+                  ...item,
+                  unread: false,
+                  readAt: item.readAt ?? timestamp,
+                  payload: nextPayload,
+                }
+              }),
+            )
+            if (notification.unread) {
+              setUnreadCount((prev) => Math.max(0, prev - 1))
+            }
+            pushToast('Friend request already resolved.', 'info')
+            return
+          }
+          if (res.status === 404) {
+            setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
+            if (notification.unread) {
+              setUnreadCount((prev) => Math.max(0, prev - 1))
+            }
+            pushToast('That friend request is no longer available.', 'info')
+            return
+          }
           pushToast(payload?.error ?? 'Unable to update friend request right now.', 'error')
           return
         }
-        setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
-        setUnreadCount((prev) => Math.max(0, prev - (notification.unread ? 1 : 0)))
+        const timestamp = new Date().toISOString()
+        setNotifications((prev) =>
+          prev.map((item) => {
+            if (item.id !== notification.id) return item
+            const nextPayload = {
+              ...((item.payload ?? {}) as Record<string, unknown>),
+              status: action === 'accept' ? 'accepted' : 'rejected',
+            }
+            return {
+              ...item,
+              unread: false,
+              readAt: item.readAt ?? timestamp,
+              payload: nextPayload,
+            }
+          }),
+        )
+        if (notification.unread) {
+          setUnreadCount((prev) => Math.max(0, prev - 1))
+        }
         pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
       } catch (err) {
         console.error('Failed to respond to friend request', err)
@@ -167,11 +319,11 @@ export default function TopNav() {
   )
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/50 bg-white/80 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-white/50 bg-white/80 backdrop-blur hidden md:block">
       <div className="mx-auto flex w-full max-w-[1800px] items-center gap-2 px-4 py-3 sm:gap-4 sm:px-6 xl:px-10">
         <Link
           href="/home"
-          className="inline-flex items-center gap-2 rounded-2xl border border-slate-100 bg-white px-2 py-2 text-slate-800 shadow-sm transition hover:border-slate-200"
+          className="inline-flex items-center gap-2 text-slate-800 transition hover:opacity-90"
           aria-label="Civil home"
         >
           <Image src="/favicon.png" alt="Civil" width={32} height={32} className="h-8 w-8 md:hidden" priority />
@@ -179,7 +331,7 @@ export default function TopNav() {
         </Link>
 
         <div className="flex flex-1 justify-center px-2">
-          <div className="relative w-full max-w-2xl">
+          <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
             <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
             <form action="/search" method="GET">
               <input

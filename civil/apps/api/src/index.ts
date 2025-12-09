@@ -16,6 +16,7 @@ import {
   BusinessStatus,
   StripeWebhookStatus,
   FriendshipStatus,
+  ReactionType,
   MessageThreadType,
   MessageType,
   MessageParticipantRole,
@@ -34,8 +35,10 @@ import {
   UpdateProfileInput,
   CursorQuery,
   HandleParam,
-  VotePostInput,
+  ReactPostInput,
+  ReactionTypeEnum,
   VoteCommentInput,
+  UpdateProfilePhotoInput,
   PostSortEnum,
   CommentSortEnum,
   PROVINCES,
@@ -62,9 +65,94 @@ import {
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import Stripe from 'stripe'
+type DailyCount = { date: string; count: number }
+
+const METRIC_TABLES = {
+  users: { table: '"User"', column: '"createdAt"' },
+  posts: { table: '"Post"', column: '"createdAt"' },
+  comments: { table: '"Comment"', column: '"createdAt"' },
+  reactions: { table: '"PostReaction"', column: '"createdAt"' },
+  follows: { table: '"Follow"', column: '"createdAt"' },
+} as const
+
+type DateRange = { start: Date; end: Date }
+
+async function queryDailyCounts(kind: keyof typeof METRIC_TABLES, range: DateRange): Promise<DailyCount[]> {
+  const config = METRIC_TABLES[kind]
+  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
+    select date_trunc('day', ${Prisma.raw(config.column)}) as date, count(*)::bigint as count
+    from ${Prisma.raw(config.table)}
+    where ${Prisma.raw(config.column)} >= ${range.start} and ${Prisma.raw(config.column)} < ${range.end}
+    group by 1
+    order by 1 asc
+  `
+  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
+}
+
+async function queryPageViewSeries(range: DateRange): Promise<DailyCount[]> {
+  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
+    select date_trunc('day', "createdAt") as date, count(*)::bigint as count
+    from "PageView"
+    where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
+    group by 1
+    order by 1 asc
+  `
+  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
+}
+
+function startOfUtcDay(date: Date) {
+  const d = new Date(date)
+  d.setUTCHours(0, 0, 0, 0)
+  return d
+}
+
+const TrackViewInput = z.object({
+  path: z.string().min(1),
+  postId: z.string().optional(),
+  referrer: z.string().optional(),
+})
+
+function parseDateInput(value?: string | null, fallbackDays = 30): { start: Date; end: Date } {
+  const now = new Date()
+  const end = startOfUtcDay(now)
+  end.setUTCDate(end.getUTCDate() + 1)
+
+  let start = startOfUtcDay(new Date(now.getTime() - (fallbackDays - 1) * 24 * 60 * 60 * 1000))
+  if (value) {
+    const candidate = new Date(value)
+    if (!Number.isNaN(candidate.getTime())) {
+      start = startOfUtcDay(candidate)
+    }
+  }
+  return { start, end }
+}
+
+function parseRange(start?: string | null, end?: string | null): DateRange {
+  const today = startOfUtcDay(new Date())
+  const defaultStart = startOfUtcDay(new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000))
+  let rangeStart = defaultStart
+  let rangeEnd = startOfUtcDay(new Date(today.getTime() + 24 * 60 * 60 * 1000))
+
+  if (start) {
+    const s = new Date(start)
+    if (!Number.isNaN(s.getTime())) rangeStart = startOfUtcDay(s)
+  }
+  if (end) {
+    const e = new Date(end)
+    if (!Number.isNaN(e.getTime())) {
+      const endDay = startOfUtcDay(e)
+      endDay.setUTCDate(endDay.getUTCDate() + 1)
+      rangeEnd = endDay
+    }
+  }
+  if (rangeEnd <= rangeStart) {
+    rangeEnd = startOfUtcDay(new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000))
+  }
+  return { start: rangeStart, end: rangeEnd }
+}
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { createHash, randomUUID } from 'crypto'
-import { locateChamberFromPoint, getChamberCentroid } from './geodata.js'
+import { locateCommunityFromPoint, getCommunityCentroid } from './geodata.js'
 import { locateFsaFromPoint } from './fsaLocator.js'
 import { statsCanPointToWgs84 } from './statscan.js'
 
@@ -105,12 +193,12 @@ type CommunityMetaPayload = {
   computedAt?: string
   reference?: {
     provinceCode?: string | null
-    chamberSlug?: string | null
+    communitySlug?: string | null
     cityName?: string | null
   } | null
 }
 
-const buildFollowKey = (province: string, chamberSlug: string) => `${province}:${chamberSlug}`
+const buildFollowKey = (province: string, communitySlug: string) => `${province}:${communitySlug}`
 
 function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): CommunityMetaPayload | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -120,7 +208,7 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
     : undefined
   const reference =
     payload.reference && typeof payload.reference === 'object' && !Array.isArray(payload.reference)
-      ? (payload.reference as { provinceCode?: string | null; chamberSlug?: string | null; cityName?: string | null })
+      ? (payload.reference as { provinceCode?: string | null; communitySlug?: string | null; cityName?: string | null })
       : null
   const computedAt = typeof payload.computedAt === 'string' ? payload.computedAt : undefined
   return {
@@ -138,8 +226,8 @@ function filterCachedSuggestions(
   if (!suggestions?.length) return []
   const filtered: CitySummaryType[] = []
   for (const entry of suggestions) {
-    if (!entry?.chamberSlug) continue
-    const key = buildFollowKey(entry.provinceCode, entry.chamberSlug)
+    if (!entry?.communitySlug) continue
+    const key = buildFollowKey(entry.provinceCode, entry.communitySlug)
     if (excludeKeys.has(key)) continue
     filtered.push(entry)
     if (filtered.length >= limit) break
@@ -196,8 +284,8 @@ async function computeNearbyCommunitySuggestions(
 
   const suggestions: CitySummaryType[] = []
   for (const candidate of candidateCities) {
-    if (!candidate.city.chamberSlug) continue
-    const key = buildFollowKey(candidate.city.provinceCode, candidate.city.chamberSlug)
+    if (!candidate.city.communitySlug) continue
+    const key = buildFollowKey(candidate.city.provinceCode, candidate.city.communitySlug)
     if (excludeKeys.has(key)) continue
     suggestions.push(formatCitySummary(candidate.city, candidate.distance))
     if (suggestions.length >= limit) break
@@ -438,21 +526,24 @@ const s3Client = new S3Client({
   },
 })
 
-const app = Fastify({
+export const app = Fastify({
   logger: true,
   trustProxy: true, // behind Nginx/Cloudflare
 })
 
-type ChamberRouteMethod = 'delete' | 'get' | 'patch' | 'post' | 'put'
-type ChamberRouteHandler = (req: FastifyRequest, reply: FastifyReply) => unknown
+type CommunityRouteMethod = 'delete' | 'get' | 'patch' | 'post' | 'put'
+type CommunityRouteHandler = (req: FastifyRequest, reply: FastifyReply) => unknown
 
-function registerChamberCommunityRoute(method: ChamberRouteMethod, path: string, handler: ChamberRouteHandler) {
-  if (!path.startsWith('/chambers')) {
-    throw new Error(`registerChamberCommunityRoute requires /chambers path, received: ${path}`)
+// Registers a community route and keeps a legacy /chambers alias for older clients.
+function registerCommunityRoute(method: CommunityRouteMethod, path: string, handler: CommunityRouteHandler) {
+  if (!path.startsWith('/communities')) {
+    throw new Error(`registerCommunityRoute requires /communities path, received: ${path}`)
   }
   ;(app as any)[method](path, handler)
-  const communityPath = path.replace('/chambers', '/communities')
-  ;(app as any)[method](communityPath, handler)
+  const legacyPath = path.replace('/communities', '/chambers')
+  if (legacyPath !== path) {
+    ;(app as any)[method](legacyPath, handler)
+  }
 }
 
 for (const mime of BINARY_UPLOAD_MIME_TYPES) {
@@ -501,8 +592,8 @@ function formatCitySummary(city: CityModel, distanceKm?: number): CitySummaryTyp
     slug: city.slug,
     provinceCode: city.provinceCode,
     provinceName,
-    chamberSlug: city.chamberSlug,
-    chamberName: city.chamberName,
+    communitySlug: city.communitySlug,
+    communityName: city.communityName,
     latitude: city.latitude,
     longitude: city.longitude,
     population: city.population ?? null,
@@ -535,8 +626,8 @@ type CommunitySummaryPayload = {
   municipalityName: string
   population: number | null
   regionLabel: string | null
-  chamberSlug: string | null
-  chamberName: string | null
+  communitySlug: string | null
+  communityName: string | null
   censusSubdivision: {
     slug: string
     name: string
@@ -559,7 +650,7 @@ type CityWithSubdivision = CityModel & {
     slug: string
     name: string
     type: string | null
-    defaultChamberName: string | null
+    defaultCommunityName: string | null
   } | null
 }
 
@@ -571,9 +662,9 @@ function buildCommunityPayloadFromCity(city: CityWithSubdivision): CommunitySumm
     municipalitySlug: city.slug,
     municipalityName: city.name,
     population: city.population ?? null,
-    regionLabel: pickLabel(city.censusSubdivision?.defaultChamberName, city.censusSubdivision?.name, city.chamberName),
-    chamberSlug: city.chamberSlug,
-    chamberName: city.chamberName,
+    regionLabel: pickLabel(city.censusSubdivision?.defaultCommunityName, city.censusSubdivision?.name, city.communityName),
+    communitySlug: city.communitySlug,
+    communityName: city.communityName,
     censusSubdivision: city.censusSubdivision
       ? {
           slug: city.censusSubdivision.slug,
@@ -591,8 +682,8 @@ type SubdivisionWithDivision = {
   officialName: string | null
   type: string | null
   population: number | null
-  defaultChamberName: string | null
-  defaultChamberSlug: string | null
+  defaultCommunityName: string | null
+  defaultCommunitySlug: string | null
   division: { name: string | null } | null
 }
 
@@ -607,9 +698,9 @@ function buildCommunityPayloadFromSubdivision(
     municipalitySlug: subdivision.slug,
     municipalityName,
     population: subdivision.population ?? null,
-    regionLabel: pickLabel(subdivision.defaultChamberName, subdivision.division?.name, subdivision.name),
-    chamberSlug: subdivision.defaultChamberSlug ? subdivision.defaultChamberSlug : null,
-    chamberName: pickLabel(subdivision.defaultChamberName),
+    regionLabel: pickLabel(subdivision.defaultCommunityName, subdivision.division?.name, subdivision.name),
+    communitySlug: subdivision.defaultCommunitySlug ? subdivision.defaultCommunitySlug : null,
+    communityName: pickLabel(subdivision.defaultCommunityName),
     censusSubdivision: {
       slug: subdivision.slug,
       name: subdivision.name,
@@ -619,7 +710,7 @@ function buildCommunityPayloadFromSubdivision(
   }
 }
 
-type LocateResult = Awaited<ReturnType<typeof locateChamberFromPoint>>
+type LocateResult = Awaited<ReturnType<typeof locateCommunityFromPoint>>
 type RawGeoMatch = NonNullable<LocateResult['primary']>
 type RawGeoMatchOrNull = LocateResult['primary']
 type EnrichedGeoMatch = RawGeoMatch & { city?: CitySummaryType }
@@ -631,24 +722,24 @@ async function enrichMatchesWithCities(matches: RawGeoMatchOrNull[], lat: number
     return matches as EnrichedGeoMatchOrNull[]
   }
 
-  const chamberSlugs = [...new Set(validMatches.map((match) => match.chamberSlug))]
+  const communitySlugs = [...new Set(validMatches.map((match) => match.communitySlug))]
   const cityRows = await prisma.city.findMany({
-    where: { chamberSlug: { in: chamberSlugs } },
+    where: { communitySlug: { in: communitySlugs } },
   })
 
-  const citiesByChamber = new Map<string, CityModel[]>()
+  const citiesByCommunity = new Map<string, CityModel[]>()
   for (const city of cityRows) {
-    const list = citiesByChamber.get(city.chamberSlug)
+    const list = citiesByCommunity.get(city.communitySlug)
     if (list) {
       list.push(city)
     } else {
-      citiesByChamber.set(city.chamberSlug, [city])
+      citiesByCommunity.set(city.communitySlug, [city])
     }
   }
 
   return matches.map((match) => {
     if (!match) return null
-    const cityOptions = citiesByChamber.get(match.chamberSlug) ?? []
+    const cityOptions = citiesByCommunity.get(match.communitySlug) ?? []
     const summary = pickNearestCitySummary(cityOptions, lat, lng)
     if (!summary) return match
     return { ...match, city: summary }
@@ -658,16 +749,16 @@ async function enrichMatchesWithCities(matches: RawGeoMatchOrNull[], lat: number
 async function citySummaryFromGeoMatch(match: EnrichedGeoMatch): Promise<CitySummaryType | null> {
   if (!match) return null
   if (match.city) return match.city
-  const centroid = await getChamberCentroid(match.province, match.chamberSlug)
+  const centroid = await getCommunityCentroid(match.province, match.communitySlug)
   if (!centroid) return null
   const provinceName = getProvinceDisplayName(match.province as ProvinceCodeLiteral) ?? match.province.toUpperCase()
   return {
-    name: match.chamberName,
-    slug: match.chamberSlug,
+    name: match.communityName,
+    slug: match.communitySlug,
     provinceCode: match.province,
     provinceName,
-    chamberSlug: match.chamberSlug,
-    chamberName: match.chamberName,
+    communitySlug: match.communitySlug,
+    communityName: match.communityName,
     latitude: centroid.lat,
     longitude: centroid.lng,
     population: match.city?.population ?? null,
@@ -676,18 +767,18 @@ async function citySummaryFromGeoMatch(match: EnrichedGeoMatch): Promise<CitySum
 }
 
 async function computeGeodataFallbackSuggestions(
-  referenceFollow: { provinceCode: string; chamberSlug: string },
+  referenceFollow: { provinceCode: string; communitySlug: string },
   excludeKeys: Set<string>,
   limit = COMMUNITY_SUGGESTION_CACHE_LIMIT,
 ): Promise<CitySummaryType[]> {
-  const centroid = await getChamberCentroid(referenceFollow.provinceCode, referenceFollow.chamberSlug)
+  const centroid = await getCommunityCentroid(referenceFollow.provinceCode, referenceFollow.communitySlug)
   if (!centroid) return []
-  const locateResult = await locateChamberFromPoint(centroid.lat, centroid.lng, { limit })
+  const locateResult = await locateCommunityFromPoint(centroid.lat, centroid.lng, { limit })
   const enriched = await enrichMatchesWithCities([locateResult.primary, ...locateResult.alternatives], centroid.lat, centroid.lng)
   const suggestions: CitySummaryType[] = []
   for (const match of enriched) {
     if (!match) continue
-    const key = buildFollowKey(match.province, match.chamberSlug)
+    const key = buildFollowKey(match.province, match.communitySlug)
     if (excludeKeys.has(key)) continue
     const summary = await citySummaryFromGeoMatch(match)
     if (!summary) continue
@@ -780,7 +871,20 @@ async function dispatchRealtimeEvent(userId: string, payload: { type: string; da
 }
 
 async function dispatchNotification(record: NotificationRecord) {
-  await dispatchRealtimeEvent(record.userId, { type: 'notification', data: formatNotification(record) })
+  let actor: ReturnType<typeof formatFriendUser> | null = null
+  if (record.actorId) {
+    const actorRecord = await prisma.user.findUnique({ where: { id: record.actorId }, select: FRIEND_USER_SELECT })
+    if (actorRecord) {
+      actor = formatFriendUser(actorRecord)
+    }
+  }
+  await dispatchRealtimeEvent(record.userId, {
+    type: 'notification',
+    data: {
+      ...formatNotification(record),
+      actor,
+    },
+  })
 }
 
 async function createNotificationRecord(data: {
@@ -838,7 +942,7 @@ async function notifyFriendRequest(friendshipId: string, requesterId: string, ad
     userId: addresseeId,
     actorId: requesterId,
     type: FRIEND_NOTIFICATION_TYPES.REQUEST,
-    payload: { friendshipId },
+    payload: { friendshipId, status: 'pending' },
   })
 }
 
@@ -865,6 +969,14 @@ async function loadAcceptedFriendIds(userId: string): Promise<string[]> {
     result.add(row.requesterId === userId ? row.addresseeId : row.requesterId)
   }
   return [...result]
+}
+
+async function loadFollowingTargetIds(userId: string): Promise<string[]> {
+  const rows: Pick<Prisma.FollowGetPayload<{ select: { targetId: true } }>, 'targetId'>[] = await prisma.follow.findMany({
+    where: { followerId: userId },
+    select: { targetId: true },
+  })
+  return rows.map((row) => row.targetId)
 }
 
 function formatFriendRequest(friendship: FriendshipWithUsers, viewerId: string) {
@@ -1047,6 +1159,9 @@ type PrismaClientOrTx = typeof prisma | Prisma.TransactionClient
 type Jurisdiction = z.infer<typeof JurisdictionEnum>
 const DEFAULT_JURISDICTION: Jurisdiction = 'self'
 const REDDIT_EPOCH_SECONDS = 1134028003
+const REACTION_HOT_WINDOW_HOURS = 48
+const POSITIVE_REACTIONS: ReactionType[] = ['maple', 'heart', 'haha', 'wow', 'fire']
+const SUPPORT_REACTIONS: ReactionType[] = ['sad']
 
 const SCHEMA_MISMATCH_MESSAGE =
   'Database schema is missing the social feed columns. Apply the latest Prisma migration (pnpm --filter @civil/db prisma migrate deploy) and restart the API.'
@@ -1112,11 +1227,11 @@ type UserSearchResultPayload = {
   avatarUrl: string | null
   isPremium: boolean
   isVerified: boolean
-  homeChamber: {
+  homeCommunity: {
     provinceCode: string
     provinceName: string | null
-    chamberSlug: string
-    chamberName: string | null
+    communitySlug: string
+    communityName: string | null
   } | null
 }
 
@@ -1162,28 +1277,28 @@ async function searchUsersForQuery({
 
   const userIds = users.map((user) => user.id)
   const homeFollows = userIds.length
-    ? await prisma.chamberFollow.findMany({
+    ? await prisma.communityFollow.findMany({
         where: { userId: { in: userIds }, home: true },
         select: {
           userId: true,
           provinceCode: true,
-          chamberSlug: true,
+          communitySlug: true,
         },
       })
     : []
 
   const homeMap = new Map<
     string,
-    { provinceCode: string; provinceName: string | null; chamberSlug: string; chamberName: string | null }
+    { provinceCode: string; provinceName: string | null; communitySlug: string; communityName: string | null }
   >()
   for (const follow of homeFollows) {
-    const community = findCommunity(follow.provinceCode, follow.chamberSlug)
+    const community = findCommunity(follow.provinceCode, follow.communitySlug)
     const provinceName = getProvinceDisplayName(follow.provinceCode as ProvinceCodeLiteral)
     homeMap.set(follow.userId, {
       provinceCode: follow.provinceCode,
       provinceName,
-      chamberSlug: follow.chamberSlug,
-      chamberName: community?.name ?? follow.chamberSlug,
+      communitySlug: follow.communitySlug,
+      communityName: community?.name ?? follow.communitySlug,
     })
   }
 
@@ -1194,7 +1309,7 @@ async function searchUsersForQuery({
     avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
     isPremium: isPremium(user.premiumStatus),
     isVerified: isPremium(user.premiumStatus),
-    homeChamber: homeMap.get(user.id) ?? null,
+    homeCommunity: homeMap.get(user.id) ?? null,
   }))
 }
 
@@ -1207,7 +1322,7 @@ async function searchCommunitiesForQuery(query: string, limit: number): Promise<
 
   const insensitiveMode = Prisma.QueryMode.insensitive
 
-  const buildFieldCondition = (field: 'name' | 'chamberName'): Prisma.CityWhereInput => {
+  const buildFieldCondition = (field: 'name' | 'communityName'): Prisma.CityWhereInput => {
     if (!tokens.length) {
       return {
         [field]: {
@@ -1230,14 +1345,14 @@ async function searchCommunitiesForQuery(query: string, limit: number): Promise<
   }
 
   const nameCondition = buildFieldCondition('name')
-  const chamberCondition = buildFieldCondition('chamberName')
+  const communityCondition = buildFieldCondition('communityName')
 
   const where: Prisma.CityWhereInput = {
     OR: [
       nameCondition,
-      chamberCondition,
+      communityCondition,
       { slug: { contains: slugQuery, mode: insensitiveMode } },
-      { chamberSlug: { contains: slugQuery, mode: insensitiveMode } },
+      { communitySlug: { contains: slugQuery, mode: insensitiveMode } },
     ],
   }
 
@@ -1310,24 +1425,23 @@ function extractVariantUrl(variants: unknown, preferred: string[]): string | nul
 }
 
 type PostStatsInput = {
-  upvotes: number
-  downvotes: number
+  positiveReactions: number
+  supportReactions: number
+  recentPositive: number
   commentCount: number
   commentScore: number
   createdAt: Date
   lastActivityAt: Date
 }
 
-function calculateHotScore({ upvotes, downvotes, commentCount, commentScore, createdAt, lastActivityAt }: PostStatsInput) {
-  const voteScore = upvotes - downvotes
+function calculateHotScore({ recentPositive, commentCount, commentScore, createdAt, lastActivityAt }: PostStatsInput) {
   const discussionWeight = Math.min(commentCount, 50)
   const commentScoreWeight = Math.max(Math.min(commentScore / 4, 75), -75)
-  const interactionScore = voteScore + discussionWeight + commentScoreWeight
+  const interactionScore = recentPositive + discussionWeight + commentScoreWeight
   const order = Math.log10(Math.max(Math.abs(interactionScore), 1))
-  const sign = interactionScore > 0 ? 1 : interactionScore < 0 ? -1 : 0
   const baseTime = Math.max(createdAt.getTime(), lastActivityAt.getTime())
   const seconds = baseTime / 1000 - REDDIT_EPOCH_SECONDS
-  return Number((sign * seconds + order).toFixed(6))
+  return Number((seconds + order).toFixed(6))
 }
 
 async function refreshPostAggregates(
@@ -1336,19 +1450,47 @@ async function refreshPostAggregates(
   times: { createdAt: Date; lastActivityAt: Date },
   options: { bumpActivity?: boolean } = {},
 ) {
-  const [upvotes, downvotes, commentCount, commentScoreResult] = await Promise.all([
-    tx.vote.count({ where: { postId, value: 1 } }),
-    tx.vote.count({ where: { postId, value: -1 } }),
+  const reactionWindowStart = new Date(Date.now() - REACTION_HOT_WINDOW_HOURS * 60 * 60 * 1000)
+
+  const [reactionGroups, recentPositive, commentCount, commentScoreResult] = await Promise.all([
+    tx.postReaction.groupBy({
+      by: ['type'],
+      where: { postId },
+      _count: true,
+    }),
+    tx.postReaction.count({
+      where: {
+        postId,
+        type: { in: POSITIVE_REACTIONS },
+        createdAt: { gte: reactionWindowStart },
+      },
+    }),
     tx.comment.count({ where: { postId } }),
     tx.comment.aggregate({ where: { postId }, _sum: { score: true } }),
   ])
 
+  const reactionCounts: Record<ReactionType, number> = {
+    maple: 0,
+    heart: 0,
+    haha: 0,
+    wow: 0,
+    sad: 0,
+    fire: 0,
+  }
+
+  for (const group of reactionGroups) {
+    reactionCounts[group.type] = group._count
+  }
+
+  const positiveReactions = POSITIVE_REACTIONS.reduce((sum, type) => sum + (reactionCounts[type] ?? 0), 0)
+  const supportReactions = SUPPORT_REACTIONS.reduce((sum, type) => sum + (reactionCounts[type] ?? 0), 0)
   const commentScore = commentScoreResult?._sum?.score ?? 0
 
   const nextLastActivityAt = options.bumpActivity ? new Date() : times.lastActivityAt
   const hotScore = calculateHotScore({
-    upvotes,
-    downvotes,
+    positiveReactions,
+    supportReactions,
+    recentPositive,
     commentCount,
     commentScore,
     createdAt: times.createdAt,
@@ -1358,20 +1500,30 @@ async function refreshPostAggregates(
   await tx.post.update({
     where: { id: postId },
     data: {
-      upvotes,
-      downvotes,
-      score: upvotes - downvotes,
+      upvotes: positiveReactions + supportReactions,
+      downvotes: 0,
+      score: positiveReactions,
       commentCount,
       hotScore,
+      reactionMaple: reactionCounts.maple,
+      reactionHeart: reactionCounts.heart,
+      reactionHaha: reactionCounts.haha,
+      reactionWow: reactionCounts.wow,
+      reactionSad: reactionCounts.sad,
+      reactionFire: reactionCounts.fire,
+      reactionTotal: positiveReactions + supportReactions,
+      recentPositive,
       lastActivityAt: nextLastActivityAt,
     },
   })
 
   return {
-    upvotes,
-    downvotes,
+    positiveReactions,
+    supportReactions,
+    reactionCounts,
     commentCount,
     commentScore,
+    recentPositive,
     lastActivityAt: nextLastActivityAt,
   }
 }
@@ -1432,22 +1584,21 @@ type CommentNode = {
 
 function calculateCommentHotScore({
   upvotes,
-  downvotes,
   replyCount,
   replyScore,
   createdAt,
   updatedAt,
 }: {
   upvotes: number
-  downvotes: number
   replyCount: number
   replyScore: number
   createdAt: Date
   updatedAt: Date
 }) {
   return calculateHotScore({
-    upvotes,
-    downvotes,
+    positiveReactions: upvotes,
+    supportReactions: 0,
+    recentPositive: upvotes,
     commentCount: replyCount,
     commentScore: replyScore,
     createdAt,
@@ -1460,7 +1611,6 @@ function attachCommentHotScore(node: CommentNode, stats?: { replyCount?: number;
   const replyScore = stats?.replyScore ?? node.replies.reduce((total, child) => total + child.score, 0)
   node.hotScore = calculateCommentHotScore({
     upvotes: node.upvotes,
-    downvotes: node.downvotes,
     replyCount,
     replyScore,
     createdAt: node.createdAt,
@@ -1701,9 +1851,19 @@ type PostWithAuthor = Prisma.PostGetPayload<{
   }
 }>
 
-function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null } = {}) {
-  const chamber = post.provinceCode && post.chamberSlug ? findCommunity(post.provinceCode, post.chamberSlug) : null
-  const provinceName = chamber ? getProvinceDisplayName(chamber.province as any) : null
+function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionType | null } = {}) {
+  const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
+  const provinceName = community ? getProvinceDisplayName(community.province as any) : null
+  const reactions = {
+    maple: post.reactionMaple ?? 0,
+    heart: post.reactionHeart ?? 0,
+    haha: post.reactionHaha ?? 0,
+    wow: post.reactionWow ?? 0,
+    sad: post.reactionSad ?? 0,
+    fire: post.reactionFire ?? 0,
+  }
+  const positiveTotal = reactions.maple + reactions.heart + reactions.haha + reactions.wow + reactions.fire
+  const totalReactions = positiveTotal + reactions.sad
   return {
     id: post.id,
     seoSlug: post.seoSlug,
@@ -1715,8 +1875,8 @@ function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null 
     updatedAt: post.updatedAt,
   jurisdiction: post.jurisdiction,
     provinceCode: post.provinceCode,
-    chamberSlug: post.chamberSlug,
-    chamberName: chamber?.name ?? null,
+    communitySlug: post.communitySlug,
+    communityName: community?.name ?? null,
     provinceName,
     author: {
       id: post.author.id,
@@ -1727,16 +1887,20 @@ function formatPost(post: PostWithAuthor, options: { viewerVote?: number | null 
       isVerified: isPremium(post.author.premiumStatus),
     },
     counts: {
-      upvotes: post.upvotes,
-      downvotes: post.downvotes,
-      score: post.score,
       commentCount: post.commentCount,
+      reactions: totalReactions,
+      recentPositive: post.recentPositive ?? 0,
+    },
+    reactions: {
+      ...reactions,
+      total: totalReactions,
+      positive: positiveTotal,
     },
     metrics: {
       hotScore: post.hotScore,
     },
     viewer: {
-      vote: options.viewerVote ?? null,
+      reaction: options.viewerReaction ?? null,
     },
   }
 }
@@ -1745,7 +1909,7 @@ function getCanonicalPaths(post: PostWithAuthor) {
   const slug = post.seoSlug ?? post.id
   return {
     user: `/u/${post.author.handle}/posts/${slug}`,
-    chamber: post.provinceCode && post.chamberSlug ? `/${post.provinceCode}/${post.chamberSlug}/posts/${slug}` : null,
+    community: post.provinceCode && post.communitySlug ? `/${post.provinceCode}/${post.communitySlug}/posts/${slug}` : null,
     legacy: `/post/${post.id}`,
   }
 }
@@ -1774,8 +1938,10 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
   }
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
   const { email, firstName, lastName, password } = parse.data
-  const name = `${firstName.trim()} ${lastName.trim()}`.trim()
-  const baseHandle = buildHandleBase(firstName, lastName)
+  const normalizedFirstName = firstName.trim().toLowerCase()
+  const normalizedLastName = lastName.trim().toLowerCase()
+  const name = `${normalizedFirstName} ${normalizedLastName}`.trim()
+  const baseHandle = buildHandleBase(normalizedFirstName, normalizedLastName)
   const handle = await generateUniqueHandle(baseHandle, prisma)
   const hash = await bcrypt.hash(password, 10)
   try {
@@ -1789,15 +1955,15 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
 })
 
 // Auth: login
-registerChamberCommunityRoute(
+registerCommunityRoute(
   'get',
-  '/chambers/:province/:chamber/posts',
+  '/communities/:province/:community/posts',
   async (req: FastifyRequest, reply: FastifyReply) =>
     withSchemaGuard(req, reply, async () => {
       const params = z
         .object({
           province: z.string().min(2).max(64),
-          chamber: z.string().min(1).max(160),
+          community: z.string().min(1).max(160),
         })
         .safeParse(req.params)
       if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
@@ -1805,8 +1971,8 @@ registerChamberCommunityRoute(
       const province = normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
 
-      const chamberRecord = findCommunity(province, params.data.chamber)
-      if (!chamberRecord) return reply.code(404).send({ error: 'chamber_not_found' })
+      const communityRecord = findCommunity(province, params.data.community)
+      if (!communityRecord) return reply.code(404).send({ error: 'community_not_found' })
 
       const query = CursorQuery.extend({
         jurisdiction: JurisdictionEnum.optional(),
@@ -1819,8 +1985,8 @@ registerChamberCommunityRoute(
       const sortMode = sort ?? 'new'
 
       const where: Prisma.PostWhereInput = {
-        provinceCode: chamberRecord.province,
-        chamberSlug: chamberRecord.slug,
+        provinceCode: communityRecord.province,
+        communitySlug: communityRecord.slug,
         ...(jurisdiction ? { jurisdiction } : {}),
       }
 
@@ -1869,52 +2035,52 @@ registerChamberCommunityRoute(
         items = queryResult
       }
 
-      let votesByPost: Record<string, number> = {}
+      let reactionsByPost: Record<string, ReactionType> = {}
       if (viewerId && items.length) {
-        const votes = await prisma.vote.findMany({
+        const reactions = await prisma.postReaction.findMany({
           where: { userId: viewerId, postId: { in: items.map((item) => item.id) } },
-          select: { postId: true, value: true },
+          select: { postId: true, type: true },
         })
-        const voteMap: Record<string, number> = {}
-        for (const vote of votes) {
-          voteMap[vote.postId] = vote.value
+        const reactionMap: Record<string, ReactionType> = {}
+        for (const reaction of reactions) {
+          reactionMap[reaction.postId] = reaction.type
         }
-        votesByPost = voteMap
+        reactionsByPost = reactionMap
       }
 
       return {
-        chamber: chamberRecord,
-        items: items.map((item) => formatPost(item, { viewerVote: votesByPost[item.id] ?? null })),
+        community: communityRecord,
+        items: items.map((item) => formatPost(item, { viewerReaction: reactionsByPost[item.id] ?? null })),
         nextCursor,
       }
     }),
 )
 
-registerChamberCommunityRoute('get', '/chambers/:province', async (req: FastifyRequest, reply: FastifyReply) => {
+registerCommunityRoute('get', '/communities/:province', async (req: FastifyRequest, reply: FastifyReply) => {
   const params = z.object({ province: z.string().min(2).max(64) }).safeParse(req.params)
   if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
   const province = normalizeProvinceCode(params.data.province)
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
 
-  const chambers = getCommunitiesByProvince(province)
-  return reply.send({ items: chambers })
+  const communities = getCommunitiesByProvince(province)
+  return reply.send({ items: communities })
 })
 
-// Chambers - get current home chamber
-registerChamberCommunityRoute('get', '/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
+// Communitys - get current home community
+registerCommunityRoute('get', '/communities/home', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-  const follow = await prisma.chamberFollow.findFirst({ where: { userId, home: true } })
+  const follow = await prisma.communityFollow.findFirst({ where: { userId, home: true } })
   if (!follow) return reply.send({ home: null })
-  const chamber = findCommunity(follow.provinceCode, follow.chamberSlug)
+  const community = findCommunity(follow.provinceCode, follow.communitySlug)
   return reply.send({
-    home: chamber ? { ...chamber } : { province: follow.provinceCode, slug: follow.chamberSlug },
+    home: community ? { ...community } : { province: follow.provinceCode, slug: follow.communitySlug },
   })
 })
 
-// Chambers - set home chamber
-registerChamberCommunityRoute('post', '/chambers/home', async (req: FastifyRequest, reply: FastifyReply) => {
+// Communitys - set home community
+registerCommunityRoute('post', '/communities/home', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -1924,54 +2090,54 @@ registerChamberCommunityRoute('post', '/chambers/home', async (req: FastifyReque
   const province = normalizeProvinceCode(parse.data.provinceCode)
   if (!province) return reply.code(400).send({ error: 'invalid_province' })
 
-  const chamber = findCommunity(province, parse.data.chamberSlug)
-  if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
+  const community = findCommunity(province, parse.data.communitySlug)
+  if (!community) return reply.code(404).send({ error: 'community_not_found' })
 
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.chamberFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
-    await tx.chamberFollow.upsert({
+    await tx.communityFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
+    await tx.communityFollow.upsert({
       where: {
-        userId_provinceCode_chamberSlug: {
+        userId_provinceCode_communitySlug: {
           userId,
           provinceCode: province,
-          chamberSlug: chamber.slug,
+          communitySlug: community.slug,
         },
       },
       create: {
         userId,
         provinceCode: province,
-        chamberSlug: chamber.slug,
+        communitySlug: community.slug,
         home: true,
       },
       update: {
         home: true,
         provinceCode: province,
-        chamberSlug: chamber.slug,
+        communitySlug: community.slug,
       },
     })
   })
 
-  return reply.send({ ok: true, home: chamber })
+  return reply.send({ ok: true, home: community })
 })
 
-// Chambers - get follows list
-registerChamberCommunityRoute('get', '/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+// Communitys - get follows list
+registerCommunityRoute('get', '/communities/follows', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-  const follows = await prisma.chamberFollow.findMany({
+  const follows = await prisma.communityFollow.findMany({
     where: { userId },
     orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
   })
 
-  const items = follows.map((follow: { provinceCode: string; chamberSlug: string; home: boolean; createdAt: Date }) => {
-    const chamber = findCommunity(follow.provinceCode, follow.chamberSlug)
+  const items = follows.map((follow: { provinceCode: string; communitySlug: string; home: boolean; createdAt: Date }) => {
+    const community = findCommunity(follow.provinceCode, follow.communitySlug)
     return {
       province: follow.provinceCode,
-      chamberSlug: follow.chamberSlug,
+      communitySlug: follow.communitySlug,
       home: follow.home,
       followedAt: follow.createdAt,
-      chamber,
+      community,
     }
   })
 
@@ -1984,7 +2150,7 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
 
   const [user, follows] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } }),
-    prisma.chamberFollow.findMany({
+    prisma.communityFollow.findMany({
       where: { userId },
       orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
     }),
@@ -1992,7 +2158,7 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
 
   const followCount = follows.length
   const followKeys: Set<string> = new Set(
-    follows.map((follow: { provinceCode: string; chamberSlug: string }) => buildFollowKey(follow.provinceCode, follow.chamberSlug))
+    follows.map((follow: { provinceCode: string; communitySlug: string }) => buildFollowKey(follow.provinceCode, follow.communitySlug))
   )
 
   const referenceFollow = follows.find((follow: { home: boolean }) => follow.home) ?? follows[0] ?? null
@@ -2000,7 +2166,7 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
 
   if (referenceFollow) {
     referenceCity = await prisma.city.findFirst({
-      where: { provinceCode: referenceFollow.provinceCode, chamberSlug: referenceFollow.chamberSlug },
+      where: { provinceCode: referenceFollow.provinceCode, communitySlug: referenceFollow.communitySlug },
       orderBy: [{ population: 'desc' }],
     })
   }
@@ -2018,7 +2184,7 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
         computed = nearest
         computedReference = {
           provinceCode: referenceCity.provinceCode,
-          chamberSlug: referenceCity.chamberSlug,
+          communitySlug: referenceCity.communitySlug,
           cityName: referenceCity.name,
         }
       }
@@ -2026,14 +2192,14 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
 
     if (!computed.length && referenceFollow) {
       const fallback = await computeGeodataFallbackSuggestions(
-        { provinceCode: referenceFollow.provinceCode, chamberSlug: referenceFollow.chamberSlug },
+        { provinceCode: referenceFollow.provinceCode, communitySlug: referenceFollow.communitySlug },
         followKeys,
       )
       if (fallback.length) {
         computed = fallback
         computedReference = {
           provinceCode: referenceFollow.provinceCode,
-          chamberSlug: referenceFollow.chamberSlug,
+          communitySlug: referenceFollow.communitySlug,
           cityName: referenceCity?.name ?? null,
         }
       }
@@ -2059,8 +2225,8 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
     const startOfToday = new Date()
     startOfToday.setHours(0, 0, 0, 0)
     const orConditions = follows
-      .filter((follow: { chamberSlug: string }) => follow.chamberSlug)
-      .map((follow: { provinceCode: string; chamberSlug: string }) => ({ provinceCode: follow.provinceCode, chamberSlug: follow.chamberSlug }))
+      .filter((follow: { communitySlug: string }) => follow.communitySlug)
+      .map((follow: { provinceCode: string; communitySlug: string }) => ({ provinceCode: follow.provinceCode, communitySlug: follow.communitySlug }))
     if (orConditions.length) {
       postsToday = await prisma.post.count({
         where: {
@@ -2079,16 +2245,16 @@ app.get('/communities/dashboard', async (req: FastifyRequest, reply: FastifyRepl
     home: referenceCity
       ? {
           provinceCode: referenceCity.provinceCode,
-          chamberSlug: referenceCity.chamberSlug,
-          chamberName: referenceCity.chamberName,
+          communitySlug: referenceCity.communitySlug,
+          communityName: referenceCity.communityName,
           cityName: referenceCity.name,
         }
       : null,
   })
 })
 
-// Chambers - follow additional chamber
-registerChamberCommunityRoute('post', '/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+// Communitys - follow additional community
+registerCommunityRoute('post', '/communities/follows', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -2098,33 +2264,33 @@ registerChamberCommunityRoute('post', '/chambers/follows', async (req: FastifyRe
   const province = normalizeProvinceCode(parse.data.provinceCode)
   if (!province) return reply.code(400).send({ error: 'invalid_province' })
 
-  const chamber = findCommunity(province, parse.data.chamberSlug)
-  if (!chamber) return reply.code(404).send({ error: 'chamber_not_found' })
+  const community = findCommunity(province, parse.data.communitySlug)
+  if (!community) return reply.code(404).send({ error: 'community_not_found' })
 
   const setAsHome = parse.data.setAsHome === true
 
   const follow = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     if (setAsHome) {
-      await tx.chamberFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
+      await tx.communityFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
     }
 
-    return tx.chamberFollow.upsert({
+    return tx.communityFollow.upsert({
       where: {
-        userId_provinceCode_chamberSlug: {
+        userId_provinceCode_communitySlug: {
           userId,
           provinceCode: province,
-          chamberSlug: chamber.slug,
+          communitySlug: community.slug,
         },
       },
       create: {
         userId,
         provinceCode: province,
-        chamberSlug: chamber.slug,
+        communitySlug: community.slug,
         home: setAsHome,
       },
       update: {
         provinceCode: province,
-        chamberSlug: chamber.slug,
+        communitySlug: community.slug,
         home: setAsHome ? true : undefined,
       },
     })
@@ -2134,15 +2300,15 @@ registerChamberCommunityRoute('post', '/chambers/follows', async (req: FastifyRe
     ok: true,
     follow: {
       province: follow.provinceCode,
-      chamberSlug: follow.chamberSlug,
+      communitySlug: follow.communitySlug,
       home: follow.home,
-      chamber,
+      community,
     },
   })
 })
 
-// Chambers - unfollow
-registerChamberCommunityRoute('delete', '/chambers/follows', async (req: FastifyRequest, reply: FastifyReply) => {
+// Communitys - unfollow
+registerCommunityRoute('delete', '/communities/follows', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -2152,12 +2318,12 @@ registerChamberCommunityRoute('delete', '/chambers/follows', async (req: Fastify
   const province = normalizeProvinceCode(parse.data.provinceCode)
   if (!province) return reply.code(400).send({ error: 'invalid_province' })
 
-  const existing = await prisma.chamberFollow.findUnique({
+  const existing = await prisma.communityFollow.findUnique({
     where: {
-      userId_provinceCode_chamberSlug: {
+      userId_provinceCode_communitySlug: {
         userId,
         provinceCode: province,
-        chamberSlug: parse.data.chamberSlug,
+        communitySlug: parse.data.communitySlug,
       },
     },
   })
@@ -2166,12 +2332,12 @@ registerChamberCommunityRoute('delete', '/chambers/follows', async (req: Fastify
     return reply.code(404).send({ error: 'not_following' })
   }
 
-  await prisma.chamberFollow.delete({
+  await prisma.communityFollow.delete({
     where: {
-      userId_provinceCode_chamberSlug: {
+      userId_provinceCode_communitySlug: {
         userId,
         provinceCode: province,
-        chamberSlug: parse.data.chamberSlug,
+        communitySlug: parse.data.communitySlug,
       },
     },
   })
@@ -2179,7 +2345,7 @@ registerChamberCommunityRoute('delete', '/chambers/follows', async (req: Fastify
   return reply.send({ ok: true })
 })
 
-registerChamberCommunityRoute('post', '/chambers/geolocate', async (req: FastifyRequest, reply: FastifyReply) => {
+registerCommunityRoute('post', '/communities/geolocate', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -2188,7 +2354,7 @@ registerChamberCommunityRoute('post', '/chambers/geolocate', async (req: Fastify
 
   try {
     const { lat, lng, limit, bboxPaddingDegrees } = parse.data
-    const { primary, alternatives, meta } = await locateChamberFromPoint(lat, lng, {
+    const { primary, alternatives, meta } = await locateCommunityFromPoint(lat, lng, {
       limit: limit ?? undefined,
       paddingDegrees: bboxPaddingDegrees ?? undefined,
     })
@@ -2200,7 +2366,7 @@ registerChamberCommunityRoute('post', '/chambers/geolocate', async (req: Fastify
       meta,
     })
   } catch (error) {
-    req.log.error({ err: error }, 'chamber_geolocate_failed')
+    req.log.error({ err: error }, 'community_geolocate_failed')
     return reply.code(500).send({ error: 'geolocation_failed' })
   }
 })
@@ -2221,11 +2387,11 @@ app.post('/postal/geolocate', async (req: FastifyRequest, reply: FastifyReply) =
       return reply.code(404).send({ error: 'fsa_not_found' })
     }
 
-    const chamberMatches = await locateChamberFromPoint(lat, lng, {
+    const communityMatches = await locateCommunityFromPoint(lat, lng, {
       limit: limit ?? undefined,
       paddingDegrees: bboxPaddingDegrees ?? undefined,
     })
-    const enriched = await enrichMatchesWithCities([chamberMatches.primary, ...chamberMatches.alternatives], lat, lng)
+    const enriched = await enrichMatchesWithCities([communityMatches.primary, ...communityMatches.alternatives], lat, lng)
     const [primary, ...alternativeMatches] = enriched
 
     return reply.send({
@@ -2237,8 +2403,8 @@ app.post('/postal/geolocate', async (req: FastifyRequest, reply: FastifyReply) =
         subdivisionName: fsaResult.match.subdivisionName ?? null,
         centroidLat: fsaResult.match.centroidLat ?? null,
         centroidLng: fsaResult.match.centroidLng ?? null,
-        defaultChamberSlug: fsaResult.match.defaultChamberSlug ?? null,
-        defaultChamberName: fsaResult.match.defaultChamberName ?? null,
+        defaultCommunitySlug: fsaResult.match.defaultCommunitySlug ?? null,
+        defaultCommunityName: fsaResult.match.defaultCommunityName ?? null,
       },
       primary: primary ?? null,
       alternatives: alternativeMatches.filter((entry): entry is EnrichedGeoMatch => Boolean(entry)),
@@ -2249,7 +2415,7 @@ app.post('/postal/geolocate', async (req: FastifyRequest, reply: FastifyReply) =
   }
 })
 
-registerChamberCommunityRoute('post', '/chambers/postal-lookup', async (req: FastifyRequest, reply: FastifyReply) => {
+registerCommunityRoute('post', '/communities/postal-lookup', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = (req as any).user?.id
   if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
@@ -2271,8 +2437,8 @@ registerChamberCommunityRoute('post', '/chambers/postal-lookup', async (req: Fas
         subdivisionName: true,
         centroidLat: true,
         centroidLng: true,
-        defaultChamberSlug: true,
-        defaultChamberName: true,
+        defaultCommunitySlug: true,
+        defaultCommunityName: true,
       },
     })
 
@@ -2298,7 +2464,7 @@ registerChamberCommunityRoute('post', '/chambers/postal-lookup', async (req: Fas
     let enrichedPrimary: EnrichedGeoMatchOrNull = null
     let enrichedAlternatives: EnrichedGeoMatch[] = []
     if (coords) {
-      const locateResult = await locateChamberFromPoint(coords.lat, coords.lng, {
+      const locateResult = await locateCommunityFromPoint(coords.lat, coords.lng, {
         limit: parse.data.limit ?? undefined,
       })
       const enriched = await enrichMatchesWithCities([locateResult.primary, ...locateResult.alternatives], coords.lat, coords.lng)
@@ -2316,8 +2482,8 @@ registerChamberCommunityRoute('post', '/chambers/postal-lookup', async (req: Fas
         subdivisionName: fsaRecord.subdivisionName ?? null,
         centroidLat: coords?.lat ?? null,
         centroidLng: coords?.lng ?? null,
-        defaultChamberSlug: fsaRecord.defaultChamberSlug ?? null,
-        defaultChamberName: fsaRecord.defaultChamberName ?? null,
+        defaultCommunitySlug: fsaRecord.defaultCommunitySlug ?? null,
+        defaultCommunityName: fsaRecord.defaultCommunityName ?? null,
       },
       primary: enrichedPrimary,
       alternatives: enrichedAlternatives,
@@ -2362,17 +2528,19 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       premiumRenewsAt: true,
       avatarMediaId: true,
       coverMediaId: true,
+      avatarPostId: true,
+      coverPostId: true,
       createdAt: true,
     },
   })
 
   if (!user) return reply.code(404).send({ error: 'not_found' })
 
-  const [followers, following, chambersFollowing, homeFollow] = await Promise.all([
+  const [followers, following, communitiesFollowing, homeFollow] = await Promise.all([
     prisma.follow.count({ where: { targetId: userId } }),
     prisma.follow.count({ where: { followerId: userId } }),
-    prisma.chamberFollow.count({ where: { userId } }),
-    prisma.chamberFollow.findFirst({ where: { userId, home: true } }),
+    prisma.communityFollow.count({ where: { userId } }),
+    prisma.communityFollow.findFirst({ where: { userId, home: true } }),
   ])
 
   let experienceItems: Array<{
@@ -2411,15 +2579,15 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   const firstName = nameParts[0] ?? ''
   const lastName = nameParts.slice(1).join(' ')
 
-  let homeChamber: Record<string, any> | null = null
+  let homeCommunity: Record<string, any> | null = null
   if (homeFollow) {
-    const chamber = findCommunity(homeFollow.provinceCode, homeFollow.chamberSlug)
+    const community = findCommunity(homeFollow.provinceCode, homeFollow.communitySlug)
     const provinceName = getProvinceDisplayName(homeFollow.provinceCode as any)
-    homeChamber = {
+    homeCommunity = {
       provinceCode: homeFollow.provinceCode,
       provinceName,
-      chamberSlug: homeFollow.chamberSlug,
-      chamberName: chamber?.name ?? homeFollow.chamberSlug,
+      communitySlug: homeFollow.communitySlug,
+      communityName: community?.name ?? homeFollow.communitySlug,
     }
   }
 
@@ -2436,15 +2604,17 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
       avatarMediaId: user.avatarMediaId ?? null,
       coverMediaId: user.coverMediaId ?? null,
+      avatarPostId: user.avatarPostId ?? null,
+      coverPostId: user.coverPostId ?? null,
       createdAt: user.createdAt,
       experiences: experienceItems,
     },
     stats: {
       followers,
       following,
-      chambersFollowing,
+      communitiesFollowing,
     },
-    homeChamber,
+    homeCommunity,
   })
 })
 
@@ -2457,7 +2627,9 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
   const { firstName, lastName, bio, experiences, avatarMediaId, coverMediaId } = parse.data
-  const fullName = `${firstName} ${lastName}`.trim()
+  const normalizedFirstName = firstName.trim().toLowerCase()
+  const normalizedLastName = lastName.trim().toLowerCase()
+  const fullName = `${normalizedFirstName} ${normalizedLastName}`.trim()
 
   let avatarAsset: Awaited<ReturnType<typeof prisma.mediaAsset.findFirst>> = null
   if (avatarMediaId) {
@@ -2495,8 +2667,8 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   }))
 
   try {
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const baseHandle = buildHandleBase(firstName, lastName)
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const baseHandle = buildHandleBase(normalizedFirstName, normalizedLastName)
       const handle = await generateUniqueHandle(baseHandle, tx, userId)
 
       const userUpdateData: Prisma.UserUncheckedUpdateInput = {
@@ -2533,6 +2705,8 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
           coverUrl: true,
           avatarMediaId: true,
           coverMediaId: true,
+          avatarPostId: true,
+          coverPostId: true,
         },
       })
 
@@ -2554,6 +2728,113 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
     throw err
   }
 })
+
+// Profile photo update + post
+app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parsed = UpdateProfilePhotoInput.safeParse(req.body)
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() })
+
+    const { category, displayAssetId, fullAssetId, caption } = parsed.data
+
+    const displayAsset = await prisma.mediaAsset.findFirst({ where: { id: displayAssetId, ownerId: userId, category } })
+    if (!displayAsset) return reply.code(404).send({ error: 'display_asset_not_found' })
+    if (displayAsset.status === 'failed') return reply.code(400).send({ error: 'display_asset_failed' })
+    if (displayAsset.status !== 'ready') return reply.code(409).send({ error: 'display_asset_not_ready' })
+
+    const fullAsset = await prisma.mediaAsset.findFirst({ where: { id: fullAssetId, ownerId: userId } })
+    if (!fullAsset) return reply.code(404).send({ error: 'full_asset_not_found' })
+    if (fullAsset.status === 'failed') return reply.code(400).send({ error: 'full_asset_failed' })
+    if (fullAsset.status !== 'ready') return reply.code(409).send({ error: 'full_asset_not_ready' })
+
+    const displayVariantPreference = category === 'avatar' ? ['avatar@2x', 'avatar@1x', 'avatar-thumb'] : ['cover-xl', 'cover-lg', 'cover-md']
+    const displayUrl = extractVariantUrl(displayAsset.variants, displayVariantPreference)
+    if (!displayUrl) return reply.code(400).send({ error: 'display_variant_missing' })
+
+    const postVariantPreference = (() => {
+      if (fullAsset.category === 'post_image') {
+        return ['post-xl', 'post-lg', 'post-md']
+      }
+      if (fullAsset.category === 'cover') {
+        return ['cover-xl', 'cover-lg', 'cover-md']
+      }
+      return ['avatar@2x', 'avatar@1x', 'avatar-thumb']
+    })()
+    const postMediaUrl = extractVariantUrl(fullAsset.variants, postVariantPreference)
+    if (!postMediaUrl) return reply.code(400).send({ error: 'full_variant_missing' })
+
+    const baseBody = category === 'avatar' ? 'Updated profile photo.' : 'Updated cover photo.'
+    const body = caption?.trim() ? caption.trim() : baseBody
+
+    const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, name: true, avatarUrl: true, premiumStatus: true } })
+    if (!author) return reply.code(401).send({ error: 'unauthorized' })
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const post = await tx.post.create({
+        data: {
+          authorId: userId,
+          body,
+          mediaUrl: postMediaUrl,
+          type: 'post',
+          jurisdiction: 'self',
+        },
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
+          },
+        },
+      })
+
+      const userUpdate: Prisma.UserUncheckedUpdateInput =
+        category === 'avatar'
+          ? { avatarMediaId: displayAsset.id, avatarUrl: displayUrl, avatarPostId: post.id }
+          : { coverMediaId: displayAsset.id, coverUrl: displayUrl, coverPostId: post.id }
+
+      const updatedUser = await tx.user.update({
+        where: { id: userId },
+        data: userUpdate,
+        select: {
+          id: true,
+          email: true,
+          handle: true,
+          name: true,
+          bio: true,
+          avatarUrl: true,
+          coverUrl: true,
+          avatarMediaId: true,
+          coverMediaId: true,
+          avatarPostId: true,
+          coverPostId: true,
+        },
+      })
+
+      return { post, user: updatedUser }
+    })
+
+    const postWithUpdatedAuthor: PostWithAuthor = {
+      ...result.post,
+      author: {
+        ...result.post.author,
+        avatarUrl: category === 'avatar' ? displayUrl : result.post.author.avatarUrl,
+      },
+    }
+
+    return reply.send({
+      ok: true,
+      post: formatPost(postWithUpdatedAuthor),
+      user: normalizeUserMedia(result.user),
+    })
+  }),
+)
 
 app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
@@ -2747,18 +3028,18 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
     let provinceCode: string | null = null
-    let chamberSlug: string | null = null
-    if (parse.data.chamberProvince && parse.data.chamberSlug) {
-      const normalizedProvince = normalizeProvinceCode(parse.data.chamberProvince)
+    let communitySlug: string | null = null
+    if (parse.data.communityProvince && parse.data.communitySlug) {
+      const normalizedProvince = normalizeProvinceCode(parse.data.communityProvince)
       if (!normalizedProvince) {
         return reply.code(400).send({ error: 'invalid_province' })
       }
-      const chamber = findCommunity(normalizedProvince, parse.data.chamberSlug)
-      if (!chamber) {
-        return reply.code(404).send({ error: 'chamber_not_found' })
+      const community = findCommunity(normalizedProvince, parse.data.communitySlug)
+      if (!community) {
+        return reply.code(404).send({ error: 'community_not_found' })
       }
-      provinceCode = chamber.province
-      chamberSlug = chamber.slug
+      provinceCode = community.province
+      communitySlug = community.slug
     }
 
     const { body, mediaUrl, hashtags, type, title, jurisdiction } = parse.data
@@ -2777,7 +3058,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           type,
           title,
           provinceCode,
-          chamberSlug,
+          communitySlug,
           seoSlug,
           jurisdiction: normalizedJurisdiction,
         },
@@ -2848,31 +3129,31 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     })
     if (!user) return reply.code(401).send({ error: 'unauthorized' })
 
-    const homeFollow = await prisma.chamberFollow.findFirst({ where: { userId: payload.sub, home: true } })
-    let homeChamber: null | {
+    const homeFollow = await prisma.communityFollow.findFirst({ where: { userId: payload.sub, home: true } })
+    let homeCommunity: null | {
       provinceCode: string
       provinceName: string
-      chamberSlug: string
-      chamberName: string
+      communitySlug: string
+      communityName: string
     } = null
 
     if (homeFollow) {
-      const chamber = findCommunity(homeFollow.provinceCode, homeFollow.chamberSlug)
+      const community = findCommunity(homeFollow.provinceCode, homeFollow.communitySlug)
       const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
-      homeChamber = {
+      homeCommunity = {
         provinceCode: normalizedProvince ?? homeFollow.provinceCode,
         provinceName: normalizedProvince
           ? getProvinceDisplayName(normalizedProvince)
           : homeFollow.provinceCode.toUpperCase(),
-        chamberSlug: homeFollow.chamberSlug,
-        chamberName: chamber?.name ?? homeFollow.chamberSlug,
+        communitySlug: homeFollow.communitySlug,
+        communityName: community?.name ?? homeFollow.communitySlug,
       }
     }
 
     const normalizedUser = normalizeUserMedia(user)
     return reply.send({
       ...normalizedUser,
-      homeChamber,
+      homeCommunity,
       isPremium: isPremium(user.premiumStatus),
       isVerified: isPremium(user.premiumStatus),
       premiumSince: user.premiumSince ?? null,
@@ -3017,6 +3298,42 @@ app.post('/friends/requests/:id/accept', async (req: FastifyRequest, reply: Fast
       include: FRIENDSHIP_WITH_USERS_INCLUDE,
     })
 
+      const existingNotification = await prisma.notification.findFirst({
+        where: {
+          userId: updated.addresseeId,
+          type: FRIEND_NOTIFICATION_TYPES.REQUEST,
+          payload: {
+            path: ['friendshipId'],
+            equals: updated.id,
+          },
+        },
+        select: NOTIFICATION_SELECT,
+      })
+
+      if (existingNotification) {
+        const basePayload: Record<string, unknown> = (() => {
+          const raw = existingNotification.payload
+          if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+            return raw as Record<string, unknown>
+          }
+          return {}
+        })()
+        const nextPayload: Record<string, unknown> = {
+          ...basePayload,
+          friendshipId: updated.id,
+          status: 'accepted',
+        }
+        const refreshed = await prisma.notification.update({
+          where: { id: existingNotification.id },
+          data: {
+            payload: nextPayload as Prisma.InputJsonValue,
+            readAt: new Date(),
+          },
+          select: NOTIFICATION_SELECT,
+        })
+        await dispatchNotification(refreshed)
+      }
+
     await notifyFriendAcceptance(updated.id, updated.requesterId, updated.addresseeId)
 
     return reply.send({ friend: formatFriendship(updated, userId) })
@@ -3046,6 +3363,42 @@ app.post('/friends/requests/:id/reject', async (req: FastifyRequest, reply: Fast
       data: { status: FriendshipStatus.REJECTED, respondedAt: new Date() },
       include: FRIENDSHIP_WITH_USERS_INCLUDE,
     })
+
+    const existingNotification = await prisma.notification.findFirst({
+      where: {
+        userId: updated.addresseeId,
+        type: FRIEND_NOTIFICATION_TYPES.REQUEST,
+        payload: {
+          path: ['friendshipId'],
+          equals: updated.id,
+        },
+      },
+      select: NOTIFICATION_SELECT,
+    })
+
+    if (existingNotification) {
+      const basePayload: Record<string, unknown> = (() => {
+        const raw = existingNotification.payload
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+          return raw as Record<string, unknown>
+        }
+        return {}
+      })()
+      const nextPayload: Record<string, unknown> = {
+        ...basePayload,
+        friendshipId: updated.id,
+        status: 'rejected',
+      }
+      const refreshed = await prisma.notification.update({
+        where: { id: existingNotification.id },
+        data: {
+          payload: nextPayload as Prisma.InputJsonValue,
+          readAt: new Date(),
+        },
+        select: NOTIFICATION_SELECT,
+      })
+      await dispatchNotification(refreshed)
+    }
 
     return reply.send({ request: formatFriendRequest(updated, userId) })
   }),
@@ -3408,19 +3761,19 @@ app.post('/auth/reset', async (req: FastifyRequest, reply: FastifyReply) => {
   return reply.send({ ok: true })
 })
 
-// Chambers - provinces list
-registerChamberCommunityRoute('get', '/chambers/provinces', async (_req: FastifyRequest, reply: FastifyReply) =>
+// Communitys - provinces list
+registerCommunityRoute('get', '/communities/provinces', async (_req: FastifyRequest, reply: FastifyReply) =>
   reply.send({ items: PROVINCES }),
 )
 
-// Chambers - list within a province
-registerChamberCommunityRoute('get', '/chambers', async (req: FastifyRequest, reply: FastifyReply) => {
+// Communitys - list within a province
+registerCommunityRoute('get', '/communities', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = z.object({ province: z.string().min(2) }).safeParse(req.query)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
   const province = normalizeProvinceCode(parse.data.province)
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
-  const chambers = getCommunitiesByProvince(province)
-  return reply.send({ items: chambers })
+  const communities = getCommunitiesByProvince(province)
+  return reply.send({ items: communities })
 })
 
 app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -3428,12 +3781,12 @@ app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
     .object({
       province: z.string().optional(),
       q: z.string().optional(),
-      chamberSlug: z.string().optional(),
+      communitySlug: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(500).default(200),
     })
     .safeParse(req.query)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { limit, q, chamberSlug } = parse.data
+  const { limit, q, communitySlug } = parse.data
   const province = parse.data.province ? normalizeProvinceCode(parse.data.province) : null
   if (parse.data.province && !province) return reply.code(404).send({ error: 'province_not_found' })
 
@@ -3441,8 +3794,8 @@ app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
   if (province) {
     where.provinceCode = province
   }
-  if (chamberSlug) {
-    where.chamberSlug = slugifyCommunityName(chamberSlug)
+  if (communitySlug) {
+    where.communitySlug = slugifyCommunityName(communitySlug)
   }
   const trimmedQuery = q?.trim()
   if (trimmedQuery) {
@@ -3450,7 +3803,7 @@ app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
     where.OR = [
       { name: { contains: trimmedQuery, mode: 'insensitive' } },
       { slug: { contains: slugQuery, mode: 'insensitive' } },
-      { chamberName: { contains: trimmedQuery, mode: 'insensitive' } },
+      { communityName: { contains: trimmedQuery, mode: 'insensitive' } },
     ]
   }
 
@@ -3487,14 +3840,14 @@ app.get('/communities/:province/:municipality', async (req: FastifyRequest, repl
       slug: true,
       name: true,
       population: true,
-      chamberSlug: true,
-      chamberName: true,
+      communitySlug: true,
+      communityName: true,
       censusSubdivision: {
         select: {
           slug: true,
           name: true,
           type: true,
-          defaultChamberName: true,
+          defaultCommunityName: true,
         },
       },
     },
@@ -3512,8 +3865,8 @@ app.get('/communities/:province/:municipality', async (req: FastifyRequest, repl
       officialName: true,
       type: true,
       population: true,
-      defaultChamberName: true,
-      defaultChamberSlug: true,
+      defaultCommunityName: true,
+      defaultCommunitySlug: true,
       division: {
         select: {
           name: true,
@@ -3550,18 +3903,18 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     })
     if (!post) return reply.code(404).send({ error: 'not found' })
     const viewerId = (req as any).user?.id as string | undefined
-    let viewerVote: number | null = null
+    let viewerReaction: ReactionType | null = null
     if (viewerId) {
-      const vote = await prisma.vote.findUnique({
+      const reaction = await prisma.postReaction.findUnique({
         where: {
           userId_postId: {
             userId: viewerId,
             postId: post.id,
           },
         },
-        select: { value: true },
+        select: { type: true },
       })
-      viewerVote = vote?.value ?? null
+      viewerReaction = reaction?.type ?? null
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -3595,7 +3948,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     return {
-      post: formatPost(post, { viewerVote }),
+      post: formatPost(post, { viewerReaction }),
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes),
     }
@@ -3611,10 +3964,18 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         limit: z.coerce.number().int().min(1).max(50).default(20),
         jurisdiction: JurisdictionEnum.optional(),
         sort: PostSortEnum.optional(),
+        scope: z.enum(['all', 'friends', 'communities']).optional(),
       })
       .safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-    const { cursor, limit, jurisdiction, sort } = parse.data
+    const { cursor, limit, jurisdiction, sort, scope = 'all' } = parse.data
+    const authorSelect = {
+      id: true,
+      handle: true,
+      name: true,
+      avatarUrl: true,
+      premiumStatus: true,
+    }
     const where: Prisma.PostWhereInput = {}
     if (jurisdiction) {
       where.jurisdiction = jurisdiction
@@ -3622,28 +3983,38 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     const viewerId = (req as any).user?.id as string | undefined
 
     if (viewerId) {
-      const follows = await prisma.chamberFollow.findMany({
-        where: { userId: viewerId },
-        select: { provinceCode: true, chamberSlug: true },
-      })
-
-      const followFilters: Prisma.PostWhereInput[] = []
-      const seenKeys = new Set<string>()
-      for (const follow of follows) {
-        if (!follow.provinceCode || !follow.chamberSlug) continue
-        const key = `${follow.provinceCode}:${follow.chamberSlug}`
-        if (seenKeys.has(key)) continue
-        seenKeys.add(key)
-        followFilters.push({ provinceCode: follow.provinceCode, chamberSlug: follow.chamberSlug })
-      }
+      const includeFriends = scope === 'all' || scope === 'friends'
+      const includeCommunities = scope === 'all' || scope === 'communities'
 
       const accessibleFilters: Prisma.PostWhereInput[] = []
-      const friendIds = await loadAcceptedFriendIds(viewerId)
-      const allowedAuthorIds = new Set<string>([viewerId, ...friendIds])
-      if (allowedAuthorIds.size) {
-        accessibleFilters.push({ authorId: { in: [...allowedAuthorIds] } })
+
+      if (includeFriends) {
+        const friendIds = await loadAcceptedFriendIds(viewerId)
+        const allowedAuthorIds = new Set<string>([viewerId, ...friendIds])
+        if (allowedAuthorIds.size) {
+          accessibleFilters.push({ authorId: { in: [...allowedAuthorIds] } })
+        }
       }
-      accessibleFilters.push(...followFilters)
+
+      if (includeCommunities) {
+        const follows = await prisma.communityFollow.findMany({
+          where: { userId: viewerId },
+          select: { provinceCode: true, communitySlug: true },
+        })
+
+        const seenKeys = new Set<string>()
+        for (const follow of follows) {
+          if (!follow.provinceCode || !follow.communitySlug) continue
+          const key = `${follow.provinceCode}:${follow.communitySlug}`
+          if (seenKeys.has(key)) continue
+          seenKeys.add(key)
+          accessibleFilters.push({ provinceCode: follow.provinceCode, communitySlug: follow.communitySlug })
+        }
+      }
+
+      if (!accessibleFilters.length && scope !== 'all') {
+        return { items: [], nextCursor: undefined }
+      }
 
       if (accessibleFilters.length) {
         const existingAnd = Array.isArray(where.AND)
@@ -3666,13 +4037,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         where,
         include: {
           author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
+            select: authorSelect,
           },
         },
       })
@@ -3683,13 +4048,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         where,
         include: {
           author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
+            select: authorSelect,
           },
         },
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -3701,35 +4060,57 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       items = query
     }
 
-    let votesByPost: Record<string, number> = {}
-    if (viewerId && items.length) {
-      const votes = await prisma.vote.findMany({
-        where: { postId: { in: items.map((item) => item.id) }, userId: viewerId },
-        select: { postId: true, value: true },
+    if (viewerId && sortMode === 'hot') {
+      const myRecent = await prisma.post.findMany({
+        take: 3,
+        orderBy: { createdAt: 'desc' },
+        where: {
+          authorId: viewerId,
+          ...(jurisdiction ? { jurisdiction } : {}),
+        },
+        include: {
+          author: {
+            select: authorSelect,
+          },
+        },
       })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.postId] = vote.value
+
+      if (myRecent.length) {
+        const seen = new Set(items.map((item) => item.id))
+        const merged = [...myRecent, ...items.filter((item) => !seen.has(item.id))]
+        items = merged.slice(0, limit)
       }
-      votesByPost = voteMap
+    }
+
+    let reactionsByPost: Record<string, ReactionType> = {}
+    if (viewerId && items.length) {
+      const reactions = await prisma.postReaction.findMany({
+        where: { postId: { in: items.map((item) => item.id) }, userId: viewerId },
+        select: { postId: true, type: true },
+      })
+      const reactionMap: Record<string, ReactionType> = {}
+      for (const reaction of reactions) {
+        reactionMap[reaction.postId] = reaction.type
+      }
+      reactionsByPost = reactionMap
     }
 
     return {
-      items: items.map((item) => formatPost(item, { viewerVote: votesByPost[item.id] ?? null })),
+      items: items.map((item) => formatPost(item, { viewerReaction: reactionsByPost[item.id] ?? null })),
       nextCursor,
     }
   }),
 )
 
-app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
+app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const userId = (req as any).user?.id as string | undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-    const parse = VotePostInput.safeParse(req.body)
+    const parse = ReactPostInput.safeParse(req.body)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-    const { postId, value } = parse.data
+    const { postId, reaction } = parse.data
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
@@ -3742,25 +4123,25 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
-    let currentVote: number | null = null
+    let currentReaction: ReactionType | null = null
 
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.vote.findUnique({
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existing = await tx.postReaction.findUnique({
         where: {
           userId_postId: {
             userId,
             postId,
           },
         },
-        select: { value: true },
+        select: { type: true },
       })
 
-      currentVote = existing?.value ?? null
-      let voteChanged = false
+      currentReaction = existing?.type ?? null
+      let reactionChanged = false
 
-      if (value === 0) {
+      if (!reaction) {
         if (existing) {
-          await tx.vote.delete({
+          await tx.postReaction.delete({
             where: {
               userId_postId: {
                 userId,
@@ -3768,28 +4149,28 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
               },
             },
           })
-          currentVote = null
-          voteChanged = true
+          currentReaction = null
+          reactionChanged = true
         }
       } else if (!existing) {
-        await tx.vote.create({ data: { userId, postId, value } })
-        currentVote = value
-        voteChanged = true
-      } else if (existing.value !== value) {
-        await tx.vote.update({
+        await tx.postReaction.create({ data: { userId, postId, type: reaction } })
+        currentReaction = reaction
+        reactionChanged = true
+      } else if (existing.type !== reaction) {
+        await tx.postReaction.update({
           where: {
             userId_postId: {
               userId,
               postId,
             },
           },
-          data: { value },
+          data: { type: reaction },
         })
-        currentVote = value
-        voteChanged = true
+        currentReaction = reaction
+        reactionChanged = true
       }
 
-      if (voteChanged) {
+      if (reactionChanged) {
         await refreshPostAggregates(
           tx,
           postId,
@@ -3819,7 +4200,7 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
 
-    return reply.send({ post: formatPost(updatedPost, { viewerVote: currentVote }) })
+    return reply.send({ post: formatPost(updatedPost, { viewerReaction: currentReaction }) })
   }),
 )
 
@@ -3905,7 +4286,7 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     return reply.code(201).send({
       comment: createdPayload,
-      post: updatedPost ? formatPost(updatedPost, { viewerVote: null }) : null,
+      post: updatedPost ? formatPost(updatedPost, { viewerReaction: null }) : null,
     })
   }),
 )
@@ -4116,18 +4497,18 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!post) return reply.code(404).send({ error: 'not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
-    let viewerVote: number | null = null
+    let viewerReaction: ReactionType | null = null
     if (viewerId) {
-      const vote = await prisma.vote.findUnique({
+      const reaction = await prisma.postReaction.findUnique({
         where: {
           userId_postId: {
             userId: viewerId,
             postId: post.id,
           },
         },
-        select: { value: true },
+        select: { type: true },
       })
-      viewerVote = vote?.value ?? null
+      viewerReaction = reaction?.type ?? null
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -4161,7 +4542,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     return {
-      post: formatPost(post, { viewerVote }),
+      post: formatPost(post, { viewerReaction }),
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes, { sort: commentSort }),
     }
@@ -4184,6 +4565,8 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         bio: true,
         avatarUrl: true,
         coverUrl: true,
+        avatarPostId: true,
+        coverPostId: true,
         createdAt: true,
         premiumStatus: true,
       },
@@ -4248,7 +4631,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       jurisdiction: JurisdictionEnum.optional(),
       sort: PostSortEnum.optional(),
       province: z.string().optional(),
-      chamber: z.string().optional(),
+      community: z.string().optional(),
       municipality: z.string().optional(),
     }).safeParse(req.query)
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
@@ -4259,7 +4642,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       jurisdiction,
       sort,
       province: provinceParam,
-      chamber: chamberParam,
+      community: communityParam,
       municipality,
     } = query.data
     const viewerId = (req as any).user?.id as string | undefined
@@ -4345,28 +4728,28 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       return reply.code(400).send({ error: 'province_required_for_municipality' })
     }
 
-    let chamberSlugFilter = chamberParam ? slugifyCommunityName(chamberParam) : null
+    let communitySlugFilter = communityParam ? slugifyCommunityName(communityParam) : null
 
-    if (!chamberSlugFilter && municipalitySlug && province) {
+    if (!communitySlugFilter && municipalitySlug && province) {
       const cityMatch = await prisma.city.findFirst({
         where: { provinceCode: province, slug: municipalitySlug },
-        select: { chamberSlug: true },
+        select: { communitySlug: true },
       })
-      if (cityMatch?.chamberSlug) {
-        chamberSlugFilter = cityMatch.chamberSlug
+      if (cityMatch?.communitySlug) {
+        communitySlugFilter = cityMatch.communitySlug
       } else {
         const subdivisionMatch = await prisma.censusSubdivision.findFirst({
           where: { provinceCode: province, slug: municipalitySlug },
-          select: { defaultChamberSlug: true },
+          select: { defaultCommunitySlug: true },
         })
-        if (subdivisionMatch?.defaultChamberSlug) {
-          chamberSlugFilter = subdivisionMatch.defaultChamberSlug
+        if (subdivisionMatch?.defaultCommunitySlug) {
+          communitySlugFilter = subdivisionMatch.defaultCommunitySlug
         }
       }
     }
 
-    if (chamberSlugFilter) {
-      where.chamberSlug = chamberSlugFilter
+    if (communitySlugFilter) {
+      where.communitySlug = communitySlugFilter
     }
 
     let posts: PostWithAuthor[] = []
@@ -4414,23 +4797,23 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       posts = queryResult
     }
 
-    let votesByPost: Record<string, number> = {}
+    let reactionsByPost: Record<string, ReactionType> = {}
     if (viewerId && posts.length) {
-      const votes = await prisma.vote.findMany({
+      const reactions = await prisma.postReaction.findMany({
         where: { userId: viewerId, postId: { in: posts.map((post) => post.id) } },
-        select: { postId: true, value: true },
+        select: { postId: true, type: true },
       })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.postId] = vote.value
+      const reactionMap: Record<string, ReactionType> = {}
+      for (const reaction of reactions) {
+        reactionMap[reaction.postId] = reaction.type
       }
-      votesByPost = voteMap
+      reactionsByPost = reactionMap
     }
 
     return {
       user,
       relationship,
-      items: posts.map((post) => formatPost(post, { viewerVote: votesByPost[post.id] ?? null })),
+      items: posts.map((post) => formatPost(post, { viewerReaction: reactionsByPost[post.id] ?? null })),
       nextCursor,
     }
   }),
@@ -5611,6 +5994,167 @@ app.get('/admin/geodata', async (req: FastifyRequest, reply: FastifyReply) => {
   })
 })
 
+app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = TrackViewInput.safeParse(req.body)
+  if (!parse.success) {
+    return reply.code(400).send({ error: parse.error.flatten() })
+  }
+  const { path, postId, referrer } = parse.data
+  const userId = (req as any).user?.id ?? null
+  try {
+    await prisma.pageView.create({ data: { path, postId: postId ?? null, referrer: referrer ?? null, userId } })
+  } catch (err) {
+    req.log.error({ err }, 'track_view_failed')
+    return reply.code(500).send({ error: 'tracking_failed' })
+  }
+  return reply.send({ ok: true })
+})
+
+app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyReply) => {
+  let user: { id: string; email: string | null } | null
+  try {
+    user = await loadAuthenticatedUser(req)
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  if (!user || !isSuperAdminEmail(user.email)) {
+    return reply.code(403).send({ error: 'forbidden' })
+  }
+
+  const query = req.query as Record<string, string | undefined>
+  const { start: startParam, end: endParam, format } = query
+  const range = parseRange(startParam, endParam)
+  const today = startOfUtcDay(new Date())
+
+  const [
+    totalUsers,
+    usersToday,
+    totalPosts,
+    postsToday,
+    totalComments,
+    commentsToday,
+    totalReactions,
+    reactionsToday,
+    totalFollows,
+    followsToday,
+    userSeries,
+    postSeries,
+    commentSeries,
+    reactionSeries,
+    followSeries,
+    pageViewSeries,
+    routeTraffic,
+    topPostViews,
+  ] = await Promise.all([
+    prisma.user.count(),
+    prisma.user.count({ where: { createdAt: { gte: today } } }),
+    prisma.post.count(),
+    prisma.post.count({ where: { createdAt: { gte: today } } }),
+    prisma.comment.count(),
+    prisma.comment.count({ where: { createdAt: { gte: today } } }),
+    prisma.postReaction.count(),
+    prisma.postReaction.count({ where: { createdAt: { gte: today } } }),
+    prisma.follow.count(),
+    prisma.follow.count({ where: { createdAt: { gte: today } } }),
+    queryDailyCounts('users', range),
+    queryDailyCounts('posts', range),
+    queryDailyCounts('comments', range),
+    queryDailyCounts('reactions', range),
+    queryDailyCounts('follows', range),
+    queryPageViewSeries(range),
+    prisma.$queryRaw<Array<{ path: string; views: bigint }>>`
+      select path, count(*)::bigint as views
+      from "PageView"
+      where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
+      group by path
+      order by views desc
+      limit 50
+    `,
+    prisma.$queryRaw<Array<{ postId: string; views: bigint; title: string | null }>>`
+      select pv."postId" as "postId", count(*)::bigint as views, p.title as title
+      from "PageView" pv
+      join "Post" p on p.id = pv."postId"
+      where pv."postId" is not null and pv."createdAt" >= ${range.start} and pv."createdAt" < ${range.end}
+      group by pv."postId", p.title
+      order by views desc
+      limit 20
+    `,
+  ])
+
+  const responsePayload = {
+    generatedAt: new Date().toISOString(),
+    users: {
+      total: totalUsers,
+      today: usersToday,
+      series: userSeries,
+    },
+    posts: {
+      total: totalPosts,
+      today: postsToday,
+      series: postSeries,
+    },
+    comments: {
+      total: totalComments,
+      today: commentsToday,
+      series: commentSeries,
+    },
+    reactions: {
+      total: totalReactions,
+      today: reactionsToday,
+      series: reactionSeries,
+    },
+    follows: {
+      total: totalFollows,
+      today: followsToday,
+      series: followSeries,
+    },
+    pageViews: {
+      series: pageViewSeries,
+    },
+    traffic: {
+      routes: routeTraffic.map((row: { path: string; views: bigint }) => ({ path: row.path, views: Number(row.views) || 0 })),
+      posts: topPostViews.map((row: { postId: string; views: bigint; title: string | null }) => ({ postId: row.postId, views: Number(row.views) || 0, title: row.title })),
+    },
+  }
+
+  if (format === 'csv') {
+    const dateMap = new Map<string, { users?: number; posts?: number; comments?: number; reactions?: number; views?: number; follows?: number }>()
+    const ingest = (series: DailyCount[], key: keyof NonNullable<ReturnType<typeof dateMap.get>>) => {
+      series.forEach((point) => {
+        const existing = dateMap.get(point.date) || {}
+        existing[key] = point.count
+        dateMap.set(point.date, existing)
+      })
+    }
+    ingest(userSeries, 'users')
+    ingest(postSeries, 'posts')
+    ingest(commentSeries, 'comments')
+    ingest(reactionSeries, 'reactions')
+    ingest(pageViewSeries, 'views')
+    ingest(followSeries, 'follows')
+
+    const sortedDates = Array.from(dateMap.keys()).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
+    const rows = sortedDates.map((date) => {
+      const entry = dateMap.get(date) || {}
+      return [
+        date,
+        entry.users ?? 0,
+        entry.posts ?? 0,
+        entry.comments ?? 0,
+        entry.reactions ?? 0,
+        entry.views ?? 0,
+        entry.follows ?? 0,
+      ].join(',')
+    })
+
+    const csv = ['date,users,posts,comments,reactions,pageViews,follows', ...rows].join('\n')
+    return reply.header('content-type', 'text/csv').send(csv)
+  }
+
+  return reply.send(responsePayload)
+})
+
 app.get('/notifications', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const userId = (req as any).user?.id
@@ -5769,9 +6313,11 @@ app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply
   })
 })
 
-try {
-  await app.listen({ port: PORT, host: '0.0.0.0' })
-} catch (err) {
-  app.log.error(err)
-  ;(globalThis as any)?.process?.exit(1)
+if (!process.env.API_SKIP_LISTEN) {
+  try {
+    await app.listen({ port: PORT, host: '0.0.0.0' })
+  } catch (err) {
+    app.log.error(err)
+    ;(globalThis as any)?.process?.exit(1)
+  }
 }
