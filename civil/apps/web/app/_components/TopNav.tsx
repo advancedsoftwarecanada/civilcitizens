@@ -10,7 +10,11 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
-import { getFriendshipId } from './notifications/notificationUtils'
+import {
+  getFriendshipId,
+  getNotificationMessage,
+  getActorDisplayName,
+} from './notifications/notificationUtils'
 import { emitNotificationsMarkedReadEvent, NOTIFICATIONS_MARKED_READ_EVENT, type NotificationsMarkedReadDetail } from './notifications/notificationEvents'
 import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from './notifications/notificationStream'
 import { pushToast } from './useToasts'
@@ -146,6 +150,9 @@ export default function TopNav() {
         }
         if (merged.unread && (!existing || !existing.unread)) {
           unreadDelta = 1
+          const message = getNotificationMessage(merged)
+          const actorName = merged.actor ? getActorDisplayName(merged) : 'Someone'
+          pushToast(`${actorName} ${message}`, 'info')
         }
         const next = [merged, ...prev.filter((item) => item.id !== incoming.id)]
         return next.slice(0, MAX_VISIBLE_NOTIFICATIONS)

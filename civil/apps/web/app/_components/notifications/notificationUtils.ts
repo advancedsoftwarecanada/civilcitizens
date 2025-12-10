@@ -25,6 +25,73 @@ export type FriendActionState = {
   action: 'accept' | 'reject'
 }
 
+export type FriendRequestStatus = 'pending' | 'accepted' | 'rejected'
+
+function normalizeFriendRequestStatus(value: unknown): FriendRequestStatus | null {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) return null
+    if (['accepted', 'accept', 'approved', 'complete', 'completed', 'resolved', 'yes', 'true'].includes(normalized)) {
+      return 'accepted'
+    }
+    if (['rejected', 'reject', 'declined', 'dismissed', 'denied', 'cancelled', 'canceled', 'no', 'false'].includes(normalized)) {
+      return 'rejected'
+    }
+    if (['pending', 'awaiting', 'waiting', 'open'].includes(normalized)) {
+      return 'pending'
+    }
+    return null
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'accepted' : 'rejected'
+  }
+  return null
+}
+
+function extractFriendRequestStatusFromPayload(payload: Record<string, unknown>): FriendRequestStatus | null {
+  const candidateValues: unknown[] = []
+
+  const directKeys = ['status', 'friendshipStatus', 'friendship_status', 'friendshipState', 'friendship_state', 'state', 'resolution', 'outcome']
+  for (const key of directKeys) {
+    if (key in payload) {
+      candidateValues.push(payload[key])
+    }
+  }
+
+  const nestedFriendship = payload.friendship
+  if (nestedFriendship && typeof nestedFriendship === 'object' && !Array.isArray(nestedFriendship)) {
+    candidateValues.push((nestedFriendship as Record<string, unknown>).status)
+  }
+
+  // Prefer definitively resolved statuses first.
+  for (const candidate of candidateValues) {
+    const normalized = normalizeFriendRequestStatus(candidate)
+    if (normalized === 'accepted' || normalized === 'rejected') {
+      return normalized
+    }
+  }
+
+  for (const candidate of candidateValues) {
+    const normalized = normalizeFriendRequestStatus(candidate)
+    if (normalized) {
+      return normalized
+    }
+  }
+
+  const acceptedAt = payload.acceptedAt ?? payload.respondedAt
+  if (typeof acceptedAt === 'string' && acceptedAt.trim()) {
+    const resolution = normalizeFriendRequestStatus(payload.resolution ?? payload.outcome)
+    return resolution && resolution !== 'pending' ? resolution : 'accepted'
+  }
+
+  const rejectedAt = payload.rejectedAt ?? payload.dismissedAt
+  if (typeof rejectedAt === 'string' && rejectedAt.trim()) {
+    return 'rejected'
+  }
+
+  return null
+}
+
 export function formatRelativeTime(iso: string) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
@@ -49,9 +116,14 @@ export function getFriendshipId(notification: NotificationItem) {
   return typeof raw === 'string' ? raw : null
 }
 
-export function getFriendRequestStatus(notification: NotificationItem) {
-  const raw = notification.payload?.status
-  if (raw === 'accepted' || raw === 'rejected') return raw
+export function getFriendRequestStatus(notification: NotificationItem): FriendRequestStatus {
+  const basePayload = notification.payload
+  if (basePayload && typeof basePayload === 'object' && !Array.isArray(basePayload)) {
+    const resolved = extractFriendRequestStatusFromPayload(basePayload as Record<string, unknown>)
+    if (resolved) {
+      return resolved
+    }
+  }
   return 'pending'
 }
 
