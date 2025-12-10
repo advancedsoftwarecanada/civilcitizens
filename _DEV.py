@@ -50,9 +50,15 @@ def run_admin_bootstrap(command: str, overrides: Mapping[str, str]) -> None:
 
 
 if __name__ == "__main__":
+    extra_files = []
+    override_file = CIVIL_DIR / "docker-compose.override.yml"
+    if override_file.exists():
+        extra_files.append(override_file)
+
     run_helper(
         default_env_candidates=[Path(".env.dev"), Path(".env")],
         default_project_name="civil_dev",
         default_command="rebuild",
         post_command=run_admin_bootstrap,
+        extra_compose_files=extra_files,
     )

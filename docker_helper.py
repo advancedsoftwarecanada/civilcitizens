@@ -68,7 +68,7 @@ def describe_env_file(path: Optional[Path]) -> str:
         return str(path)
 
 
-def build_compose_base(project_name: str, env_file: Optional[Path]) -> list[str]:
+def build_compose_base(project_name: str, env_file: Optional[Path], extra_compose_files: list[Path] = []) -> list[str]:
     cmd = [
         "docker",
         "compose",
@@ -77,6 +77,8 @@ def build_compose_base(project_name: str, env_file: Optional[Path]) -> list[str]
         "-f",
         str(DOCKER_COMPOSE_FILE),
     ]
+    for f in extra_compose_files:
+        cmd += ["-f", str(f)]
     if env_file:
         cmd += ["--env-file", str(env_file)]
     return cmd
@@ -195,6 +197,7 @@ def run_helper(
     default_project_name: str,
     default_command: Optional[str],
     post_command: Optional[Callable[[str, Mapping[str, str]], None]] = None,
+    extra_compose_files: Iterable[Path] = [],
 ) -> None:
     ensure_docker()
     args = parse_args(default_command)
@@ -213,7 +216,7 @@ def run_helper(
         print("→ No env file detected; relying on shell environment variables")
 
     project_name = os.environ.get("COMPOSE_PROJECT_NAME", default_project_name)
-    compose_cmd = build_compose_base(project_name, env_file)
+    compose_cmd = build_compose_base(project_name, env_file, list(extra_compose_files))
 
     overrides: Dict[str, str] = {"COMPOSE_PROJECT_NAME": project_name}
     overrides.update(env_file_vars)

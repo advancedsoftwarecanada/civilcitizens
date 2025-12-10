@@ -4096,8 +4096,16 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       where.jurisdiction = jurisdiction
     }
     if (province && community) {
-      where.provinceCode = province.toUpperCase()
-      where.communitySlug = community.toLowerCase()
+      const normalizedProvince = normalizeProvinceCode(province)
+      if (!normalizedProvince) {
+        return reply.code(400).send({ error: 'invalid_province' })
+      }
+      const communityRecord = findCommunity(normalizedProvince, community)
+      if (!communityRecord) {
+        return reply.code(404).send({ error: 'community_not_found' })
+      }
+      where.provinceCode = communityRecord.province
+      where.communitySlug = communityRecord.slug
     }
 
     const viewerId = (req as any).user?.id as string | undefined
@@ -4153,11 +4161,13 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (viewerId) {
       if (province && community) {
+        const normalized = normalizeProvinceCode(province)
+        const provinceCode = normalized ?? province
         const follow = await prisma.communityFollow.findUnique({
           where: {
             userId_provinceCode_communitySlug: {
               userId: viewerId,
-              provinceCode: province.toUpperCase(),
+              provinceCode,
               communitySlug: community.toLowerCase(),
             },
           },
@@ -4170,7 +4180,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
               where: {
                 userId_provinceCode_communitySlug: {
                   userId: viewerId,
-                  provinceCode: province.toUpperCase(),
+                  provinceCode,
                   communitySlug: community.toLowerCase(),
                 },
               },
@@ -4690,6 +4700,99 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes, { sort: commentSort }),
     }
+  }),
+)
+
+app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const { handle } = req.params as { handle: string }
+    const viewerId = (req as any).user?.id
+
+    if (!viewerId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true, lastViewedFriendsAt: true, lastViewedHomeAt: true },
+    })
+
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    // Privacy check: only the user can view their own full friends list (for now)
+    if (user.id !== viewerId) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const friendIds = await loadAcceptedFriendIds(user.id)
+    
+    // Determine threshold for new posts
+    const friendsThreshold = [
+      user.lastViewedFriendsAt,
+      user.lastViewedHomeAt
+    ]
+      .filter((d): d is Date => !!d)
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
+
+    // Get new post counts
+    const activeFriendCounts = await prisma.post.groupBy({
+      by: ['authorId'],
+      where: {
+        authorId: { in: friendIds },
+        createdAt: { gt: friendsThreshold },
+      },
+      _count: { id: true },
+    })
+
+    const friendCountMap = new Map<string, number>()
+    activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
+      friendCountMap.set(row.authorId, row._count.id)
+    })
+
+    const friends = await prisma.user.findMany({
+      where: { id: { in: friendIds } },
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        bio: true,
+        communityMeta: true, // To get home community
+      },
+    })
+
+    const items = friends.map((friend: any) => {
+      // Extract home community from communityMeta if available
+      // communityMeta structure: { home: { province: 'on', community: 'york-durham' } }
+      let homeCommunity = null
+      if (friend.communityMeta?.home) {
+        const { province, community } = friend.communityMeta.home
+        const city = findCommunity(province, community)
+        if (city) {
+          homeCommunity = {
+            province,
+            community,
+            name: city.name,
+          }
+        }
+      }
+
+      return {
+        id: friend.id,
+        handle: friend.handle,
+        name: friend.name,
+        avatarUrl: friend.avatarUrl,
+        bio: friend.bio,
+        newPosts: friendCountMap.get(friend.id) ?? 0,
+        homeCommunity,
+      }
+    })
+
+    // Sort by new posts desc, then name
+    items.sort((a: any, b: any) => {
+      if (b.newPosts !== a.newPosts) return b.newPosts - a.newPosts
+      return (a.name || a.handle).localeCompare(b.name || b.handle)
+    })
+
+    return { items }
   }),
 )
 
@@ -6470,30 +6573,68 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { lastViewedFriendsAt: true },
+    select: { handle: true, lastViewedFriendsAt: true, lastViewedHomeAt: true },
   })
 
   // 1. Friends
   const friendIds = await loadAcceptedFriendIds(userId)
-  const friends = await prisma.user.findMany({
-    where: { id: { in: friendIds } },
-    select: { id: true, handle: true, name: true, avatarUrl: true },
+  
+  // Determine the threshold for "new" friend posts
+  const friendsThreshold = [
+    user?.lastViewedFriendsAt,
+    user?.lastViewedHomeAt
+  ]
+    .filter((d): d is Date => !!d)
+    .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
+
+  // Optimize: Group by author to get counts in one query
+  const activeFriendCounts = await prisma.post.groupBy({
+    by: ['authorId'],
+    where: {
+      authorId: { in: friendIds },
+      createdAt: { gt: friendsThreshold },
+    },
+    _count: { id: true },
   })
 
-  const friendsWithCounts = await Promise.all(
-    friends.map(async (friend: any) => {
-      const newPosts = await prisma.post.count({
-        where: {
-          authorId: friend.id,
-          createdAt: { gt: user?.lastViewedFriendsAt ?? new Date(0) },
-        },
-      })
-      return { ...friend, newPosts }
-    }),
-  )
+  // Map authorId -> count
+  const friendCountMap = new Map<string, number>()
+  activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
+    friendCountMap.set(row.authorId, row._count.id)
+  })
 
-  // Randomize and limit 10
-  const randomFriends = friendsWithCounts.sort(() => 0.5 - Math.random()).slice(0, 10)
+  // Prioritize friends with new posts, then fill with others
+  // Sort active counts descending
+  const sortedActive = [...activeFriendCounts].sort((a: any, b: any) => b._count.id - a._count.id)
+  const activeIds = sortedActive.map((row: any) => row.authorId)
+  const activeIdSet = new Set(activeIds)
+  const otherIds = friendIds.filter((id) => !activeIdSet.has(id))
+  
+  // Combine and limit to 10
+  // We want active ones first, then random others? Or just others.
+  // Let's shuffle others to keep it fresh if they have many friends
+  const shuffledOthers = otherIds.sort(() => 0.5 - Math.random())
+  const selectedIds = [...activeIds, ...shuffledOthers].slice(0, 10)
+  
+  const friends = await prisma.user.findMany({
+    where: { id: { in: selectedIds } },
+    select: {
+      id: true,
+      handle: true,
+      name: true,
+      avatarUrl: true,
+      bio: true,
+      communityMeta: true, // To get home community
+    },
+  })
+
+  const friendsWithCounts = friends.map((friend: any) => ({
+    ...friend,
+    newPosts: friendCountMap.get(friend.id) ?? 0,
+  }))
+
+  // Sort by new posts desc
+  const finalFriends = friendsWithCounts.sort((a: any, b: any) => b.newPosts - a.newPosts)
 
   // 2. Communities
   const follows = await prisma.communityFollow.findMany({
@@ -6503,11 +6644,25 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
 
   const communitiesWithCounts = await Promise.all(
     follows.map(async (follow: any) => {
+      // If the user has viewed the home feed more recently than this specific community,
+      // we can consider posts "seen" if they are older than the home feed view time.
+      // However, this is a heuristic. The user might not have scrolled down far enough.
+      // But per user request: "if my user sees the post in the /home feed... technically, we saw it"
+      // So we will use the MAX of community lastViewedAt and user.lastViewedHomeAt (and maybe lastViewedCommunitiesAt)
+      
+      const lastViewed = [
+        follow.lastViewedAt,
+        user?.lastViewedHomeAt,
+        // user?.lastViewedCommunitiesAt // Optional: include if we want the "Communities" tab to also clear it
+      ]
+        .filter((d): d is Date => !!d)
+        .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
+
       const newPosts = await prisma.post.count({
         where: {
           provinceCode: follow.provinceCode,
           communitySlug: follow.communitySlug,
-          createdAt: { gt: follow.lastViewedAt ?? new Date(0) },
+          createdAt: { gt: lastViewed },
         },
       })
 
@@ -6526,10 +6681,12 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   )
 
   // Limit 5, sort by new posts desc
-  const topCommunities = communitiesWithCounts.sort((a, b) => b.newPosts - a.newPosts).slice(0, 5)
+  const topCommunities = communitiesWithCounts.sort((a: any, b: any) => b.newPosts - a.newPosts).slice(0, 5)
 
   return {
-    friends: randomFriends,
+    userHandle: user?.handle,
+    totalFriends: friendIds.length,
+    friends: finalFriends,
     communities: topCommunities,
   }
 })
