@@ -139,6 +139,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
   const [relationship, setRelationship] = useState<ProfileRelationship | null>(null)
   const [friendshipAction, setFriendshipAction] = useState<'send' | 'accept' | 'reject' | null>(null)
+  const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
 
@@ -337,11 +338,20 @@ export default function UserPostsPage({ params }: PageProps) {
         )
       case 'friends':
         return (
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700">
-            <span role="img" aria-label="Handshake">
-              🤝
-            </span>
-            Friends since {resolvedRelationship.friendshipSince ? formatDate(resolvedRelationship.friendshipSince) : 'today'}
+          <div className="flex flex-col items-center gap-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700">
+              <span role="img" aria-label="Handshake">
+                🤝
+              </span>
+              Friends since {resolvedRelationship.friendshipSince ? formatDate(resolvedRelationship.friendshipSince) : 'today'}
+            </div>
+            <button
+              type="button"
+              className="text-xs text-slate-500 hover:text-red-600 hover:underline"
+              onClick={() => setRemoveFriendModalOpen(true)}
+            >
+              Remove friend
+            </button>
           </div>
         )
       case 'self':
@@ -480,6 +490,39 @@ export default function UserPostsPage({ params }: PageProps) {
       pushToast('Unable to dismiss friend request.', 'error')
     } finally {
       setFriendshipAction(null)
+    }
+  }
+
+  const handleRemoveFriend = async () => {
+    if (!profile || !relationship?.friendshipId) return
+    const token = requireAuthToken()
+    if (!token) return
+    
+    try {
+      const res = await fetch(buildApiUrl(`/friends/${relationship.friendshipId}`), {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        pushToast(payload?.error ?? 'Unable to remove friend.', 'error')
+        return
+      }
+
+      setRelationship((prev) => ({
+        friendshipStatus: 'none',
+        friendshipId: undefined,
+        friendshipSince: null,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Friend removed.', 'info')
+      setRemoveFriendModalOpen(false)
+    } catch (err) {
+      console.error('Failed to remove friend', err)
+      pushToast('Unable to remove friend right now.', 'error')
     }
   }
 
@@ -989,6 +1032,35 @@ export default function UserPostsPage({ params }: PageProps) {
         <div className="lg:hidden">
           <RightRail />
         </div>
+
+        <Modal
+          open={removeFriendModalOpen}
+          onClose={() => setRemoveFriendModalOpen(false)}
+          title="Remove friend?"
+          maxWidthClassName="max-w-md"
+        >
+          <div className="p-6">
+            <p className="mb-6 text-slate-600">
+              Are you sure you want to remove @{profile?.handle} from your friends list? You will no longer see their private posts.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                className="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                onClick={() => setRemoveFriendModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                onClick={handleRemoveFriend}
+              >
+                Remove friend
+              </button>
+            </div>
+          </div>
+        </Modal>
       </DashboardShell>
     </div>
   )

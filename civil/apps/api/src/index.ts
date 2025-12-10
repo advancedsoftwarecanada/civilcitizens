@@ -1810,7 +1810,7 @@ function buildPostSlugBase(options: { handle?: string | null; title?: string | n
   const titleSource = options.title?.trim()
   const rawSource = titleSource && titleSource.length > 0 ? titleSource : stripHtmlToPlainText(options.body).slice(0, 120)
   const contentPart = slugifyText(rawSource)
-  const combined = [handlePart, contentPart].filter(Boolean).join('-') || 'post'
+  const combined = [handlePart, contentPart].filter(Boolean).join('-')
   const normalized = combined.replace(/-+/g, '-')
   const trimmed = trimSlugLength(normalized, POST_SLUG_BASE_LIMIT)
   return trimmed || 'post'
@@ -2024,7 +2024,7 @@ registerCommunityRoute(
                 avatarUrl: true,
                 premiumStatus: true,
               },
-            },
+                                  },
           },
           ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         })
@@ -2286,12 +2286,12 @@ registerCommunityRoute('post', '/communities/follows', async (req: FastifyReques
         userId,
         provinceCode: province,
         communitySlug: community.slug,
-        home: setAsHome,
+        home: true,
       },
       update: {
+        home: true,
         provinceCode: province,
         communitySlug: community.slug,
-        home: setAsHome ? true : undefined,
       },
     })
   })
@@ -3235,7 +3235,7 @@ app.post('/friends/requests', async (req: FastifyRequest, reply: FastifyReply) =
           { requesterId: targetUserId, addresseeId: userId },
         ],
       },
-      select: { id: true, requesterId: true, addresseeId: true, status: true },
+      select: { id: true, requesterId: true, addresseeId: true, status: true, requestedAt: true, respondedAt: true },
     })
 
     let friendship: FriendshipWithUsers
@@ -3298,19 +3298,22 @@ app.post('/friends/requests/:id/accept', async (req: FastifyRequest, reply: Fast
       include: FRIENDSHIP_WITH_USERS_INCLUDE,
     })
 
-      const existingNotification = await prisma.notification.findFirst({
-        where: {
-          userId: updated.addresseeId,
-          type: FRIEND_NOTIFICATION_TYPES.REQUEST,
-          payload: {
-            path: ['friendshipId'],
-            equals: updated.id,
-          },
-        },
-        select: NOTIFICATION_SELECT,
-      })
+    const candidateNotifications = await prisma.notification.findMany({
+      where: {
+        userId: updated.addresseeId,
+        type: FRIEND_NOTIFICATION_TYPES.REQUEST,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: NOTIFICATION_SELECT,
+    })
 
-      if (existingNotification) {
+    const existingNotification = candidateNotifications.find((n: any) => {
+      const p = n.payload as Record<string, unknown> | null
+      return p?.friendshipId === updated.id
+    }) ?? candidateNotifications.find((n: any) => n.actorId === updated.requesterId)
+
+    if (existingNotification) {
         const basePayload: Record<string, unknown> = (() => {
           const raw = existingNotification.payload
           if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
@@ -3336,7 +3339,7 @@ app.post('/friends/requests/:id/accept', async (req: FastifyRequest, reply: Fast
 
     await notifyFriendAcceptance(updated.id, updated.requesterId, updated.addresseeId)
 
-    return reply.send({ friend: formatFriendship(updated, userId) })
+    return reply.send({ friendship: formatFriendship(updated, userId) })
   }),
 )
 
@@ -3364,17 +3367,20 @@ app.post('/friends/requests/:id/reject', async (req: FastifyRequest, reply: Fast
       include: FRIENDSHIP_WITH_USERS_INCLUDE,
     })
 
-    const existingNotification = await prisma.notification.findFirst({
+    const candidateNotifications = await prisma.notification.findMany({
       where: {
         userId: updated.addresseeId,
         type: FRIEND_NOTIFICATION_TYPES.REQUEST,
-        payload: {
-          path: ['friendshipId'],
-          equals: updated.id,
-        },
       },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
       select: NOTIFICATION_SELECT,
     })
+
+    const existingNotification = candidateNotifications.find((n: any) => {
+      const p = n.payload as Record<string, unknown> | null
+      return p?.friendshipId === updated.id
+    }) ?? candidateNotifications.find((n: any) => n.actorId === updated.requesterId)
 
     if (existingNotification) {
       const basePayload: Record<string, unknown> = (() => {
@@ -3401,6 +3407,31 @@ app.post('/friends/requests/:id/reject', async (req: FastifyRequest, reply: Fast
     }
 
     return reply.send({ request: formatFriendRequest(updated, userId) })
+  }),
+)
+
+app.delete('/friends/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = FriendshipIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const friendship = await prisma.friendship.findUnique({
+      where: { id: params.data.id },
+    })
+    if (!friendship) return reply.code(404).send({ error: 'friendship_not_found' })
+
+    if (friendship.requesterId !== userId && friendship.addresseeId !== userId) {
+      return reply.code(403).send({ error: 'not_participant' })
+    }
+
+    await prisma.friendship.delete({
+      where: { id: friendship.id },
+    })
+
+    return reply.send({ success: true })
   }),
 )
 
@@ -3551,7 +3582,7 @@ app.get('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fas
 
 app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
+    const userId = (req as any).user?.id as string | undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = MessageThreadIdParam.safeParse(req.params)
@@ -3772,6 +3803,7 @@ registerCommunityRoute('get', '/communities', async (req: FastifyRequest, reply:
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
   const province = normalizeProvinceCode(parse.data.province)
   if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
   const communities = getCommunitiesByProvince(province)
   return reply.send({ items: communities })
 })
@@ -4032,23 +4064,35 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (sortMode === 'hot') {
       items = await prisma.post.findMany({
+        where,
         take: limit,
         orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
-        where,
         include: {
           author: {
-            select: authorSelect,
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
           },
         },
       })
     } else {
       const query = await prisma.post.findMany({
+        where,
         take: limit + 1,
         orderBy: { createdAt: 'desc' },
-        where,
         include: {
           author: {
-            select: authorSelect,
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
           },
         },
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -4070,7 +4114,13 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         },
         include: {
           author: {
-            select: authorSelect,
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
           },
         },
       })
@@ -4168,6 +4218,8 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
         })
         currentReaction = reaction
         reactionChanged = true
+      } else {
+        currentReaction = existing.type
       }
 
       if (reactionChanged) {
@@ -4321,7 +4373,7 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     let viewerVote: number | null = null
     let voteChanged = false
 
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.commentVote.findUnique({
         where: {
           userId_commentId: {
@@ -5709,7 +5761,7 @@ app.post('/businesses', async (req: FastifyRequest, reply: FastifyReply) => {
   const body = CreateBusinessInput.safeParse(req.body)
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
-  const { user } = await ensureStripeCustomer(userId)
+  const { user, customerId } = await ensureStripeCustomer(userId)
   if (!isPremium(user.premiumStatus)) {
     return reply.code(403).send({ error: 'premium_required' })
   }
@@ -6002,6 +6054,7 @@ app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) =>
   const { path, postId, referrer } = parse.data
   const userId = (req as any).user?.id ?? null
   try {
+   
     await prisma.pageView.create({ data: { path, postId: postId ?? null, referrer: referrer ?? null, userId } })
   } catch (err) {
     req.log.error({ err }, 'track_view_failed')
@@ -6299,15 +6352,21 @@ app.post('/notifications/ack', async (req: FastifyRequest, reply: FastifyReply) 
 // SSE notifications (skeleton)
 app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply) => {
   const userId = await resolveStreamUserId(req)
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  if (!userId) {
+    req.log.warn('notifications_stream_unauthorized')
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+  req.log.info({ userId }, 'notifications_stream_connected')
   const sub = new IORedis(REDIS_URL)
   const channel = `${NOTIFICATION_CHANNEL_PREFIX}${userId}`
   await sub.subscribe(channel)
   reply.sse({ data: JSON.stringify({ type: 'connected' }) })
   sub.on('message', (_chan: string, message: string) => {
+    req.log.debug({ userId, size: message.length }, 'notifications_stream_dispatch')
     reply.sse({ data: message })
   })
   req.raw.on('close', async () => {
+    req.log.info({ userId }, 'notifications_stream_disconnected')
     await sub.unsubscribe(channel)
     sub.disconnect()
   })
