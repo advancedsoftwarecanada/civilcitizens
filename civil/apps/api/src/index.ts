@@ -4120,7 +4120,21 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         const friendIds = await loadAcceptedFriendIds(viewerId)
         const allowedAuthorIds = new Set<string>([viewerId, ...friendIds])
         if (allowedAuthorIds.size) {
-          accessibleFilters.push({ authorId: { in: [...allowedAuthorIds] } })
+          // If scope is strictly 'friends', we only want posts that are NOT targeted at a community
+          // unless the user specifically wants to see everything their friends posted.
+          // The requirement is: "When viewing /friends we should only see posts with the context of the post subtype of friend; not a community post."
+          // This implies we should filter out posts that have a communitySlug set, OR we should only include posts where audience is 'friends' or 'public' but not community-specific.
+          // However, the current schema might not have an explicit 'audience' field that distinguishes this easily other than provinceCode/communitySlug being null.
+          // Let's check if we can filter by provinceCode: null.
+          
+          if (scope === 'friends') {
+             accessibleFilters.push({ 
+               authorId: { in: [...allowedAuthorIds] },
+               communitySlug: null 
+             })
+          } else {
+             accessibleFilters.push({ authorId: { in: [...allowedAuthorIds] } })
+          }
         }
       }
 

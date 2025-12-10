@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import VerifiedAvatar from './VerifiedAvatar'
+import Block from './Block'
 
 type RightRailData = {
   userHandle?: string
@@ -72,18 +73,14 @@ export function RightRail() {
   return (
     <div className="sticky top-8 space-y-6">
       {/* Friends Section */}
-      <section className="surface-card p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Contacts</h2>
-          {data?.userHandle && (data.totalFriends ?? 0) > 0 && (
-            <Link 
-              href={`/u/${data.userHandle}/friends`}
-              className="text-xs font-semibold text-[var(--cc-primary)] hover:underline"
-            >
-              {data.totalFriends}
-            </Link>
-          )}
-        </div>
+      <Block
+        title="Contacts"
+        action={
+          data?.userHandle && (data.totalFriends ?? 0) > 0
+            ? { label: `View all (${data.totalFriends})`, href: `/u/${data.userHandle}/friends` }
+            : undefined
+        }
+      >
         {data?.friends.length ? (
           <ul className="space-y-3">
             {data.friends.map((friend) => (
@@ -116,18 +113,10 @@ export function RightRail() {
         ) : (
           <p className="text-sm text-slate-500">No contacts yet.</p>
         )}
-        {data?.userHandle && (
-          <div className="mt-4 border-t border-slate-100 pt-3">
-            <Link href={`/u/${data.userHandle}/friends`} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
-              View all contacts
-            </Link>
-          </div>
-        )}
-      </section>
+      </Block>
 
       {/* Communities Section */}
-      <section className="surface-card p-5">
-        <h2 className="mb-4 text-xs font-semibold uppercase tracking-wider text-slate-500">Your Communities</h2>
+      <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
         {data?.communities.length ? (
           <ul className="space-y-3">
             {data.communities.map((comm) => {
@@ -160,12 +149,7 @@ export function RightRail() {
         ) : (
           <p className="text-sm text-slate-500">No communities followed.</p>
         )}
-        <div className="mt-4 border-t border-slate-100 pt-3">
-          <Link href="/communities/settings" className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
-            View all communities
-          </Link>
-        </div>
-      </section>
+      </Block>
     </div>
   )
 }
