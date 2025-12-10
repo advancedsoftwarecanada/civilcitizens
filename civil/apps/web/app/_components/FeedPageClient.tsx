@@ -1,9 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { getProvinceDisplayName, normalizeProvinceCode, type Jurisdiction, type ReactionType } from '@civil/shared'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { getProvinceDisplayName, normalizeProvinceCode, type ReactionType } from '@civil/shared'
 import Sidebar from './Sidebar'
-import PostComposer, { ApiPost, CommunityTarget, JURISDICTION_LABELS, type PostType } from './PostComposer'
+import PostComposer, { ApiPost, CommunityTarget, type PostType } from './PostComposer'
 import { RightRail } from './RightRail'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
@@ -15,18 +15,6 @@ import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
 
-const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
-  { value: 'hot', label: 'Hot' },
-  { value: 'new', label: 'New' },
-]
-
-const JURISDICTION_FILTERS: Array<{ value: 'all' | Jurisdiction; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'federal', label: JURISDICTION_LABELS.federal },
-  { value: 'provincial', label: JURISDICTION_LABELS.provincial },
-  { value: 'municipal', label: JURISDICTION_LABELS.municipal },
-  { value: 'self', label: JURISDICTION_LABELS.self },
-]
 
 export type FeedScope = 'all' | 'friends' | 'communities'
 
@@ -38,6 +26,8 @@ export type FeedPageClientProps = {
   emptyState?: string
   emptyStateCta?: { label: string; href: string }
   rightRail?: ReactNode
+  province?: string
+  community?: string
 }
 
 type CommunityFollowRow = {
@@ -72,28 +62,28 @@ const mapFollowToCommunityTarget = (follow: CommunityFollowRow): CommunityTarget
   }
 }
 
-export default function FeedPageClient({ scope, sidebarActive, title, description, emptyState, emptyStateCta, rightRail }: FeedPageClientProps) {
+export default function FeedPageClient({ scope, sidebarActive, title, description, emptyState, emptyStateCta, rightRail, province, community }: FeedPageClientProps) {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [communityOptions, setCommunityOptions] = useState<CommunityTarget[]>([])
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
-  const [activeFilter, setActiveFilter] = useState<'all' | Jurisdiction>('all')
-  const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
+
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
+  const [hasMore, setHasMore] = useState(false)
+  const [lastViewedAt, setLastViewedAt] = useState<string | null>(null)
 
   const filterQuery = useMemo(() => {
     const params = new URLSearchParams()
-    if (activeFilter !== 'all') {
-      params.set('jurisdiction', activeFilter)
-    }
-    params.set('sort', sortMode)
     params.set('scope', scope)
+    if (province) params.set('province', province)
+    if (community) params.set('community', community)
     const qs = params.toString()
     return qs ? `?${qs}` : ''
-  }, [activeFilter, sortMode, scope])
+  }, [scope, province, community])
 
-  const refreshPosts = useCallback(async () => {
+  const loadPosts = useCallback(async (cursor?: string) => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
@@ -101,7 +91,10 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
     }
     setLoading(true)
     try {
-      const response = await fetch(buildApiUrl(`/posts${filterQuery}`), {
+      const query = new URLSearchParams(filterQuery)
+      if (cursor) query.set('cursor', cursor)
+      
+      const response = await fetch(buildApiUrl(`/posts?${query.toString()}`), {
         headers: {
           authorization: `Bearer ${token}`,
         },
@@ -111,12 +104,50 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
         redirectToAuthModal('login')
         return
       }
-      const data = await response.json().catch(() => ({ items: [] }))
-      setPosts(Array.isArray(data.items) ? data.items : [])
+      const data = await response.json().catch(() => ({ items: [], nextCursor: undefined, lastViewedAt: null }))
+      const newItems = Array.isArray(data.items) ? data.items : []
+      
+      setPosts((prev) => cursor ? [...prev, ...newItems] : newItems)
+      setNextCursor(data.nextCursor)
+      setHasMore(!!data.nextCursor)
+      if (!cursor && data.lastViewedAt) {
+        setLastViewedAt(data.lastViewedAt)
+      }
     } finally {
       setLoading(false)
     }
   }, [filterQuery])
+
+  useEffect(() => {
+    loadPosts().catch(() => {
+      /* noop */
+    })
+  }, [loadPosts])
+
+  const handleLoadMore = useCallback(() => {
+    if (nextCursor && !loading) {
+      loadPosts(nextCursor)
+    }
+  }, [nextCursor, loading, loadPosts])
+
+  const observerTarget = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !loading) {
+          handleLoadMore()
+        }
+      },
+      { threshold: 0.1 }
+    )
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current)
+    }
+
+    return () => observer.disconnect()
+  }, [hasMore, loading, handleLoadMore])
 
   useEffect(() => {
     const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -179,28 +210,25 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
     void bootstrap()
   }, [])
 
-  useEffect(() => {
-    refreshPosts().catch(() => {
-      /* noop */
-    })
-  }, [refreshPosts])
-
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
-      const matchesFilter = activeFilter === 'all' || post.jurisdiction === activeFilter
-      if (matchesFilter) {
-        setPosts((prev) => {
-          const withoutDuplicate = prev.filter((item) => item.id !== post.id)
-          return [post, ...withoutDuplicate]
-        })
-        return
-      }
-
-      refreshPosts().catch(() => {
-        /* noop */
-      })
+      setPosts((prev) => [post, ...prev])
     },
-    [activeFilter, refreshPosts],
+    [],
+  )
+
+  const handlePostDelete = useCallback(
+    (postId: string) => {
+      setPosts((prev) => prev.filter((p) => p.id !== postId))
+    },
+    [],
+  )
+
+  const handlePostUpdate = useCallback(
+    (updatedPost: ApiPost) => {
+      setPosts((prev) => prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)))
+    },
+    [],
   )
 
   const handleReact = useCallback(
@@ -320,43 +348,6 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
         </div>
       </section>
 
-      <section className="surface-card px-6 py-4 shadow-subtle">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {JURISDICTION_FILTERS.filter((filter) => filter.value === 'all').map((filter) => (
-              <button
-                key={filter.value}
-                type="button"
-                className={`rounded-full border px-4 py-1 text-sm font-semibold transition ${
-                  activeFilter === filter.value
-                    ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
-                    : 'border-transparent bg-slate-100 text-slate-500 hover:text-slate-700'
-                }`}
-                onClick={() => setActiveFilter(filter.value)}
-                disabled={loading && activeFilter === filter.value}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
-            {SORT_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`rounded-full px-3 py-1 transition ${
-                  sortMode === option.value ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                }`}
-                onClick={() => setSortMode(option.value)}
-                disabled={loading && sortMode === option.value}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <div className="space-y-4">
         {visiblePosts.length === 0 ? (
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
@@ -371,9 +362,45 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
             ) : null}
           </section>
         ) : (
-          visiblePosts.map((p) => (
-            <PostFeedItem key={p.id} post={p} onReact={handleReact} viewerId={me?.id ?? null} viewerIsVerified={isVerifiedUser || isBusinessUser} />
-          ))
+          <>
+            {visiblePosts.map((p, i) => {
+              const prevPost = visiblePosts[i - 1]
+              const isFirstSeen = lastViewedAt && p.createdAt <= lastViewedAt && (i === 0 || (prevPost && prevPost.createdAt > lastViewedAt))
+              return (
+                <div key={p.id}>
+                  {isFirstSeen ? (
+                    <div className="relative my-6 flex items-center justify-center">
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-slate-200"></div>
+                      </div>
+                      <span className="relative bg-slate-50 px-4 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        Caught up
+                      </span>
+                    </div>
+                  ) : null}
+                  <PostFeedItem
+                    post={p}
+                    onReact={handleReact}
+                    onDelete={handlePostDelete}
+                    onUpdate={handlePostUpdate}
+                    viewerId={me?.id ?? null}
+                    viewerIsVerified={isVerifiedUser || isBusinessUser}
+                  />
+                </div>
+              )
+            })}
+            {hasMore ? (
+              <div ref={observerTarget} className="flex justify-center py-4">
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loading}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {loading ? 'Loading...' : 'Load more'}
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
 

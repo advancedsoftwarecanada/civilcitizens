@@ -396,3 +396,15 @@ export const ThreadReadInput = z.object({
   messageId: z.string().cuid().optional(),
 })
 export type ThreadReadInput = z.infer<typeof ThreadReadInput>
+
+export const UpdatePostInput = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(3, { message: 'Title must be at least 3 characters' })
+    .max(160, { message: 'Title is too long' })
+    .optional(),
+  body: z.string().max(20000).optional(),
+  mediaUrl: z.string().url().optional().nullable(),
+  hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
+})
