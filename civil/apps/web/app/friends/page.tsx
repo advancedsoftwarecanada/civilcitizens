@@ -1,5 +1,5 @@
 import FeedPageClient from '../_components/FeedPageClient'
-import FriendsRightRail from '../_components/FriendsRightRail'
+import { RightRail } from '../_components/RightRail'
 
 export default function FriendsFeedPage() {
   return (
@@ -10,7 +10,7 @@ export default function FriendsFeedPage() {
       description="Updates from the people you follow and trust on Civil."
       emptyState="No friend activity yet. Once your friends start posting, their updates will land here."
       emptyStateCta={{ label: 'Find Friends', href: '/search' }}
-      rightRail={<FriendsRightRail />}
+      rightRail={<RightRail />}
     />
   )
 }

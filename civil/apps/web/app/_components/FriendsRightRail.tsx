@@ -7,6 +7,7 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { pushToast } from './useToasts'
 import { formatDisplayName } from '../_lib/text'
+import Block from './Block'
 
 export type FriendListEntry = {
   id: string
@@ -120,23 +121,27 @@ export default function FriendsRightRail() {
     }
 
     return (
-      <ul className="space-y-2">
+      <ul className="space-y-3">
         {sortedFriends.map((friend) => {
           const displayName = formatDisplayName(friend.user.name ?? friend.user.handle) || friend.user.handle
           return (
-            <li key={friend.id}>
-              <Link href={`/u/${friend.user.handle}`} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 transition hover:border-[var(--cc-primary)]">
+            <li key={friend.id} className="flex items-center justify-between">
+              <Link href={`/u/${friend.user.handle}`} className="group flex items-center gap-2">
                 <VerifiedAvatar
                   src={friend.user.avatarUrl}
                   alt={displayName}
                   initials={displayName}
-                  size={40}
+                  size={32}
                   isVerified={friend.user.isVerified}
                   isBusiness={friend.user.isPremium}
                 />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
-                  <p className="text-xs text-slate-500">@{friend.user.handle}</p>
+                <div className="flex flex-col">
+                  <span className="max-w-[120px] truncate text-sm font-medium text-slate-700 group-hover:text-slate-900">
+                    {displayName}
+                  </span>
+                  <span className="max-w-[120px] truncate text-xs text-slate-400">
+                    @{friend.user.handle}
+                  </span>
                 </div>
               </Link>
             </li>
@@ -147,14 +152,13 @@ export default function FriendsRightRail() {
   }
 
   return (
-    <div className="sticky top-8 space-y-4">
-      <section className="surface-card space-y-4 p-5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-700">Contacts</h2>
-          {sortedFriends.length ? <span className="text-xs font-semibold text-slate-400">{sortedFriends.length}</span> : null}
-        </div>
+    <div className="sticky top-8 space-y-6">
+      <Block
+        title="Contacts"
+        action={sortedFriends.length ? { label: String(sortedFriends.length), href: '#' } : undefined}
+      >
         {renderContent()}
-      </section>
+      </Block>
     </div>
   )
 }
