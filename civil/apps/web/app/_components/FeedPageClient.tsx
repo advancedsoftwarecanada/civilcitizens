@@ -269,7 +269,9 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
   const isBusinessUser = Boolean(me?.isPremium)
   const viewerDisplayName = me?.name ? formatDisplayName(me.name) : me?.handle ?? friendlyFirstName
   const viewerHandleNormalized = me?.handle ? me.handle.toLowerCase() : null
-  const hideSelfPosts = scope === 'communities' || scope === 'friends'
+  // Only hide self posts on the main aggregated feeds, not on specific community pages
+  const isSpecificCommunity = Boolean(province && community)
+  const hideSelfPosts = (scope === 'communities' && !isSpecificCommunity) || scope === 'friends'
   const visiblePosts = useMemo(() => {
     if (!hideSelfPosts || !viewerHandleNormalized) return posts
     return posts.filter((post) => {
