@@ -282,11 +282,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             </div>
           </div>
         </div>
-        {post.metrics?.hotScore ? (
-          <div className="rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
-            Hot {Math.round(post.metrics.hotScore)}
-          </div>
-        ) : null}
         {isAuthor ? (
           <div className="relative" ref={menuRef}>
             <button
