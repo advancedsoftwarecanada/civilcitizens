@@ -5,12 +5,18 @@ import Link from 'next/link'
 import clsx from 'clsx'
 import Image from 'next/image'
 import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
+import { HiEllipsisHorizontal, HiPencil, HiTrash } from 'react-icons/hi2'
 import type { IconBaseProps, IconType } from 'react-icons'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost } from './PostComposer'
 import { JURISDICTION_LABELS } from './PostComposer'
 import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
+import { buildApiUrl } from '../_lib/api'
+import { getStoredToken } from '../_lib/tokenStorage'
+import { pushToast } from './useToasts'
+import Modal from './Modal'
+import PostComposer from './PostComposer'
 
 function buildPostUrl(post: ApiPost) {
   const slug = post.seoSlug ?? post.id
@@ -30,6 +36,8 @@ function buildCommunityUrl(post: ApiPost) {
 type PostFeedItemProps = {
   post: ApiPost
   onReact: (postId: string, reaction: ReactionType | null) => Promise<void>
+  onDelete?: (postId: string) => void
+  onUpdate?: (post: ApiPost) => void
   viewerIsVerified?: boolean
   viewerId?: string | null
 }
@@ -103,9 +111,15 @@ function ReactionButton({ option, count, active, blocked, disabled, onClick, onB
   )
 }
 
-export default function PostFeedItem({ post, onReact, viewerIsVerified, viewerId }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerIsVerified, viewerId }: PostFeedItemProps) {
   const [pending, setPending] = useState(false)
   const [showVoteTooltip, setShowVoteTooltip] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editBody, setEditBody] = useState(post.body)
+  const [editTitle, setEditTitle] = useState(post.title ?? '')
+  const [isDeleting, setIsDeleting] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reactionCounts = post.reactions ?? {
     maple: 0,
@@ -129,6 +143,69 @@ export default function PostFeedItem({ post, onReact, viewerIsVerified, viewerId
   const profileHref = `/u/${post.author.handle}`
   const authorDisplayName = post.author.name ? formatDisplayName(post.author.name) : post.author.handle
   const avatarInitials = authorDisplayName || post.author.handle
+  const isAuthor = viewerId === post.author.id
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
+
+  const handleDelete = async () => {
+    if (!confirm('Are you sure you want to delete this post?')) return
+    setIsDeleting(true)
+    try {
+      const token = getStoredToken()
+      if (!token) return
+      const res = await fetch(buildApiUrl(`/posts/${post.id}`), {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        onDelete?.(post.id)
+        pushToast('Post deleted', 'success')
+      } else {
+        pushToast('Failed to delete post', 'error')
+      }
+    } catch (err) {
+      pushToast('Failed to delete post', 'error')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const handleUpdate = async () => {
+    try {
+      const token = getStoredToken()
+      if (!token) return
+      const res = await fetch(buildApiUrl(`/posts/${post.id}`), {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: post.type === 'article' ? editTitle : undefined,
+          body: editBody,
+        }),
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        onUpdate?.(updated)
+        setIsEditing(false)
+        pushToast('Post updated', 'success')
+      } else {
+        pushToast('Failed to update post', 'error')
+      }
+    } catch (err) {
+      pushToast('Failed to update post', 'error')
+    }
+  }
 
   const handleReact = useCallback(
     async (nextReaction: ReactionType | null) => {
@@ -210,9 +287,44 @@ export default function PostFeedItem({ post, onReact, viewerIsVerified, viewerId
             Hot {Math.round(post.metrics.hotScore)}
           </div>
         ) : null}
+        {isAuthor ? (
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <HiEllipsisHorizontal className="h-5 w-5" />
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 top-full z-10 mt-1 w-32 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setIsEditing(true)
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  <HiPencil className="h-4 w-4" />
+                  Edit
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    handleDelete()
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  <HiTrash className="h-4 w-4" />
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <div className="space-y-3 text-[15px] leading-6 text-slate-800">
+
         {post.mediaUrl ? (
           <Link href={postUrl} className="block overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
             {/* Use plain img to avoid domain allow-list issues blocking Next/Image */}
@@ -279,6 +391,58 @@ export default function PostFeedItem({ post, onReact, viewerIsVerified, viewerId
           </Link>
         </div>
       </footer>
+
+      {isEditing ? (
+        <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl">
+          <div className="space-y-4 p-6">
+            <div className="grid gap-4">
+              {post.type === 'article' ? (
+                <div className="grid gap-2">
+                  <label htmlFor="title" className="text-sm font-medium text-slate-700">
+                    Title
+                  </label>
+                  <input
+                    id="title"
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                    placeholder="Enter post title"
+                  />
+                </div>
+              ) : null}
+              <div className="grid gap-2">
+                <label htmlFor="body" className="text-sm font-medium text-slate-700">
+                  Body
+                </label>
+                <textarea
+                  id="body"
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                  rows={6}
+                  placeholder="Enter post content"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setIsEditing(false)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdate}
+                disabled={pending}
+                className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 disabled:opacity-50"
+              >
+                {pending ? 'Saving...' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </article>
   )
 }

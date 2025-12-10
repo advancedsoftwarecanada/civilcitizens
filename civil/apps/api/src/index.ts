@@ -58,6 +58,7 @@ import {
   CreateDirectThreadInput,
   SendMessageInput,
   MessageThreadListQuery,
+  UpdatePostInput,
   MessageListQuery,
   ThreadReadInput,
   slugifyCommunityName,
@@ -2024,7 +2025,7 @@ registerCommunityRoute(
                 avatarUrl: true,
                 premiumStatus: true,
               },
-                                  },
+            },
           },
           ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         })
@@ -3090,6 +3091,86 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
   }),
 )
 
+app.delete('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
+
+    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true } })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (post.authorId !== userId) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await prisma.post.delete({ where: { id: params.data.id } })
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
+
+    const parse = UpdatePostInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true } })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (post.authorId !== userId) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const { title, body, mediaUrl, hashtags } = parse.data
+
+    const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updatedPost = await tx.post.update({
+        where: { id: params.data.id },
+        data: {
+          title,
+          body,
+          mediaUrl,
+        },
+        include: {
+          author: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
+          },
+        },
+      })
+
+      if (hashtags) {
+        // Clear existing hashtags
+        await tx.postHashtag.deleteMany({ where: { postId: params.data.id } })
+
+        const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))] as string[]
+        if (tags.length) {
+          await tx.hashtag.createMany({ data: tags.map((tag: string) => ({ tag })), skipDuplicates: true })
+          await tx.postHashtag.createMany({ data: tags.map((tag: string) => ({ postId: params.data.id, tag })) })
+        }
+      }
+
+      return updatedPost
+    })
+
+    return reply.send(formatPost(updated))
+  }),
+)
+
 // Auth: login
 app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
@@ -3440,7 +3521,7 @@ app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
     const userId = (req as any).user?.id
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-    const parse = MessageThreadListQuery.safeParse(req.query ?? {})
+    const parse = MessageThreadListQuery.safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
     const { limit, cursor } = parse.data
@@ -3997,10 +4078,12 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         jurisdiction: JurisdictionEnum.optional(),
         sort: PostSortEnum.optional(),
         scope: z.enum(['all', 'friends', 'communities']).optional(),
+        province: z.string().optional(),
+        community: z.string().optional(),
       })
       .safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-    const { cursor, limit, jurisdiction, sort, scope = 'all' } = parse.data
+    const { cursor, limit, jurisdiction, sort, scope = 'all', province, community } = parse.data
     const authorSelect = {
       id: true,
       handle: true,
@@ -4012,9 +4095,14 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     if (jurisdiction) {
       where.jurisdiction = jurisdiction
     }
+    if (province && community) {
+      where.provinceCode = province.toUpperCase()
+      where.communitySlug = community.toLowerCase()
+    }
+
     const viewerId = (req as any).user?.id as string | undefined
 
-    if (viewerId) {
+    if (viewerId && !province && !community) {
       const includeFriends = scope === 'all' || scope === 'friends'
       const includeCommunities = scope === 'all' || scope === 'communities'
 
@@ -4061,76 +4149,79 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     let items: PostWithAuthor[] = []
     let nextCursor: string | undefined = undefined
+    let lastViewedAt: Date | null = null
 
-    if (sortMode === 'hot') {
-      items = await prisma.post.findMany({
-        where,
-        take: limit,
-        orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
+    if (viewerId) {
+      if (province && community) {
+        const follow = await prisma.communityFollow.findUnique({
+          where: {
+            userId_provinceCode_communitySlug: {
+              userId: viewerId,
+              provinceCode: province.toUpperCase(),
+              communitySlug: community.toLowerCase(),
             },
           },
-        },
-      })
-    } else {
-      const query = await prisma.post.findMany({
-        where,
-        take: limit + 1,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-        },
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      })
-      if (query.length > limit) {
-        const next = query.pop()!
-        nextCursor = next.id
-      }
-      items = query
-    }
-
-    if (viewerId && sortMode === 'hot') {
-      const myRecent = await prisma.post.findMany({
-        take: 3,
-        orderBy: { createdAt: 'desc' },
-        where: {
-          authorId: viewerId,
-          ...(jurisdiction ? { jurisdiction } : {}),
-        },
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-        },
-      })
-
-      if (myRecent.length) {
-        const seen = new Set(items.map((item) => item.id))
-        const merged = [...myRecent, ...items.filter((item) => !seen.has(item.id))]
-        items = merged.slice(0, limit)
+          select: { lastViewedAt: true },
+        })
+        lastViewedAt = follow?.lastViewedAt ?? null
+        if (!cursor && follow) {
+          prisma.communityFollow
+            .update({
+              where: {
+                userId_provinceCode_communitySlug: {
+                  userId: viewerId,
+                  provinceCode: province.toUpperCase(),
+                  communitySlug: community.toLowerCase(),
+                },
+              },
+              data: { lastViewedAt: new Date() },
+            })
+            .catch(console.error)
+        }
+      } else if (scope === 'friends') {
+        const u = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedFriendsAt: true } })
+        lastViewedAt = u?.lastViewedFriendsAt ?? null
+        if (!cursor) {
+          prisma.user.update({ where: { id: viewerId }, data: { lastViewedFriendsAt: new Date() } }).catch(console.error)
+        }
+      } else if (scope === 'communities') {
+        const u = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedCommunitiesAt: true } })
+        lastViewedAt = u?.lastViewedCommunitiesAt ?? null
+        if (!cursor) {
+          prisma.user.update({ where: { id: viewerId }, data: { lastViewedCommunitiesAt: new Date() } }).catch(console.error)
+        }
+      } else {
+        // scope === 'all'
+        const u = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedHomeAt: true } })
+        lastViewedAt = u?.lastViewedHomeAt ?? null
+        if (!cursor) {
+          prisma.user.update({ where: { id: viewerId }, data: { lastViewedHomeAt: new Date() } }).catch(console.error)
+        }
       }
     }
+
+    const query = await prisma.post.findMany({
+      where,
+      take: limit + 1,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            premiumStatus: true,
+          },
+        },
+      },
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    })
+    if (query.length > limit) {
+      const next = query.pop()!
+      nextCursor = next.id
+    }
+    items = query
 
     let reactionsByPost: Record<string, ReactionType> = {}
     if (viewerId && items.length) {
@@ -4148,6 +4239,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     return {
       items: items.map((item) => formatPost(item, { viewerReaction: reactionsByPost[item.id] ?? null })),
       nextCursor,
+      lastViewedAt,
     }
   }),
 )
@@ -4661,7 +4753,6 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       endDate: exp.endDate ? exp.endDate.toISOString() : null,
       current: exp.current,
       description: exp.description,
-      position: exp.position,
     }))
 
     const normalizedProfile = normalizeUserMedia({
@@ -5936,6 +6027,7 @@ app.post(
     let event: Stripe.Event
     try {
       event = stripe.webhooks.constructEvent(payloadBuffer, signature, STRIPE_WEBHOOK_SECRET)
+
     } catch (error) {
       req.log.error({ err: error }, 'stripe_webhook_signature_invalid')
       return reply.code(400).send({ error: 'invalid_signature' })
@@ -6372,11 +6464,81 @@ app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply
   })
 })
 
-if (!process.env.API_SKIP_LISTEN) {
-  try {
-    await app.listen({ port: PORT, host: '0.0.0.0' })
-  } catch (err) {
-    app.log.error(err)
-    ;(globalThis as any)?.process?.exit(1)
+app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { lastViewedFriendsAt: true },
+  })
+
+  // 1. Friends
+  const friendIds = await loadAcceptedFriendIds(userId)
+  const friends = await prisma.user.findMany({
+    where: { id: { in: friendIds } },
+    select: { id: true, handle: true, name: true, avatarUrl: true },
+  })
+
+  const friendsWithCounts = await Promise.all(
+    friends.map(async (friend: any) => {
+      const newPosts = await prisma.post.count({
+        where: {
+          authorId: friend.id,
+          createdAt: { gt: user?.lastViewedFriendsAt ?? new Date(0) },
+        },
+      })
+      return { ...friend, newPosts }
+    }),
+  )
+
+  // Randomize and limit 10
+  const randomFriends = friendsWithCounts.sort(() => 0.5 - Math.random()).slice(0, 10)
+
+  // 2. Communities
+  const follows = await prisma.communityFollow.findMany({
+    where: { userId },
+    select: { provinceCode: true, communitySlug: true, lastViewedAt: true },
+  })
+
+  const communitiesWithCounts = await Promise.all(
+    follows.map(async (follow: any) => {
+      const newPosts = await prisma.post.count({
+        where: {
+          provinceCode: follow.provinceCode,
+          communitySlug: follow.communitySlug,
+          createdAt: { gt: follow.lastViewedAt ?? new Date(0) },
+        },
+      })
+
+      const city = await prisma.city.findFirst({
+        where: { provinceCode: follow.provinceCode, communitySlug: follow.communitySlug },
+        select: { name: true, communityName: true },
+      })
+
+      return {
+        provinceCode: follow.provinceCode,
+        communitySlug: follow.communitySlug,
+        name: city?.communityName ?? city?.name ?? follow.communitySlug,
+        newPosts,
+      }
+    }),
+  )
+
+  // Limit 5, sort by new posts desc
+  const topCommunities = communitiesWithCounts.sort((a, b) => b.newPosts - a.newPosts).slice(0, 5)
+
+  return {
+    friends: randomFriends,
+    communities: topCommunities,
   }
+})
+
+// Restore the app.listen call
+try {
+  await app.listen({ port: PORT, host: '0.0.0.0' })
+  console.log(`Server listening on port ${PORT}`)
+} catch (err) {
+  app.log.error(err)
+  process.exit(1)
 }
