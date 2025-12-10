@@ -56,3 +56,6 @@ Thumbs.db
 uploads/
 !uploads/README.md
 node_modules/
+
+# Large geodata archives (tracked elsewhere)
+_geodata/
