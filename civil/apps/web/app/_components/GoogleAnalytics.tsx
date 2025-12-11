@@ -11,6 +11,7 @@ export default function GoogleAnalytics() {
 
   // Don't render anything if GTAG ID is not configured
   if (!gtagId) {
+    // not tracking
     return null
   }
 
