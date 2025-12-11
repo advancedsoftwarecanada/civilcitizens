@@ -81,6 +81,8 @@ services:
     build:
       context: .
       dockerfile: ./apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_GTAG_ID: ${NEXT_PUBLIC_GTAG_ID:-}
     environment:
       # Allow overriding via env files per environment
       NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-/api}
