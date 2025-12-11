@@ -7,6 +7,7 @@ import MobileDock from './_components/MobileDock'
 import TopNavVisibility from './_components/TopNavVisibility'
 import ScrollManager from './_components/ScrollManager'
 import AnalyticsTracker from './_components/AnalyticsTracker'
+import GoogleAnalytics from './_components/GoogleAnalytics'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -60,6 +61,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
   return (
     <html lang="en">
       <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
+        <GoogleAnalytics />
         <TopNavVisibility />
         <Suspense fallback={null}>
           <AnalyticsTracker />
