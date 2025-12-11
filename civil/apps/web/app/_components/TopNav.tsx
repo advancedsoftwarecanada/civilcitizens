@@ -4,7 +4,8 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { HiOutlineBell, HiOutlineMagnifyingGlass } from 'react-icons/hi2'
+import { usePathname } from 'next/navigation'
+import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
@@ -23,9 +24,11 @@ const MAX_VISIBLE_NOTIFICATIONS = 7
 
 
 export default function TopNav() {
+  const pathname = usePathname()
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
+  const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
@@ -86,6 +89,22 @@ export default function TopNav() {
     }
   }, [])
 
+  const fetchMessageUnreadCount = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) return
+    try {
+      const res = await fetch(buildApiUrl('/messages/unread-count'), {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { count: number }
+        setMessageUnreadCount(data.count)
+      }
+    } catch (err) {
+      console.error('Failed to load message unread count', err)
+    }
+  }, [])
+
   const acknowledgeNotifications = useCallback(async () => {
     const token = getStoredToken()
     if (!token) {
@@ -123,6 +142,20 @@ export default function TopNav() {
 
   const handleRealtimeNotification = useCallback(
     (payload: RealtimePayload) => {
+      if (payload.type === 'message.created') {
+        if (pathname?.startsWith('/messages')) {
+          // If we are on the messages page, we let the page handle the read status
+          // But we still update the count just in case, though it might be redundant if the page marks it read immediately
+          // Actually, if we are on /messages, we might not want to show a toast or increment unread count if it's the active thread
+          // But TopNav doesn't know the active thread.
+          // However, the user asked to suppress the notification.
+          // We will still fetch the count, but maybe suppress a toast if we were to add one for messages.
+          // Currently TopNav doesn't show toasts for messages, only for notifications.
+          // But it does update the badge.
+        }
+        void fetchMessageUnreadCount()
+        return
+      }
       if (!isNotificationPayload(payload)) return
       const data: NotificationRealtimeData = payload.data
       const payloadValue = data.payload
@@ -161,14 +194,23 @@ export default function TopNav() {
         setUnreadCount((prev) => prev + unreadDelta)
       }
     },
-    [],
+    [fetchMessageUnreadCount],
   )
 
   useEffect(() => {
     const token = getStoredToken()
     if (!token) return
     void fetchNotifications()
-  }, [fetchNotifications])
+    void fetchMessageUnreadCount()
+
+    const handleMessageRead = () => {
+      void fetchMessageUnreadCount()
+    }
+    window.addEventListener('message.read', handleMessageRead)
+    return () => {
+      window.removeEventListener('message.read', handleMessageRead)
+    }
+  }, [fetchNotifications, fetchMessageUnreadCount])
 
   useEffect(() => {
     if (!dropdownOpen) return undefined
@@ -357,6 +399,18 @@ export default function TopNav() {
         </div>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <Link
+            href="/messages"
+            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+            aria-label="Messages"
+          >
+            <HiOutlineChatBubbleOvalLeft className="text-xl" />
+            {messageUnreadCount > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
+                {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
+              </span>
+            ) : null}
+          </Link>
           <div className="relative" ref={dropdownRef}>
             <button
               type="button"

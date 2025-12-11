@@ -247,6 +247,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         })
         if (selectedThreadRef.current === threadId) {
           void markThreadRead(threadId, message.id)
+          // Dispatch event to update TopNav count immediately
+          window.dispatchEvent(new CustomEvent('message.read'))
         }
       }
     },
@@ -436,6 +438,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         const payload = (await response.json()) as { message: MessagePayload }
         setMessagesByThread((prev) => {
           const existing = prev[threadId] ?? []
+          if (existing.some((item) => item.id === payload.message.id)) return prev
           return { ...prev, [threadId]: [...existing, payload.message] }
         })
         setComposerText('')
@@ -567,10 +570,6 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
             <p className="text-lg font-semibold text-slate-900">{getThreadTitle(activeThread)}</p>
             <p className="text-xs text-slate-500">{activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}</p>
           </div>
-          <Link href="/search?type=people" className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
-            <HiOutlinePlusCircle className="h-4 w-4" />
-            New chat
-          </Link>
         </header>
         <div className="mt-4 flex-1 overflow-hidden">
           <div className="flex h-full flex-col">
@@ -629,6 +628,14 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
               <textarea
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    if (activeThread) {
+                      void sendMessage(activeThread.id)
+                    }
+                  }
+                }}
                 placeholder="Write a message"
                 className="h-12 flex-1 resize-none border-none bg-transparent text-sm text-slate-800 outline-none"
               />
@@ -665,15 +672,15 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   return (
     <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="messages" />} mainClassName="space-y-6">
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr]">
-        <div className="flex flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr] lg:h-[calc(100vh-8rem)]">
+        <div className="flex flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)] lg:h-full">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Inbox</p>
               <h2 className="text-xl font-semibold text-slate-900">Messages</h2>
             </div>
             <Link
-              href="/search?type=people"
+              href={me ? `/u/${me.handle}/friends` : '/friends'}
               className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             >
               <HiOutlinePlusCircle className="h-4 w-4" />
@@ -685,7 +692,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
             {threadsFooter}
           </div>
         </div>
-        <div className="min-h-[60vh]">{renderMessages()}</div>
+        <div className="min-h-[60vh] lg:h-full lg:min-h-0">{renderMessages()}</div>
       </section>
     </DashboardShell>
   )
