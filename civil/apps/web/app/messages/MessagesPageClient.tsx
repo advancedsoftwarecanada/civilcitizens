@@ -11,7 +11,14 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import type { MeResponse } from '../_lib/me'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { HiOutlineArrowPath, HiOutlinePaperAirplane, HiOutlinePlusCircle, HiOutlineChevronLeft } from 'react-icons/hi2'
+import {
+  HiOutlineArrowPath,
+  HiOutlinePaperAirplane,
+  HiOutlinePlusCircle,
+  HiOutlineChevronLeft,
+  HiOutlinePhoto,
+  HiOutlineXMark,
+} from 'react-icons/hi2'
 
 const THREAD_PAGE_LIMIT = 20
 const MESSAGE_PAGE_LIMIT = 40
@@ -152,6 +159,9 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const [composerText, setComposerText] = useState('')
   const [sending, setSending] = useState(false)
   const [streamKey, setStreamKey] = useState(0)
+  const [attachments, setAttachments] = useState<string[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId
@@ -421,13 +431,13 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const sendMessage = useCallback(
     async (threadId: string) => {
       const trimmed = composerText.trim()
-      if (!trimmed) return
+      if (!trimmed && attachments.length === 0) return
       setSending(true)
       try {
         const response = await authedFetch(`/messages/threads/${threadId}/messages`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ body: trimmed }),
+          body: JSON.stringify({ body: trimmed || null, attachments }),
         })
         if (response.status === 401) {
           redirectToAuthModal('login')
@@ -443,6 +453,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
           return { ...prev, [threadId]: [...existing, payload.message] }
         })
         setComposerText('')
+        setAttachments([])
         void markThreadRead(threadId, payload.message.id)
       } catch (err) {
         console.error('Failed to send message', err)
@@ -451,7 +462,145 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         setSending(false)
       }
     },
-    [authedFetch, composerText, markThreadRead],
+    [authedFetch, composerText, attachments, markThreadRead],
+  )
+
+  const handleFileSelect = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+
+      // Reset input
+      event.target.value = ''
+
+      if (file.size > 25 * 1024 * 1024) {
+        pushToast('File is too large (max 25MB).', 'error')
+        return
+      }
+
+      setIsUploading(true)
+      try {
+        const token = getStoredToken()
+        if (!token) throw new Error('unauthenticated')
+
+        // 1. Init upload
+        const initRes = await fetch(buildApiUrl('/media/uploads'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            category: 'post_image',
+            mime: file.type || 'application/octet-stream',
+            byteSize: file.size,
+            filename: file.name,
+          }),
+        })
+
+        if (!initRes.ok) {
+          const errData = await initRes.json().catch(() => ({}))
+          console.error('Upload init failed', errData)
+          throw new Error(errData.error || 'Upload init failed')
+        }
+        const initPayload = await initRes.json()
+        const assetId = initPayload.assetId
+        const upload = initPayload.upload || {}
+        const proxyPath = initPayload.proxyPath
+
+        // 2. Upload file
+        let uploaded = false
+        if (upload.url) {
+          try {
+            const res = await fetch(upload.url, {
+              method: upload.method || 'PUT',
+              headers: upload.headers,
+              body: file,
+            })
+            if (res.ok) uploaded = true
+          } catch (e) {
+            console.warn('Direct upload failed', e)
+          }
+        }
+
+        if (!uploaded && proxyPath) {
+          // Ensure we have a valid mime type for the proxy upload
+          const contentType = file.type || 'application/octet-stream'
+          const res = await fetch(buildApiUrl(proxyPath), {
+            method: 'PUT',
+            headers: {
+              authorization: `Bearer ${token}`,
+              'content-type': contentType,
+              'x-upload-byte-size': String(file.size),
+            },
+            body: file,
+          })
+          if (res.ok) uploaded = true
+        }
+
+        if (!uploaded) throw new Error('Upload failed')
+
+        // 3. Complete upload
+        const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ assetId }),
+        })
+
+        if (!completeRes.ok) {
+          const errData = await completeRes.json().catch(() => ({}))
+          console.error('Completion failed', errData)
+          throw new Error(errData.error || 'Completion failed')
+        }
+
+        // 4. Poll for readiness
+        let mediaUrl: string | null = null
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 1000))
+          const pollRes = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
+            headers: { authorization: `Bearer ${token}` },
+          })
+          if (pollRes.ok) {
+            const pollData = await pollRes.json()
+            if (pollData.asset?.status === 'ready') {
+              // Pick a variant
+              const variants = pollData.asset.variants || []
+              // Prefer 'public' or 'large' or just the first one
+              const v = variants.find((v: any) => v.variant === 'public') || variants[0]
+              if (v) {
+                mediaUrl = v.url
+                break
+              }
+            } else if (pollData.asset?.status === 'failed') {
+              throw new Error('Processing failed')
+            }
+          }
+        }
+
+        if (mediaUrl) {
+          setAttachments((prev) => [...prev, mediaUrl!])
+        } else {
+          throw new Error('Processing timeout')
+        }
+      } catch (err) {
+        console.error('Upload error', err)
+        const msg = err instanceof Error ? err.message : 'Failed to upload image.'
+        pushToast(msg, 'error')
+      } finally {
+        setIsUploading(false)
+      }
+    },
+    [],
+  )
+
+  const removeAttachment = useCallback(
+    (index: number) => {
+      setAttachments((prev) => prev.filter((_, i) => i !== index))
+    },
+    [],
   )
 
   useEffect(() => {
@@ -569,7 +718,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     const title = getThreadTitle(activeThread)
 
     return (
-      <div className="flex h-full flex-col rounded-3xl border border-white/60 bg-white/90 p-4 shadow-[0_30px_80px_rgba(15,23,42,0.08)]">
+      <div className="flex h-full flex-col bg-white p-4 lg:rounded-3xl lg:border lg:border-white/60 lg:bg-white/90 lg:shadow-[0_30px_80px_rgba(15,23,42,0.08)]">
         <header className="flex items-center gap-3 border-b border-slate-100 pb-3">
           <button
             type="button"
@@ -632,9 +781,13 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                         <p className="italic text-slate-400">Message removed.</p>
                       ) : (
                         <>
-                          {message.body ? <p>{message.body}</p> : null}
-                          {!message.body && message.attachments.length ? (
-                            <p className="text-xs italic">{message.attachments.length} attachment(s)</p>
+                          {message.body ? <p className="whitespace-pre-wrap">{message.body}</p> : null}
+                          {message.attachments.length > 0 ? (
+                            <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
+                              {message.attachments.map((url, i) => (
+                                <img key={i} src={url} alt="Attachment" className="rounded-lg object-cover max-h-60 w-full" />
+                              ))}
+                            </div>
                           ) : null}
                         </>
                       )}
@@ -645,7 +798,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
               })}
             </div>
             <form
-              className="mt-4 flex items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2 shadow-inner"
+              className="mt-4 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm"
               onSubmit={(event) => {
                 event.preventDefault()
                 if (activeThread) {
@@ -653,6 +806,22 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                 }
               }}
             >
+              {attachments.length > 0 ? (
+                <div className="flex gap-2 overflow-x-auto px-2 pb-2">
+                  {attachments.map((url, i) => (
+                    <div key={i} className="relative h-16 w-16 shrink-0">
+                      <img src={url} alt="Attachment" className="h-full w-full rounded-lg object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(i)}
+                        className="absolute -right-1 -top-1 rounded-full bg-slate-900 text-white p-0.5 shadow-sm hover:bg-slate-700"
+                      >
+                        <HiOutlineXMark className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <textarea
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
@@ -665,21 +834,41 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                   }
                 }}
                 placeholder="Write a message"
-                className="h-12 flex-1 resize-none border-none bg-transparent text-sm text-slate-800 outline-none"
+                className="min-h-[3rem] w-full resize-none border-none bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
               />
-              <button
-                type="submit"
-                disabled={!composerText.trim() || sending}
-                className={clsx(
-                  'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white transition',
-                  !composerText.trim() || sending
-                    ? 'cursor-not-allowed bg-slate-300'
-                    : 'bg-[var(--cc-primary)] hover:bg-[var(--cc-primary-dark, #0d5)]',
-                )}
-              >
-                <HiOutlinePaperAirplane className="h-4 w-4" />
-                Send
-              </button>
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept="image/jpeg,image/png,image/webp,image/heic"
+                    onChange={handleFileSelect}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-[var(--cc-primary)] disabled:opacity-50"
+                    title="Add photo"
+                  >
+                    <HiOutlinePhoto className={clsx('h-6 w-6', isUploading ? 'animate-pulse' : '')} />
+                  </button>
+                </div>
+                <button
+                  type="submit"
+                  disabled={(!composerText.trim() && attachments.length === 0) || sending || isUploading}
+                  className={clsx(
+                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white transition',
+                    (!composerText.trim() && attachments.length === 0) || sending || isUploading
+                      ? 'cursor-not-allowed bg-slate-300'
+                      : 'bg-[var(--cc-primary)] hover:bg-[var(--cc-primary-dark, #0d5)]',
+                  )}
+                >
+                  <HiOutlinePaperAirplane className="h-4 w-4" />
+                  Send
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -699,11 +888,15 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   ) : null
 
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="messages" />} mainClassName="space-y-6">
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr] lg:h-[calc(100vh-8rem)]">
+    <DashboardShell
+      sidebar={<Sidebar me={me ?? undefined} active="messages" />}
+      mainClassName="space-y-6 !pt-0 lg:!pt-8"
+      containerClassName="!px-0 sm:!px-8"
+    >
+      <section className="grid lg:gap-6 lg:grid-cols-[minmax(0,340px)_1fr] lg:h-[calc(100vh-8rem)]">
         <div className={clsx(
-          "flex flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)] lg:h-full",
-          activeThread ? "hidden lg:flex" : "flex h-[calc(100vh-12rem)] lg:h-full"
+          "flex flex-col bg-white p-4 lg:rounded-[32px] lg:border lg:border-white/70 lg:bg-white/90 lg:shadow-[0_25px_70px_rgba(15,23,42,0.08)] lg:h-full",
+          activeThread ? "hidden lg:flex" : "flex h-[calc(100vh-8rem)] lg:h-full"
         )}>
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div>
@@ -725,7 +918,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         </div>
         <div className={clsx(
           "min-h-[60vh] lg:h-full lg:min-h-0",
-          activeThread ? "flex h-[calc(100vh-12rem)] lg:h-full" : "hidden lg:flex"
+          activeThread ? "flex h-[calc(100vh-8rem)] lg:h-full" : "hidden lg:flex"
         )}>
           {renderMessages()}
         </div>
