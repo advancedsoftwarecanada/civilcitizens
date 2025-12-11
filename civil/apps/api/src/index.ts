@@ -3738,6 +3738,24 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
   }),
 )
 
+app.get('/messages/unread-count', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const result = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*)::int as count
+      FROM "Message" m
+      JOIN "MessageParticipant" mp ON m."threadId" = mp."threadId"
+      WHERE mp."userId" = ${userId}
+      AND m."senderId" != ${userId}
+      AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+    `
+    const count = Number(result[0]?.count || 0)
+    return reply.send({ count })
+  }),
+)
+
 app.post('/messages/threads/:id/read', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const userId = (req as any).user?.id
@@ -4250,7 +4268,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     let reactionsByPost: Record<string, ReactionType> = {}
     if (viewerId && items.length) {
       const reactions = await prisma.postReaction.findMany({
-        where: { postId: { in: items.map((item) => item.id) }, userId: viewerId },
+        where: { userId: viewerId, postId: { in: items.map((post) => post.id) } },
         select: { postId: true, type: true },
       })
       const reactionMap: Record<string, ReactionType> = {}
@@ -4268,550 +4286,9 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
   }),
 )
 
-app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
-    const parse = ReactPostInput.safeParse(req.body)
-    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-
-    const { postId, reaction } = parse.data
-
-    const post = await prisma.post.findUnique({
-      where: { id: postId },
-      select: {
-        id: true,
-        createdAt: true,
-        lastActivityAt: true,
-        authorId: true,
-      },
-    })
-    if (!post) return reply.code(404).send({ error: 'post_not_found' })
-
-    let currentReaction: ReactionType | null = null
-
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.postReaction.findUnique({
-        where: {
-          userId_postId: {
-            userId,
-            postId,
-          },
-        },
-        select: { type: true },
-      })
-
-      currentReaction = existing?.type ?? null
-      let reactionChanged = false
-
-      if (!reaction) {
-        if (existing) {
-          await tx.postReaction.delete({
-            where: {
-              userId_postId: {
-                userId,
-                postId,
-              },
-            },
-          })
-          currentReaction = null
-          reactionChanged = true
-        }
-      } else if (!existing) {
-        await tx.postReaction.create({ data: { userId, postId, type: reaction } })
-        currentReaction = reaction
-        reactionChanged = true
-      } else if (existing.type !== reaction) {
-        await tx.postReaction.update({
-          where: {
-            userId_postId: {
-              userId,
-              postId,
-            },
-          },
-          data: { type: reaction },
-        })
-        currentReaction = reaction
-        reactionChanged = true
-      } else {
-        currentReaction = existing.type
-      }
-
-      if (reactionChanged) {
-        await refreshPostAggregates(
-          tx,
-          postId,
-          {
-            createdAt: post.createdAt,
-            lastActivityAt: post.lastActivityAt,
-          },
-          { bumpActivity: true },
-        )
-      }
-    })
-
-    const updatedPost = await prisma.post.findUnique({
-      where: { id: postId },
-      include: {
-        author: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
-    })
-
-    if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
-
-    return reply.send({ post: formatPost(updatedPost, { viewerReaction: currentReaction }) })
-  }),
-)
-
-app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
-    const parse = CreateCommentInput.safeParse(req.body)
-    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-
-    const { postId, body, parentId } = parse.data
-
-    const post = await prisma.post.findUnique({
-      where: { id: postId },
-      select: {
-        id: true,
-        createdAt: true,
-        lastActivityAt: true,
-      },
-    })
-    if (!post) return reply.code(404).send({ error: 'post_not_found' })
-
-    if (parentId) {
-      const parent = await prisma.comment.findUnique({ where: { id: parentId }, select: { id: true, postId: true } })
-      if (!parent || parent.postId !== postId) {
-        return reply.code(400).send({ error: 'invalid_parent' })
-      }
-    }
-
-    let createdComment: CommentWithUser | null = null
-
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      createdComment = await tx.comment.create({
-        data: {
-          postId,
-          userId,
-          parentId: parentId ?? null,
-          body,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-        },
-      })
-
-      await refreshPostAggregates(
-        tx,
-        postId,
-        {
-          createdAt: post.createdAt,
-          lastActivityAt: post.lastActivityAt,
-        },
-        { bumpActivity: true },
-      )
-    })
-
-    if (!createdComment) return reply.code(500).send({ error: 'comment_failed' })
-
-    const updatedPost = await prisma.post.findUnique({
-      where: { id: postId },
-      include: {
-        author: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
-    })
-
-    const createdPayload = attachCommentHotScore(mapComment(createdComment, null), { replyCount: 0, replyScore: 0 })
-
-    return reply.code(201).send({
-      comment: createdPayload,
-      post: updatedPost ? formatPost(updatedPost, { viewerReaction: null }) : null,
-    })
-  }),
-)
-
-app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
-    const parse = VoteCommentInput.safeParse(req.body)
-    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-
-    const { commentId, value } = parse.data
-
-    const comment = await prisma.comment.findUnique({
-      where: { id: commentId },
-      select: {
-        id: true,
-        postId: true,
-        post: {
-          select: {
-            id: true,
-            createdAt: true,
-            lastActivityAt: true,
-          },
-        },
-      },
-    })
-
-    if (!comment) return reply.code(404).send({ error: 'comment_not_found' })
-
-    let viewerVote: number | null = null
-    let voteChanged = false
-
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const existing = await tx.commentVote.findUnique({
-        where: {
-          userId_commentId: {
-            userId,
-            commentId,
-          },
-        },
-        select: { value: true },
-      })
-
-      if (value === 0) {
-        if (existing) {
-          await tx.commentVote.delete({
-            where: {
-              userId_commentId: {
-                userId,
-                commentId,
-              },
-            },
-          })
-          voteChanged = true
-        }
-        viewerVote = null
-      } else if (!existing) {
-        await tx.commentVote.create({ data: { userId, commentId, value } })
-        voteChanged = true
-        viewerVote = value
-      } else if (existing.value !== value) {
-        await tx.commentVote.update({
-          where: {
-            userId_commentId: {
-              userId,
-              commentId,
-            },
-          },
-          data: { value },
-        })
-        voteChanged = true
-        viewerVote = value
-      } else {
-        viewerVote = existing.value
-      }
-
-      if (voteChanged) {
-        await refreshCommentAggregates(tx, commentId)
-
-        if (comment.post) {
-          await refreshPostAggregates(
-            tx,
-            comment.postId,
-            {
-              createdAt: comment.post.createdAt,
-              lastActivityAt: comment.post.lastActivityAt,
-            },
-            { bumpActivity: true },
-          )
-        }
-      }
-    })
-
-    const updated = await prisma.comment.findUnique({
-      where: { id: commentId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
-    })
-
-    if (!updated) return reply.code(404).send({ error: 'comment_not_found' })
-
-    const [directReplyCount, replyScoreAggregate] = await Promise.all([
-      prisma.comment.count({ where: { parentId: commentId } }),
-      prisma.comment.aggregate({ where: { parentId: commentId }, _sum: { score: true } }),
-    ])
-
-    const formatted = attachCommentHotScore(mapComment(updated, viewerVote), {
-      replyCount: directReplyCount,
-      replyScore: replyScoreAggregate._sum?.score ?? 0,
-    })
-
-    return reply.send({ comment: formatted })
-  }),
-)
-
-app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: 'invalid id' })
-
-    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { id: true } })
-    if (!post) return reply.code(404).send({ error: 'post_not_found' })
-
-    const sortQuery = z
-      .object({
-        sort: CommentSortEnum.optional(),
-      })
-      .safeParse(req.query)
-    if (!sortQuery.success) return reply.code(400).send({ error: sortQuery.error.flatten() })
-
-    const sortMode = sortQuery.data.sort ?? 'hot'
-
-    const rows: CommentWithUser[] = await prisma.comment.findMany({
-      where: { postId: post.id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
-    })
-
-    const viewerId = (req as any).user?.id as string | undefined
-    let viewerVotes: Record<string, number> = {}
-    if (viewerId && rows.length) {
-      const commentIds = rows.map((comment) => comment.id)
-      const votes = await prisma.commentVote.findMany({
-        where: { userId: viewerId, commentId: { in: commentIds } },
-        select: { commentId: true, value: true },
-      })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.commentId] = vote.value
-      }
-      viewerVotes = voteMap
-    }
-
-    return reply.send({ comments: buildCommentTree(rows, viewerVotes, { sort: sortMode }) })
-  }),
-)
-
-app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const params = z.object({ slug: z.string().min(3).max(200) }).safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: 'invalid_slug' })
-
-    const commentSortQuery = z
-      .object({
-        commentSort: CommentSortEnum.optional(),
-      })
-      .safeParse(req.query)
-    if (!commentSortQuery.success) return reply.code(400).send({ error: commentSortQuery.error.flatten() })
-
-    const commentSort = commentSortQuery.data.commentSort ?? 'hot'
-
-    const post = await prisma.post.findUnique({
-      where: { seoSlug: params.data.slug },
-      include: {
-        author: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
-    })
-
-    if (!post) return reply.code(404).send({ error: 'not_found' })
-
-    const viewerId = (req as any).user?.id as string | undefined
-    let viewerReaction: ReactionType | null = null
-    if (viewerId) {
-      const reaction = await prisma.postReaction.findUnique({
-        where: {
-          userId_postId: {
-            userId: viewerId,
-            postId: post.id,
-          },
-        },
-        select: { type: true },
-      })
-      viewerReaction = reaction?.type ?? null
-    }
-
-    const commentRows: CommentWithUser[] = await prisma.comment.findMany({
-      where: { postId: post.id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
-    })
-
-    let viewerCommentVotes: Record<string, number> = {}
-    if (viewerId && commentRows.length) {
-      const commentIds = commentRows.map((comment) => comment.id)
-      const votes = await prisma.commentVote.findMany({
-        where: { userId: viewerId, commentId: { in: commentIds } },
-        select: { commentId: true, value: true },
-      })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.commentId] = vote.value
-      }
-      viewerCommentVotes = voteMap
-    }
-
-    return {
-      post: formatPost(post, { viewerReaction }),
-      paths: getCanonicalPaths(post),
-      comments: buildCommentTree(commentRows, viewerCommentVotes, { sort: commentSort }),
-    }
-  }),
-)
-
-app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyReply) =>
-  withSchemaGuard(req, reply, async () => {
-    const { handle } = req.params as { handle: string }
-    const viewerId = (req as any).user?.id
-
-    if (!viewerId) return reply.code(401).send({ error: 'unauthorized' })
-
-    const user = await prisma.user.findUnique({
-      where: { handle },
-      select: { id: true, handle: true, lastViewedFriendsAt: true, lastViewedHomeAt: true },
-    })
-
-    if (!user) return reply.code(404).send({ error: 'not_found' })
-
-    // Privacy check: only the user can view their own full friends list (for now)
-    if (user.id !== viewerId) {
-      return reply.code(403).send({ error: 'forbidden' })
-    }
-
-    const friendIds = await loadAcceptedFriendIds(user.id)
-    
-    // Determine threshold for new posts
-    const friendsThreshold = [
-      user.lastViewedFriendsAt,
-      user.lastViewedHomeAt
-    ]
-      .filter((d): d is Date => !!d)
-      .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
-
-    // Get new post counts
-    const activeFriendCounts = await prisma.post.groupBy({
-      by: ['authorId'],
-      where: {
-        authorId: { in: friendIds },
-        createdAt: { gt: friendsThreshold },
-      },
-      _count: { id: true },
-    })
-
-    const friendCountMap = new Map<string, number>()
-    activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
-      friendCountMap.set(row.authorId, row._count.id)
-    })
-
-    const friends = await prisma.user.findMany({
-      where: { id: { in: friendIds } },
-      select: {
-        id: true,
-        handle: true,
-        name: true,
-        avatarUrl: true,
-        bio: true,
-        communityMeta: true, // To get home community
-      },
-    })
-
-    const items = friends.map((friend: any) => {
-      // Extract home community from communityMeta if available
-      // communityMeta structure: { home: { province: 'on', community: 'york-durham' } }
-      let homeCommunity = null
-      if (friend.communityMeta?.home) {
-        const { province, community } = friend.communityMeta.home
-        const city = findCommunity(province, community)
-        if (city) {
-          homeCommunity = {
-            province,
-            community,
-            name: city.name,
-          }
-        }
-      }
-
-      return {
-        id: friend.id,
-        handle: friend.handle,
-        name: friend.name,
-        avatarUrl: friend.avatarUrl,
-        bio: friend.bio,
-        newPosts: friendCountMap.get(friend.id) ?? 0,
-        homeCommunity,
-      }
-    })
-
-    // Sort by new posts desc, then name
-    items.sort((a: any, b: any) => {
-      if (b.newPosts !== a.newPosts) return b.newPosts - a.newPosts
-      return (a.name || a.handle).localeCompare(b.name || b.handle)
-    })
-
-    return { items }
-  }),
-)
-
 app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
+    try {
     const params = HandleParam.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
@@ -4835,8 +4312,18 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
     if (!userRecord) return reply.code(404).send({ error: 'user_not_found' })
 
-    const followerCountPromise = prisma.follow.count({ where: { targetId: userRecord.id } })
-    const followingCountPromise = prisma.follow.count({ where: { followerId: userRecord.id } })
+    let followersCount = 0
+    let followingCount = 0
+    try {
+      const [followers, following] = await Promise.all([
+        prisma.follow.count({ where: { targetId: userRecord.id } }),
+        prisma.follow.count({ where: { followerId: userRecord.id } }),
+      ])
+      followersCount = followers
+      followingCount = following
+    } catch (error) {
+      // Ignore
+    }
 
     let experiences: Array<{
       id: string
@@ -4878,7 +4365,6 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     }) as typeof userRecord & { experiences: typeof mappedExperiences }
 
     const { premiumStatus, ...restProfile } = normalizedProfile
-    const [followersCount, followingCount] = await Promise.all([followerCountPromise, followingCountPromise])
     const user = {
       ...restProfile,
       isPremium: isPremium(premiumStatus),
@@ -4908,63 +4394,66 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     const viewerId = (req as any).user?.id as string | undefined
     let relationship: {
       friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
-      friendshipId?: string
-      friendshipSince?: string | null
+      friendshipId: string | null
+      friendshipSince: Date | null
       following: boolean
-    } | null = null
+    } = {
+      friendshipStatus: 'none',
+      friendshipId: null,
+      friendshipSince: null,
+      following: false,
+    }
 
     if (viewerId) {
       if (viewerId === user.id) {
-        relationship = { friendshipStatus: 'self', friendshipId: undefined, friendshipSince: null, following: false }
+        relationship.friendshipStatus = 'self'
       } else {
-        const [friendship, followRecord] = await Promise.all([
-          prisma.friendship.findFirst({
-            where: {
-              OR: [
-                { requesterId: viewerId, addresseeId: user.id },
-                { requesterId: user.id, addresseeId: viewerId },
-              ],
-            },
-            select: {
-              id: true,
-              requesterId: true,
-              addresseeId: true,
-              status: true,
-              requestedAt: true,
-              respondedAt: true,
-            },
-          }),
-          prisma.follow.findUnique({
-            where: {
-              followerId_targetId: {
-                followerId: viewerId,
-                targetId: user.id,
+        try {
+          const [friendship, followRecord] = await Promise.all([
+            prisma.friendship.findFirst({
+              where: {
+                OR: [
+                  { initiatorId: viewerId, recipientId: user.id },
+                  { initiatorId: user.id, recipientId: viewerId },
+                ],
               },
-            },
-            select: { followerId: true },
-          }),
-        ])
+            }),
+            prisma.follow.findUnique({
+              where: {
+                followerId_targetId: {
+                  followerId: viewerId,
+                  targetId: user.id,
+                },
+              },
+            }),
+          ])
 
-        let friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none' = 'none'
-        let friendshipId: string | undefined
-        let friendshipSince: string | null = null
+          let friendshipStatus: 'none' | 'friends' | 'incoming' | 'outgoing' = 'none'
+          let friendshipId: string | null = null
+          let friendshipSince: Date | null = null
 
-        if (friendship) {
-          friendshipId = friendship.id
-          if (friendship.status === FriendshipStatus.ACCEPTED) {
-            friendshipStatus = 'friends'
-            const since = friendship.respondedAt ?? friendship.requestedAt
-            friendshipSince = since ? since.toISOString() : null
-          } else if (friendship.status === FriendshipStatus.PENDING) {
-            friendshipStatus = friendship.requesterId === viewerId ? 'outgoing' : 'incoming'
+          if (friendship) {
+            friendshipId = friendship.id
+            if (friendship.status === FriendshipStatus.ACCEPTED) {
+              friendshipStatus = 'friends'
+              friendshipSince = friendship.createdAt // or updatedAt? usually createdAt of acceptance if tracked, but here just createdAt
+            } else if (friendship.status === FriendshipStatus.PENDING) {
+              if (friendship.initiatorId === viewerId) {
+                friendshipStatus = 'outgoing'
+              } else {
+                friendshipStatus = 'incoming'
+              }
+            }
           }
-        }
 
-        relationship = {
-          friendshipStatus,
-          friendshipId,
-          friendshipSince,
-          following: Boolean(followRecord),
+          relationship = {
+            friendshipStatus,
+            friendshipId,
+            friendshipSince,
+            following: Boolean(followRecord),
+          }
+        } catch (error) {
+          // Ignore
         }
       }
     }
@@ -5076,6 +4565,10 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       items: posts.map((post) => formatPost(post, { viewerReaction: reactionsByPost[post.id] ?? null })),
       nextCursor,
     }
+  } catch (e: any) {
+    req.log.error(e)
+    return reply.code(500).send({ error: e.message, stack: e.stack })
+  }
   }),
 )
 
@@ -5273,6 +4766,7 @@ const PremiumCheckoutSchema = z.union([CheckoutPaymentSchema, CheckoutFinalizeSc
 
 const PortalSessionSchema = z.object({
   returnUrl: z.string().url().optional(),
+  businessId: z.string().cuid(),
 })
 
 const CreateBusinessInput = z.object({
@@ -5902,216 +5396,7 @@ app.post('/billing/portal', async (req: FastifyRequest, reply: FastifyReply) => 
   const body = PortalSessionSchema.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
-  const stripe = getStripeClient()
-  const { customerId } = await ensureStripeCustomer(userId)
-  const session = await stripe.billingPortal.sessions.create({
-    customer: customerId,
-    return_url: body.data.returnUrl ?? BILLING_PORTAL_RETURN_FALLBACK,
-  })
-  return reply.send({ portalUrl: session.url })
-})
-
-app.post('/billing/cancel', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { stripeSubscriptionId: true, premiumStatus: true },
-  })
-  if (!user?.stripeSubscriptionId) {
-    return reply.code(400).send({ error: 'no_active_subscription' })
-  }
-
-  const stripe = getStripeClient()
-  try {
-    await stripe.subscriptions.cancel(user.stripeSubscriptionId, { invoice_now: false, prorate: false })
-  } catch (err) {
-    req.log.error({ err, subscriptionId: user.stripeSubscriptionId }, 'stripe_cancel_failed')
-    return reply.code(502).send({ error: 'stripe_cancel_failed' })
-  }
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      premiumStatus: 'CANCELED',
-      premiumRenewsAt: null,
-      stripeSubscriptionId: null,
-      stripePriceId: null,
-    },
-  })
-
-  return reply.send({ ok: true })
-})
-
-app.get('/businesses', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
-  const businesses = await prisma.business.findMany({
-    where: { ownerId: userId },
-    orderBy: { createdAt: 'desc' },
-    select: BUSINESS_SUMMARY_SELECT,
-  })
-
-  return reply.send({
-    items: businesses,
-    limit: MAX_BUSINESSES_PER_USER,
-  })
-})
-
-app.post('/businesses', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
-
-  const body = CreateBusinessInput.safeParse(req.body)
-  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-
-  const { user, customerId } = await ensureStripeCustomer(userId)
-  if (!isPremium(user.premiumStatus)) {
-    return reply.code(403).send({ error: 'premium_required' })
-  }
-
-  const existingCount = await prisma.business.count({ where: { ownerId: userId } })
-  if (existingCount >= MAX_BUSINESSES_PER_USER) {
-    return reply.code(422).send({ error: 'business_limit_reached' })
-  }
-
-  const slugBase = body.data.slug ? slugifyText(body.data.slug).slice(0, 80) : body.data.name
-  const slug = await generateUniqueBusinessSlug(userId, slugBase)
-
-  const business = await prisma.business.create({
-    data: {
-      ownerId: userId,
-      name: body.data.name.trim(),
-      slug,
-      description: body.data.description?.trim() || null,
-      memberships: {
-        create: { userId, role: 'OWNER' },
-      },
-    },
-    select: BUSINESS_SUMMARY_SELECT,
-  })
-
-  return reply.code(201).send({ business, remaining: MAX_BUSINESSES_PER_USER - (existingCount + 1) })
-})
-
-app.post('/businesses/:businessId/checkout', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
-
-  const params = BusinessParam.safeParse(req.params)
-  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-  const body = BusinessCheckoutSchema.safeParse(req.body ?? {})
-  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-
-  const { user, customerId } = await ensureStripeCustomer(userId)
-  if (!isPremium(user.premiumStatus)) {
-    return reply.code(403).send({ error: 'premium_required' })
-  }
-  const billingProfile = buildBillingProfileResponse(user)
-  if (!billingProfileIsComplete(billingProfile)) {
-    return reply.code(412).send(buildBillingProfileIncompleteError(billingProfile))
-  }
-  const billingDetails = convertProfileToBillingDetails(billingProfile)
-
-  const business = await loadOwnedBusiness(userId, params.data.businessId)
-  if (!business) return reply.code(404).send({ error: 'business_not_found' })
-
-  const priceId = ensurePriceAvailable(STRIPE_PRICE_BUSINESS, 'business')
-  const stripe = getStripeClient()
-  if ('paymentMethodId' in body.data) {
-    try {
-      await ensurePaymentMethodForCustomer(stripe, customerId, body.data.paymentMethodId)
-    } catch (error) {
-      if (error instanceof PaymentMethodOwnershipError) {
-        return reply.code(error.statusCode).send({ error: error.message })
-      }
-      throw error
-    }
-
-    const customerUpdate: Stripe.CustomerUpdateParams = {
-      name: billingDetails?.name || business.name,
-      invoice_settings: { default_payment_method: body.data.paymentMethodId },
-    }
-    if (billingDetails?.email) customerUpdate.email = billingDetails.email
-    if (billingDetails?.phone) customerUpdate.phone = billingDetails.phone
-    if (billingDetails?.address) {
-      customerUpdate.address = billingDetails.address
-    }
-    await stripe.customers.update(customerId, customerUpdate)
-
-    const metadata: Record<string, string> = {
-      kind: 'business',
-      businessId: business.id,
-      ownerId: userId,
-    }
-    if (body.data.setupIntentId) {
-      metadata.setupIntentId = body.data.setupIntentId
-    }
-
-    const subscription = await stripe.subscriptions.create({
-      customer: customerId,
-      items: [{ price: priceId }],
-      payment_behavior: 'default_incomplete',
-      payment_settings: { save_default_payment_method: 'on_subscription' },
-      expand: ['latest_invoice.payment_intent'],
-      metadata,
-    })
-
-    const { invoice, paymentIntent } = resolveSubscriptionInvoice(subscription)
-    if (!paymentIntent) {
-      return reply.code(502).send({ error: 'payment_intent_missing' })
-    }
-    const requiresAction = paymentIntentRequiresAction(paymentIntent)
-    const paymentSucceeded = paymentIntentSucceeded(paymentIntent)
-
-    if (paymentSucceeded) {
-      await syncBusinessSubscription(subscription)
-    }
-
-    return reply.send({
-      subscriptionId: subscription.id,
-      invoiceId: invoice?.id ?? null,
-      paymentIntentId: paymentIntent?.id ?? null,
-      paymentIntentStatus: paymentIntent?.status ?? null,
-      requiresAction,
-      clientSecret: paymentIntent?.client_secret ?? null,
-      planApplied: paymentSucceeded,
-    })
-  }
-
-  const stripeSubscription = await stripe.subscriptions.retrieve(body.data.subscriptionId, {
-    expand: ['latest_invoice.payment_intent'],
-  })
-  const { paymentIntent } = resolveSubscriptionInvoice(stripeSubscription)
-  const paymentSucceeded = paymentIntentSucceeded(paymentIntent)
-  if (paymentSucceeded) {
-    await syncBusinessSubscription(stripeSubscription)
-  }
-
-  return reply.send({
-    subscriptionId: stripeSubscription.id,
-    paymentIntentStatus: paymentIntent?.status ?? null,
-    requiresAction: paymentIntentRequiresAction(paymentIntent),
-    planApplied: paymentSucceeded,
-  })
-})
-
-app.post('/businesses/:businessId/portal', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-  if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
-
-  const params = BusinessParam.safeParse(req.params)
-  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-  const body = PortalSessionSchema.safeParse(req.body ?? {})
-  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-
-  const business = await loadOwnedBusiness(userId, params.data.businessId)
+  const business = await loadOwnedBusiness(userId, body.data.businessId)
   if (!business) return reply.code(404).send({ error: 'business_not_found' })
   if (!business.stripeSubscriptionId) return reply.code(409).send({ error: 'subscription_missing' })
 
@@ -6595,13 +5880,13 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   
   // Determine the threshold for "new" friend posts
   const friendsThreshold = [
-    user?.lastViewedFriendsAt,
-    user?.lastViewedHomeAt
+    user.lastViewedFriendsAt,
+    user.lastViewedHomeAt
   ]
     .filter((d): d is Date => !!d)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
 
-  // Optimize: Group by author to get counts in one query
+  // Get new post counts
   const activeFriendCounts = await prisma.post.groupBy({
     by: ['authorId'],
     where: {
@@ -6611,7 +5896,6 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
     _count: { id: true },
   })
 
-  // Map authorId -> count
   const friendCountMap = new Map<string, number>()
   activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
     friendCountMap.set(row.authorId, row._count.id)
@@ -6705,11 +5989,109 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   }
 })
 
-// Restore the app.listen call
-try {
-  await app.listen({ port: PORT, host: '0.0.0.0' })
-  console.log(`Server listening on port ${PORT}`)
-} catch (err) {
-  app.log.error(err)
-  process.exit(1)
+// Restore the missing /users/:handle/friends endpoint.
+app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const { handle } = req.params as { handle: string }
+    const viewerId = (req as any).user?.id
+
+    if (!viewerId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true, lastViewedFriendsAt: true, lastViewedHomeAt: true },
+    })
+
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    // Privacy check: only the user can view their own full friends list (for now)
+    if (user.id !== viewerId) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const friendIds = await loadAcceptedFriendIds(user.id)
+    
+    // Determine threshold for new posts
+    const friendsThreshold = [
+      user.lastViewedFriendsAt,
+      user.lastViewedHomeAt
+    ]
+      .filter((d): d is Date => !!d)
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
+
+    // Get new post counts
+    const activeFriendCounts = await prisma.post.groupBy({
+      by: ['authorId'],
+      where: {
+        authorId: { in: friendIds },
+        createdAt: { gt: friendsThreshold },
+      },
+      _count: { id: true },
+    })
+
+    const friendCountMap = new Map<string, number>()
+    activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
+      friendCountMap.set(row.authorId, row._count.id)
+    })
+
+    const friends = await prisma.user.findMany({
+      where: { id: { in: friendIds } },
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        bio: true,
+        communityMeta: true, // To get home community
+      },
+    })
+
+    const items = friends.map((friend: any) => {
+      // Extract home community from communityMeta if available
+      // communityMeta structure: { home: { province: 'on', community: 'york-durham' } }
+      let homeCommunity = null
+      if (friend.communityMeta?.home) {
+        const { province, community } = friend.communityMeta.home
+        const city = findCommunity(province, community)
+        if (city) {
+          homeCommunity = {
+            province,
+            community,
+            name: city.name,
+          }
+        }
+      }
+
+      return {
+        id: friend.id,
+        handle: friend.handle,
+        name: friend.name,
+        avatarUrl: friend.avatarUrl,
+        bio: friend.bio,
+        newPosts: friendCountMap.get(friend.id) ?? 0,
+        homeCommunity,
+      }
+    })
+
+    // Sort by new posts desc, then name
+    items.sort((a: any, b: any) => {
+      if (b.newPosts !== a.newPosts) return b.newPosts - a.newPosts
+      return (a.name || a.handle).localeCompare(b.name || b.handle)
+    })
+
+    return { items }
+  }),
+)
+
+// Server startup code
+const start = async () => {
+  try {
+    await app.listen({ port: 3000, host: '0.0.0.0' })
+    console.log('Server listening on port 3000')
+  } catch (err) {
+    app.log.error(err)
+    process.exit(1)
+  }
 }
+start()
+
