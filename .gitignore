@@ -30,14 +30,14 @@ yarn-error.log*
 **/.nyc_output/
 
 # Env files (keep examples)
-.env
-.env.*
-!*.env.example
-**/.env
-**/.env.*
-!**/.env.example
-!.env.production
-!**/.env.production
+# .env
+# .env.*
+# !*.env.example
+# **/.env
+# **/.env.*
+# !**/.env.example
+# !.env.production
+# !**/.env.production
 
 # OS/editor misc
 .DS_Store
