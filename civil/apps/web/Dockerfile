@@ -11,6 +11,8 @@ RUN pnpm install --recursive --frozen-lockfile || pnpm install --recursive
 
 FROM deps AS build
 ENV NODE_ENV=production
+ARG NEXT_PUBLIC_GTAG_ID
+ENV NEXT_PUBLIC_GTAG_ID=$NEXT_PUBLIC_GTAG_ID
 COPY apps/web ./apps/web
 RUN pnpm install --filter @civil/web... --prod=false --prefer-offline \
 	&& pnpm --filter @civil/shared build \
