@@ -718,8 +718,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     const title = getThreadTitle(activeThread)
 
     return (
-      <div className="flex h-full flex-col bg-white p-4 lg:rounded-3xl lg:border lg:border-white/60 lg:bg-white/90 lg:shadow-[0_30px_80px_rgba(15,23,42,0.08)]">
-        <header className="flex items-center gap-3 border-b border-slate-100 pb-3">
+      <div className="flex h-full flex-col bg-white lg:rounded-3xl lg:border lg:border-white/60 lg:bg-white/90 lg:p-4 lg:shadow-[0_30px_80px_rgba(15,23,42,0.08)]">
+        <header className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 lg:px-0 lg:pb-3 lg:pt-0">
           <button
             type="button"
             className="lg:hidden -ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
@@ -761,7 +761,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                 Load previous
               </button>
             ) : null}
-            <div ref={messagesViewportRef} className="flex-1 space-y-4 overflow-y-auto pr-2">
+            <div ref={messagesViewportRef} className="flex-1 space-y-4 overflow-y-auto px-4 lg:pr-2 lg:pl-0">
               {activeMessages.length === 0 && loadingThreadId === activeThread.id ? (
                 <p className="text-center text-sm text-slate-500">Loading messages…</p>
               ) : null}
@@ -798,7 +798,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
               })}
             </div>
             <form
-              className="mt-4 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm"
+              className="mt-4 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm mx-4 mb-4 lg:mx-0 lg:mb-0"
               onSubmit={(event) => {
                 event.preventDefault()
                 if (activeThread) {
@@ -895,10 +895,10 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     >
       <section className="grid lg:gap-6 lg:grid-cols-[minmax(0,340px)_1fr] lg:h-[calc(100vh-8rem)]">
         <div className={clsx(
-          "flex flex-col bg-white p-4 lg:rounded-[32px] lg:border lg:border-white/70 lg:bg-white/90 lg:shadow-[0_25px_70px_rgba(15,23,42,0.08)] lg:h-full",
-          activeThread ? "hidden lg:flex" : "flex h-[calc(100vh-8rem)] lg:h-full"
+          "flex flex-col bg-white lg:rounded-[32px] lg:border lg:border-white/70 lg:bg-white/90 lg:p-4 lg:shadow-[0_25px_70px_rgba(15,23,42,0.08)] lg:h-full",
+          activeThread ? "hidden lg:flex" : "flex h-[calc(100vh-6rem)] lg:h-full"
         )}>
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 lg:px-0 lg:pb-4 lg:pt-0">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Inbox</p>
               <h2 className="text-xl font-semibold text-slate-900">Messages</h2>
@@ -911,14 +911,14 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
               Start chat
             </Link>
           </div>
-          <div className="mt-4 flex-1 overflow-y-auto pr-1">
+          <div className="mt-4 flex-1 overflow-y-auto px-4 lg:pr-1 lg:pl-0">
             {renderThreadList()}
             {threadsFooter}
           </div>
         </div>
         <div className={clsx(
           "min-h-[60vh] lg:h-full lg:min-h-0",
-          activeThread ? "flex h-[calc(100vh-8rem)] lg:h-full" : "hidden lg:flex"
+          activeThread ? "flex h-[calc(100vh-6rem)] lg:h-full" : "hidden lg:flex"
         )}>
           {renderMessages()}
         </div>
