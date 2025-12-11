@@ -14,6 +14,13 @@ export default function GoogleAnalytics() {
     return null
   }
 
+  // Validate GA tag format (G-XXXXXXXXXX or GT-XXXXXXXXXX or AW-XXXXXXXXXX)
+  const isValidGtagId = /^(G|GT|AW)-[A-Z0-9]+$/.test(gtagId)
+  if (!isValidGtagId) {
+    console.error(`Invalid NEXT_PUBLIC_GTAG_ID format: ${gtagId}`)
+    return null
+  }
+
   return (
     <>
       <Script
