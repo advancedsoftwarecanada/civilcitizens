@@ -20,6 +20,7 @@ import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
 import FriendsRightRail from './FriendsRightRail'
+import { getStoredToken } from '../_lib/tokenStorage'
 
 const NAV_BUTTONS: Array<{
   key: 'menu' | 'search' | 'notifications' | 'messages' | 'wallet' | 'more'
@@ -51,6 +52,8 @@ export default function MobileDock() {
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [hasSession, setHasSession] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+  const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const moreCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuMountedRef = useRef(false)
@@ -90,6 +93,51 @@ export default function MobileDock() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (!hasSession) return
+
+    const fetchCounts = async () => {
+      const token = getStoredToken()
+      if (!token) return
+
+      try {
+        const [notifRes, msgRes] = await Promise.all([
+          fetch(buildApiUrl('/notifications?limit=1'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+          fetch(buildApiUrl('/messages/unread-count'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        ])
+
+        if (notifRes.ok) {
+          const data = (await notifRes.json()) as { unreadCount?: number }
+          setUnreadCount(data.unreadCount || 0)
+        }
+
+        if (msgRes.ok) {
+          const data = (await msgRes.json()) as { count: number }
+          setMessageUnreadCount(data.count || 0)
+        }
+      } catch (err) {
+        console.error('Failed to load notification counts', err)
+      }
+    }
+
+    void fetchCounts()
+    const interval = setInterval(fetchCounts, 30000)
+
+    const handleMessageRead = () => {
+      void fetchCounts()
+    }
+    window.addEventListener('message.read', handleMessageRead)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('message.read', handleMessageRead)
+    }
+  }, [hasSession])
 
   useEffect(() => {
     if (!menuMounted && !moreMounted) return undefined
@@ -289,6 +337,9 @@ export default function MobileDock() {
               (item.key === 'messages' && pathname?.startsWith('/messages')) ||
               (item.key === 'wallet' && pathname?.startsWith('/wallet')) ||
               (item.key === 'more' && moreOpen)
+            
+            const count = item.key === 'notifications' ? unreadCount : item.key === 'messages' ? messageUnreadCount : 0
+
             return (
               <button
                 key={item.key}
@@ -302,7 +353,14 @@ export default function MobileDock() {
                 )}
                 aria-label={item.label}
               >
-                <Icon className="text-xl leading-none" />
+                <div className="relative">
+                  <Icon className="text-xl leading-none" />
+                  {count > 0 ? (
+                    <span className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white ring-2 ring-white">
+                      {count > 99 ? '99+' : count}
+                    </span>
+                  ) : null}
+                </div>
               </button>
             )
           })}
