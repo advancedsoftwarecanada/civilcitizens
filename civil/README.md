@@ -271,6 +271,27 @@ pnpm --filter @civil/web dev
 pnpm --filter @civil/worker dev
 ```
 
+### Environment Variables
+
+Copy the appropriate environment example file from the repository root:
+
+```bash
+# For development
+cp .env.dev.example .env.dev
+
+# For production
+cp .env.production.example .env.production
+```
+
+#### Google Analytics
+
+To enable Google Analytics tracking, set `NEXT_PUBLIC_GTAG_ID` in your environment file:
+
+- **Production**: Set to your Google Analytics tag ID (e.g., `G-1ML0TFH7F0`)
+- **Development**: Leave empty to disable Google Analytics tracking
+
+The Google Analytics scripts will only load when `NEXT_PUBLIC_GTAG_ID` is configured.
+
 ## Docker Compose
 
 `docker-compose.yml`
