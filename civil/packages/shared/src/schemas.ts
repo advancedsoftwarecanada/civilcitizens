@@ -371,7 +371,7 @@ export const SendMessageInput = z
       .max(4000, { message: 'Message must be 4,000 characters or fewer' })
       .optional()
       .transform((value) => (value ? value.trim() : value)),
-    attachments: z.array(MediaAssetIdSchema).min(1).max(5).optional(),
+    attachments: z.array(z.string()).min(1).max(5).optional(),
   })
   .refine((value) => {
     const hasBody = typeof value.body === 'string' && value.body.length > 0

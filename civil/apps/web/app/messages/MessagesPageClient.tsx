@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
@@ -145,7 +146,19 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
   const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
   const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
+
+  useEffect(() => {
+    if (lightboxUrl) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [lightboxUrl])
   const [me, setMe] = useState<MeResponse | null>(null)
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadCursor, setThreadCursor] = useState<string | null>(null)
@@ -567,11 +580,12 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
             const pollData = await pollRes.json()
             if (pollData.asset?.status === 'ready') {
               // Pick a variant
-              const variants = pollData.asset.variants || []
+              const rawVariants = pollData.asset.variants || []
+              const variants = Object.values(rawVariants)
               // Prefer 'public' or 'large' or just the first one
               const v = variants.find((v: any) => v.variant === 'public') || variants[0]
               if (v) {
-                mediaUrl = v.url
+                mediaUrl = (v as any).url
                 break
               }
             } else if (pollData.asset?.status === 'failed') {
@@ -785,7 +799,13 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                           {message.attachments.length > 0 ? (
                             <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
                               {message.attachments.map((url, i) => (
-                                <img key={i} src={url} alt="Attachment" className="rounded-lg object-cover max-h-60 w-full" />
+                                <img
+                                  key={i}
+                                  src={url}
+                                  alt="Attachment"
+                                  className="rounded-lg object-cover max-h-60 w-full cursor-pointer transition hover:opacity-90"
+                                  onClick={() => setLightboxUrl(url)}
+                                />
                               ))}
                             </div>
                           ) : null}
@@ -922,6 +942,29 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
       <div className="hidden h-full lg:block">
         {renderMessages()}
       </div>
+      {lightboxUrl
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
+              onClick={() => setLightboxUrl(null)}
+            >
+              <button
+                type="button"
+                className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+                onClick={() => setLightboxUrl(null)}
+              >
+                <HiOutlineXMark className="h-6 w-6" />
+              </button>
+              <img
+                src={lightboxUrl}
+                alt="Full size"
+                className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </DashboardShell>
   )
 }
