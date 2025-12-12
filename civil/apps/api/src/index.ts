@@ -5855,11 +5855,17 @@ app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply
   const channel = `${NOTIFICATION_CHANNEL_PREFIX}${userId}`
   await sub.subscribe(channel)
   reply.sse({ data: JSON.stringify({ type: 'connected' }) })
+
+  const heartbeat = setInterval(() => {
+    reply.sse({ data: JSON.stringify({ type: 'ping' }) })
+  }, 30000)
+
   sub.on('message', (_chan: string, message: string) => {
     req.log.debug({ userId, size: message.length }, 'notifications_stream_dispatch')
     reply.sse({ data: message })
   })
   req.raw.on('close', async () => {
+    clearInterval(heartbeat)
     req.log.info({ userId }, 'notifications_stream_disconnected')
     await sub.unsubscribe(channel)
     sub.disconnect()
