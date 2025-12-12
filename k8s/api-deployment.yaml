@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: civil-api
+  labels:
+    app: civil-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: civil-api
+  template:
+    metadata:
+      labels:
+        app: civil-api
+    spec:
+      serviceAccountName: civil-sa
+      containers:
+      - name: civil-api
+        image: us-central1-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/civil-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: civil-config
+        - secretRef:
+            name: civil-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      - name: cloud-sql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.1.0
+        args:
+          - "--structured-logs"
+          - "--port=5432"
+          - "project-5d3507d0-0546-4202-aba:northamerica-northeast2:civilcitizens-postgre-prod"
+        securityContext:
+          runAsNonRoot: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: civil-api
+spec:
+  selector:
+    app: civil-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: ClusterIP
