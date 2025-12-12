@@ -706,9 +706,9 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const renderMessages = () => {
     if (!activeThread) {
       return (
-        <div className="flex h-full flex-col items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50/80 p-8 text-center">
+        <div className="flex h-full flex-col items-center justify-center rounded-[32px] border border-dashed border-slate-200 bg-slate-50/80 p-8 text-center">
           <p className="text-lg font-semibold text-slate-700">Select a conversation</p>
-          <p className="mt-2 text-sm text-slate-500">Choose a thread on the left to start messaging.</p>
+          <p className="mt-2 text-sm text-slate-500">Choose a thread on the right to start messaging.</p>
         </div>
       )
     }
@@ -718,7 +718,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     const title = getThreadTitle(activeThread)
 
     return (
-      <div className="flex h-full flex-col rounded-3xl border border-white/60 bg-white/90 p-4 shadow-[0_30px_80px_rgba(15,23,42,0.08)]">
+      <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
         <header className="flex items-center gap-3 border-b border-slate-100 pb-3">
           <button
             type="button"
@@ -887,38 +887,41 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     </button>
   ) : null
 
+  const inboxPanel = (
+    <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Inbox</p>
+          <h2 className="text-xl font-semibold text-slate-900">Messages</h2>
+        </div>
+        <Link
+          href={me ? `/u/${me.handle}/friends` : '/friends'}
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+        >
+          <HiOutlinePlusCircle className="h-4 w-4" />
+          All Contacts
+        </Link>
+      </div>
+      <div className="mt-4 flex-1 overflow-y-auto pr-1">
+        {renderThreadList()}
+        {threadsFooter}
+      </div>
+    </div>
+  )
+
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active="messages" />} mainClassName="space-y-6">
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr] lg:h-[calc(100vh-8rem)]">
-        <div className={clsx(
-          "flex flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)] lg:h-full",
-          activeThread ? "hidden lg:flex" : "flex h-[calc(100vh-12rem)] lg:h-full"
-        )}>
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Inbox</p>
-              <h2 className="text-xl font-semibold text-slate-900">Messages</h2>
-            </div>
-            <Link
-              href={me ? `/u/${me.handle}/friends` : '/friends'}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-            >
-              <HiOutlinePlusCircle className="h-4 w-4" />
-              Start chat
-            </Link>
-          </div>
-          <div className="mt-4 flex-1 overflow-y-auto pr-1">
-            {renderThreadList()}
-            {threadsFooter}
-          </div>
-        </div>
-        <div className={clsx(
-          "min-h-[60vh] lg:h-full lg:min-h-0",
-          activeThread ? "flex h-[calc(100vh-12rem)] lg:h-full" : "hidden lg:flex"
-        )}>
-          {renderMessages()}
-        </div>
-      </section>
+    <DashboardShell
+      sidebar={<Sidebar me={me ?? undefined} active="messages" />}
+      rightRail={inboxPanel}
+      rightRailClassName="sticky top-0 h-screen md:h-[calc(100vh-4.5rem)] pb-8"
+      mainClassName="sticky top-0 h-screen md:h-[calc(100vh-4.5rem)] pb-8"
+    >
+      <div className="h-full lg:hidden">
+        {activeThread ? renderMessages() : inboxPanel}
+      </div>
+      <div className="hidden h-full lg:block">
+        {renderMessages()}
+      </div>
     </DashboardShell>
   )
 }
