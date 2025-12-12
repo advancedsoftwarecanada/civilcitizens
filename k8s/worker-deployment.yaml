@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: civil-worker
+  labels:
+    app: civil-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: civil-worker
+  template:
+    metadata:
+      labels:
+        app: civil-worker
+    spec:
+      serviceAccountName: civil-sa
+      containers:
+      - name: civil-worker
+        image: us-central1-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/civil-worker:latest
+        imagePullPolicy: Always
+        envFrom:
+        - configMapRef:
+            name: civil-config
+        - secretRef:
+            name: civil-secrets
+      - name: cloud-sql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.1.0
+        args:
+          - "--structured-logs"
+          - "--port=5432"
+          - "project-5d3507d0-0546-4202-aba:northamerica-northeast2:civilcitizens-postgre-prod"
+        securityContext:
+          runAsNonRoot: true
