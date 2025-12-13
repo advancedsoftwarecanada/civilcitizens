@@ -79,6 +79,7 @@ model Post {
   title          String?
   type           String        @default("post")
   mediaUrl       String?
+  images         Json?
   seoSlug        String?       @unique
   jurisdiction   String        @default("self")
   provinceCode   String?

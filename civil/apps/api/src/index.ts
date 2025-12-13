@@ -3043,7 +3043,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
-    const { body, mediaUrl, hashtags, type, title, jurisdiction } = parse.data
+    const { body, mediaUrl, images, hashtags, type, title, jurisdiction } = parse.data
 
     const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
     const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
@@ -3056,6 +3056,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           authorId: userId,
           body,
           mediaUrl,
+          images: images ? (images as any) : undefined,
           type,
           title,
           provinceCode,
