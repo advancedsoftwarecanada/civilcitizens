@@ -1838,21 +1838,83 @@ async function generateUniquePostSlug(base: string, client: PrismaClientOrTx) {
   return buildCandidate(randomUUID().replace(/-/g, '').slice(0, 12))
 }
 
+const POST_INCLUDE = {
+  author: {
+    select: {
+      id: true,
+      handle: true,
+      name: true,
+      avatarUrl: true,
+      premiumStatus: true,
+    },
+  },
+  sharedPost: {
+    include: {
+      author: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+          avatarUrl: true,
+          premiumStatus: true,
+        },
+      },
+    },
+  },
+}
+
 type PostWithAuthor = Prisma.PostGetPayload<{
-  include: {
-    author: {
-      select: {
-        id: true
-        handle: true
-        name: true
-        avatarUrl: true
-        premiumStatus: true
-      }
-    }
-  }
+  include: typeof POST_INCLUDE
 }>
 
-function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionType | null } = {}) {
+type FormattedPost = {
+  id: string
+  seoSlug: string | null
+  type: string
+  title: string | null
+  body: string
+  mediaUrl: string | null
+  images: string[] | null
+  createdAt: Date
+  updatedAt: Date
+  jurisdiction: string
+  provinceCode: string | null
+  communitySlug: string | null
+  communityName: string | null
+  provinceName: string | null
+  sharedPost: FormattedPost | null
+  author: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    isPremium: boolean
+    isVerified: boolean
+  }
+  counts: {
+    commentCount: number
+    reactions: number
+    recentPositive: number
+  }
+  reactions: {
+    maple: number
+    heart: number
+    haha: number
+    wow: number
+    sad: number
+    fire: number
+    total: number
+    positive: number
+  }
+  metrics: {
+    hotScore: number
+  }
+  viewer: {
+    reaction: ReactionType | null
+  }
+}
+
+function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionType | null } = {}): FormattedPost {
   const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
   const provinceName = community ? getProvinceDisplayName(community.province as any) : null
   const reactions = {
@@ -1865,6 +1927,16 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
   }
   const positiveTotal = reactions.maple + reactions.heart + reactions.haha + reactions.wow + reactions.fire
   const totalReactions = positiveTotal + reactions.sad
+
+  let sharedPost: FormattedPost | null = null
+  if (post.sharedPost) {
+    // Recursively format the shared post, but prevent infinite recursion if needed (though DB structure prevents cycles usually)
+    // We'll just format it as a regular post.
+    // Note: The type of post.sharedPost matches PostWithAuthor structure mostly, but we need to cast or ensure it matches.
+    // Since we included author in sharedPost, it should be fine.
+    sharedPost = formatPost(post.sharedPost as any)
+  }
+
   return {
     id: post.id,
     seoSlug: post.seoSlug,
@@ -1875,11 +1947,12 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
     images: (post.images as string[] | null)?.map(normalizeMediaUrl).filter((url): url is string => url !== null) ?? null,
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
-  jurisdiction: post.jurisdiction,
+    jurisdiction: post.jurisdiction,
     provinceCode: post.provinceCode,
     communitySlug: post.communitySlug,
     communityName: community?.name ?? null,
     provinceName,
+    sharedPost,
     author: {
       id: post.author.id,
       handle: post.author.handle,
@@ -2000,34 +2073,14 @@ registerCommunityRoute(
           where,
           take: limit,
           orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
-          include: {
-            author: {
-              select: {
-                id: true,
-                handle: true,
-                name: true,
-                avatarUrl: true,
-                premiumStatus: true,
-              },
-            },
-          },
+          include: POST_INCLUDE,
         })
       } else {
         const queryResult = await prisma.post.findMany({
           where,
           take: limit + 1,
           orderBy: { createdAt: 'desc' },
-          include: {
-            author: {
-              select: {
-                id: true,
-                handle: true,
-                name: true,
-                avatarUrl: true,
-                premiumStatus: true,
-              },
-            },
-          },
+          include: POST_INCLUDE,
           ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         })
         if (queryResult.length > limit) {
@@ -3044,7 +3097,11 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
-    const { body, mediaUrl, images, hashtags, type, title, jurisdiction } = parse.data
+    const { body, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId } = parse.data
+
+    if (sharedPostId && (!body || body.trim().length === 0)) {
+      return reply.code(400).send({ error: 'Commentary is required when sharing a post.' })
+    }
 
     const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
     const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
@@ -3064,6 +3121,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           communitySlug,
           seoSlug,
           jurisdiction: normalizedJurisdiction,
+          sharedPostId,
         },
         include: {
           author: {
@@ -3073,6 +3131,19 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
               name: true,
               avatarUrl: true,
               premiumStatus: true,
+            },
+          },
+          sharedPost: {
+            include: {
+              author: {
+                select: {
+                  id: true,
+                  handle: true,
+                  name: true,
+                  avatarUrl: true,
+                  premiumStatus: true,
+                },
+              },
             },
           },
         },
@@ -3090,6 +3161,83 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     return reply.code(201).send(formatPost(created))
+  }),
+)
+
+app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = ReactPostInput.safeParse(req.body)
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { postId, reaction } = parse.data
+
+    const post = await prisma.post.findUnique({ where: { id: postId } })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (reaction) {
+        await tx.postReaction.upsert({
+          where: {
+            userId_postId: {
+              userId,
+              postId,
+            },
+          },
+          create: {
+            userId,
+            postId,
+            type: reaction,
+          },
+          update: {
+            type: reaction,
+          },
+        })
+      } else {
+        await tx.postReaction.deleteMany({
+          where: {
+            userId,
+            postId,
+          },
+        })
+      }
+
+      await refreshPostAggregates(tx, postId, { createdAt: post.createdAt, lastActivityAt: post.updatedAt }, { bumpActivity: false })
+    })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: postId },
+      include: {
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            premiumStatus: true,
+          },
+        },
+        sharedPost: {
+          include: {
+            author: {
+              select: {
+                id: true,
+                handle: true,
+                name: true,
+                avatarUrl: true,
+                premiumStatus: true,
+              },
+            },
+          },
+        },
+      },
+    })
+
+    if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
+
+    return reply.send({ post: formatPost(updatedPost, { viewerReaction: reaction }) })
   }),
 )
 
@@ -4324,17 +4472,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       where,
       take: limit + 1,
       orderBy: { createdAt: 'desc' },
-      include: {
-        author: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            premiumStatus: true,
-          },
-        },
-      },
+      include: POST_INCLUDE,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     })
     if (query.length > limit) {
@@ -4542,6 +4680,11 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       ...(jurisdiction ? { jurisdiction } : {}),
     }
 
+    // Privacy: If not self and not friends, only show community posts
+    if (relationship.friendshipStatus !== 'self' && relationship.friendshipStatus !== 'friends') {
+      where.communitySlug = { not: null }
+    }
+
     const province = provinceParam ? normalizeProvinceCode(provinceParam) : null
     if (provinceParam && !province) {
       return reply.code(404).send({ error: 'province_not_found' })
@@ -4587,34 +4730,14 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         where,
         take: limit,
         orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-        },
+        include: POST_INCLUDE,
       })
     } else {
       const queryResult = await prisma.post.findMany({
         where,
         take: limit + 1,
         orderBy: { createdAt: 'desc' },
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-        },
+        include: POST_INCLUDE,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       })
       if (queryResult.length > limit) {

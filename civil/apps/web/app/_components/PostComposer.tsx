@@ -63,6 +63,7 @@ export type ApiPost = {
   viewer?: {
     reaction: ReactionType | null
   }
+  sharedPost?: ApiPost | null
 }
 
 export type CommunityTarget = {

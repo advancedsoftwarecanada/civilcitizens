@@ -22,6 +22,7 @@ export const CreatePostInput = z
     communityProvince: z.string().trim().min(2).max(32).optional(),
     communitySlug: z.string().trim().min(1).max(160).optional(),
     jurisdiction: JurisdictionEnum.optional(),
+    sharedPostId: z.string().cuid().optional(),
   })
   .superRefine((data, ctx) => {
     const hasProvince = typeof data.communityProvince === 'string' && data.communityProvince.trim().length > 0
