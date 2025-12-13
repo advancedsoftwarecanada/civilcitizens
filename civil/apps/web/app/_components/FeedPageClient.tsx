@@ -386,6 +386,7 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
                     onUpdate={handlePostUpdate}
                     viewerId={me?.id ?? null}
                     viewerIsVerified={isVerifiedUser || isBusinessUser}
+                    communityOptions={communityOptions}
                   />
                 </div>
               )

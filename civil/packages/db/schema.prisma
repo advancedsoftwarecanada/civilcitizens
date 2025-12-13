@@ -107,6 +107,9 @@ model Post {
   hashtags       PostHashtag[]
   votes          Vote[]
   reactions      PostReaction[]
+  sharedPostId   String?
+  sharedPost     Post?         @relation("SharedPost", fields: [sharedPostId], references: [id])
+  shares         Post[]        @relation("SharedPost")
 
   @@index([authorId, createdAt])
   @@index([provinceCode, communitySlug, createdAt])

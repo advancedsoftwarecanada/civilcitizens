@@ -4,11 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import Image from 'next/image'
-import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
+import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles, LuShare } from 'react-icons/lu'
 import { HiEllipsisHorizontal, HiPencil, HiTrash } from 'react-icons/hi2'
 import type { IconBaseProps, IconType } from 'react-icons'
 import type { ReactionType } from '@civil/shared'
-import type { ApiPost } from './PostComposer'
+import type { ApiPost, CommunityTarget } from './PostComposer'
 import { JURISDICTION_LABELS } from './PostComposer'
 import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
@@ -17,6 +17,7 @@ import { getStoredToken } from '../_lib/tokenStorage'
 import { pushToast } from './useToasts'
 import Modal from './Modal'
 import PostComposer from './PostComposer'
+import SharePostModal from './SharePostModal'
 
 function buildPostUrl(post: ApiPost) {
   const slug = post.seoSlug ?? post.id
@@ -40,6 +41,7 @@ type PostFeedItemProps = {
   onUpdate?: (post: ApiPost) => void
   viewerIsVerified?: boolean
   viewerId?: string | null
+  communityOptions?: CommunityTarget[]
 }
 
 type ReactionOption = {
@@ -172,11 +174,12 @@ function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null
   )
 }
 
-export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerIsVerified, viewerId }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerIsVerified, viewerId, communityOptions }: PostFeedItemProps) {
   const [pending, setPending] = useState(false)
   const [showVoteTooltip, setShowVoteTooltip] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
   const [editBody, setEditBody] = useState(post.body)
   const [editTitle, setEditTitle] = useState(post.title ?? '')
   const [isDeleting, setIsDeleting] = useState(false)
@@ -266,6 +269,14 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
     } catch (err) {
       pushToast('Failed to update post', 'error')
     }
+  }
+
+  const handleShare = () => {
+    if (!canReact) {
+      triggerVoteTooltip()
+      return
+    }
+    setShareModalOpen(true)
   }
 
   const handleReact = useCallback(
@@ -403,6 +414,33 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             {post.body}
           </Link>
         )}
+
+        {post.sharedPost ? (
+          <Link href={buildPostUrl(post.sharedPost)} className="block mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition-colors">
+            <div className="flex items-center gap-2 mb-2">
+              <VerifiedAvatar
+                src={post.sharedPost.author.avatarUrl}
+                alt={post.sharedPost.author.name || post.sharedPost.author.handle}
+                initials={post.sharedPost.author.name || post.sharedPost.author.handle}
+                size={24}
+                isVerified={post.sharedPost.author.isVerified}
+                isBusiness={post.sharedPost.author.isPremium}
+              />
+              <span className="text-sm font-semibold text-slate-900 hover:underline">
+                {formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
+              </span>
+              <span className="text-xs text-slate-500">• {new Date(post.sharedPost.createdAt).toLocaleDateString()}</span>
+            </div>
+            <div className="text-sm text-slate-800">
+              {post.sharedPost.body}
+              {post.sharedPost.images && post.sharedPost.images.length > 0 && (
+                 <div className="mt-2">
+                   <PostImageGrid images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />
+                 </div>
+              )}
+            </div>
+          </Link>
+        ) : null}
       </div>
 
       <footer className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-100 pt-4 text-sm text-slate-500">
@@ -434,8 +472,23 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           <Link href={postUrl} className="font-semibold text-slate-600 hover:text-slate-900">
             {commentCount === 1 ? '1 comment' : `${commentCount} comments`}
           </Link>
+          <button
+            onClick={handleShare}
+            className="flex items-center gap-1 font-semibold text-slate-600 hover:text-slate-900"
+          >
+            <LuShare className="h-4 w-4" />
+            <span>Share</span>
+          </button>
         </div>
       </footer>
+
+      {shareModalOpen ? (
+        <SharePostModal
+          post={post}
+          onClose={() => setShareModalOpen(false)}
+          communityOptions={communityOptions}
+        />
+      ) : null}
 
       {isEditing ? (
         <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl">
