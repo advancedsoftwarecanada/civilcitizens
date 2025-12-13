@@ -26,6 +26,7 @@ export type ApiPost = {
   title?: string | null
   body: string
   mediaUrl?: string | null
+  images?: string[] | null
   createdAt: string
   updatedAt: string
   jurisdiction: Jurisdiction
@@ -175,6 +176,16 @@ const readImageDimensions = async (file: File): Promise<{ width: number; height:
   }
 }
 
+type PhotoItem = {
+  id: string
+  file?: File
+  previewUrl: string
+  assetId?: string | null
+  mediaUrl?: string | null
+  status: 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
+  error?: string | null
+}
+
 export default function PostComposer({
   className,
   defaultPostType = 'post',
@@ -189,11 +200,7 @@ export default function PostComposer({
   const [draft, setDraft] = useState('')
   const [articleTitle, setArticleTitle] = useState('')
   const [articleBody, setArticleBody] = useState('<p></p>')
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null)
-  const [photoAssetId, setPhotoAssetId] = useState<string | null>(null)
-  const [photoMediaUrl, setPhotoMediaUrl] = useState<string | null>(null)
-  const [photoStatus, setPhotoStatus] = useState<'idle' | 'uploading' | 'processing' | 'ready' | 'error'>('idle')
-  const [photoError, setPhotoError] = useState<string | null>(null)
+  const [photos, setPhotos] = useState<PhotoItem[]>([])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -253,14 +260,14 @@ export default function PostComposer({
     })
   }, [communityTarget, defaultAudience, normalizedCommunityOptions])
 
-  const startPhotoUpload = useCallback(async (file: File) => {
-    setPhotoError(null)
-    setPhotoStatus('uploading')
+  const startPhotoUpload = useCallback(async (id: string, file: File) => {
+    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
-      setPhotoStatus('error')
-      setPhotoError('Sign in to upload a photo.')
+      setPhotos((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, status: 'error', error: 'Sign in to upload a photo.' } : p)),
+      )
       return
     }
 
@@ -333,8 +340,7 @@ export default function PostComposer({
         throw new Error('processing_not_scheduled')
       }
 
-      setPhotoAssetId(assetId)
-      setPhotoStatus('processing')
+      setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, assetId, status: 'processing' } : p)))
 
       let lastError: unknown = null
       for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -355,8 +361,9 @@ export default function PostComposer({
             if (!variantUrl) {
               throw new Error('variant_missing')
             }
-            setPhotoMediaUrl(variantUrl)
-            setPhotoStatus('ready')
+            setPhotos((prev) =>
+              prev.map((p) => (p.id === id ? { ...p, mediaUrl: variantUrl, status: 'ready' } : p)),
+            )
             return
           }
           if (asset?.status === 'failed') {
@@ -369,17 +376,19 @@ export default function PostComposer({
       throw lastError ?? new Error('processing_timeout')
     } catch (err) {
       console.error('Photo upload failed', err)
-      setPhotoStatus('error')
-      setPhotoError(err instanceof Error ? err.message : 'Upload failed')
-      setPhotoAssetId(null)
-      setPhotoMediaUrl(null)
+      setPhotos((prev) =>
+        prev.map((p) =>
+          p.id === id ? { ...p, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' } : p,
+        ),
+      )
     }
   }, [])
 
   const canSubmit = useMemo(() => {
     if (postType === 'photo') {
       const captionOk = draft.trim().length <= MAX_POST_LENGTH
-      return photoStatus === 'ready' && Boolean(photoMediaUrl) && captionOk && !submitting
+      const photosOk = photos.length > 0 && photos.every((p) => p.status === 'ready')
+      return photosOk && captionOk && !submitting
     }
     if (postType === 'post') {
       const trimmed = draft.trim()
@@ -389,7 +398,7 @@ export default function PostComposer({
     const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
     const bodyOk = articleBodyPlain.length >= MIN_ARTICLE_BODY_LENGTH
     return titleOk && bodyOk
-  }, [articleBodyPlain, articleTitle, draft, photoMediaUrl, photoStatus, postType, submitting])
+  }, [articleBodyPlain, articleTitle, draft, photos, postType, submitting])
 
   const resetComposer = useCallback(() => {
     setDraft('')
@@ -398,15 +407,9 @@ export default function PostComposer({
     setPostType(defaultPostType)
     setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions))
     setError(null)
-    if (photoPreviewUrl) {
-      URL.revokeObjectURL(photoPreviewUrl)
-    }
-    setPhotoPreviewUrl(null)
-    setPhotoAssetId(null)
-    setPhotoMediaUrl(null)
-    setPhotoStatus('idle')
-    setPhotoError(null)
-  }, [communityTarget, defaultAudience, defaultPostType, normalizedCommunityOptions, photoPreviewUrl])
+    photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+    setPhotos([])
+  }, [communityTarget, defaultAudience, defaultPostType, normalizedCommunityOptions, photos])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -427,7 +430,9 @@ export default function PostComposer({
     try {
       const payload: Record<string, unknown> = (() => {
         if (postType === 'photo') {
-          return { type: 'photo', body: draft.trim(), mediaUrl: photoMediaUrl }
+          const mediaUrl = photos[0]?.mediaUrl
+          const images = photos.map((p) => p.mediaUrl).filter(Boolean)
+          return { type: 'photo', body: draft.trim(), mediaUrl, images }
         }
         if (postType === 'post') {
           return { type: 'post', body: draft }
@@ -480,60 +485,64 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, onPostCreated, photoMediaUrl, postType, resetComposer, submitting])
+  }, [activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting])
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0]
+      const files = event.target.files
       event.target.value = ''
-      if (!file) return
+      if (!files || files.length === 0) return
 
-      if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
-        setPhotoError('Please choose an image file (JPG, PNG, WebP, AVIF, HEIC, HEIF).')
-        setPhotoStatus('error')
-        return
+      const newPhotos: PhotoItem[] = []
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        if (!file) continue
+        if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+          pushToast(`Skipped ${file.name}: Invalid file type.`, 'error')
+          continue
+        }
+
+        if (file.size > PHOTO_MAX_BYTES) {
+          pushToast(`Skipped ${file.name}: File too large (max 25MB).`, 'error')
+          continue
+        }
+
+        const dims = await readImageDimensions(file)
+        if (!dims) {
+          pushToast(`Skipped ${file.name}: Could not read image.`, 'error')
+          continue
+        }
+        const megaPixels = (dims.width * dims.height) / 1_000_000
+        if (dims.width > MAX_IMAGE_DIMENSION || dims.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
+          pushToast(`Skipped ${file.name}: Image resolution too high.`, 'error')
+          continue
+        }
+
+        const id = Math.random().toString(36).slice(2)
+        const previewUrl = URL.createObjectURL(file)
+        newPhotos.push({ id, file, previewUrl, status: 'idle' })
       }
 
-      if (file.size > PHOTO_MAX_BYTES) {
-        setPhotoError('Photo must be 25 MB or smaller.')
-        setPhotoStatus('error')
-        return
-      }
+      if (newPhotos.length === 0) return
 
-      const dims = await readImageDimensions(file)
-      if (!dims) {
-        setPhotoError('Could not read that image. Please pick a different file.')
-        setPhotoStatus('error')
-        return
-      }
-      const megaPixels = (dims.width * dims.height) / 1_000_000
-      if (dims.width > MAX_IMAGE_DIMENSION || dims.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
-        setPhotoError('Image is too large. Please upload something under 8k resolution (~40MP) or smaller.')
-        setPhotoStatus('error')
-        return
-      }
+      setPhotos((prev) => [...prev, ...newPhotos])
 
-      if (photoPreviewUrl) {
-        URL.revokeObjectURL(photoPreviewUrl)
-      }
-      const nextPreview = URL.createObjectURL(file)
-      setPhotoPreviewUrl(nextPreview)
-      setPhotoStatus('uploading')
-      setPhotoMediaUrl(null)
-      setPhotoAssetId(null)
-
-      await startPhotoUpload(file)
+      // Start uploads
+      newPhotos.forEach((p) => {
+        if (p.file) {
+          startPhotoUpload(p.id, p.file)
+        }
+      })
     },
-    [photoPreviewUrl, startPhotoUpload],
+    [startPhotoUpload],
   )
 
   useEffect(() => {
     return () => {
-      if (photoPreviewUrl) {
-        URL.revokeObjectURL(photoPreviewUrl)
-      }
+      photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     }
-  }, [photoPreviewUrl])
+  }, [photos])
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {
@@ -567,7 +576,7 @@ export default function PostComposer({
 
   return (
     <section ref={containerRef} className={containerClasses}>
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex flex-col gap-2">
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
           <select
@@ -605,8 +614,10 @@ export default function PostComposer({
             </p>
           ) : null}
         </div>
-        <div className="inline-flex rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500">
-          {POST_TYPE_CHOICES.map((choice) => {
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Type</span>
+          <div className="inline-flex rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500">
+            {POST_TYPE_CHOICES.map((choice) => {
             const isActive = !choice.comingSoon && postType === choice.type
             const isComingSoon = Boolean(choice.comingSoon)
             return (
@@ -630,6 +641,7 @@ export default function PostComposer({
               </button>
             )
           })}
+          </div>
         </div>
       </header>
 
@@ -640,7 +652,7 @@ export default function PostComposer({
           <div className="space-y-2">
             <textarea
               className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
-              placeholder="Share a quick update, poll, or question"
+              placeholder="Share something"
               rows={4}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -675,7 +687,7 @@ export default function PostComposer({
               <RichTextEditor
                 value={articleBody}
                 onChange={setArticleBody}
-                placeholder="Share a deeper dive, context, or long-form perspective..."
+                placeholder="Share something"
                 minHeight={260}
                 disabled={submitting}
               />
@@ -688,33 +700,69 @@ export default function PostComposer({
         ) : (
           <div className="space-y-3">
             <div className="space-y-2">
-              <p className="text-sm text-slate-600">Add a photo and an optional caption.</p>
+              <p className="text-sm text-slate-600">Add photos and an optional caption.</p>
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
                   className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={submitting || photoStatus === 'uploading' || photoStatus === 'processing'}
+                  disabled={submitting}
                 >
-                  {photoStatus === 'uploading' ? 'Uploading…' : photoStatus === 'processing' ? 'Processing…' : photoStatus === 'ready' ? 'Replace photo' : 'Upload photo'}
+                  {photos.length > 0 ? 'Add more photos' : 'Upload photos'}
                 </button>
-                {photoError ? <span className="text-sm text-red-600">{photoError}</span> : null}
               </div>
-              {photoPreviewUrl || photoMediaUrl ? (
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={photoMediaUrl ?? photoPreviewUrl ?? ''}
-                    alt="Post upload"
-                    className="max-h-[360px] w-full object-contain"
-                  />
+
+              {photos.length > 0 ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {photos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={photo.mediaUrl ?? photo.previewUrl}
+                        alt="Post upload"
+                        className="h-full w-full object-cover"
+                      />
+                      {photo.status === 'uploading' || photo.status === 'processing' ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold text-white">
+                          {photo.status === 'uploading' ? 'Uploading...' : 'Processing...'}
+                        </div>
+                      ) : null}
+                      {photo.status === 'error' ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-red-500/80 p-2 text-center text-xs font-semibold text-white">
+                          {photo.error ?? 'Error'}
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
+                        onClick={() => {
+                          URL.revokeObjectURL(photo.previewUrl)
+                          setPhotos((prev) => prev.filter((p) => p.id !== photo.id))
+                        }}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                          className="h-4 w-4"
+                        >
+                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
                 </div>
               ) : null}
+
               <input
                 ref={fileInputRef}
                 type="file"
                 accept={ACCEPTED_IMAGE_TYPES}
                 className="hidden"
+                multiple
                 onChange={handlePhotoFile}
               />
             </div>
@@ -725,12 +773,12 @@ export default function PostComposer({
               <textarea
                 id="photo-caption"
                 className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
-                placeholder="Add a short caption"
+                placeholder="Share something"
                 rows={3}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 maxLength={MAX_POST_LENGTH}
-                disabled={submitting || photoStatus === 'uploading' || photoStatus === 'processing'}
+                disabled={submitting}
               />
               <div className="flex items-center justify-end text-xs text-slate-500">
                 <span>
@@ -738,14 +786,8 @@ export default function PostComposer({
                 </span>
               </div>
             </div>
-            {photoStatus !== 'ready' && photoStatus !== 'idle' ? (
-              <p className="text-xs text-slate-500">
-                {photoStatus === 'uploading'
-                  ? 'Uploading…'
-                  : photoStatus === 'processing'
-                  ? 'Processing your image…'
-                  : photoError ?? ''}
-              </p>
+            {photos.some((p) => p.status === 'error') ? (
+              <p className="text-xs text-red-600">Some photos failed to upload.</p>
             ) : null}
           </div>
         )}
