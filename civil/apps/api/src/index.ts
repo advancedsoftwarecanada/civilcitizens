@@ -1872,6 +1872,7 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
     title: post.title,
     body: post.body,
     mediaUrl: normalizeMediaUrl(post.mediaUrl ?? null),
+    images: (post.images as string[] | null)?.map(normalizeMediaUrl).filter((url): url is string => url !== null) ?? null,
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
   jurisdiction: post.jurisdiction,
@@ -4013,6 +4014,82 @@ app.get('/communities/:province/:municipality', async (req: FastifyRequest, repl
 
   return reply.code(404).send({ error: 'community_not_found' })
 })
+
+// Get post by slug
+app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = z.object({ slug: z.string() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid slug' })
+
+    const post = await prisma.post.findUnique({
+      where: { seoSlug: params.data.slug },
+      include: {
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            premiumStatus: true,
+          },
+        },
+      },
+    })
+
+    if (!post) return reply.code(404).send({ error: 'not found' })
+
+    const viewerId = (req as any).user?.id as string | undefined
+    let viewerReaction: ReactionType | null = null
+    if (viewerId) {
+      const reaction = await prisma.postReaction.findUnique({
+        where: {
+          userId_postId: {
+            userId: viewerId,
+            postId: post.id,
+          },
+        },
+        select: { type: true },
+      })
+      viewerReaction = reaction?.type ?? null
+    }
+
+    const commentRows: CommentWithUser[] = await prisma.comment.findMany({
+      where: { postId: post.id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            premiumStatus: true,
+          },
+        },
+      },
+    })
+
+    let viewerCommentVotes: Record<string, number> = {}
+    if (viewerId && commentRows.length) {
+      const commentIds = commentRows.map((comment) => comment.id)
+      const votes = await prisma.commentVote.findMany({
+        where: { userId: viewerId, commentId: { in: commentIds } },
+        select: { commentId: true, value: true },
+      })
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.commentId] = vote.value
+      }
+      viewerCommentVotes = voteMap
+    }
+
+    return {
+      post: formatPost(post, { viewerReaction }),
+      paths: getCanonicalPaths(post),
+      comments: buildCommentTree(commentRows, viewerCommentVotes),
+    }
+  }),
+)
 
 // Get post by id
 app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>

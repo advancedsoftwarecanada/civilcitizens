@@ -299,6 +299,13 @@ export default function PostComposer({
 
       const tryDirect = async () => {
         if (!upload.url) return false
+
+        // Avoid Mixed Content errors
+        if (typeof window !== 'undefined' && window.location.protocol === 'https:' && upload.url.startsWith('http:')) {
+          console.warn('Skipping direct upload due to protocol mismatch (Mixed Content)')
+          return false
+        }
+
         const res = await fetch(upload.url, {
           method: upload.method || 'PUT',
           headers: upload.headers,
@@ -321,8 +328,24 @@ export default function PostComposer({
         return res.ok
       }
 
-      const directOk = upload.url ? await tryDirect().catch(() => false) : false
-      const proxyOk = directOk ? true : await tryProxy().catch(() => false)
+      console.log('Starting upload for', id, 'direct:', !!upload.url, 'proxy:', !!proxyPath)
+      const directOk = upload.url
+        ? await tryDirect().catch((e) => {
+            console.warn('Direct upload failed', e)
+            return false
+          })
+        : false
+
+      if (directOk) console.log('Direct upload succeeded')
+      else console.log('Direct upload skipped or failed, trying proxy')
+
+      const proxyOk = directOk
+        ? true
+        : await tryProxy().catch((e) => {
+            console.warn('Proxy upload failed', e)
+            return false
+          })
+
       if (!directOk && !proxyOk) {
         throw new Error('upload_failed')
       }
@@ -489,60 +512,84 @@ export default function PostComposer({
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
-      const files = event.target.files
+      const fileList = event.target.files
+      if (!fileList || fileList.length === 0) return
+
+      // Convert to array to persist files after clearing input
+      const files = Array.from(fileList)
+
+      // Clear input immediately so change event fires even if same file selected again
       event.target.value = ''
-      if (!files || files.length === 0) return
 
       const newPhotos: PhotoItem[] = []
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         if (!file) continue
+
         if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+          console.warn('Invalid file type:', file.type)
           pushToast(`Skipped ${file.name}: Invalid file type.`, 'error')
           continue
         }
 
         if (file.size > PHOTO_MAX_BYTES) {
+          console.warn('File too large:', file.size)
           pushToast(`Skipped ${file.name}: File too large (max 25MB).`, 'error')
           continue
         }
 
-        const dims = await readImageDimensions(file)
-        if (!dims) {
-          pushToast(`Skipped ${file.name}: Could not read image.`, 'error')
-          continue
-        }
-        const megaPixels = (dims.width * dims.height) / 1_000_000
-        if (dims.width > MAX_IMAGE_DIMENSION || dims.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
-          pushToast(`Skipped ${file.name}: Image resolution too high.`, 'error')
-          continue
-        }
+        try {
+          const dims = await readImageDimensions(file)
+          if (!dims) {
+            console.warn('Could not read dimensions')
+            pushToast(`Skipped ${file.name}: Could not read image.`, 'error')
+            continue
+          }
+          const megaPixels = (dims.width * dims.height) / 1_000_000
+          if (dims.width > MAX_IMAGE_DIMENSION || dims.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
+            console.warn('Image too large dimensions')
+            pushToast(`Skipped ${file.name}: Image resolution too high.`, 'error')
+            continue
+          }
 
-        const id = Math.random().toString(36).slice(2)
-        const previewUrl = URL.createObjectURL(file)
-        newPhotos.push({ id, file, previewUrl, status: 'idle' })
+          const id = Math.random().toString(36).slice(2)
+          const previewUrl = URL.createObjectURL(file)
+          newPhotos.push({ id, file, previewUrl, status: 'idle' })
+        } catch (e) {
+          console.error('Error processing image', e)
+          pushToast(`Skipped ${file.name}: Error processing image.`, 'error')
+        }
       }
 
-      if (newPhotos.length === 0) return
+      if (newPhotos.length === 0) {
+        return
+      }
 
       setPhotos((prev) => [...prev, ...newPhotos])
-
-      // Start uploads
-      newPhotos.forEach((p) => {
-        if (p.file) {
-          startPhotoUpload(p.id, p.file)
-        }
-      })
     },
-    [startPhotoUpload],
+    [],
   )
 
   useEffect(() => {
-    return () => {
-      photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
-    }
+    photos.forEach((p) => {
+      if (p.status === 'idle' && p.file) {
+        startPhotoUpload(p.id, p.file)
+      }
+    })
+  }, [photos, startPhotoUpload])
+
+  // Keep track of photos for cleanup on unmount
+  const photosRef = useRef(photos)
+  useEffect(() => {
+    photosRef.current = photos
   }, [photos])
+
+  useEffect(() => {
+    return () => {
+      photosRef.current.forEach((p) => URL.revokeObjectURL(p.previewUrl))
+    }
+  }, [])
 
   useEffect(() => {
     const handleKeydown = (event: KeyboardEvent) => {

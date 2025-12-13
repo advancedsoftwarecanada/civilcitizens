@@ -111,6 +111,67 @@ function ReactionButton({ option, count, active, blocked, disabled, onClick, onB
   )
 }
 
+function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null; mediaUrl?: string | null; postUrl: string }) {
+  const allImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
+  if (allImages.length === 0) return null
+
+  if (allImages.length === 1) {
+    return (
+      <Link href={postUrl} className="block overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={allImages[0]}
+          alt="Post image"
+          className="h-auto w-full max-h-[70vh] object-contain bg-slate-900/5"
+          loading="lazy"
+        />
+      </Link>
+    )
+  }
+
+  const displayImages = allImages.slice(0, 5)
+  const remainingCount = allImages.length - 5
+
+  return (
+    <div className="grid grid-cols-2 gap-1 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 sm:grid-cols-6">
+      {displayImages.map((src, index) => {
+        // Layout logic for up to 5 images
+        // 2 images: 50/50 (col-span-3)
+        // 3 images: 1st (col-span-4), 2nd/3rd (col-span-2) - wait, 6 cols.
+        // Let's try a simpler approach with CSS grid classes based on count.
+
+        let className = 'relative aspect-square w-full overflow-hidden bg-slate-100'
+        const isLast = index === displayImages.length - 1
+
+        if (displayImages.length === 2) {
+          className += ' col-span-1 sm:col-span-3'
+        } else if (displayImages.length === 3) {
+          if (index === 0) className += ' col-span-2 sm:col-span-4 row-span-2'
+          else className += ' col-span-1 sm:col-span-2'
+        } else if (displayImages.length === 4) {
+          className += ' col-span-1 sm:col-span-3'
+        } else if (displayImages.length >= 5) {
+          if (index < 2) className += ' col-span-1 sm:col-span-3'
+          else if (index === 4) className += ' col-span-2 sm:col-span-2'
+          else className += ' col-span-1 sm:col-span-2'
+        }
+
+        return (
+          <Link key={src} href={postUrl} className={className}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={`Post image ${index + 1}`} className="h-full w-full object-cover" loading="lazy" />
+            {isLast && remainingCount > 0 ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-lg font-bold text-white backdrop-blur-sm">
+                +{remainingCount} more
+              </div>
+            ) : null}
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerIsVerified, viewerId }: PostFeedItemProps) {
   const [pending, setPending] = useState(false)
   const [showVoteTooltip, setShowVoteTooltip] = useState(false)
@@ -320,18 +381,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
 
       <div className="space-y-3 text-[15px] leading-6 text-slate-800">
 
-        {post.mediaUrl ? (
-          <Link href={postUrl} className="block overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-            {/* Use plain img to avoid domain allow-list issues blocking Next/Image */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={post.mediaUrl}
-              alt={post.title || post.body || 'Post image'}
-              className="h-auto w-full max-h-[70vh] object-contain bg-slate-900/5"
-              loading="lazy"
-            />
-          </Link>
-        ) : null}
+        <PostImageGrid images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
 
         {post.type === 'article' && post.title ? (
           <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
