@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSPropert
 import type { CommunityGeoMatch, CommunityGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
 import { HiMiniStar } from 'react-icons/hi2'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
@@ -151,7 +152,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [suggestedCommunities, setSuggestedCommunities] = useState<CitySummary[]>([])
   const [managingFollow, setManagingFollow] = useState<string | null>(null)
-  const [bootstrapped, setBootstrapped] = useState(false)
+  const [, setBootstrapped] = useState(false)
   const [geoBusy, setGeoBusy] = useState(false)
   const [geoStatus, setGeoStatus] = useState('')
   const [geoError, setGeoError] = useState<string | null>(null)
@@ -670,10 +671,12 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       return
     }
     const selectedCitySlug = extractCitySlugFromKey(selectedCityKey)
+    let keepWelcomeLocked = false
     if (source === 'picker') {
       setSavingHome(true)
     } else if (source === 'welcome') {
       setWelcomeAutoSaving(true)
+      keepWelcomeLocked = true
     } else {
       setManagingFollow(`${provinceCode}:${communitySlug}:home`)
     }
@@ -694,26 +697,31 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       if (!options?.skipCityLoad) {
         await loadCitiesForProvince(provinceCode, communitySlug, selectedCitySlug)
       }
+      if (isWelcomeMode) {
+        // Keep the user locked in a setup state and redirect immediately.
+        // Avoid rendering intermediate screens (e.g., community follow list) while the redirect happens.
+        window.setTimeout(() => {
+          window.location.replace('/home')
+        }, 50)
+        return
+      }
+
       await refreshFollows({ token, syncHome: true })
       const message = source === 'list' ? 'Home city updated.' : 'Home city set. Welcome home!'
       pushToast(message, 'success')
-      if (isWelcomeMode) {
-        window.setTimeout(() => {
-          if (readStoredPostalCode(activePostalOwnerId)) {
-            window.location.replace('/home')
-          }
-        }, 500)
-      }
     } catch (error) {
       console.error('Failed saving home city', error)
       const message = getErrorMessage(error)
       const friendly = message === 'chamber_not_found' ? 'City not found. Please pick a different option.' : 'Unable to save home city right now.'
       pushToast(friendly, 'error')
+      keepWelcomeLocked = false
     } finally {
       if (source === 'picker') {
         setSavingHome(false)
       } else if (source === 'welcome') {
-        setWelcomeAutoSaving(false)
+        if (!keepWelcomeLocked) {
+          setWelcomeAutoSaving(false)
+        }
       } else {
         setManagingFollow(null)
       }
@@ -832,7 +840,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const followButtonClass = 'border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
   const visitButtonClass = 'border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
   const locationButtonClass = 'inline-flex items-center justify-center border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
-  const tabButtonBaseClass = 'inline-flex items-center justify-center rounded-md border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60'
 
   const manageSection = (
     <section className="surface-card space-y-6 px-6 py-5 shadow-subtle">
@@ -1029,7 +1036,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const renderPickerSection = (variant: 'default' | 'welcome') => {
     const isWelcome = variant === 'welcome'
     const sectionClasses = isWelcome ? 'surface-card px-8 py-8 shadow-panel' : 'surface-card px-6 py-5 shadow-subtle'
-    const heading = isWelcome ? 'Enter your Postal Code' : 'Look up another community'
+    const heading = isWelcome ? 'Find your Civil Community' : 'Look up another community'
     const isLocked = isWelcome && welcomeAutoSaving
 
     const showFullPicker = !isWelcome
@@ -1052,8 +1059,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     const isPostalSuggestion = (match: CommunityGeoMatch) =>
       postalMatches.some((entry) => entry.province === match.province && entry.communitySlug === match.communitySlug)
     const showAssistPanel = !isWelcome || welcomePickerView === 'assist' || assistUnlocked || postalMatches.length > 0
-    const assistButtonClass = `${tabButtonBaseClass} w-full sm:w-auto ${isWelcome && welcomePickerView === 'assist' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm' : 'border-[var(--cc-primary)] text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10'}`
-
     const handleAssistStart = () => {
       if (isLocked) return
       setWelcomePickerView('assist')
@@ -1071,19 +1076,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
 
     return (
       <section className={sectionClasses}>
-        <h2 className="text-2xl font-bold text-gray-900">{heading}</h2>
-        {isWelcome ? (
-          <>
-            <p className="mt-2 text-sm text-gray-600">
-              To finish your account, just enter your postal code to connect with Citizens near you! Only the first three characters are needed to get started.
-            </p>
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <p className="text-sm text-gray-600">
-                Prefer automatic matching? Use the welcome flow to detect your city via GPS.
-              </p>
-            </div>
-          </>
-        ) : null}
+        <h2 className={`text-2xl font-bold text-gray-900 ${isWelcome ? 'text-center' : ''}`}>{heading}</h2>
         {isWelcome && welcomeAutoSaving ? (
           <div className="mt-4 rounded-2xl border border-emerald-200 bg-white/90 p-4 text-sm text-gray-700 shadow-inner">
             <div className="flex items-center gap-3">
@@ -1096,105 +1089,119 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           </div>
         ) : null}
         <div className={pickerContainerClass}>
-          {isWelcome ? (
-            <div className="rounded-2xl border border-[var(--cc-border)] bg-white/85 p-4 shadow-subtle">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-gray-900">Let Civil detect your community</div>
-                  <p className="text-xs text-gray-500">Allow a one-time location lookup to match the closest electoral district automatically.</p>
-                </div>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    className={locationButtonClass}
-                    onClick={handleAssistStart}
-                    disabled={geoBusy || isLocked}
-                  >
-                    {geoBusy ? 'Detecting…' : 'Use my location'}
-                  </button>
-                  {assistUnlocked ? (
-                    <button
-                      type="button"
-                      className="border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={handleAssistGeolocate}
-                      disabled={geoBusy || isLocked}
-                    >
-                      Retry
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              {(geoStatus || geoError) && (
-                <div className="mt-3 space-y-1 text-xs">
-                  {geoStatus ? <div className="text-gray-700">{geoStatus}</div> : null}
-                  {geoError ? <div className="text-red-500">{geoError}</div> : null}
-                </div>
-              )}
-            </div>
-          ) : null}
-          <div className="rounded-2xl border border-[var(--cc-border)] bg-white/80 p-4 shadow-subtle">
-            <form className="space-y-3" onSubmit={handlePostalLookupSubmit}>
-              <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium text-gray-800">Postal code</label>
-                <p className="text-xs text-gray-500">Enter the first six characters (e.g., M5V-2T6) to reveal matching communities.</p>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <input
-                  type="text"
-                  inputMode="text"
-                  autoComplete="postal-code"
-                  maxLength={7}
-                  className="flex-1 rounded-md border border-[var(--cc-border)] px-3 py-2 text-lg tracking-[0.3em] focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
-                  placeholder="e.g. M5V-2T6"
-                  value={postalCodeInput}
-                  onChange={handlePostalInputChange}
-                  disabled={isLocked}
-                />
-                <div className="flex flex-col gap-2 sm:w-auto sm:flex-row">
-                  <button
-                    type="submit"
-                    className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-                    disabled={postalBusy || isLocked}
-                  >
-                    {postalBusy ? 'Working…' : 'Start!'}
-                  </button>
-                  {postalCodeInput ? (
-                    <button
-                      type="button"
-                      className="border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => {
-                        setPostalCodeInput('')
-                        setPostalMatches([])
-                        setPostalStatus('')
-                        setPostalError(null)
-                        setPostalFsa(null)
-                        setPostalNormalized(null)
-                      }}
+          {(() => {
+            const postalCard = (
+              <div className="rounded-2xl border border-[var(--cc-border)] bg-white/80 p-4 shadow-subtle h-full">
+                <form className="space-y-3" onSubmit={handlePostalLookupSubmit}>
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">Postal code</div>
+                    <p className="text-xs text-gray-500">Enter the first six characters (e.g., M5V-2T6) to reveal matching communities.</p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <label className="sr-only" htmlFor="postal-code-input">
+                      Postal code
+                    </label>
+                    <input
+                      id="postal-code-input"
+                      type="text"
+                      inputMode="text"
+                      autoComplete="postal-code"
+                      maxLength={7}
+                      className="flex-1 rounded-md border border-[var(--cc-border)] px-3 py-2 text-lg tracking-[0.3em] focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
+                      placeholder="e.g. M5V-2T6"
+                      value={postalCodeInput}
+                      onChange={handlePostalInputChange}
                       disabled={isLocked}
-                    >
-                      Clear
-                    </button>
-                  ) : null}
+                    />
+                    <div className="flex flex-col gap-2 sm:w-auto sm:flex-row">
+                      <button
+                        type="submit"
+                        className="bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                        disabled={postalBusy || isLocked}
+                      >
+                        {postalBusy ? 'Working…' : 'Start!'}
+                      </button>
+                      {postalCodeInput ? (
+                        <button
+                          type="button"
+                          className="border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => {
+                            setPostalCodeInput('')
+                            setPostalMatches([])
+                            setPostalStatus('')
+                            setPostalError(null)
+                            setPostalFsa(null)
+                            setPostalNormalized(null)
+                          }}
+                          disabled={isLocked}
+                        >
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </form>
+                {(postalStatus || postalError) && (
+                  <div className="mt-3 space-y-2 text-xs">
+                    {postalStatus ? <div className="text-gray-700">{postalStatus}</div> : null}
+                    {postalError ? <div className="text-red-500">{postalError}</div> : null}
+                  </div>
+                )}
+                {postalFsa && (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-gray-600">
+                    <div className="font-semibold text-gray-800">Matched FSA {postalFsa.code}</div>
+                    <div className="flex flex-wrap gap-4 pt-1">
+                      <span>Province: {postalFsa.provinceCode?.toUpperCase() ?? '—'}</span>
+                      {postalFsa.subdivisionName ? <span>Subdivision: {postalFsa.subdivisionName}</span> : null}
+                      {postalNormalized ? <span>Normalized: {postalNormalized}</span> : null}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+
+            if (!isWelcome) return postalCard
+
+            return (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-2xl border border-[var(--cc-border)] bg-white/85 p-4 shadow-subtle h-full flex flex-col justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-gray-900">Let Civil detect your community</div>
+                    <p className="text-xs text-gray-500">Allow a one-time location lookup to match the closest electoral district automatically.</p>
+                  </div>
+                  <div className="mt-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                      <button
+                        type="button"
+                        className={locationButtonClass}
+                        onClick={handleAssistStart}
+                        disabled={geoBusy || isLocked}
+                      >
+                        {geoBusy ? 'Detecting…' : 'Use my location'}
+                      </button>
+                      {assistUnlocked ? (
+                        <button
+                          type="button"
+                          className="border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={handleAssistGeolocate}
+                          disabled={geoBusy || isLocked}
+                        >
+                          Retry
+                        </button>
+                      ) : null}
+                    </div>
+                    {(geoStatus || geoError) && (
+                      <div className="mt-3 space-y-1 text-xs">
+                        {geoStatus ? <div className="text-gray-700">{geoStatus}</div> : null}
+                        {geoError ? <div className="text-red-500">{geoError}</div> : null}
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {postalCard}
               </div>
-            </form>
-            {(postalStatus || postalError) && (
-              <div className="mt-3 space-y-2 text-xs">
-                {postalStatus ? <div className="text-gray-700">{postalStatus}</div> : null}
-                {postalError ? <div className="text-red-500">{postalError}</div> : null}
-              </div>
-            )}
-            {postalFsa && (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-gray-600">
-                <div className="font-semibold text-gray-800">Matched FSA {postalFsa.code}</div>
-                <div className="flex flex-wrap gap-4 pt-1">
-                  <span>Province: {postalFsa.provinceCode?.toUpperCase() ?? '—'}</span>
-                  {postalFsa.subdivisionName ? <span>Subdivision: {postalFsa.subdivisionName}</span> : null}
-                  {postalNormalized ? <span>Normalized: {postalNormalized}</span> : null}
-                </div>
-              </div>
-            )}
-          </div>
+            )
+          })()}
 
           {(showAssistPanel || suggestionMatches.length > 0) && (
             <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
@@ -1354,13 +1361,34 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       )
 
   if (mode === 'welcome') {
+    const setupOverlay = !welcomeAutoSaving ? null : (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm">
+        <div className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-lg">
+          <div className="flex items-center gap-3">
+            <span
+              aria-hidden="true"
+              className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--cc-primary)] border-t-transparent"
+            />
+            <div>
+              <div className="text-sm font-semibold text-gray-900">Setting up your account…</div>
+              <div className="mt-0.5 text-xs text-gray-500">Saving your home community and preparing your feed.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+
     return (
       <div className="relative min-h-screen" style={wallpaperBackground}>
         <div className="absolute inset-0 bg-slate-950/45" aria-hidden />
         <div className="relative mx-auto w-full max-w-4xl px-4 py-10">
+          <div className="mb-6 flex justify-center">
+            <Image src="/logo-white.svg" alt="Civil Citizens" width={160} height={44} className="h-auto w-[160px]" priority />
+          </div>
           {renderPickerSection('welcome')}
         </div>
         {geoOverlay}
+        {setupOverlay}
       </div>
     )
   }

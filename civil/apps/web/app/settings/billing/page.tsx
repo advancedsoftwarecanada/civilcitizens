@@ -154,7 +154,7 @@ export default function BillingSettingsPage() {
       const res = await fetch(buildApiUrl('/billing/summary'), {
         headers: { authorization: `Bearer ${authToken}` },
       })
-      if (res.status === 401) {
+      if (res.status === 401 || res.status === 403) {
         handleUnauthorized()
         return null
       }
@@ -173,9 +173,14 @@ export default function BillingSettingsPage() {
       const res = await fetch(buildApiUrl('/businesses'), {
         headers: { authorization: `Bearer ${authToken}` },
       })
-      if (res.status === 401) {
+      if (res.status === 401 || res.status === 403) {
         handleUnauthorized()
         return null
+      }
+      if (res.status === 404) {
+        // Some environments may not ship the businesses API yet.
+        setBusinesses([])
+        return []
       }
       if (!res.ok) {
         throw new Error('businesses_failed')
@@ -197,22 +202,40 @@ export default function BillingSettingsPage() {
     let cancelled = false
     const bootstrap = async () => {
       try {
-        const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${storedToken}` } })
-        if (!res.ok) {
-          handleUnauthorized()
-          return
+        setToken(storedToken)
+
+        // Best-effort viewer fetch: don't block billing data on transient /auth/me issues.
+        try {
+          const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${storedToken}` } })
+          if (res.status === 401 || res.status === 403) {
+            handleUnauthorized()
+            return
+          }
+          if (res.ok) {
+            const data: MeResponse = await res.json()
+            if (!hasHomeCommunity(data)) {
+              window.location.replace('/welcome')
+              return
+            }
+            if (!cancelled) {
+              setMe(data)
+            }
+          } else {
+            console.warn('Billing bootstrap: /auth/me failed', { status: res.status })
+          }
+        } catch (err) {
+          console.warn('Billing bootstrap: /auth/me request failed', err)
         }
-        const data: MeResponse = await res.json()
-        if (!hasHomeCommunity(data)) {
-          window.location.replace('/welcome')
-          return
+
+        const nextSummary = await loadSummary(storedToken)
+        if (!nextSummary) return
+
+        // Avoid calling /businesses unless there are businesses to load.
+        if (nextSummary.businessCount > 0) {
+          await loadBusinesses(storedToken)
+        } else {
+          setBusinesses([])
         }
-        if (!cancelled) {
-          setMe(data)
-          setToken(storedToken)
-          setLoading(true)
-        }
-        await Promise.all([loadSummary(storedToken), loadBusinesses(storedToken)])
       } catch (err) {
         console.error('Unable to bootstrap billing view', err)
         pushToast('Unable to load billing. Please try again.', 'error', 6000)
@@ -243,7 +266,14 @@ export default function BillingSettingsPage() {
   const refreshBilling = useCallback(async () => {
     if (!token) return
     try {
-      await Promise.all([loadSummary(token), loadBusinesses(token)])
+      const nextSummary = await loadSummary(token)
+      if (!nextSummary) return
+
+      if (nextSummary.businessCount > 0) {
+        await loadBusinesses(token)
+      } else {
+        setBusinesses([])
+      }
     } catch (err) {
       console.error('Unable to refresh billing', err)
     }
@@ -292,7 +322,7 @@ export default function BillingSettingsPage() {
           body: JSON.stringify(payload),
         })
         const data = await res.json().catch(() => null)
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
           handleUnauthorized()
           return
         }
@@ -365,7 +395,7 @@ export default function BillingSettingsPage() {
           publishableKey?: string | null
           error?: string
         } | null
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
           handleUnauthorized()
           return
         }
@@ -459,7 +489,7 @@ export default function BillingSettingsPage() {
           },
           body: JSON.stringify({ returnUrl: billingReturnUrl }),
         })
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
           handleUnauthorized()
           return
         }
@@ -513,7 +543,7 @@ export default function BillingSettingsPage() {
           },
           body: JSON.stringify(payload),
         })
-        if (res.status === 401) {
+        if (res.status === 401 || res.status === 403) {
           handleUnauthorized()
           return
         }

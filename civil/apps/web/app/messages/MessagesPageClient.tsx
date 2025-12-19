@@ -623,6 +623,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     void loadThreads()
   }, [authReady, loadMe, loadThreads])
 
+  const activeThread = useMemo(() => threads.find((thread) => thread.id === selectedThreadId) ?? null, [threads, selectedThreadId])
+
   useEffect(() => {
     if (!selectedThreadId) return
     const messageCount = messagesByThread[selectedThreadId]?.length ?? 0
@@ -630,9 +632,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     const container = messagesViewportRef.current
     if (!container) return
     container.scrollTop = container.scrollHeight
-  }, [messagesByThread, selectedThreadId])
-
-  const activeThread = useMemo(() => threads.find((thread) => thread.id === selectedThreadId) ?? null, [threads, selectedThreadId])
+  }, [messagesByThread, selectedThreadId, activeThread])
   const activeMessages = selectedThreadId ? messagesByThread[selectedThreadId] ?? [] : []
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
 
@@ -931,10 +931,11 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   return (
     <DashboardShell
+      className="!min-h-0"
       sidebar={<Sidebar me={me ?? undefined} active="messages" />}
       rightRail={inboxPanel}
-      rightRailClassName="sticky top-0 h-screen md:h-[calc(100vh-4.5rem)] pb-8"
-      mainClassName="sticky top-0 h-screen md:h-[calc(100vh-4.5rem)] pb-8"
+      rightRailClassName="sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8"
+      mainClassName="sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8"
     >
       <div className="h-full lg:hidden">
         {activeThread ? renderMessages() : inboxPanel}
