@@ -23,6 +23,7 @@ import {
 import type { IconType } from 'react-icons'
 import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
+import { useViewerStore } from '../_lib/viewerStore'
 
 type SidebarProps = {
   me?: {
@@ -84,6 +85,8 @@ function navItemClasses(active: boolean) {
 }
 
 export default function Sidebar({ me, active }: SidebarProps) {
+  const cachedMe = useViewerStore((s) => s.me)
+  const effectiveMe = me ?? cachedMe ?? undefined
   const sidebarRef = useRef<HTMLElement | null>(null)
   const navRef = useRef<HTMLElement | null>(null)
   const profileRef = useRef<HTMLAnchorElement | null>(null)
@@ -95,12 +98,12 @@ export default function Sidebar({ me, active }: SidebarProps) {
       : active === 'community' || active === 'chambers'
         ? 'communities'
         : active
-  const displayName = formatDisplayName(me?.name ?? null) || 'Civil Citizen'
-  const avatarInitials = displayName || me?.handle || 'C'
-  const displayHandle = me?.handle ? `@${me.handle}` : '@civil'
-  const profileHref = me?.handle ? `/u/${me.handle}` : '/profile/edit'
-  const verified = Boolean(me?.isVerified)
-  const business = Boolean(me?.isPremium)
+  const displayName = formatDisplayName(effectiveMe?.name ?? null) || 'Civil Citizen'
+  const avatarInitials = displayName || effectiveMe?.handle || 'C'
+  const displayHandle = effectiveMe?.handle ? `@${effectiveMe.handle}` : '@civil'
+  const profileHref = effectiveMe?.handle ? `/u/${effectiveMe.handle}` : '/profile/edit'
+  const verified = Boolean(effectiveMe?.isVerified)
+  const business = Boolean(effectiveMe?.isPremium)
   const scaled = (value: number, minFactor = 0.72) => {
     // scaled(px) = max(base * navScale, base * minFactor)
     const scaledValue = value * navScale
@@ -191,7 +194,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
         ref={profileRef}
       >
         <VerifiedAvatar
-          src={me?.avatarUrl ?? null}
+          src={effectiveMe?.avatarUrl ?? null}
           alt={displayName}
           initials={avatarInitials}
           size={36}

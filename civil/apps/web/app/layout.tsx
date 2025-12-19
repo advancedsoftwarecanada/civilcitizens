@@ -3,8 +3,9 @@ import { ReactNode, Suspense } from 'react'
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import Toasts from './_components/Toasts'
-import MobileDock from './_components/MobileDock'
+import MobileDockVisibility from './_components/MobileDockVisibility'
 import TopNavVisibility from './_components/TopNavVisibility'
+import ViewerBootstrap from './_components/ViewerBootstrap'
 import ScrollManager from './_components/ScrollManager'
 import AnalyticsTracker from './_components/AnalyticsTracker'
 import GoogleAnalytics from './_components/GoogleAnalytics'
@@ -63,17 +64,18 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
       <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
         <GoogleAnalytics />
         <TopNavVisibility />
+        <ViewerBootstrap />
         <Suspense fallback={null}>
           <AnalyticsTracker />
         </Suspense>
         <Suspense fallback={null}>
           <ScrollManager />
         </Suspense>
-        <div className="min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-0">
+        <div className="min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pt-[4.5rem] lg:pb-0">
           {children}
           {modal}
         </div>
-        <MobileDock />
+        <MobileDockVisibility />
         <Toasts />
       </body>
     </html>
