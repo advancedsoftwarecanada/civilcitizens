@@ -25,6 +25,7 @@ const MAX_VISIBLE_NOTIFICATIONS = 7
 
 export default function TopNav() {
   const pathname = usePathname()
+  const showSearch = !pathname?.startsWith('/welcome')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -194,7 +195,7 @@ export default function TopNav() {
         setUnreadCount((prev) => prev + unreadDelta)
       }
     },
-    [fetchMessageUnreadCount],
+    [fetchMessageUnreadCount, pathname],
   )
 
   useEffect(() => {
@@ -368,7 +369,7 @@ export default function TopNav() {
   )
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/50 bg-white/80 backdrop-blur hidden md:block">
+    <header className="fixed left-0 right-0 top-0 z-30 border-b border-white/50 bg-white/80 backdrop-blur hidden md:block">
       <div className="mx-auto flex w-full max-w-[1800px] items-center gap-2 px-4 py-3 sm:gap-4 sm:px-6 xl:px-10">
         <Link
           href="/home"
@@ -379,24 +380,28 @@ export default function TopNav() {
           <Image src="/logo.svg" alt="Civil" width={112} height={32} className="hidden h-7 w-auto md:block" priority />
         </Link>
 
-        <div className="flex flex-1 justify-center px-2">
-          <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
-            <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-            <form action="/search" method="GET">
-              <input
-                type="search"
-                name="q"
-                placeholder="Search"
-                className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                onFocus={handleSearchFocus}
-                onBlur={handleSearchBlur}
-              />
-            </form>
-            <SearchResults query={searchQuery} open={showSearchResults} />
+        {showSearch ? (
+          <div className="flex flex-1 justify-center px-2">
+            <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+              <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              <form action="/search" method="GET">
+                <input
+                  type="search"
+                  name="q"
+                  placeholder="Search"
+                  className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onFocus={handleSearchFocus}
+                  onBlur={handleSearchBlur}
+                />
+              </form>
+              <SearchResults query={searchQuery} open={showSearchResults} />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex-1" aria-hidden="true" />
+        )}
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <Link

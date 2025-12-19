@@ -113,22 +113,26 @@ export default function SettingsPage() {
   const isAdminViewer = useMemo(() => isSuperAdmin(viewer), [viewer])
 
   return (
-    <DashboardShell sidebar={<Sidebar me={viewer ?? undefined} active="account" />} className="bg-gradient-to-b from-white to-slate-50">
-      <div className="max-w-3xl">
+    <DashboardShell
+      sidebar={<Sidebar me={viewer ?? undefined} active="account" />}
+      className="bg-slate-50"
+      mainClassName="space-y-6"
+    >
+      <section className="surface-card px-6 py-5 shadow-subtle">
         <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Account</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-900">{greeting}</h1>
         <p className="mt-3 text-sm text-slate-600">
           Manage everything about your Civil account from one dashboard. Pick a card to jump straight into the experience you need.
         </p>
 
-        <div className="mt-8 grid grid-cols-3 gap-3">
+        <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {CARD_LINKS.map((card) => {
             const Icon = card.icon
             return (
               <Link
                 key={card.key}
                 href={card.href}
-                className="group rounded-3xl border border-slate-200 bg-white/90 p-4 text-slate-700 shadow hover:border-[var(--cc-primary)] hover:bg-white"
+                className="group rounded-3xl border border-slate-200 bg-white/90 p-4 text-slate-700 shadow-subtle transition hover:border-[var(--cc-primary)] hover:bg-white"
               >
                 <span className="inline-flex rounded-2xl bg-[var(--cc-primary)]/10 p-2 text-[var(--cc-primary)]">
                   <Icon className="h-5 w-5" />
@@ -142,62 +146,62 @@ export default function SettingsPage() {
             )
           })}
         </div>
+      </section>
 
-        <div className="mt-4 flex w-full justify-center">
+      <section className="surface-card px-6 py-5 shadow-subtle">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <button
             type="button"
             onClick={requestLogout}
-            className="w-full max-w-xs rounded-3xl border border-rose-200 bg-rose-50 px-5 py-4 text-center text-sm font-semibold text-rose-700 shadow transition hover:bg-rose-100"
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-5 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
           >
-            <HiOutlineArrowRightOnRectangle className="mx-auto h-5 w-5" />
-            <span className="mt-2 block text-base font-semibold">Log Out</span>
+            <HiOutlineArrowRightOnRectangle className="h-5 w-5" />
+            Log Out
           </button>
-        </div>
 
-        {isAdminViewer ? (
-          <div className="mt-3 flex w-full justify-center">
+          {isAdminViewer ? (
             <Link
               href="/admin"
-              className="flex w-full max-w-xs flex-col items-center justify-center rounded-3xl border border-slate-900 bg-slate-900 px-5 py-4 text-center text-sm font-semibold text-white shadow transition hover:bg-slate-800"
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-900 bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               <HiOutlineCog8Tooth className="h-5 w-5" />
-              <span className="mt-2 block text-base font-semibold">Open Admin Dashboard</span>
+              Open Admin Dashboard
             </Link>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
+      </section>
 
-        {showLogoutConfirm ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-            <div className="w-full max-w-sm rounded-2xl border border-rose-200 bg-white p-5 shadow-xl">
-              <div className="flex items-center gap-3 text-rose-700">
-                <span className="rounded-xl bg-rose-50 p-2">
-                  <HiOutlineArrowRightOnRectangle className="h-5 w-5" />
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-rose-700">Confirm log out</p>
-                  <p className="text-xs text-slate-600">You will need to sign in again to continue.</p>
-                </div>
-              </div>
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={cancelLogout}
-                  className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmLogout}
-                  className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
-                >
-                  Log Out
-                </button>
+      {showLogoutConfirm ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-2xl border border-rose-200 bg-white p-5 shadow-xl">
+            <div className="flex items-center gap-3 text-rose-700">
+              <span className="rounded-xl bg-rose-50 p-2">
+                <HiOutlineArrowRightOnRectangle className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-rose-700">Confirm log out</p>
+                <p className="text-xs text-slate-600">You will need to sign in again to continue.</p>
               </div>
             </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={cancelLogout}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmLogout}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+              >
+                Log Out
+              </button>
+            </div>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </DashboardShell>
   )
 }

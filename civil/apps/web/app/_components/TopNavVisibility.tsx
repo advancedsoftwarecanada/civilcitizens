@@ -7,7 +7,7 @@ const HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 
 export default function TopNavVisibility() {
   const pathname = usePathname()
-  const hideNav = pathname ? HIDDEN_PATHS.has(pathname) : false
+  const hideNav = pathname ? HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') : false
 
   if (hideNav) {
     return null
