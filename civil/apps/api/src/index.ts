@@ -14,6 +14,7 @@ import {
   MediaCategory,
   PremiumStatus,
   BusinessStatus,
+  BusinessType,
   StripeWebhookStatus,
   FriendshipStatus,
   ReactionType,
@@ -24,7 +25,6 @@ import {
 import type { City as CityModel } from '@prisma/client'
 import {
   CreatePostInput,
-  CreateCommentInput,
   RegisterInput,
   LoginInput,
   ForgotPasswordInput,
@@ -152,7 +152,7 @@ function parseRange(start?: string | null, end?: string | null): DateRange {
   return { start: rangeStart, end: rangeEnd }
 }
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
-import { createHash, randomUUID } from 'crypto'
+import { createHash, randomInt, randomUUID } from 'crypto'
 import { locateCommunityFromPoint, getCommunityCentroid } from './geodata.js'
 import { locateFsaFromPoint } from './fsaLocator.js'
 import { statsCanPointToWgs84 } from './statscan.js'
@@ -501,6 +501,8 @@ const MB = 1024 * 1024
 const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
   avatar: 8 * MB,
   cover: 20 * MB,
+  business_logo: 8 * MB,
+  business_cover: 20 * MB,
   post_image: 25 * MB,
   attachment: 40 * MB,
 }
@@ -1821,6 +1823,11 @@ function randomSlugSuffix() {
   return randomUUID().replace(/-/g, '').slice(0, 6)
 }
 
+function randomNumericSlugSuffix() {
+  // 7 digits (e.g., 2324214) for user-friendly collision suffixes.
+  return String(randomInt(1_000_000, 10_000_000))
+}
+
 async function generateUniquePostSlug(base: string, client: PrismaClientOrTx) {
   const normalizedBase = trimSlugLength(base, POST_SLUG_BASE_LIMIT) || 'post'
   const baseWithPost = normalizedBase.endsWith('-post') ? normalizedBase : trimSlugLength(`${normalizedBase}-post`, POST_SLUG_BASE_LIMIT)
@@ -1848,6 +1855,17 @@ const POST_INCLUDE = {
       premiumStatus: true,
     },
   },
+  business: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      isVerified: true,
+      logoUrl: true,
+      provinceCode: true,
+      communitySlug: true,
+    },
+  },
   sharedPost: {
     include: {
       author: {
@@ -1859,13 +1877,22 @@ const POST_INCLUDE = {
           premiumStatus: true,
         },
       },
+      business: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          isVerified: true,
+          logoUrl: true,
+          provinceCode: true,
+          communitySlug: true,
+        },
+      },
     },
   },
-}
+} as const
 
-type PostWithAuthor = Prisma.PostGetPayload<{
-  include: typeof POST_INCLUDE
-}>
+type PostWithAuthor = Prisma.PostGetPayload<{ include: typeof POST_INCLUDE }>
 
 type FormattedPost = {
   id: string
@@ -1882,6 +1909,15 @@ type FormattedPost = {
   communitySlug: string | null
   communityName: string | null
   provinceName: string | null
+  organization: {
+    id: string
+    name: string
+    slug: string
+    isVerified: boolean
+    logoUrl: string | null
+    provinceCode: string | null
+    communitySlug: string | null
+  } | null
   sharedPost: FormattedPost | null
   author: {
     id: string
@@ -1917,7 +1953,8 @@ type FormattedPost = {
 function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionType | null } = {}): FormattedPost {
   const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
   const provinceName = community ? getProvinceDisplayName(community.province as any) : null
-  const reactions = {
+
+  const reactionCounts = {
     maple: post.reactionMaple ?? 0,
     heart: post.reactionHeart ?? 0,
     haha: post.reactionHaha ?? 0,
@@ -1925,15 +1962,11 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
     sad: post.reactionSad ?? 0,
     fire: post.reactionFire ?? 0,
   }
-  const positiveTotal = reactions.maple + reactions.heart + reactions.haha + reactions.wow + reactions.fire
-  const totalReactions = positiveTotal + reactions.sad
+  const positiveTotal = reactionCounts.maple + reactionCounts.heart + reactionCounts.haha + reactionCounts.wow + reactionCounts.fire
+  const totalReactions = positiveTotal + reactionCounts.sad
 
   let sharedPost: FormattedPost | null = null
   if (post.sharedPost) {
-    // Recursively format the shared post, but prevent infinite recursion if needed (though DB structure prevents cycles usually)
-    // We'll just format it as a regular post.
-    // Note: The type of post.sharedPost matches PostWithAuthor structure mostly, but we need to cast or ensure it matches.
-    // Since we included author in sharedPost, it should be fine.
     sharedPost = formatPost(post.sharedPost as any)
   }
 
@@ -1952,6 +1985,17 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
     communitySlug: post.communitySlug,
     communityName: community?.name ?? null,
     provinceName,
+    organization: post.business
+      ? {
+          id: post.business.id,
+          name: post.business.name,
+          slug: post.business.slug,
+          isVerified: Boolean(post.business.isVerified),
+          logoUrl: normalizeMediaUrl((post.business as any).logoUrl ?? null),
+          provinceCode: post.business.provinceCode ?? null,
+          communitySlug: post.business.communitySlug ?? null,
+        }
+      : null,
     sharedPost,
     author: {
       id: post.author.id,
@@ -1967,7 +2011,7 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
       recentPositive: post.recentPositive ?? 0,
     },
     reactions: {
-      ...reactions,
+      ...reactionCounts,
       total: totalReactions,
       positive: positiveTotal,
     },
@@ -4163,6 +4207,734 @@ app.get('/communities/:province/:municipality', async (req: FastifyRequest, repl
   return reply.code(404).send({ error: 'community_not_found' })
 })
 
+const CommunityOrgParams = z.object({
+  province: z.string().min(2),
+  municipality: z.string().min(1),
+})
+
+const CommunityOrgSlugParams = CommunityOrgParams.extend({
+  slug: z.string().trim().min(3).max(80),
+})
+
+const CommunityOrgListQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
+
+const OrganizationsDirectoryQuery = z.object({
+  q: z.string().trim().max(80).optional(),
+  type: z
+    .enum([
+      'LOCAL_BUSINESS',
+      'NON_PROFIT',
+      'COMMUNITY_GROUP',
+      'EDUCATIONAL',
+      'RELIGIOUS',
+      'GOVERNMENT',
+      'ARTS_CULTURE',
+      'SPORTS_RECREATION',
+    ])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+})
+
+const CommunityOrgCreateBody = z.object({
+  name: z.string().trim().min(3).max(160),
+  slug: z.string().trim().min(1).max(80).optional(),
+  type: z
+    .enum([
+      'LOCAL_BUSINESS',
+      'NON_PROFIT',
+      'COMMUNITY_GROUP',
+      'EDUCATIONAL',
+      'RELIGIOUS',
+      'GOVERNMENT',
+      'ARTS_CULTURE',
+      'SPORTS_RECREATION',
+    ])
+    .optional(),
+  description: z.string().trim().max(2000).optional(),
+})
+
+const CommunityOrgSettingsBody = z.object({
+  logoMediaId: z.string().trim().min(3).optional(),
+  coverMediaId: z.string().trim().min(3).optional(),
+})
+
+type CommunityOrgRecord = {
+  id: string
+  ownerId: string
+  provinceCode: string | null
+  communitySlug: string | null
+  name: string
+  slug: string
+  type: BusinessType
+  description: string | null
+  status: BusinessStatus
+  isVerified: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
+  createdAt: Date
+  updatedAt: Date
+  _count?: { follows?: number }
+}
+
+function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boolean) {
+  return {
+    id: org.id,
+    ownerId: org.ownerId,
+    provinceCode: org.provinceCode,
+    communitySlug: org.communitySlug,
+    name: org.name,
+    slug: org.slug,
+    type: org.type,
+    description: org.description,
+    status: org.status,
+    isVerified: org.isVerified,
+    logoUrl: org.logoUrl ?? null,
+    coverUrl: org.coverUrl ?? null,
+    followerCount: org._count?.follows ?? 0,
+    viewerFollowed,
+    createdAt: org.createdAt,
+    updatedAt: org.updatedAt,
+  }
+}
+
+async function ensureUniqueCommunityOrgSlug({
+  provinceCode,
+  communitySlug,
+  baseSlug,
+}: {
+  provinceCode: string
+  communitySlug: string
+  baseSlug: string
+}) {
+  const base = trimSlugLength(baseSlug, 80) || 'organization'
+  let candidate = base
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const existing = await prisma.business.findFirst({
+      where: { provinceCode, communitySlug, slug: candidate },
+      select: { id: true },
+    })
+    if (!existing) return candidate
+
+    const suffix = randomNumericSlugSuffix()
+    candidate = trimSlugLength(`${base}-${suffix}`, 80) || `organization-${suffix}`
+  }
+
+  const suffix = randomNumericSlugSuffix()
+  return trimSlugLength(`${base}-${suffix}`, 80) || `organization-${suffix}`
+}
+
+async function generateUniqueCommunityOrgSlug({
+  provinceCode,
+  communitySlug,
+  name,
+}: {
+  provinceCode: string
+  communitySlug: string
+  name: string
+}) {
+  const base = trimSlugLength(slugifyText(name), 80) || 'organization'
+  return ensureUniqueCommunityOrgSlug({ provinceCode, communitySlug, baseSlug: base })
+}
+
+// Organizations (community-tied): /communities/:province/:municipality/orgs
+app.get('/communities/:province/:municipality/orgs', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = CommunityOrgParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const query = CommunityOrgListQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const viewerId = (req as any).user?.id as string | undefined
+
+    const where: Prisma.BusinessWhereInput = viewerId
+      ? {
+          provinceCode: province,
+          communitySlug: community.slug,
+          OR: [{ status: 'ACTIVE' }, { ownerId: viewerId }],
+        }
+      : {
+          provinceCode: province,
+          communitySlug: community.slug,
+          status: 'ACTIVE',
+        }
+
+    const orgs = (await prisma.business.findMany({
+      where,
+      orderBy: [{ isVerified: 'desc' }, { name: 'asc' }],
+      take: query.data.limit,
+      select: {
+        id: true,
+        ownerId: true,
+        provinceCode: true,
+        communitySlug: true,
+        name: true,
+        slug: true,
+        type: true,
+        description: true,
+        status: true,
+        isVerified: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { follows: true } },
+      },
+    })) as CommunityOrgRecord[]
+
+    let followedSet: Set<string> = new Set()
+    if (viewerId && orgs.length) {
+      const follows = await prisma.businessFollow.findMany({
+        where: { userId: viewerId, businessId: { in: orgs.map((org) => org.id) } },
+        select: { businessId: true },
+      })
+      followedSet = new Set(follows.map((follow: { businessId: string }) => follow.businessId))
+    }
+
+    return reply.send({
+      provinceCode: province,
+      communitySlug: community.slug,
+      items: orgs.map((org) => buildCommunityOrgPayload(org, followedSet.has(org.id))),
+    })
+  }),
+)
+
+// Organizations directory: /organizations/directory
+app.get('/organizations/directory', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const query = OrganizationsDirectoryQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    type DirectoryOrgRow = Prisma.BusinessGetPayload<{
+      select: {
+        id: true
+        name: true
+        slug: true
+        type: true
+        provinceCode: true
+        communitySlug: true
+        isVerified: true
+        logoUrl: true
+        coverUrl: true
+      }
+    }>
+
+    const where: Prisma.BusinessWhereInput = {
+      status: 'ACTIVE',
+      ...(query.data.type ? { type: query.data.type } : {}),
+      ...(query.data.q
+        ? {
+            name: {
+              contains: query.data.q,
+              mode: 'insensitive',
+            },
+          }
+        : {}),
+    }
+
+    const items = await prisma.business.findMany({
+      where,
+      orderBy: [{ isVerified: 'desc' }, { name: 'asc' }],
+      take: query.data.limit,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        type: true,
+        provinceCode: true,
+        communitySlug: true,
+        isVerified: true,
+        logoUrl: true,
+        coverUrl: true,
+      },
+    })
+
+    return reply.send({
+      items: items
+        .filter((row: DirectoryOrgRow) => Boolean(row.provinceCode) && Boolean(row.communitySlug))
+        .map((row: DirectoryOrgRow) => ({
+          logoUrl: row.logoUrl ?? null,
+          coverUrl: row.coverUrl ?? null,
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          type: row.type,
+          provinceCode: row.provinceCode as string,
+          communitySlug: row.communitySlug as string,
+          isVerified: Boolean(row.isVerified),
+        })),
+    })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = (await prisma.business.findFirst({
+      where: {
+        provinceCode: province,
+        communitySlug: community.slug,
+        slug,
+      },
+      select: {
+        id: true,
+        ownerId: true,
+        provinceCode: true,
+        communitySlug: true,
+        name: true,
+        slug: true,
+        type: true,
+        description: true,
+        status: true,
+        isVerified: true,
+        logoUrl: true,
+        coverUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { follows: true } },
+      },
+    })) as CommunityOrgRecord | null
+
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const viewerId = (req as any).user?.id as string | undefined
+    const viewerFollowed = viewerId
+      ? Boolean(
+          await prisma.businessFollow.findUnique({
+            where: { businessId_userId: { businessId: org.id, userId: viewerId } },
+            select: { id: true },
+          }),
+        )
+      : false
+
+    return reply.send({ org: buildCommunityOrgPayload(org, viewerFollowed) })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const body = CommunityOrgCreateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+    if (!isPremium(user.premiumStatus)) return reply.code(403).send({ error: 'premium_required' })
+
+    const ownedCount = await prisma.business.count({ where: { ownerId: userId } })
+    if (ownedCount >= MAX_BUSINESSES_PER_USER) {
+      return reply.code(403).send({ error: 'business_limit_reached' })
+    }
+
+    const desiredSlugRaw = body.data.slug?.trim() || ''
+    const desiredSlug = desiredSlugRaw ? trimSlugLength(slugifyText(desiredSlugRaw.toLowerCase()), 80) : null
+
+    const baseSlug = desiredSlug || trimSlugLength(slugifyText(body.data.name), 80) || 'organization'
+    const slug = await ensureUniqueCommunityOrgSlug({ provinceCode: province, communitySlug: community.slug, baseSlug })
+
+    const type = (body.data.type ?? 'LOCAL_BUSINESS') as BusinessType
+
+    const org = (await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const created = await tx.business.create({
+        data: {
+          ownerId: userId,
+          provinceCode: province,
+          communitySlug: community.slug,
+          name: body.data.name.trim(),
+          slug,
+          type,
+          description: body.data.description?.trim() || null,
+          // Community organizations should be visible immediately.
+          status: 'ACTIVE',
+        },
+        select: { id: true },
+      })
+
+      await tx.businessFollow.upsert({
+        where: { businessId_userId: { businessId: created.id, userId } },
+        create: { businessId: created.id, userId },
+        update: {},
+        select: { id: true },
+      })
+
+      return (await tx.business.findUnique({
+        where: { id: created.id },
+        select: {
+          id: true,
+          ownerId: true,
+          provinceCode: true,
+          communitySlug: true,
+          name: true,
+          slug: true,
+          type: true,
+          description: true,
+          status: true,
+          isVerified: true,
+          logoUrl: true,
+          coverUrl: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { follows: true } },
+        },
+      })) as CommunityOrgRecord
+    })) as CommunityOrgRecord
+
+    return reply.code(201).send({ org: buildCommunityOrgPayload(org, true) })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/follow', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug, status: 'ACTIVE' },
+      select: { id: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    await prisma.businessFollow.upsert({
+      where: { businessId_userId: { businessId: org.id, userId } },
+      create: { businessId: org.id, userId },
+      update: {},
+      select: { id: true },
+    })
+
+    return reply.send({ ok: true })
+  }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug/follow', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: { id: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    await prisma.businessFollow.deleteMany({ where: { businessId: org.id, userId } })
+    return reply.send({ ok: true })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const body = CommunityOrgSettingsBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: { id: true, ownerId: true },
+    })
+
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.ownerId !== userId) return reply.code(403).send({ error: 'forbidden' })
+
+    const nextData: Prisma.BusinessUpdateInput = {}
+
+    if (body.data.logoMediaId) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: body.data.logoMediaId, ownerId: userId },
+        select: { id: true, category: true, status: true },
+      })
+      if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+      if (asset.category !== 'business_logo') return reply.code(400).send({ error: 'invalid_logo_category' })
+      nextData.logoMedia = { connect: { id: asset.id } }
+      nextData.logoUrl = null
+    }
+
+    if (body.data.coverMediaId) {
+      const asset = await prisma.mediaAsset.findFirst({
+        where: { id: body.data.coverMediaId, ownerId: userId },
+        select: { id: true, category: true, status: true },
+      })
+      if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+      if (asset.category !== 'business_cover') return reply.code(400).send({ error: 'invalid_cover_category' })
+      nextData.coverMedia = { connect: { id: asset.id } }
+      nextData.coverUrl = null
+    }
+
+    const updated = (await prisma.business.update({
+      where: { id: org.id },
+      data: nextData,
+      select: {
+        id: true,
+        ownerId: true,
+        provinceCode: true,
+        communitySlug: true,
+        name: true,
+        slug: true,
+        type: true,
+        description: true,
+        status: true,
+        isVerified: true,
+        logoUrl: true,
+        coverUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { follows: true } },
+      },
+    })) as CommunityOrgRecord
+
+    return reply.send({ org: buildCommunityOrgPayload(updated, true) })
+  }),
+)
+
+app.get('/organizations/follows', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const follows: Array<{
+      business: {
+        id: string
+        name: string
+        slug: string
+        provinceCode: string
+        communitySlug: string
+        isVerified: boolean
+      } | null
+    }> = (await prisma.businessFollow.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 50,
+      select: {
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+            isVerified: true,
+          },
+        },
+      },
+    })) as any
+
+    const items = follows.flatMap((row) =>
+      row.business
+        ? [
+            {
+              id: row.business.id,
+              name: row.business.name,
+              slug: row.business.slug,
+              provinceCode: row.business.provinceCode,
+              communitySlug: row.business.communitySlug,
+              isVerified: row.business.isVerified,
+            },
+          ]
+        : [],
+    )
+
+    return reply.send({ items })
+  }),
+)
+
+app.get('/organizations/owned', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const organizations = (await prisma.business.findMany({
+      where: { ownerId: userId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 50,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        provinceCode: true,
+        communitySlug: true,
+        isVerified: true,
+        status: true,
+      },
+    })) as Array<{
+      id: string
+      name: string
+      slug: string
+      provinceCode: string | null
+      communitySlug: string | null
+      isVerified: boolean
+      status: BusinessStatus
+    }>
+
+    const items = organizations.map((org) => ({
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      provinceCode: org.provinceCode,
+      communitySlug: org.communitySlug,
+      isVerified: org.isVerified,
+      status: org.status,
+    }))
+
+    return reply.send({ items })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const query = CursorQuery.extend({
+      jurisdiction: JurisdictionEnum.optional(),
+      sort: PostSortEnum.optional(),
+    }).safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: { id: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const { cursor, limit, jurisdiction, sort } = query.data
+    const sortMode = sort ?? 'new'
+
+    const where: Prisma.PostWhereInput = {
+      businessId: org.id,
+      ...(jurisdiction ? { jurisdiction } : {}),
+    }
+
+    let posts: PostWithAuthor[] = []
+    let nextCursor: string | undefined
+
+    if (sortMode === 'hot') {
+      posts = await prisma.post.findMany({
+        where,
+        take: limit,
+        orderBy: [{ hotScore: 'desc' }, { lastActivityAt: 'desc' }],
+        include: POST_INCLUDE,
+      })
+    } else {
+      const queryResult = await prisma.post.findMany({
+        where,
+        take: limit + 1,
+        orderBy: { createdAt: 'desc' },
+        include: POST_INCLUDE,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      })
+      if (queryResult.length > limit) {
+        const next = queryResult.pop()!
+        nextCursor = next.id
+      }
+      posts = queryResult
+    }
+
+    const viewerId = (req as any).user?.id as string | undefined
+    let reactionsByPost: Record<string, ReactionType> = {}
+    if (viewerId && posts.length) {
+      const reactions = await prisma.postReaction.findMany({
+        where: { userId: viewerId, postId: { in: posts.map((post) => post.id) } },
+        select: { postId: true, type: true },
+      })
+      const reactionMap: Record<string, ReactionType> = {}
+      for (const reaction of reactions) {
+        reactionMap[reaction.postId] = reaction.type
+      }
+      reactionsByPost = reactionMap
+    }
+
+    return reply.send({
+      items: posts.map((post) => formatPost(post, { viewerReaction: reactionsByPost[post.id] ?? null })),
+      nextCursor,
+    })
+  }),
+)
+
 // Get post by slug
 app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
@@ -4321,7 +5093,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         limit: z.coerce.number().int().min(1).max(50).default(20),
         jurisdiction: JurisdictionEnum.optional(),
         sort: PostSortEnum.optional(),
-        scope: z.enum(['all', 'friends', 'communities']).optional(),
+        scope: z.enum(['all', 'friends', 'communities', 'organizations']).optional(),
         province: z.string().optional(),
         community: z.string().optional(),
       })
@@ -4357,6 +5129,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     if (viewerId && !province && !community) {
       const includeFriends = scope === 'all' || scope === 'friends'
       const includeCommunities = scope === 'all' || scope === 'communities'
+      const includeOrganizations = scope === 'all' || scope === 'organizations'
 
       const accessibleFilters: Prisma.PostWhereInput[] = []
 
@@ -4395,6 +5168,18 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           if (seenKeys.has(key)) continue
           seenKeys.add(key)
           accessibleFilters.push({ provinceCode: follow.provinceCode, communitySlug: follow.communitySlug })
+        }
+      }
+
+      if (includeOrganizations) {
+        const businessFollows: Array<{ businessId: string }> = await prisma.businessFollow.findMany({
+          where: { userId: viewerId },
+          select: { businessId: true },
+        })
+
+        const businessIds = Array.from(new Set(businessFollows.map((follow) => follow.businessId)))
+        if (businessIds.length) {
+          accessibleFilters.push({ businessId: { in: businessIds } })
         }
       }
 
@@ -4458,6 +5243,8 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         if (!cursor) {
           prisma.user.update({ where: { id: viewerId }, data: { lastViewedCommunitiesAt: new Date() } }).catch(console.error)
         }
+      } else if (scope === 'organizations') {
+        lastViewedAt = null
       } else {
         // scope === 'all'
         const u = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedHomeAt: true } })

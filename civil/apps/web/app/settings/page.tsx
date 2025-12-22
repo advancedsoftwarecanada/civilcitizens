@@ -13,6 +13,7 @@ import type { IconType } from 'react-icons'
 import DashboardShell from '../_components/DashboardShell'
 import Sidebar from '../_components/Sidebar'
 import type { MeResponse } from '../_lib/me'
+import { hasHomeCommunity, isPremiumMember } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { isSuperAdmin } from '../_lib/admin'
 
@@ -32,7 +33,7 @@ const CARD_LINKS: Array<{
   },
   {
     key: 'communities',
-    label: 'Community Settings',
+    label: 'Manage Communities',
     description: 'Pick your home riding and follow more communities.',
     href: '/communities/settings',
     icon: HiOutlineBuildingOffice2,
@@ -60,14 +61,12 @@ export default function SettingsPage() {
     let cancelled = false
     const loadViewer = async () => {
       try {
-        const res = await fetch(buildApiUrl('/auth/me'), {
+        const meRes = await fetch(buildApiUrl('/auth/me'), {
           headers: { authorization: `Bearer ${storedToken}` },
         })
-        if (!res.ok) return
-        const payload = (await res.json()) as MeResponse
-        if (!cancelled) {
-          setViewer(payload)
-        }
+        if (!meRes.ok) return
+        const payload = (await meRes.json()) as MeResponse
+        if (!cancelled) setViewer(payload)
       } catch (error) {
         console.error('Unable to load viewer for settings', error)
       }
@@ -111,6 +110,8 @@ export default function SettingsPage() {
   }, [viewer?.name])
 
   const isAdminViewer = useMemo(() => isSuperAdmin(viewer), [viewer])
+  const showManageOrganizations = useMemo(() => isPremiumMember(viewer) && hasHomeCommunity(viewer), [viewer])
+  const manageOrganizationsHref = showManageOrganizations ? '/organizations/manager' : null
 
   return (
     <DashboardShell
@@ -119,11 +120,15 @@ export default function SettingsPage() {
       mainClassName="space-y-6"
     >
       <section className="surface-card px-6 py-5 shadow-subtle">
-        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Account</p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-900">{greeting}</h1>
-        <p className="mt-3 text-sm text-slate-600">
-          Manage everything about your Civil account from one dashboard. Pick a card to jump straight into the experience you need.
-        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Account</p>
+            <h1 className="mt-2 text-3xl font-semibold text-slate-900">{greeting}</h1>
+            <p className="mt-3 text-sm text-slate-600">
+              Manage everything about your Civil account from one dashboard. Pick a card to jump straight into the experience you need.
+            </p>
+          </div>
+        </div>
 
         <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {CARD_LINKS.map((card) => {
@@ -145,6 +150,22 @@ export default function SettingsPage() {
               </Link>
             )
           })}
+
+          {manageOrganizationsHref ? (
+            <Link
+              href={manageOrganizationsHref}
+              className="group rounded-3xl border border-slate-200 bg-white/90 p-4 text-slate-700 shadow-subtle transition hover:border-[var(--cc-primary)] hover:bg-white"
+            >
+              <span className="inline-flex rounded-2xl bg-[var(--cc-primary)]/10 p-2 text-[var(--cc-primary)]">
+                <HiOutlineBuildingOffice2 className="h-5 w-5" />
+              </span>
+              <h2 className="mt-3 text-base font-semibold text-slate-900">
+                Manage Organizations
+                <span className="ml-1 text-sm text-[var(--cc-primary)] transition group-hover:translate-x-1">{'>'}</span>
+              </h2>
+              <p className="mt-2 text-xs text-slate-600">Manage organizations you follow or own.</p>
+            </Link>
+          ) : null}
         </div>
       </section>
 
