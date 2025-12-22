@@ -201,12 +201,19 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const postUrl = buildPostUrl(post)
   const communityUrl = buildCommunityUrl(post)
   const createdAt = new Date(post.createdAt)
-  const isVerifiedAuthor = Boolean(post.author.isVerified)
-  const isBusinessAuthor = Boolean(post.author.isPremium)
+  const organization = post.organization ?? null
+  const isVerifiedAuthor = organization ? Boolean(organization.isVerified) : Boolean(post.author.isVerified)
+  const isBusinessAuthor = organization ? true : Boolean(post.author.isPremium)
   const canReact = Boolean(viewerIsVerified)
-  const profileHref = `/u/${post.author.handle}`
-  const authorDisplayName = post.author.name ? formatDisplayName(post.author.name) : post.author.handle
-  const avatarInitials = authorDisplayName || post.author.handle
+  const profileHref = organization?.provinceCode && organization.communitySlug
+    ? `/com/${organization.provinceCode.toLowerCase()}/${organization.communitySlug.toLowerCase()}/orgs/${organization.slug}`
+    : `/u/${post.author.handle}`
+  const authorDisplayName = organization?.name
+    ? formatDisplayName(organization.name)
+    : post.author.name
+      ? formatDisplayName(post.author.name)
+      : post.author.handle
+  const avatarInitials = authorDisplayName || organization?.name || post.author.handle
   const isAuthor = viewerId === post.author.id
 
   useEffect(() => {
@@ -322,7 +329,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       <header className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
           <VerifiedAvatar
-            src={post.author.avatarUrl}
+            src={organization ? (organization.logoUrl ?? null) : post.author.avatarUrl}
             alt={authorDisplayName ?? post.author.handle}
             initials={avatarInitials}
             size={48}
@@ -336,6 +343,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               <Link href={profileHref} className="font-semibold text-slate-900 hover:underline" title={`View ${authorDisplayName ?? post.author.handle}`}>
                 {authorDisplayName ?? post.author.handle}
               </Link>
+              {organization ? <span className="text-xs font-semibold text-slate-400">Organization</span> : null}
               <span className="text-xs">• {formattedDate}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
@@ -419,15 +427,25 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           <Link href={buildPostUrl(post.sharedPost)} className="block mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition-colors">
             <div className="flex items-center gap-2 mb-2">
               <VerifiedAvatar
-                src={post.sharedPost.author.avatarUrl}
-                alt={post.sharedPost.author.name || post.sharedPost.author.handle}
-                initials={post.sharedPost.author.name || post.sharedPost.author.handle}
+                src={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
+                alt={
+                  post.sharedPost.organization?.name
+                    ? formatDisplayName(post.sharedPost.organization.name)
+                    : post.sharedPost.author.name || post.sharedPost.author.handle
+                }
+                initials={
+                  post.sharedPost.organization?.name
+                    ? formatDisplayName(post.sharedPost.organization.name)
+                    : post.sharedPost.author.name || post.sharedPost.author.handle
+                }
                 size={24}
-                isVerified={post.sharedPost.author.isVerified}
-                isBusiness={post.sharedPost.author.isPremium}
+                isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
+                isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
               />
               <span className="text-sm font-semibold text-slate-900 hover:underline">
-                {formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
+                {post.sharedPost.organization?.name
+                  ? formatDisplayName(post.sharedPost.organization.name)
+                  : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
               </span>
               <span className="text-xs text-slate-500">• {new Date(post.sharedPost.createdAt).toLocaleDateString()}</span>
             </div>

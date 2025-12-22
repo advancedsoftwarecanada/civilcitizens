@@ -1,13 +1,16 @@
-import ComingSoon from '../_components/ComingSoon'
+import FeedPageClient from '../_components/FeedPageClient'
+import { RightRail } from '../_components/RightRail'
 
 export default function OrganizationsPage() {
   return (
-    <ComingSoon
-      activeNavKey="organizations"
-      title="Organizations are coming soon"
-      message="Organization tools are being refreshed. Check back soon for team management and billing seats."
-      secondaryHref="/settings/billing#business-create"
-      secondaryLabel="Create organization"
+    <FeedPageClient
+      scope="organizations"
+      sidebarActive="organizations"
+      title="Organizations"
+      description="Updates from organizations you follow."
+      emptyState="No organization updates yet. Follow organizations in your community to see their posts here."
+      emptyStateCta={{ label: 'Browse Communities', href: '/communities' }}
+      rightRail={<RightRail mode="organizations" />}
     />
   )
 }

@@ -339,7 +339,7 @@ export const UpdateProfilePhotoInput = z.object({
 })
 export type UpdateProfilePhotoInput = z.infer<typeof UpdateProfilePhotoInput>
 
-export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'post_image', 'attachment'])
+export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'business_logo', 'business_cover', 'post_image', 'attachment'])
 export type MediaCategory = z.infer<typeof MediaCategoryEnum>
 
 export const RequestMediaUploadInput = z.object({

@@ -16,7 +16,7 @@ import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
 
 
-export type FeedScope = 'all' | 'friends' | 'communities'
+export type FeedScope = 'all' | 'friends' | 'communities' | 'organizations'
 
 export type FeedPageClientProps = {
   scope: FeedScope
@@ -296,9 +296,11 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
   return (
     <DashboardShell sidebar={<Sidebar me={me ?? undefined} active={sidebarActive} />} rightRail={resolvedRightRail} mainClassName="space-y-6">
       <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
-          {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
+            {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <VerifiedAvatar

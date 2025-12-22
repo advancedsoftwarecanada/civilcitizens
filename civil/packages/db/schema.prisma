@@ -48,6 +48,7 @@ model User {
   stripeSubscriptionId      String?              @unique
   businesses                Business[]
   businessMemberships       BusinessMembership[]
+  businessFollows           BusinessFollow[]
   communityFollows          CommunityFollow[]
   comments                  Comment[]
   commentVotes              CommentVote[]
@@ -75,6 +76,7 @@ model User {
 model Post {
   id             String        @id @default(cuid())
   authorId       String
+  businessId     String?
   body           String
   title          String?
   type           String        @default("post")
@@ -102,6 +104,7 @@ model Post {
   lastActivityAt DateTime      @default(now())
   comments       Comment[]
   author         User          @relation(fields: [authorId], references: [id])
+  business       Business?      @relation(fields: [businessId], references: [id], onDelete: SetNull)
   avatarOwner    User?         @relation("AvatarPost")
   coverOwner     User?         @relation("CoverPost")
   hashtags       PostHashtag[]
@@ -112,6 +115,7 @@ model Post {
   shares         Post[]        @relation("SharedPost")
 
   @@index([authorId, createdAt])
+  @@index([businessId, createdAt])
   @@index([provinceCode, communitySlug, createdAt])
   @@index([jurisdiction, createdAt])
 }
@@ -487,6 +491,7 @@ model MediaAsset {
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
   logoBusiness  Business?        @relation("BusinessLogoMedia")
+  coverBusiness Business?        @relation("BusinessCoverMedia")
   owner         User             @relation("UserMediaAssets", fields: [ownerId], references: [id], onDelete: Cascade)
   avatarOwner   User?            @relation("AvatarMedia")
   coverOwner    User?            @relation("CoverMedia")
@@ -498,12 +503,18 @@ model MediaAsset {
 model Business {
   id                   String               @id @default(cuid())
   ownerId              String
+  provinceCode         String?
+  communitySlug        String?
   name                 String
   slug                 String
+  type                 BusinessType         @default(LOCAL_BUSINESS)
   description          String?
   logoMediaId          String?              @unique
+  coverMediaId         String?              @unique
   status               BusinessStatus       @default(DRAFT)
   isVerified           Boolean              @default(false)
+  logoUrl              String?
+  coverUrl             String?
   stripeSubscriptionId String?              @unique
   stripePriceId        String?
   billingEmail         String?
@@ -511,12 +522,29 @@ model Business {
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   logoMedia            MediaAsset?          @relation("BusinessLogoMedia", fields: [logoMediaId], references: [id])
+  coverMedia           MediaAsset?          @relation("BusinessCoverMedia", fields: [coverMediaId], references: [id])
   owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   memberships          BusinessMembership[]
+  follows              BusinessFollow[]
+  posts                Post[]
 
-  @@unique([ownerId, slug])
+  @@unique([provinceCode, communitySlug, slug])
   @@index([ownerId])
+  @@index([provinceCode, communitySlug])
   @@index([slug])
+}
+
+model BusinessFollow {
+  id         String   @id @default(cuid())
+  businessId String
+  userId     String
+  createdAt  DateTime @default(now())
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, userId])
+  @@index([userId])
+  @@index([businessId])
 }
 
 model BusinessMembership {
@@ -563,6 +591,8 @@ model StripeWebhookEvent {
 enum MediaCategory {
   avatar
   cover
+  business_logo
+  business_cover
   post_image
   attachment
 }
@@ -597,6 +627,17 @@ enum BusinessStatus {
   ACTIVE
   SUSPENDED
   CANCELED
+}
+
+enum BusinessType {
+  LOCAL_BUSINESS
+  NON_PROFIT
+  COMMUNITY_GROUP
+  EDUCATIONAL
+  RELIGIOUS
+  GOVERNMENT
+  ARTS_CULTURE
+  SPORTS_RECREATION
 }
 
 enum BusinessRole {

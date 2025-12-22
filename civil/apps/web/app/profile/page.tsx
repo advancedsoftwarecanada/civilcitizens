@@ -131,6 +131,8 @@ const MEDIA_LABELS: Record<ProfileMediaCategory, string> = {
 const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
   avatar: MEDIA_LIMITS.avatar,
   cover: MEDIA_LIMITS.cover,
+  business_logo: 8 * MB,
+  business_cover: 20 * MB,
   post_image: 25 * MB,
   attachment: 40 * MB,
 }

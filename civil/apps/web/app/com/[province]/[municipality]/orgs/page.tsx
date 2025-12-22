@@ -1,13 +1,26 @@
 import CommunitySection from '../../../_components/CommunitySection'
+import OrganizationCreateButton from '../../../_components/OrganizationCreateButton'
+import CommunityOrganizationsList from '../../../_components/CommunityOrganizationsList'
 
-export default function CommunityOrganizationsPage() {
+export const dynamic = 'force-dynamic'
+
+type PageProps = {
+  params: {
+    province: string
+    municipality: string
+  }
+}
+
+export default async function CommunityOrganizationsPage({ params }: PageProps) {
   return (
     <CommunitySection title="Organizations" description="Local clubs, unions, associations, and boards rooted in this city.">
-      <p>
-        Soon this directory will list every verified org with membership controls and admin tooling. Each organization
-        gets its own nested route so they can run posts, events, jobs, and discussions without leaving the community
-        shell.
-      </p>
+      <div className="flex justify-end">
+        <OrganizationCreateButton province={params.province} municipality={params.municipality} />
+      </div>
+
+      <p className="text-sm text-slate-600">Your organizations in this community.</p>
+
+      <CommunityOrganizationsList province={params.province} municipality={params.municipality} />
     </CommunitySection>
   )
 }
