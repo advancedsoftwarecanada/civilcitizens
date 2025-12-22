@@ -4,7 +4,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import sharp from 'sharp'
 import pino from 'pino'
 import { prisma } from '@civil/db'
-import type { MediaCategory } from '@prisma/client'
+import type { MediaCategory } from '@civil/db'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 const MEDIA_S3_ENDPOINT = process.env.MEDIA_S3_ENDPOINT || 'http://127.0.0.1:9000'
@@ -65,6 +65,16 @@ const VARIANT_PRESETS: Record<MediaCategory, VariantPreset[]> = {
     { name: 'avatar-thumb', width: 96, height: 96, fit: 'cover', quality: 90 },
   ],
   cover: [
+    { name: 'cover-xl', width: 1920, height: 640, fit: 'cover', quality: 85 },
+    { name: 'cover-lg', width: 1280, height: 480, fit: 'cover', quality: 85 },
+    { name: 'cover-md', width: 960, height: 360, fit: 'cover', quality: 85 },
+  ],
+  business_logo: [
+    { name: 'logo@2x', width: 512, height: 512, fit: 'cover', quality: 90 },
+    { name: 'logo@1x', width: 256, height: 256, fit: 'cover', quality: 90 },
+    { name: 'logo-thumb', width: 96, height: 96, fit: 'cover', quality: 90 },
+  ],
+  business_cover: [
     { name: 'cover-xl', width: 1920, height: 640, fit: 'cover', quality: 85 },
     { name: 'cover-lg', width: 1280, height: 480, fit: 'cover', quality: 85 },
     { name: 'cover-md', width: 960, height: 360, fit: 'cover', quality: 85 },
@@ -212,6 +222,16 @@ async function updateUserMediaReferences(
     const url = variants['cover-xl']?.url || variants['cover-lg']?.url || variants['cover-md']?.url
     if (url) {
       await prisma.user.updateMany({ where: { id: ownerId, coverMediaId: assetId }, data: { coverUrl: url } })
+    }
+  } else if (category === 'business_logo') {
+    const url = variants['logo@2x']?.url || variants['logo@1x']?.url || variants['logo-thumb']?.url
+    if (url) {
+      await prisma.business.updateMany({ where: { logoMediaId: assetId }, data: { logoUrl: url } })
+    }
+  } else if (category === 'business_cover') {
+    const url = variants['cover-xl']?.url || variants['cover-lg']?.url || variants['cover-md']?.url
+    if (url) {
+      await prisma.business.updateMany({ where: { coverMediaId: assetId }, data: { coverUrl: url } })
     }
   }
 }

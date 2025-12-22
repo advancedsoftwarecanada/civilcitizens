@@ -9,3 +9,4 @@ export const prisma: PrismaClient = global.prisma ?? new PrismaClient()
 if (process.env.NODE_ENV !== 'production') global.prisma = prisma
 
 export * from '@prisma/client'
+export type { Prisma } from '@prisma/client'

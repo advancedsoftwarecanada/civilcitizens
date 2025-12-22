@@ -34,6 +34,15 @@ export type ApiPost = {
   provinceName?: string | null
   communitySlug?: string | null
   communityName?: string | null
+  organization?: {
+    id: string
+    name: string
+    slug: string
+    isVerified: boolean
+    logoUrl?: string | null
+    provinceCode: string | null
+    communitySlug: string | null
+  } | null
   author: {
     id: string
     handle: string
