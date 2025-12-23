@@ -17,12 +17,17 @@ export type CommunityOrganization = {
     | 'ARTS_CULTURE'
     | 'SPORTS_RECREATION'
   description: string | null
+  phone?: string | null
+  websiteUrl?: string | null
+  address?: string | null
+  schedule?: string | null
   status: 'DRAFT' | 'ACTIVE' | 'SUSPENDED' | 'CANCELED'
   isVerified: boolean
   logoUrl: string | null
   coverUrl: string | null
   followerCount: number
   viewerFollowed: boolean
+  viewerRole?: 'OWNER' | 'MANAGER' | null
   createdAt: string
   updatedAt: string
 }
