@@ -13,7 +13,7 @@ type PageProps = {
 
 export default function OrganizationSettingsPage({ params }: PageProps) {
   return (
-    <OrganizationSection title="Organization settings" description="Update your organization profile photos.">
+    <OrganizationSection title="Settings" description="Update your organization profile photos.">
       <OrganizationSettingsClient province={params.province} municipality={params.municipality} slug={params.organization} />
     </OrganizationSection>
   )

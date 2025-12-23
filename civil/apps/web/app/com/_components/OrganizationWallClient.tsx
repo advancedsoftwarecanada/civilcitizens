@@ -1,9 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import clsx from 'clsx'
-import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import PostFeedItem from '../../_components/PostFeedItem'
+import PostComposer from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import type { ReactionType } from '@civil/shared'
@@ -14,13 +13,6 @@ const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
   { value: 'new', label: 'New' },
 ]
-
-function formatShortDate(value?: string | null) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-}
 
 export default function OrganizationWallClient({
   province,
@@ -114,8 +106,36 @@ export default function OrganizationWallClient({
     }
   }, [token])
 
-  const coverDisplayUrl = org.coverUrl ?? null
-  const createdLabel = formatShortDate(org.createdAt)
+  useEffect(() => {
+    if (!token) return
+    let cancelled = false
+    const refreshOrg = async () => {
+      try {
+        const res = await fetch(
+          buildApiUrl(
+            `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
+          ),
+          { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+        )
+        if (!res.ok) return
+        const payload = (await res.json().catch(() => null)) as { org?: CommunityOrganization } | null
+        if (!cancelled && payload?.org) setOrg(payload.org)
+      } catch {
+        // ignore
+      }
+    }
+    void refreshOrg()
+    return () => {
+      cancelled = true
+    }
+  }, [municipality, province, slug, token])
+
+  const canPostAsOrg = Boolean(viewerId && (org.viewerRole === 'OWNER' || org.viewerRole === 'MANAGER' || org.ownerId === viewerId))
+  const communityTarget = org.provinceCode && org.communitySlug ? { provinceCode: org.provinceCode, communitySlug: org.communitySlug } : null
+
+  const handlePostCreated = useCallback((post: ApiPost) => {
+    setPosts((prev) => [post, ...prev])
+  }, [])
 
   const handleReact = useCallback(async (postId: string, reaction: ReactionType | null) => {
     if (!token) {
@@ -144,47 +164,16 @@ export default function OrganizationWallClient({
   }, [token])
 
   return (
-    <div className={org ? 'space-y-0' : undefined}>
-      <section className="relative rounded-[36px] rounded-b-none border border-white/60 bg-white/40 shadow-[0_35px_120px_rgba(15,23,42,0.12)]">
-        <div className="relative h-48 w-full overflow-hidden rounded-t-[36px] sm:h-60">
-          {coverDisplayUrl ? (
-            <>
-              <img src={coverDisplayUrl} alt={`${org.name} cover`} className="absolute inset-0 h-full w-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/0 to-black/20" />
-            </>
-          ) : (
-            <div className="absolute inset-0 bg-gradient-to-r from-[#fde2d7] via-[#f7f0ff] to-[#dff3ff]" />
-          )}
-        </div>
-      </section>
-
-      <section
-        className={clsx(
-          'rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8',
-          org && 'rounded-t-none border-t-0',
-        )}
-      >
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-rose-200 via-amber-100 to-sky-200 blur-lg" aria-hidden="true" />
-              <VerifiedAvatar
-                src={org.logoUrl}
-                alt={org.name}
-                initials={org.name}
-                size={96}
-                isVerified={Boolean(org.isVerified)}
-                isBusiness
-                className="relative border-4 border-white"
-              />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{org.name}</h1>
-              <p className="text-sm text-slate-500">@{org.slug} · Created {createdLabel}</p>
-            </div>
-          </div>
-        </div>
-      </section>
+    <div className="space-y-6">
+      {canPostAsOrg && communityTarget ? (
+        <PostComposer
+          className="rounded-3xl border border-slate-200 bg-white shadow-sm"
+          communityTarget={communityTarget}
+          businessTarget={{ businessId: org.id }}
+          defaultAudience="community"
+          onPostCreated={handlePostCreated}
+        />
+      ) : null}
 
       {org.description ? (
         <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">

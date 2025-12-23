@@ -15,12 +15,13 @@ import {
 import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import VerifiedAvatar from './VerifiedAvatar'
-import { PRIMARY_NAV, type SidebarNavItem } from './Sidebar'
+import { PRIMARY_NAV } from './Sidebar'
 import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
 import FriendsRightRail from './FriendsRightRail'
 import { getStoredToken } from '../_lib/tokenStorage'
+import Block from './Block'
 
 const NAV_BUTTONS: Array<{
   key: 'menu' | 'search' | 'notifications' | 'messages' | 'wallet' | 'more'
@@ -42,6 +43,69 @@ const MAX_SWIPE_VERTICAL_DELTA = 80
 
 type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
 
+const ORG_DRAWER_LINKS: Array<{ key: string; label: string; segment: string }> = [
+  { key: 'overview', label: 'Overview', segment: '' },
+  { key: 'posts', label: 'Posts', segment: 'posts' },
+  { key: 'events', label: 'Events', segment: 'events' },
+  { key: 'jobs', label: 'Jobs', segment: 'jobs' },
+  { key: 'gigs', label: 'Gigs', segment: 'gigs' },
+  { key: 'discussions', label: 'Discussions', segment: 'discussions' },
+  { key: 'settings', label: 'Settings', segment: 'settings' },
+]
+
+function getOrgRouteFromPathname(pathname: string | null | undefined):
+  | { basePath: string; activePath: string }
+  | null {
+  if (!pathname) return null
+  const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
+  if (parts.length < 5) return null
+  if (parts[0] !== 'com') return null
+  if (parts[3] !== 'orgs') return null
+  const province = parts[1]
+  const municipality = parts[2]
+  const organization = parts[4]
+  if (!province || !municipality || !organization) return null
+  const basePath = `/com/${province}/${municipality}/orgs/${organization}`
+  return { basePath, activePath: pathname }
+}
+
+function OrganizationMoreBlock({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string | null | undefined
+  onNavigate: () => void
+}) {
+  const orgInfo = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
+  if (!orgInfo) return null
+
+  return (
+    <Block title="Organization" className="p-0">
+      <div className="divide-y divide-slate-100">
+        {ORG_DRAWER_LINKS.map((link) => {
+          const href = link.segment ? `${orgInfo.basePath}/${link.segment}` : orgInfo.basePath
+          const active = orgInfo.activePath === href || (link.segment && orgInfo.activePath?.startsWith(`${href}`))
+          return (
+            <Link
+              key={link.key}
+              href={href}
+              onClick={onNavigate}
+              className={clsx(
+                'flex items-center justify-between px-5 py-3 text-sm font-semibold transition-colors',
+                active
+                  ? 'bg-slate-50 text-[var(--cc-primary)]'
+                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900',
+              )}
+            >
+              <span>{link.label}</span>
+            </Link>
+          )
+        })}
+      </div>
+    </Block>
+  )
+}
+
 export default function MobileDock() {
   const pathname = usePathname()
   const router = useRouter()
@@ -49,6 +113,7 @@ export default function MobileDock() {
   const [menuMounted, setMenuMounted] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [moreMounted, setMoreMounted] = useState(false)
+  const isOrganizationsDirectory = pathname === '/organizations/directory'
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [hasSession, setHasSession] = useState(false)
@@ -272,8 +337,20 @@ export default function MobileDock() {
     if (pathname?.startsWith('/friends')) {
       return <FriendsRightRail />
     }
-    return <RightRail />
-  }, [pathname])
+    if (pathname?.startsWith('/organizations')) {
+      return isOrganizationsDirectory ? (
+        <RightRail mode="organizationsDirectory" sticky={false} />
+      ) : (
+        <RightRail mode="organizations" sticky={false} />
+      )
+    }
+    return (
+      <div className="space-y-6">
+        <OrganizationMoreBlock pathname={pathname} onNavigate={handleCloseMore} />
+        <RightRail sticky={false} />
+      </div>
+    )
+  }, [pathname, handleCloseMore, isOrganizationsDirectory])
 
   useEffect(() => {
     if (!hydrated || !hasSession) return undefined

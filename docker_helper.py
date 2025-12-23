@@ -15,6 +15,30 @@ COMPOSE_DIR = ROOT_DIR / "civil"
 DOCKER_COMPOSE_FILE = COMPOSE_DIR / "docker-compose.yml"
 
 
+def ensure_prisma_env(overrides: Mapping[str, str]) -> None:
+    """Ensure Prisma CLI can run locally.
+
+    Prisma loads environment variables from a `.env` file in the schema directory.
+    Our docker compose env uses an internal host (`postgres`) which is not reachable
+    from the host shell, so we generate a host-friendly DATABASE_URL.
+    """
+
+    db_env_path = COMPOSE_DIR / "packages" / "db" / ".env"
+
+    database_url = overrides.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if not database_url:
+        postgres_host_port = overrides.get("POSTGRES_HOST_PORT") or os.environ.get("POSTGRES_HOST_PORT") or "5432"
+        database_url = f"postgresql://postgres:postgres@localhost:{postgres_host_port}/civil"
+
+    try:
+        db_env_path.parent.mkdir(parents=True, exist_ok=True)
+        db_env_path.write_text(f"DATABASE_URL={database_url}\n")
+        print(f"→ Wrote Prisma env {db_env_path.relative_to(ROOT_DIR)}")
+    except OSError:
+        # Non-fatal: docker compose can still run even if we can't write the file.
+        print("→ Warning: unable to write Prisma env file; Prisma CLI may require DATABASE_URL in your shell")
+
+
 def ensure_docker() -> None:
     if shutil.which("docker") is None:
         print("Error: docker is not installed or not on PATH", file=sys.stderr)
@@ -245,6 +269,8 @@ def run_helper(
 
     if env_label:
         overrides.setdefault("CIVIL_ENV_LABEL", env_label)
+
+    ensure_prisma_env(overrides)
 
     command_map = {
         "up": command_up,

@@ -5,6 +5,7 @@ import Link from 'next/link'
 import DashboardShell from '../../_components/DashboardShell'
 import Sidebar from '../../_components/Sidebar'
 import { buildApiUrl } from '../../_lib/api'
+import { RightRail } from '../../_components/RightRail'
 
 type OrgDirectoryItem = {
   id: string
@@ -22,6 +23,12 @@ type OrgDirectoryItem = {
   provinceCode: string
   communitySlug: string
   isVerified: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
+  phone?: string | null
+  websiteUrl?: string | null
+  address?: string | null
+  schedule?: string | null
 }
 
 type DirectoryResponse = {
@@ -42,6 +49,13 @@ const TYPE_OPTIONS: Array<{ value: '' | OrgDirectoryItem['type']; label: string 
 
 function formatTypeLabel(value: OrgDirectoryItem['type']) {
   return TYPE_OPTIONS.find((opt) => opt.value === value)?.label ?? value
+}
+
+function toWebsiteHref(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed
+  return `https://${trimmed}`
 }
 
 export default function OrganizationDirectoryPageClient() {
@@ -77,7 +91,11 @@ export default function OrganizationDirectoryPageClient() {
   }, [load])
 
   return (
-    <DashboardShell sidebar={<Sidebar active="organizations" />} mainClassName="space-y-6">
+    <DashboardShell
+      sidebar={<Sidebar active="organizations" />}
+      rightRail={<RightRail mode="organizationsDirectory" />}
+      mainClassName="space-y-6"
+    >
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold text-slate-900">Organizations Directory</h1>
         <p className="text-sm text-slate-600">Search and browse organizations by type.</p>
@@ -120,17 +138,49 @@ export default function OrganizationDirectoryPageClient() {
             {items.map((org) => (
               <li key={org.id} className="py-3">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <Link
-                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                      className="block truncate text-sm font-semibold text-slate-900 hover:underline"
-                    >
-                      {org.name}
-                    </Link>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {formatTypeLabel(org.type)} · {org.provinceCode.toUpperCase()} · {org.communitySlug}
-                    </p>
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                      {org.coverUrl ? (
+                        <img src={org.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                      ) : null}
+                      <div className="absolute -bottom-3 left-2 h-10 w-10 overflow-hidden rounded-full border border-slate-200 bg-white">
+                        {org.logoUrl ? (
+                          <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="min-w-0">
+                      <Link
+                        href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                        className="block truncate text-sm font-semibold text-slate-900 hover:underline"
+                      >
+                        {org.name}
+                      </Link>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatTypeLabel(org.type)} · {org.provinceCode.toUpperCase()} · {org.communitySlug}
+                      </p>
+
+                      <div className="mt-2 space-y-1 text-xs text-slate-600">
+                        {org.phone ? <p className="truncate">{org.phone}</p> : null}
+                        {org.websiteUrl ? (
+                          <p className="truncate">
+                            <a
+                              href={toWebsiteHref(org.websiteUrl)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="hover:underline"
+                            >
+                              {org.websiteUrl}
+                            </a>
+                          </p>
+                        ) : null}
+                        {org.address ? <p className="truncate">{org.address}</p> : null}
+                        {org.schedule ? <p className="truncate">{org.schedule}</p> : null}
+                      </div>
+                    </div>
                   </div>
+
                   {org.isVerified ? (
                     <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Verified</span>
                   ) : null}

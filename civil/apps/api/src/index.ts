@@ -3126,9 +3126,44 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true } })
     if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
+    let business: { id: string; ownerId: string; provinceCode: string | null; communitySlug: string | null; status: BusinessStatus } | null = null
+    const businessId = (parse.data as any).businessId as string | undefined
+    if (businessId) {
+      business = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { id: true, ownerId: true, provinceCode: true, communitySlug: true, status: true },
+      })
+      if (!business) return reply.code(404).send({ error: 'organization_not_found' })
+
+      const isOwner = business.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: business.id, userId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(403).send({ error: 'forbidden' })
+    }
+
     let provinceCode: string | null = null
     let communitySlug: string | null = null
-    if (parse.data.communityProvince && parse.data.communitySlug) {
+    if (business) {
+      if (!business.provinceCode || !business.communitySlug) {
+        return reply.code(400).send({ error: 'organization_missing_community' })
+      }
+      const normalizedProvince = normalizeProvinceCode(business.provinceCode)
+      if (!normalizedProvince) {
+        return reply.code(400).send({ error: 'invalid_province' })
+      }
+      provinceCode = normalizedProvince
+      communitySlug = business.communitySlug
+
+      const requestedProvince = parse.data.communityProvince ? normalizeProvinceCode(parse.data.communityProvince) : null
+      const requestedCommunity = parse.data.communitySlug?.trim() ? slugifyCommunityName(parse.data.communitySlug) : null
+      if ((requestedProvince && requestedProvince !== provinceCode) || (requestedCommunity && requestedCommunity !== communitySlug)) {
+        return reply.code(400).send({ error: 'organization_community_mismatch' })
+      }
+    } else if (parse.data.communityProvince && parse.data.communitySlug) {
       const normalizedProvince = normalizeProvinceCode(parse.data.communityProvince)
       if (!normalizedProvince) {
         return reply.code(400).send({ error: 'invalid_province' })
@@ -3156,6 +3191,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       const post = await tx.post.create({
         data: {
           authorId: userId,
+          ...(business ? { businessId: business.id } : {}),
           body,
           mediaUrl,
           images: images ? (images as any) : undefined,
@@ -3167,30 +3203,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           jurisdiction: normalizedJurisdiction,
           sharedPostId,
         },
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-          sharedPost: {
-            include: {
-              author: {
-                select: {
-                  id: true,
-                  handle: true,
-                  name: true,
-                  avatarUrl: true,
-                  premiumStatus: true,
-                },
-              },
-            },
-          },
-        },
+        include: POST_INCLUDE,
       })
 
       if (hashtags?.length) {
@@ -4258,6 +4271,10 @@ const CommunityOrgCreateBody = z.object({
 const CommunityOrgSettingsBody = z.object({
   logoMediaId: z.string().trim().min(3).optional(),
   coverMediaId: z.string().trim().min(3).optional(),
+  phone: z.string().trim().min(1).max(50).optional().nullable(),
+  websiteUrl: z.string().trim().max(2048).optional().nullable(),
+  address: z.string().trim().max(500).optional().nullable(),
+  schedule: z.string().trim().max(2000).optional().nullable(),
 })
 
 type CommunityOrgRecord = {
@@ -4269,6 +4286,10 @@ type CommunityOrgRecord = {
   slug: string
   type: BusinessType
   description: string | null
+  phone?: string | null
+  websiteUrl?: string | null
+  address?: string | null
+  schedule?: string | null
   status: BusinessStatus
   isVerified: boolean
   logoUrl?: string | null
@@ -4278,7 +4299,7 @@ type CommunityOrgRecord = {
   _count?: { follows?: number }
 }
 
-function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boolean) {
+function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boolean, viewerRole: 'OWNER' | 'MANAGER' | null = null) {
   return {
     id: org.id,
     ownerId: org.ownerId,
@@ -4288,12 +4309,17 @@ function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boole
     slug: org.slug,
     type: org.type,
     description: org.description,
+    phone: org.phone ?? null,
+    websiteUrl: org.websiteUrl ?? null,
+    address: org.address ?? null,
+    schedule: org.schedule ?? null,
     status: org.status,
     isVerified: org.isVerified,
     logoUrl: org.logoUrl ?? null,
     coverUrl: org.coverUrl ?? null,
     followerCount: org._count?.follows ?? 0,
     viewerFollowed,
+    viewerRole,
     createdAt: org.createdAt,
     updatedAt: org.updatedAt,
   }
@@ -4425,6 +4451,10 @@ app.get('/organizations/directory', async (req: FastifyRequest, reply: FastifyRe
         isVerified: true
         logoUrl: true
         coverUrl: true
+        phone: true
+        websiteUrl: true
+        address: true
+        schedule: true
       }
     }>
 
@@ -4455,6 +4485,10 @@ app.get('/organizations/directory', async (req: FastifyRequest, reply: FastifyRe
         isVerified: true,
         logoUrl: true,
         coverUrl: true,
+        phone: true,
+        websiteUrl: true,
+        address: true,
+        schedule: true,
       },
     })
 
@@ -4464,6 +4498,10 @@ app.get('/organizations/directory', async (req: FastifyRequest, reply: FastifyRe
         .map((row: DirectoryOrgRow) => ({
           logoUrl: row.logoUrl ?? null,
           coverUrl: row.coverUrl ?? null,
+          phone: row.phone ?? null,
+          websiteUrl: row.websiteUrl ?? null,
+          address: row.address ?? null,
+          schedule: row.schedule ?? null,
           id: row.id,
           name: row.name,
           slug: row.slug,
@@ -4528,7 +4566,16 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
         )
       : false
 
-    return reply.send({ org: buildCommunityOrgPayload(org, viewerFollowed) })
+    const viewerRole = viewerId
+      ? org.ownerId === viewerId
+        ? 'OWNER'
+        : ((await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: org.id, userId: viewerId } },
+            select: { role: true },
+          }))?.role as 'OWNER' | 'MANAGER' | undefined) ?? null
+      : null
+
+    return reply.send({ org: buildCommunityOrgPayload(org, viewerFollowed, viewerRole) })
   }),
 )
 
@@ -4589,6 +4636,13 @@ app.post('/communities/:province/:municipality/orgs', async (req: FastifyRequest
         where: { businessId_userId: { businessId: created.id, userId } },
         create: { businessId: created.id, userId },
         update: {},
+        select: { id: true },
+      })
+
+      await tx.businessMembership.upsert({
+        where: { businessId_userId: { businessId: created.id, userId } },
+        create: { businessId: created.id, userId, role: 'OWNER' },
+        update: { role: 'OWNER' },
         select: { id: true },
       })
 
@@ -4709,9 +4763,35 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     })
 
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
-    if (org.ownerId !== userId) return reply.code(403).send({ error: 'forbidden' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: org.id, userId } },
+          select: { role: true },
+        })
+
+    if (!membership) return reply.code(403).send({ error: 'forbidden' })
 
     const nextData: Prisma.BusinessUpdateInput = {}
+
+    if ('phone' in body.data) {
+      const next = body.data.phone
+      nextData.phone = next ? next : null
+    }
+    if ('websiteUrl' in body.data) {
+      const next = body.data.websiteUrl
+      nextData.websiteUrl = next ? next : null
+    }
+    if ('address' in body.data) {
+      const next = body.data.address
+      nextData.address = next ? next : null
+    }
+    if ('schedule' in body.data) {
+      const next = body.data.schedule
+      nextData.schedule = next ? next : null
+    }
 
     if (body.data.logoMediaId) {
       const asset = await prisma.mediaAsset.findFirst({
@@ -4747,6 +4827,10 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
         slug: true,
         type: true,
         description: true,
+        phone: true,
+        websiteUrl: true,
+        address: true,
+        schedule: true,
         status: true,
         isVerified: true,
         logoUrl: true,
@@ -4757,7 +4841,154 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
       },
     })) as CommunityOrgRecord
 
-    return reply.send({ org: buildCommunityOrgPayload(updated, true) })
+    return reply.send({ org: buildCommunityOrgPayload(updated, true, membership.role as any) })
+  }),
+)
+
+const CommunityOrgPhotoUpdateBody = z.object({
+  category: z.enum(['business_logo', 'business_cover']),
+  displayAssetId: MediaAssetIdSchema,
+  fullAssetId: MediaAssetIdSchema.optional(),
+  caption: z.string().trim().max(5000).optional(),
+})
+
+app.post('/communities/:province/:municipality/orgs/:slug/profile-photo', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const body = CommunityOrgPhotoUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: {
+        id: true,
+        ownerId: true,
+        provinceCode: true,
+        communitySlug: true,
+        name: true,
+        slug: true,
+        type: true,
+        description: true,
+        status: true,
+        isVerified: true,
+        logoUrl: true,
+        coverUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { follows: true } },
+      },
+    })
+
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: org.id, userId } },
+          select: { role: true },
+        })
+    if (!membership) return reply.code(403).send({ error: 'forbidden' })
+
+    const displayAsset = await prisma.mediaAsset.findFirst({ where: { id: body.data.displayAssetId, ownerId: userId, category: body.data.category } })
+    if (!displayAsset) return reply.code(404).send({ error: 'display_asset_not_found' })
+    if (displayAsset.status === 'failed') return reply.code(400).send({ error: 'display_asset_failed' })
+    if (displayAsset.status !== 'ready') return reply.code(409).send({ error: 'display_asset_not_ready' })
+
+    const fullAssetId = body.data.fullAssetId ?? body.data.displayAssetId
+    const fullAsset = await prisma.mediaAsset.findFirst({ where: { id: fullAssetId, ownerId: userId } })
+    if (!fullAsset) return reply.code(404).send({ error: 'full_asset_not_found' })
+    if (fullAsset.status === 'failed') return reply.code(400).send({ error: 'full_asset_failed' })
+    if (fullAsset.status !== 'ready') return reply.code(409).send({ error: 'full_asset_not_ready' })
+
+    const displayVariantPreference = body.data.category === 'business_logo' ? ['logo@2x', 'logo@1x', 'logo-thumb'] : ['cover-xl', 'cover-lg', 'cover-md']
+    const displayUrl = extractVariantUrl(displayAsset.variants, displayVariantPreference)
+    if (!displayUrl) return reply.code(400).send({ error: 'display_variant_missing' })
+
+    const postVariantPreference = (() => {
+      if (fullAsset.category === 'post_image') {
+        return ['post-xl', 'post-lg', 'post-md']
+      }
+      if (fullAsset.category === 'business_cover' || fullAsset.category === 'cover') {
+        return ['cover-xl', 'cover-lg', 'cover-md']
+      }
+      if (fullAsset.category === 'business_logo' || fullAsset.category === 'avatar') {
+        return ['logo@2x', 'logo@1x', 'logo-thumb']
+      }
+      return ['post-xl', 'post-lg', 'post-md']
+    })()
+
+    const postMediaUrl = extractVariantUrl(fullAsset.variants, postVariantPreference)
+    if (!postMediaUrl) return reply.code(400).send({ error: 'full_variant_missing' })
+
+    const baseBody = body.data.category === 'business_logo' ? 'Updated organization profile photo.' : 'Updated organization cover photo.'
+    const postBody = body.data.caption?.trim() ? body.data.caption.trim() : baseBody
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const post = await tx.post.create({
+        data: {
+          authorId: userId,
+          businessId: org.id,
+          body: postBody,
+          mediaUrl: postMediaUrl,
+          type: 'post',
+          provinceCode: org.provinceCode,
+          communitySlug: org.communitySlug,
+          jurisdiction: 'municipal',
+        },
+        include: POST_INCLUDE,
+      })
+
+      const businessUpdate: Prisma.BusinessUpdateInput =
+        body.data.category === 'business_logo'
+          ? { logoMedia: { connect: { id: displayAsset.id } }, logoUrl: displayUrl }
+          : { coverMedia: { connect: { id: displayAsset.id } }, coverUrl: displayUrl }
+
+      const updated = (await tx.business.update({
+        where: { id: org.id },
+        data: businessUpdate,
+        select: {
+          id: true,
+          ownerId: true,
+          provinceCode: true,
+          communitySlug: true,
+          name: true,
+          slug: true,
+          type: true,
+          description: true,
+          status: true,
+          isVerified: true,
+          logoUrl: true,
+          coverUrl: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: { select: { follows: true } },
+        },
+      })) as CommunityOrgRecord
+
+      return { post, org: updated }
+    })
+
+    return reply.send({
+      ok: true,
+      post: formatPost(result.post),
+      org: buildCommunityOrgPayload(result.org as any, true, membership.role as any),
+    })
   }),
 )
 

@@ -9,6 +9,7 @@ export type Jurisdiction = z.infer<typeof JurisdictionEnum>
 export const CreatePostInput = z
   .object({
     type: PostTypeEnum.default('post'),
+    businessId: z.string().cuid().optional(),
     title: z
       .string()
       .trim()
@@ -25,10 +26,11 @@ export const CreatePostInput = z
     sharedPostId: z.string().cuid().optional(),
   })
   .superRefine((data, ctx) => {
+    const hasBusinessId = typeof data.businessId === 'string' && data.businessId.trim().length > 0
     const hasProvince = typeof data.communityProvince === 'string' && data.communityProvince.trim().length > 0
     const hasCommunitySlug = typeof data.communitySlug === 'string' && data.communitySlug.trim().length > 0
 
-    if (hasProvince !== hasCommunitySlug) {
+    if (!hasBusinessId && hasProvince !== hasCommunitySlug) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Community province and slug must both be provided to target a community',
@@ -36,7 +38,7 @@ export const CreatePostInput = z
       })
     }
 
-    if (hasProvince) {
+    if (!hasBusinessId && hasProvince) {
       const normalized = normalizeProvinceCode(data.communityProvince)
       if (!normalized) {
         ctx.addIssue({
