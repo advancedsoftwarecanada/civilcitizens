@@ -39,6 +39,9 @@ yarn-error.log*
 # !.env.production
 # !**/.env.production
 
+# Generated local Prisma env
+civil/packages/db/.env
+
 # OS/editor misc
 .DS_Store
 Thumbs.db

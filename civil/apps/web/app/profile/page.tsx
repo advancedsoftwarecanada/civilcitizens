@@ -4,8 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildHandleBase, MediaCategory } from '@civil/shared'
-import Cropper, { Area } from 'react-easy-crop'
-import 'react-easy-crop/react-easy-crop.css'
+import { Area } from 'react-easy-crop'
 import Sidebar from '../_components/Sidebar'
 import RichTextEditor from '../_components/RichTextEditor'
 import { pushToast } from '../_components/useToasts'
@@ -13,6 +12,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 import DashboardShell from '../_components/DashboardShell'
+import PhotoUpdateModal from '../_components/PhotoUpdateModal'
 
 type Viewer = {
   id: string
@@ -1795,141 +1795,36 @@ export default function ProfileEditPage() {
         )}
       </DashboardShell>
 
-      {photoModalCategory ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">
-                  {photoModalCategory === 'avatar' ? 'Update profile photo' : 'Update cover photo'}
-                </h3>
-                <p className="text-sm text-gray-500">Share a quick post when you refresh your photo.</p>
-              </div>
-              <button
-                type="button"
-                onClick={closePhotoModal}
-                className="rounded-full p-2 text-gray-500 hover:bg-gray-100"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <div className="space-y-4">
-                <div className="overflow-hidden rounded-xl border bg-slate-50">
-                  {photoModalCategory && activePhotoDraft?.previewUrl ? (
-                    <div className="relative h-64 w-full bg-gray-900/5">
-                      <Cropper
-                        key={`${currentPhotoCategory}-${activePhotoDraft.previewUrl}`}
-                        image={activePhotoDraft.previewUrl}
-                        crop={activePhotoDraft.crop}
-                        zoom={activePhotoDraft.zoom}
-                        aspect={currentPhotoCategory === 'avatar' ? 1 : COVER_ASPECT_RATIO}
-                        cropShape={currentPhotoCategory === 'avatar' ? 'round' : 'rect'}
-                        showGrid={currentPhotoCategory !== 'avatar'}
-                        restrictPosition
-                        objectFit="contain"
-                        onCropChange={handleCropChange(currentPhotoCategory)}
-                        onZoomChange={handleZoomChange(currentPhotoCategory)}
-                        onCropComplete={handleCropComplete(currentPhotoCategory)}
-                      />
-                    </div>
-                  ) : modalMediaState?.previewUrl || modalMediaState?.serverUrl || (photoModalCategory === 'avatar' ? avatarDisplayUrl : coverDisplayUrl) ? (
-                    <img
-                      src={(modalMediaState?.previewUrl || modalMediaState?.serverUrl || (photoModalCategory === 'avatar' ? avatarDisplayUrl : coverDisplayUrl)) ?? ''}
-                      alt="Preview"
-                      className="h-64 w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-64 w-full items-center justify-center text-sm text-slate-500">Upload a photo to preview it.</div>
-                  )}
-                </div>
-
-                {photoModalCategory && activePhotoDraft?.previewUrl ? (
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
-                    <label className="font-medium text-gray-700" htmlFor={`crop-zoom-${currentPhotoCategory}`}>
-                      Zoom
-                    </label>
-                    <input
-                      id={`crop-zoom-${currentPhotoCategory}`}
-                      type="range"
-                      min={1}
-                      max={MAX_CROP_ZOOM}
-                      step={0.01}
-                      value={activePhotoDraft.zoom}
-                      onChange={(event) => {
-                        const nextValue = Number.parseFloat(event.target.value)
-                        handleZoomChange(currentPhotoCategory)(Number.isNaN(nextValue) ? 1 : nextValue)
-                      }}
-                      className="h-1 w-48 flex-1 cursor-pointer accent-[var(--cc-primary)]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => resetPhotoDraftCrop(currentPhotoCategory)}
-                      className="text-[var(--cc-primary)] transition hover:underline"
-                    >
-                      Reset position
-                    </button>
-                  </div>
-                ) : null}
-
-                {photoModalCategory && activePhotoDraft?.previewUrl ? (
-                  <p className="text-xs text-gray-500">
-                    Drag the image to find the perfect crop. We will keep this version for your profile and share the full photo in your update.
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
-                <button
-                  type="button"
-                  onClick={() => openFilePicker(photoModalCategory)}
-                  className="rounded border border-gray-300 px-3 py-1 font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={modalMediaState?.status === 'uploading' || modalMediaState?.status === 'processing' || photoPosting}
-                >
-                  {modalMediaState?.status === 'uploading' ? 'Uploading…' : 'Choose photo'}
-                </button>
-                {modalMediaState?.status === 'processing' ? <span className="text-amber-600">Processing your photo…</span> : null}
-                {modalMediaState?.error ? <span className="text-red-600">{modalMediaState.error}</span> : null}
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700" htmlFor="photo-description">
-                  Description
-                </label>
-                <textarea
-                  id="photo-description"
-                  value={photoCaption}
-                  onChange={(event) => setPhotoCaption(event.target.value)}
-                  rows={3}
-                  className="w-full rounded-lg border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-                  placeholder="Description"
-                  disabled={modalMediaState?.status === 'uploading' || modalMediaState?.status === 'processing' || photoPosting}
-                />
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={closePhotoModal}
-                className="rounded border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handlePostPhoto}
-                disabled={photoPosting || !canSubmitPhoto}
-                className="rounded bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
-              >
-                {photoPosting ? 'Posting…' : 'Post update'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <PhotoUpdateModal
+        open={Boolean(photoModalCategory)}
+        title={photoModalCategory === 'avatar' ? 'Update profile photo' : 'Update cover photo'}
+        subtitle="Share a quick post when you refresh your photo."
+        imageUrl={(modalMediaState?.previewUrl || modalMediaState?.serverUrl || (photoModalCategory === 'avatar' ? avatarDisplayUrl : coverDisplayUrl)) ?? null}
+        cropperImageUrl={photoModalCategory && activePhotoDraft?.previewUrl ? activePhotoDraft.previewUrl : null}
+        aspect={currentPhotoCategory === 'avatar' ? 1 : COVER_ASPECT_RATIO}
+        cropShape={currentPhotoCategory === 'avatar' ? 'round' : 'rect'}
+        showGrid={currentPhotoCategory !== 'avatar'}
+        crop={activePhotoDraft?.crop ?? { x: 0, y: 0 }}
+        zoom={activePhotoDraft?.zoom ?? 1}
+        maxZoom={MAX_CROP_ZOOM}
+        onCropChange={handleCropChange(currentPhotoCategory)}
+        onZoomChange={handleZoomChange(currentPhotoCategory)}
+        onCropComplete={handleCropComplete(currentPhotoCategory)}
+        onResetPosition={() => resetPhotoDraftCrop(currentPhotoCategory)}
+        onPickFile={() => {
+          if (!photoModalCategory) return
+          openFilePicker(photoModalCategory)
+        }}
+        uploadStatus={modalMediaState?.status}
+        uploadError={modalMediaState?.error}
+        caption={photoCaption}
+        onCaptionChange={setPhotoCaption}
+        primaryLabel="Post update"
+        primaryDisabled={photoPosting || !canSubmitPhoto}
+        primaryLoading={photoPosting}
+        onPrimary={handlePostPhoto}
+        onClose={closePhotoModal}
+      />
     </div>
   )
 }

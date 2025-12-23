@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { OrganizationContextProvider } from '../../../../_components/OrganizationContext'
 import OrganizationNav from '../../../../_components/OrganizationNav'
 import OrganizationRightColumn from '../../../../_components/OrganizationRightColumn'
+import OrganizationHeader from '../../../../_components/OrganizationHeader'
 import { fetchCommunityOrganization } from '../../../../../_lib/organizations'
 
 export const dynamic = 'force-dynamic'
@@ -31,9 +32,7 @@ export default async function OrganizationLayout({ children, params }: LayoutPro
       <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-8">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-10">
           <div className="space-y-6">
-            <div className="lg:hidden">
-              <OrganizationNav />
-            </div>
+            <OrganizationHeader org={org} fallbackName={name} />
             {children}
           </div>
           <aside className="hidden lg:block">

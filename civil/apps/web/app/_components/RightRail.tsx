@@ -1,10 +1,9 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeCommunity, isPremiumMember, type MeResponse } from '../_lib/me'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
 
@@ -35,8 +34,22 @@ type FollowedOrganization = {
   isVerified?: boolean
 }
 
+type OwnedOrganization = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string | null
+  communitySlug: string | null
+  isVerified?: boolean
+  status?: string
+}
+
 type OrganizationsFollowsResponse = {
   items?: FollowedOrganization[]
+}
+
+type OrganizationsOwnedResponse = {
+  items?: OwnedOrganization[]
 }
 
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
@@ -44,14 +57,33 @@ type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 export function RightRail({
   mode = 'default',
   showOrganizations = false,
+  sticky = true,
+  hideContactsAndCommunities = false,
 }: {
-  mode?: 'default' | 'organizations'
+  mode?: 'default' | 'organizations' | 'organizationsDirectory'
   showOrganizations?: boolean
+  sticky?: boolean
+  hideContactsAndCommunities?: boolean
 }) {
   const [status, setStatus] = useState<Status>('loading')
   const [data, setData] = useState<RightRailData | null>(null)
-  const [me, setMe] = useState<MeResponse | null>(null)
   const [organizations, setOrganizations] = useState<FollowedOrganization[]>([])
+  const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
+
+  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory'
+  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || showOrganizations
+  const shouldLoadOwnedOrganizations = mode === 'organizationsDirectory'
+  const shouldLoadHomeRail = !hideSocialBlocks
+
+  const subscribedOrganizations = useMemo(
+    () => organizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
+    [organizations],
+  )
+
+  const partOfOrganizations = useMemo(
+    () => ownedOrganizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
+    [ownedOrganizations],
+  )
 
   const loadData = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -60,63 +92,80 @@ export function RightRail({
       return
     }
     try {
-      const requests: Array<Promise<Response>> = [
-        fetch(buildApiUrl('/home/right-rail'), {
-          headers: { authorization: `Bearer ${token}` },
-        }),
-      ]
+      const requests: Array<{ key: 'home' | 'follows' | 'owned'; promise: Promise<Response> }> = []
 
-      const shouldLoadOrganizations = mode === 'organizations' || showOrganizations
+      if (shouldLoadHomeRail) {
+        requests.push({
+          key: 'home',
+          promise: fetch(buildApiUrl('/home/right-rail'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        })
+      }
+
       if (shouldLoadOrganizations) {
-        requests.push(
-          fetch(buildApiUrl('/organizations/follows'), {
+        requests.push({
+          key: 'follows',
+          promise: fetch(buildApiUrl('/organizations/follows'), {
             headers: { authorization: `Bearer ${token}` },
           }),
-        )
+        })
       }
 
-      if (mode === 'organizations') {
-        requests.push(
-          fetch(buildApiUrl('/auth/me'), {
+      if (shouldLoadOwnedOrganizations) {
+        requests.push({
+          key: 'owned',
+          promise: fetch(buildApiUrl('/organizations/owned'), {
             headers: { authorization: `Bearer ${token}` },
           }),
-        )
+        })
       }
 
-      const results = await Promise.all(requests)
-      const homeRes = results[0]
-      if (!homeRes) {
-        setStatus('error')
-        return
-      }
-      const orgsRes = (mode === 'organizations' || showOrganizations ? results[1] : undefined) as Response | undefined
-      const meRes = (mode === 'organizations' ? results[results.length - 1] : undefined) as Response | undefined
+      const results = await Promise.all(requests.map((entry) => entry.promise))
+      const byKey = new Map(requests.map((entry, index) => [entry.key, results[index] as Response]))
 
-      if (homeRes.status === 401 || orgsRes?.status === 401 || meRes?.status === 401) {
+      const homeRes = byKey.get('home')
+      const followsRes = byKey.get('follows')
+      const ownedRes = byKey.get('owned')
+
+      if (homeRes?.status === 401 || followsRes?.status === 401 || ownedRes?.status === 401) {
         setStatus('unauthorized')
         return
       }
-      if (!homeRes.ok) throw new Error('Failed to load')
-      const homeJson = (await homeRes.json()) as RightRailData
-      setData(homeJson)
 
-      if (orgsRes) {
-        if (orgsRes.ok) {
-          const payload = (await orgsRes.json().catch(() => null)) as OrganizationsFollowsResponse | null
-          const items = Array.isArray(payload?.items) ? payload.items : []
-          setOrganizations(items)
-        } else {
-          setOrganizations([])
-        }
+      const requiredHomeOk = shouldLoadHomeRail ? Boolean(homeRes?.ok) : true
+      const requiredFollowsOk = shouldLoadOrganizations ? Boolean(followsRes?.ok) : true
+      const requiredOwnedOk = shouldLoadOwnedOrganizations ? Boolean(ownedRes?.ok) : true
+
+      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk) {
+        setStatus('error')
+        if (!shouldLoadHomeRail) setData(null)
+        if (!shouldLoadOrganizations) setOrganizations([])
+        if (!shouldLoadOwnedOrganizations) setOwnedOrganizations([])
+        return
       }
 
-      if (mode === 'organizations') {
-        if (meRes?.ok) {
-          const viewer = (await meRes.json()) as MeResponse
-          setMe(viewer)
-        } else {
-          setMe(null)
-        }
+      if (homeRes?.ok) {
+        const homeJson = (await homeRes.json()) as RightRailData
+        setData(homeJson)
+      } else {
+        setData(null)
+      }
+
+      if (followsRes?.ok) {
+        const payload = (await followsRes.json().catch(() => null)) as OrganizationsFollowsResponse | null
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        setOrganizations(items)
+      } else {
+        setOrganizations([])
+      }
+
+      if (ownedRes?.ok) {
+        const payload = (await ownedRes.json().catch(() => null)) as OrganizationsOwnedResponse | null
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        setOwnedOrganizations(items)
+      } else {
+        setOwnedOrganizations([])
       }
 
       setStatus('ready')
@@ -124,7 +173,7 @@ export function RightRail({
       console.error(err)
       setStatus('error')
     }
-  }, [mode])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations])
 
   useEffect(() => {
     void loadData()
@@ -132,7 +181,7 @@ export function RightRail({
 
   if (status === 'loading') {
     return (
-      <div className="sticky top-8 space-y-6">
+      <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
         <div className="surface-card h-48 animate-pulse p-5" />
         <div className="surface-card h-48 animate-pulse p-5" />
       </div>
@@ -141,11 +190,54 @@ export function RightRail({
 
   if (status === 'unauthorized') return null
 
-  const showCreateOrganization = mode === 'organizations' && isPremiumMember(me) && hasHomeCommunity(me)
-  const createOrganizationHref = showCreateOrganization ? '/organizations/create' : null
-
   return (
-    <div className="sticky top-8 space-y-6">
+    <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
+      {mode === 'organizationsDirectory' ? (
+        <>
+          <Block
+            title="Organizations You're Subscribed to"
+            action={{ label: 'Show all', href: '/organizations/manager' }}
+            actionVariant="pill"
+          >
+            {subscribedOrganizations.length ? (
+              <ul className="space-y-3">
+                {subscribedOrganizations.slice(0, 10).map((org) => (
+                  <li key={org.id} className="flex items-center justify-between">
+                    <Link
+                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                      className="max-w-[200px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
+                    >
+                      {org.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No organizations subscribed.</p>
+            )}
+          </Block>
+
+          <Block title="Organizations You're a part of" action={{ label: 'Manage', href: '/organizations/manager' }} actionVariant="pill">
+            {partOfOrganizations.length ? (
+              <ul className="space-y-3">
+                {partOfOrganizations.slice(0, 10).map((org) => (
+                  <li key={org.id} className="flex items-center justify-between">
+                    <Link
+                      href={`/com/${String(org.provinceCode).toLowerCase()}/${String(org.communitySlug).toLowerCase()}/orgs/${org.slug}`}
+                      className="max-w-[200px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
+                    >
+                      {org.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No organizations managed.</p>
+            )}
+          </Block>
+        </>
+      ) : null}
+
       {mode === 'default' && showOrganizations ? (
         <Block title="Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
           {organizations.length ? (
@@ -170,8 +262,8 @@ export function RightRail({
       {mode === 'organizations' ? (
         <Block
           title="Organizations"
-          action={createOrganizationHref ? { label: 'Create an organization', href: createOrganizationHref } : undefined}
-          actionVariant={createOrganizationHref ? 'pill' : 'link'}
+          action={{ label: 'View all', href: '/organizations/directory' }}
+          actionVariant="link"
         >
           {organizations.length ? (
             <ul className="space-y-3">
@@ -193,6 +285,7 @@ export function RightRail({
       ) : null}
 
       {/* Friends Section */}
+      {!hideSocialBlocks ? (
       <Block
         title="Contacts"
         action={
@@ -234,42 +327,45 @@ export function RightRail({
           <p className="text-sm text-slate-500">No contacts yet.</p>
         )}
       </Block>
+      ) : null}
 
       {/* Communities Section */}
-      <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
-        {data?.communities.length ? (
-          <ul className="space-y-3">
-            {data.communities.map((comm) => {
-              const formattedName = comm.name
-                .split('-')
-                .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                .join(' ')
+      {!hideSocialBlocks ? (
+        <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
+          {data?.communities.length ? (
+            <ul className="space-y-3">
+              {data.communities.map((comm) => {
+                const formattedName = comm.name
+                  .split('-')
+                  .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                  .join(' ')
 
-              return (
-                <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-center justify-between">
-                  <Link
-                    href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                    className="max-w-[160px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
-                  >
-                    {formattedName}
-                  </Link>
-                  {comm.newPosts > 0 && (
+                return (
+                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-center justify-between">
                     <Link
                       href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                      className="flex items-center gap-1 text-xs font-semibold text-[var(--cc-primary)] hover:underline"
+                      className="max-w-[160px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
                     >
-                      <HiOutlineBell className="h-4 w-4" />
-                      ({comm.newPosts})
+                      {formattedName}
                     </Link>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="text-sm text-slate-500">No communities followed.</p>
-        )}
-      </Block>
+                    {comm.newPosts > 0 && (
+                      <Link
+                        href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
+                        className="flex items-center gap-1 text-xs font-semibold text-[var(--cc-primary)] hover:underline"
+                      >
+                        <HiOutlineBell className="h-4 w-4" />
+                        ({comm.newPosts})
+                      </Link>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No communities followed.</p>
+          )}
+        </Block>
+      ) : null}
     </div>
   )
 }

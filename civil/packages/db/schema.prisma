@@ -509,6 +509,10 @@ model Business {
   slug                 String
   type                 BusinessType         @default(LOCAL_BUSINESS)
   description          String?
+  phone                String?
+  websiteUrl           String?
+  address              String?
+  schedule             String?
   logoMediaId          String?              @unique
   coverMediaId         String?              @unique
   status               BusinessStatus       @default(DRAFT)

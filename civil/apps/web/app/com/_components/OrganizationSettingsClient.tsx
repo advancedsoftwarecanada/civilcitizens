@@ -1,11 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { Area } from 'react-easy-crop'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
+import PhotoUpdateModal from '../../_components/PhotoUpdateModal'
+import { computeFallbackCropArea, generateCroppedImageBlob, readImageDimensions } from '../../_lib/imageCrop'
 
 type MeResponse = {
   id: string
@@ -37,37 +40,37 @@ const MB = 1024 * 1024
 const MEDIA_LIMITS = {
   business_logo: 8 * MB,
   business_cover: 20 * MB,
+  post_image: 25 * MB,
 } as const
 
-type BusinessMediaCategory = keyof typeof MEDIA_LIMITS
+type BusinessMediaCategory = 'business_logo' | 'business_cover'
+type UploadStatus = 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
 
-type SlotState = {
-  status: 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
+type PhotoDraftState = {
+  file: File | null
   previewUrl: string | null
-  error: string | null
+  crop: { x: number; y: number }
+  zoom: number
+  croppedAreaPixels: Area | null
+  isDirty: boolean
+  fullAssetId: string | null
 }
 
-const createSlotState = (): SlotState => ({
-  status: 'idle',
+const createPhotoDraftState = (): PhotoDraftState => ({
+  file: null,
   previewUrl: null,
-  error: null,
+  crop: { x: 0, y: 0 },
+  zoom: 1,
+  croppedAreaPixels: null,
+  isDirty: false,
+  fullAssetId: null,
 })
 
-async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
-  return await new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file)
-    const img = new Image()
-    img.onload = () => {
-      URL.revokeObjectURL(url)
-      resolve({ width: img.naturalWidth, height: img.naturalHeight })
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      reject(new Error('image_load_failed'))
-    }
-    img.src = url
-  })
-}
+const COVER_EXPORT_WIDTH = 1920
+const COVER_EXPORT_HEIGHT = 640
+const COVER_ASPECT_RATIO = COVER_EXPORT_WIDTH / COVER_EXPORT_HEIGHT
+const LOGO_EXPORT_SIZE = 1024
+const MAX_CROP_ZOOM = 3
 
 function safeParseAbsoluteUrl(candidate: string | null | undefined): URL | null {
   if (!candidate) return null
@@ -117,14 +120,29 @@ export default function OrganizationSettingsClient({
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  const [logoState, setLogoState] = useState<SlotState>(() => createSlotState())
-  const [coverState, setCoverState] = useState<SlotState>(() => createSlotState())
+  const [details, setDetails] = useState({
+    phone: '',
+    websiteUrl: '',
+    address: '',
+    schedule: '',
+  })
+  const [detailsDirty, setDetailsDirty] = useState(false)
+
+  const [photoModalCategory, setPhotoModalCategory] = useState<BusinessMediaCategory | null>(null)
+  const [photoCaption, setPhotoCaption] = useState('')
+  const [photoPosting, setPhotoPosting] = useState(false)
+  const [drafts, setDrafts] = useState<Record<BusinessMediaCategory, PhotoDraftState>>(() => ({
+    business_logo: createPhotoDraftState(),
+    business_cover: createPhotoDraftState(),
+  }))
+  const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle')
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const logoInputRef = useRef<HTMLInputElement | null>(null)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
 
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('token') : null), [])
-  const isOwner = Boolean(me?.id && org?.ownerId && me.id === org.ownerId)
+  const canManage = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || (me?.id && org?.ownerId && me.id === org.ownerId))
 
   const orgApiPath = useMemo(() => {
     return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
@@ -162,155 +180,387 @@ export default function OrganizationSettingsClient({
     void load()
   }, [load])
 
-  const openPicker = useCallback((category: BusinessMediaCategory) => {
+  useEffect(() => {
+    if (!org) return
+    setDetails({
+      phone: org.phone ?? '',
+      websiteUrl: org.websiteUrl ?? '',
+      address: org.address ?? '',
+      schedule: org.schedule ?? '',
+    })
+    setDetailsDirty(false)
+  }, [org?.id])
+
+  const saveDetails = useCallback(async () => {
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!org) return
+
+    setSaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          phone: details.phone.trim() ? details.phone.trim() : null,
+          websiteUrl: details.websiteUrl.trim() ? details.websiteUrl.trim() : null,
+          address: details.address.trim() ? details.address.trim() : null,
+          schedule: details.schedule.trim() ? details.schedule.trim() : null,
+        }),
+      })
+
+      const { json } = await parseApiResponse<{ org?: CommunityOrganization; error?: unknown }>(res)
+      if (!res.ok) {
+        if (res.status === 403) {
+          pushToast('Only organization admins can edit these settings.', 'error')
+        } else {
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Unable to save organization details right now.', 'error')
+        }
+        return
+      }
+
+      setOrg(json?.org ?? org)
+      setDetailsDirty(false)
+      pushToast('Saved organization details.', 'success')
+    } catch (err) {
+      console.error('Failed to save organization details', err)
+      pushToast('Unable to save organization details right now.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }, [details.address, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
+
+  const updateDraft = useCallback((category: BusinessMediaCategory, updater: (prev: PhotoDraftState) => PhotoDraftState) => {
+    setDrafts((prev) => ({ ...prev, [category]: updater(prev[category]) }))
+  }, [])
+
+  const launchPhotoFlow = useCallback((category: BusinessMediaCategory, triggerPicker = true) => {
+    setPhotoModalCategory(category)
+    setPhotoCaption('')
+    setUploadError(null)
+    setUploadStatus('idle')
+    if (triggerPicker) {
+      setTimeout(() => {
+        const ref = category === 'business_logo' ? logoInputRef : coverInputRef
+        ref.current?.click()
+      }, 0)
+    }
+  }, [])
+
+  const closePhotoModal = useCallback(() => {
+    setPhotoModalCategory(null)
+    setPhotoCaption('')
+    setUploadError(null)
+    setUploadStatus('idle')
+    setPhotoPosting(false)
+  }, [])
+
+  const openFilePicker = useCallback((category: BusinessMediaCategory) => {
     const ref = category === 'business_logo' ? logoInputRef : coverInputRef
     ref.current?.click()
   }, [])
 
-  const uploadAndAttach = useCallback(
-    async (category: BusinessMediaCategory, file: File) => {
+  const handleCropChange = useCallback(
+    (category: BusinessMediaCategory) => (nextCrop: { x: number; y: number }) => {
+      updateDraft(category, (prev) => ({ ...prev, crop: nextCrop, isDirty: true }))
+    },
+    [updateDraft],
+  )
+
+  const handleZoomChange = useCallback(
+    (category: BusinessMediaCategory) => (nextZoom: number) => {
+      updateDraft(category, (prev) => ({ ...prev, zoom: nextZoom, isDirty: true }))
+    },
+    [updateDraft],
+  )
+
+  const handleCropComplete = useCallback(
+    (category: BusinessMediaCategory) => (_area: Area, nextAreaPixels: Area) => {
+      updateDraft(category, (prev) => ({ ...prev, croppedAreaPixels: nextAreaPixels, isDirty: true }))
+    },
+    [updateDraft],
+  )
+
+  const resetPhotoDraftCrop = useCallback(
+    (category: BusinessMediaCategory) => {
+      updateDraft(category, (prev) => ({ ...prev, crop: { x: 0, y: 0 }, zoom: 1, croppedAreaPixels: null, isDirty: Boolean(prev.file) }))
+    },
+    [updateDraft],
+  )
+
+  const safeParseAbsoluteUrl = useCallback((candidate: string | null | undefined): URL | null => {
+    if (!candidate) return null
+    try {
+      return new URL(candidate)
+    } catch {
+      return null
+    }
+  }, [])
+
+  const uploadViaMediaApi = useCallback(
+    async (category: keyof typeof MEDIA_LIMITS, file: File) => {
       if (!token) {
         pushToast('You must be signed in to upload organization photos.', 'error')
         redirectToAuthModal('login')
-        return
+        return null
       }
 
       const limit = MEDIA_LIMITS[category]
       if (file.size > limit) {
         pushToast(`That file is too large. Max size is ${(limit / MB).toFixed(0)}MB.`, 'error')
-        return
+        return null
       }
 
       if (file.type && !ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
         pushToast('Please choose a JPG, PNG, WebP, AVIF, HEIC, or HEIF image.', 'error')
-        return
+        return null
       }
 
-      const previewUrl = URL.createObjectURL(file)
-      const setSlot = category === 'business_logo' ? setLogoState : setCoverState
-      setSlot({ status: 'uploading', previewUrl, error: null })
+      setUploadStatus('uploading')
+      setUploadError(null)
 
-      setSaving(true)
+      const dimensions = await readImageDimensions(file)
 
-      try {
-        const dimensions = await readImageDimensions(file).catch(() => null)
+      const initRes = await fetch(buildApiUrl('/media/uploads'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          category,
+          mime: file.type || 'application/octet-stream',
+          byteSize: file.size,
+          filename: file.name,
+        }),
+      })
 
-        // 1) init upload
-        const initRes = await fetch(buildApiUrl('/media/uploads'), {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            category,
-            mime: file.type || 'application/octet-stream',
-            byteSize: file.size,
-            filename: file.name,
-          }),
-        })
+      if (!initRes.ok) {
+        const { json } = await parseApiResponse<{ error?: unknown }>(initRes)
+        console.warn('Upload init failed', json)
+        setUploadStatus('error')
+        setUploadError('Upload failed.')
+        return null
+      }
 
-        if (!initRes.ok) {
-          const { json } = await parseApiResponse<{ error?: unknown }>(initRes)
-          console.warn('Upload init failed', json)
-          throw new Error('upload_init_failed')
-        }
+      const initPayload = (await initRes.json().catch(() => null)) as MediaUploadInitResponse | null
+      const assetId = initPayload?.assetId
+      if (!assetId) {
+        setUploadStatus('error')
+        setUploadError('Upload failed.')
+        return null
+      }
 
-        const initPayload = (await initRes.json().catch(() => null)) as MediaUploadInitResponse | null
-        const assetId = initPayload?.assetId
-        if (!assetId) throw new Error('upload_init_invalid')
-
-        // 2) upload bytes (direct if possible, otherwise proxy)
-        let uploaded = false
-        const directUrl = safeParseAbsoluteUrl(initPayload?.upload?.url)
-        if (directUrl) {
-          try {
-            const res = await fetch(directUrl.toString(), {
-              method: 'PUT',
-              headers: {
-                ...(initPayload?.upload?.headers ?? {}),
-                'content-type': file.type || 'application/octet-stream',
-              },
-              body: file,
-            })
-            uploaded = res.ok
-          } catch {
-            uploaded = false
-          }
-        }
-
-        if (!uploaded && initPayload?.proxyPath) {
-          const proxyRes = await fetch(buildApiUrl(initPayload.proxyPath), {
+      let uploaded = false
+      const directUrl = safeParseAbsoluteUrl(initPayload?.upload?.url)
+      if (directUrl) {
+        try {
+          const res = await fetch(directUrl.toString(), {
             method: 'PUT',
             headers: {
-              authorization: `Bearer ${token}`,
+              ...(initPayload?.upload?.headers ?? {}),
               'content-type': file.type || 'application/octet-stream',
-              'x-upload-byte-size': String(file.size),
             },
             body: file,
           })
-          uploaded = proxyRes.ok
+          uploaded = res.ok
+        } catch {
+          uploaded = false
         }
+      }
 
-        if (!uploaded) throw new Error('upload_failed')
-
-        // 3) complete upload (kicks off processing)
-        const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            assetId,
-            width: dimensions?.width,
-            height: dimensions?.height,
-          }),
-        })
-
-        if (!completeRes.ok) throw new Error('upload_complete_failed')
-
-        // 4) attach to org
-        const settingsRes = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
+      if (!uploaded && initPayload?.proxyPath) {
+        const proxyRes = await fetch(buildApiUrl(initPayload.proxyPath), {
           method: 'PUT',
           headers: {
-            'content-type': 'application/json',
             authorization: `Bearer ${token}`,
+            'content-type': file.type || 'application/octet-stream',
+            'x-upload-byte-size': String(file.size),
           },
-          body: JSON.stringify(
-            category === 'business_logo'
-              ? { logoMediaId: assetId }
-              : { coverMediaId: assetId },
-          ),
+          body: file,
         })
-
-        if (!settingsRes.ok) {
-          const { json, text } = await parseApiResponse(settingsRes)
-          console.warn('Org settings update failed', { json, text, status: settingsRes.status })
-          throw new Error(settingsRes.status === 403 ? 'forbidden' : 'settings_update_failed')
-        }
-
-        setSlot((prev) => ({ ...prev, status: 'processing', error: null }))
-        await waitForAssetReady(token, assetId, category === 'business_logo' ? 'logo' : 'cover photo')
-
-        setSlot((prev) => ({ ...prev, status: 'ready', error: null }))
-        pushToast('Updated organization photo.', 'success')
-
-        await load()
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Something went wrong during upload.'
-        if (message === 'forbidden') {
-          pushToast('Only organization owners can update these photos.', 'error')
-        } else {
-          pushToast(message || 'Something went wrong during upload.', 'error')
-        }
-        setSlot((prev) => ({ ...prev, status: 'error', error: 'Upload failed.' }))
-      } finally {
-        setSaving(false)
+        uploaded = proxyRes.ok
       }
+
+      if (!uploaded) {
+        setUploadStatus('error')
+        setUploadError('Upload failed.')
+        return null
+      }
+
+      const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          assetId,
+          width: dimensions?.width,
+          height: dimensions?.height,
+        }),
+      })
+      if (!completeRes.ok) {
+        setUploadStatus('error')
+        setUploadError('Upload failed.')
+        return null
+      }
+
+      setUploadStatus('processing')
+      try {
+        await waitForAssetReady(token, assetId, 'photo')
+      } catch (err) {
+        setUploadStatus('error')
+        setUploadError(err instanceof Error ? err.message : 'Upload failed.')
+        return null
+      }
+
+      setUploadStatus('ready')
+      return assetId
     },
-    [load, orgApiPath, token],
+    [safeParseAbsoluteUrl, token],
   )
+
+  const applyPhotoCrop = useCallback(
+    async (category: BusinessMediaCategory) => {
+      const draft = drafts[category]
+      if (!draft.file) {
+        pushToast('Upload a photo before posting.', 'error')
+        return null
+      }
+
+      const desiredAspect = category === 'business_logo' ? 1 : COVER_ASPECT_RATIO
+      let cropArea = draft.croppedAreaPixels
+      if (!cropArea) {
+        const dims = await readImageDimensions(draft.file)
+        if (!dims) {
+          pushToast('We could not read that photo. Please choose a different one.', 'error')
+          return null
+        }
+        const fallbackArea = computeFallbackCropArea(dims, desiredAspect)
+        cropArea = fallbackArea
+        updateDraft(category, (prev) => ({ ...prev, croppedAreaPixels: fallbackArea }))
+      }
+
+      const exportOptions =
+        category === 'business_logo'
+          ? { width: LOGO_EXPORT_SIZE, height: LOGO_EXPORT_SIZE, mime: 'image/jpeg' as const, quality: 0.92 }
+          : { width: COVER_EXPORT_WIDTH, height: COVER_EXPORT_HEIGHT, mime: 'image/jpeg' as const, quality: 0.92 }
+
+      const blob = await generateCroppedImageBlob(draft.file, cropArea, exportOptions)
+      if (!blob) {
+        pushToast('We could not crop that image. Please try again with a different photo.', 'error')
+        return null
+      }
+
+      const baseName = draft.file.name?.replace(/\.[^/.]+$/, '') || category
+      const croppedFile = new File([blob], `${baseName}-${category}.jpg`, { type: blob.type || 'image/jpeg' })
+
+      const displayAssetId = await uploadViaMediaApi(category, croppedFile)
+      if (displayAssetId) {
+        updateDraft(category, (prev) => ({ ...prev, isDirty: false }))
+      }
+      return displayAssetId
+    },
+    [drafts, updateDraft, uploadViaMediaApi],
+  )
+
+  const ensureFullSizeAsset = useCallback(
+    async (category: BusinessMediaCategory, displayAssetId: string) => {
+      const draft = drafts[category]
+      if (draft.file) {
+        if (draft.fullAssetId) return draft.fullAssetId
+        const fullAssetId = await uploadViaMediaApi('post_image', draft.file)
+        if (!fullAssetId) return null
+        updateDraft(category, (prev) => ({ ...prev, fullAssetId }))
+        return fullAssetId
+      }
+      return displayAssetId
+    },
+    [drafts, updateDraft, uploadViaMediaApi],
+  )
+
+  const ensurePhotoApplied = useCallback(
+    async (category: BusinessMediaCategory) => {
+      const draft = drafts[category]
+      if (draft.file && draft.isDirty) {
+        return await applyPhotoCrop(category)
+      }
+      return null
+    },
+    [applyPhotoCrop, drafts],
+  )
+
+  const handlePostPhoto = useCallback(async () => {
+    if (!photoModalCategory) return
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setPhotoPosting(true)
+    setSaving(true)
+    try {
+      const displayAssetId = await ensurePhotoApplied(photoModalCategory)
+      if (!displayAssetId) {
+        pushToast('Upload a photo before posting.', 'error')
+        return
+      }
+
+      const fullAssetId = await ensureFullSizeAsset(photoModalCategory, displayAssetId)
+      if (!fullAssetId) return
+
+      const res = await fetch(buildApiUrl(`${orgApiPath}/profile-photo`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          category: photoModalCategory,
+          displayAssetId,
+          fullAssetId,
+          caption: photoCaption.trim() || undefined,
+        }),
+      })
+
+      const payload = await res.json().catch(() => null)
+      if (!res.ok) {
+        const rawError = typeof payload?.error === 'string' ? payload.error : typeof payload?.error?.message === 'string' ? payload.error.message : null
+        if (res.status === 403) {
+          pushToast('Only organization admins can update these photos.', 'error')
+        } else {
+          pushToast(rawError ?? 'Unable to update organization photo right now.', 'error')
+        }
+        return
+      }
+
+      pushToast('Updated organization photo (posted to feed).', 'success')
+      setDrafts((prev) => ({
+        ...prev,
+        [photoModalCategory]: createPhotoDraftState(),
+      }))
+      closePhotoModal()
+      await load()
+    } catch (err) {
+      console.error('Failed to update organization photo', err)
+      pushToast('Unable to update organization photo right now.', 'error')
+    } finally {
+      setPhotoPosting(false)
+      setSaving(false)
+    }
+  }, [closePhotoModal, ensureFullSizeAsset, ensurePhotoApplied, load, orgApiPath, orgApiPath, photoCaption, photoModalCategory, token])
 
   const handleFileChange = useCallback(
     (category: BusinessMediaCategory) =>
@@ -318,13 +568,48 @@ export default function OrganizationSettingsClient({
         const file = event.target.files?.[0]
         event.target.value = ''
         if (!file) return
-        void uploadAndAttach(category, file)
+
+        const limit = MEDIA_LIMITS[category]
+        if (file.size > limit) {
+          pushToast(`That file is too large. Max size is ${(limit / MB).toFixed(0)}MB.`, 'error')
+          return
+        }
+        if (file.type && !ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+          pushToast('Please choose a JPG, PNG, WebP, AVIF, HEIC, or HEIF image.', 'error')
+          return
+        }
+
+        const previewUrl = URL.createObjectURL(file)
+        updateDraft(category, (prev) => {
+          if (prev.previewUrl && prev.previewUrl.startsWith('blob:')) {
+            URL.revokeObjectURL(prev.previewUrl)
+          }
+          return {
+            ...prev,
+            file,
+            previewUrl,
+            crop: { x: 0, y: 0 },
+            zoom: 1,
+            croppedAreaPixels: null,
+            isDirty: true,
+            fullAssetId: null,
+          }
+        })
       },
-    [uploadAndAttach],
+    [updateDraft],
   )
 
-  const logoDisplayUrl = logoState.previewUrl ?? org?.logoUrl ?? null
-  const coverDisplayUrl = coverState.previewUrl ?? org?.coverUrl ?? null
+  useEffect(() => {
+    return () => {
+      const urls = [drafts.business_logo.previewUrl, drafts.business_cover.previewUrl]
+      for (const url of urls) {
+        if (url && url.startsWith('blob:')) URL.revokeObjectURL(url)
+      }
+    }
+  }, [drafts.business_cover.previewUrl, drafts.business_logo.previewUrl])
+
+  const logoDisplayUrl = org?.logoUrl ?? null
+  const coverDisplayUrl = org?.coverUrl ?? null
 
   if (loading) {
     return <p className="text-sm text-slate-600">Loading…</p>
@@ -349,12 +634,47 @@ export default function OrganizationSettingsClient({
     return <p className="text-sm text-slate-600">Organization not found.</p>
   }
 
-  if (!isOwner) {
-    return <p className="text-sm text-slate-600">Only the organization owner can edit these settings.</p>
+  if (!canManage) {
+    return <p className="text-sm text-slate-600">Only organization admins can edit these settings.</p>
   }
+
+  const currentCategory = photoModalCategory ?? 'business_logo'
+  const activeDraft = photoModalCategory ? drafts[photoModalCategory] : null
+  const modalTitle = currentCategory === 'business_logo' ? 'Update organization profile photo' : 'Update organization cover photo'
+  const modalPreview =
+    activeDraft?.previewUrl ?? (currentCategory === 'business_logo' ? org.logoUrl ?? null : org.coverUrl ?? null)
+  const canSubmitPhoto = Boolean(photoModalCategory && activeDraft?.file)
 
   return (
     <div className="space-y-8">
+      <PhotoUpdateModal
+        open={Boolean(photoModalCategory)}
+        title={modalTitle}
+        subtitle="Share a quick post when you refresh your photo."
+        imageUrl={activeDraft?.previewUrl ? null : modalPreview}
+        cropperImageUrl={activeDraft?.previewUrl ?? null}
+        aspect={currentCategory === 'business_logo' ? 1 : COVER_ASPECT_RATIO}
+        cropShape={currentCategory === 'business_logo' ? 'round' : 'rect'}
+        showGrid={currentCategory !== 'business_logo'}
+        crop={activeDraft?.crop ?? { x: 0, y: 0 }}
+        zoom={activeDraft?.zoom ?? 1}
+        maxZoom={MAX_CROP_ZOOM}
+        onCropChange={handleCropChange(currentCategory)}
+        onZoomChange={handleZoomChange(currentCategory)}
+        onCropComplete={handleCropComplete(currentCategory)}
+        onResetPosition={() => resetPhotoDraftCrop(currentCategory)}
+        onPickFile={() => openFilePicker(currentCategory)}
+        uploadStatus={uploadStatus}
+        uploadError={uploadError}
+        caption={photoCaption}
+        onCaptionChange={setPhotoCaption}
+        primaryLabel="Post update"
+        primaryDisabled={photoPosting || !canSubmitPhoto}
+        primaryLoading={photoPosting}
+        onPrimary={handlePostPhoto}
+        onClose={closePhotoModal}
+      />
+
       <section className="space-y-3">
         <h3 className="text-sm font-semibold text-slate-900">Display photo</h3>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -371,16 +691,14 @@ export default function OrganizationSettingsClient({
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => openPicker('business_logo')}
-                disabled={saving || logoState.status === 'uploading'}
+                onClick={() => launchPhotoFlow('business_logo', true)}
+                disabled={saving}
                 className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
               >
-                {logoState.status === 'uploading' ? 'Uploading…' : 'Upload logo'}
+                Upload logo
               </button>
             </div>
             <p className="text-xs text-slate-500">Up to 8MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
-            {logoState.status === 'processing' ? <p className="text-xs text-amber-600">Processing…</p> : null}
-            {logoState.error ? <p className="text-xs text-rose-700">{logoState.error}</p> : null}
           </div>
         </div>
         <input
@@ -406,16 +724,14 @@ export default function OrganizationSettingsClient({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => openPicker('business_cover')}
-              disabled={saving || coverState.status === 'uploading'}
+              onClick={() => launchPhotoFlow('business_cover', true)}
+              disabled={saving}
               className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {coverState.status === 'uploading' ? 'Uploading…' : 'Upload cover'}
+              Upload cover
             </button>
           </div>
           <p className="text-xs text-slate-500">Up to 20MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
-          {coverState.status === 'processing' ? <p className="text-xs text-amber-600">Processing…</p> : null}
-          {coverState.error ? <p className="text-xs text-rose-700">{coverState.error}</p> : null}
         </div>
 
         <input
@@ -425,6 +741,81 @@ export default function OrganizationSettingsClient({
           className="hidden"
           onChange={handleFileChange('business_cover')}
         />
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-slate-900">Directory details</h3>
+        <p className="text-xs text-slate-500">These appear on the organizations directory page.</p>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Phone
+            <input
+              value={details.phone}
+              onChange={(e) => {
+                setDetails((prev) => ({ ...prev, phone: e.target.value }))
+                setDetailsDirty(true)
+              }}
+              disabled={saving}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+              placeholder="(optional)"
+            />
+          </label>
+
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Website
+            <input
+              value={details.websiteUrl}
+              onChange={(e) => {
+                setDetails((prev) => ({ ...prev, websiteUrl: e.target.value }))
+                setDetailsDirty(true)
+              }}
+              disabled={saving}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+              placeholder="(optional)"
+            />
+          </label>
+        </div>
+
+        <label className="grid gap-1 text-sm font-medium text-slate-700">
+          Address
+          <input
+            value={details.address}
+            onChange={(e) => {
+              setDetails((prev) => ({ ...prev, address: e.target.value }))
+              setDetailsDirty(true)
+            }}
+            disabled={saving}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder="(optional)"
+          />
+        </label>
+
+        <label className="grid gap-1 text-sm font-medium text-slate-700">
+          Schedule
+          <textarea
+            value={details.schedule}
+            onChange={(e) => {
+              setDetails((prev) => ({ ...prev, schedule: e.target.value }))
+              setDetailsDirty(true)
+            }}
+            disabled={saving}
+            rows={3}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder="(optional)"
+          />
+        </label>
+
+        <div>
+          <button
+            type="button"
+            onClick={saveDetails}
+            disabled={saving || !detailsDirty}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            Save details
+          </button>
+        </div>
       </section>
     </div>
   )

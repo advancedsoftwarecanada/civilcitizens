@@ -94,6 +94,7 @@ type PostComposerProps = {
   defaultPostType?: PostType
   communityTarget?: CommunityTarget | null
   communityOptions?: CommunityTarget[]
+  businessTarget?: { businessId: string } | null
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
   defaultAudience?: 'friends' | 'community'
@@ -201,6 +202,7 @@ export default function PostComposer({
   defaultPostType = 'post',
   communityTarget = null,
   communityOptions = [],
+  businessTarget = null,
   onPostCreated,
   variant = 'card',
   defaultAudience = 'friends',
@@ -480,6 +482,10 @@ export default function PostComposer({
       }
       payload.jurisdiction = targetCommunity ? 'municipal' : 'self'
 
+      if (businessTarget?.businessId) {
+        payload.businessId = businessTarget.businessId
+      }
+
       const res = await fetch(buildApiUrl('/posts'), {
         method: 'POST',
         headers: {
@@ -518,7 +524,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting])
+  }, [activeCommunity, articleBody, articleTitle, audienceSelection, businessTarget, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting])
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
