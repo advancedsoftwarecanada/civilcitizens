@@ -7311,8 +7311,8 @@ app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyRepl
 // Server startup code
 const start = async () => {
   try {
-    await app.listen({ port: 3000, host: '0.0.0.0' })
-    console.log('Server listening on port 3000')
+    await app.listen({ port: PORT, host: '0.0.0.0' })
+    console.log(`Server listening on port ${PORT}`)
   } catch (err) {
     app.log.error(err)
     process.exit(1)

@@ -3,6 +3,11 @@ services:
     image: nginx:1.25-alpine
     profiles: [app]
     restart: unless-stopped
+    networks:
+      default: {}
+      public_proxy:
+        aliases:
+          - civil_prod_nginx
     volumes:
       - ./ops/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
@@ -155,3 +160,8 @@ volumes:
   pgdata:
   redisdata:
   miniostorage:
+
+networks:
+  public_proxy:
+    external: true
+    name: public_proxy

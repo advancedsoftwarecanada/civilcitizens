@@ -40,7 +40,7 @@ export default function Home() {
             <div className="text-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
                 <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
-                <div className="text-center text-sm text-white/80 mt-2">Release: Beta 1.5.1</div>
+                <div className="text-center text-sm text-white/80 mt-2">Release: 1.6.0 Jan 7 2026</div>
               </div>
             </div>
 
