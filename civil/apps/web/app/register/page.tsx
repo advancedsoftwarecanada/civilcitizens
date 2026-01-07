@@ -24,7 +24,13 @@ type RegisterErrorResponse = {
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
+const INVITE_CODE = 'andyrocks'
+
 export default function RegisterPage() {
+  const [inviteCode, setInviteCode] = useState('')
+  const [inviteUnlocked, setInviteUnlocked] = useState(false)
+  const [inviteError, setInviteError] = useState<string | null>(null)
+
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -40,6 +46,12 @@ export default function RegisterPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    if (!inviteUnlocked) {
+      setInviteError('Enter a valid invite code to register.')
+      return
+    }
+
     setFormError(null)
     setFieldErrors({})
 
@@ -115,6 +127,22 @@ export default function RegisterPage() {
         : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
     }`
 
+  const inviteInputClass =
+    `w-full rounded-2xl border px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 transition focus-visible:outline-none ${
+      inviteError ? 'border-red-500 ring-2 ring-red-100' : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
+    }`
+
+  const handleInviteSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const trimmed = inviteCode.trim()
+    if (trimmed === INVITE_CODE) {
+      setInviteUnlocked(true)
+      setInviteError(null)
+      return
+    }
+    setInviteError('Invalid invite code.')
+  }
+
   const footer = (
     <div className="space-y-2">
       <p>
@@ -140,6 +168,28 @@ export default function RegisterPage() {
       hideSidePanel
       useWallpaper
     >
+      {!inviteUnlocked ? (
+        <form onSubmit={handleInviteSubmit} className="space-y-4">
+          <div className="text-center text-sm font-medium text-slate-700">Enter your invite code</div>
+          <input
+            className={inviteInputClass}
+            placeholder="Invite code"
+            value={inviteCode}
+            onChange={(event) => {
+              setInviteCode(event.target.value)
+              if (inviteError) setInviteError(null)
+            }}
+            autoComplete="off"
+          />
+          {inviteError ? <div className="text-xs text-red-600 text-center">⚠️ {inviteError}</div> : null}
+          <button
+            className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
+            type="submit"
+          >
+            Continue
+          </button>
+        </form>
+      ) : (
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="block text-sm font-medium text-slate-700">
@@ -185,6 +235,7 @@ export default function RegisterPage() {
           Create account
         </button>
       </form>
+      )}
     </AuthScreen>
   )
 }
