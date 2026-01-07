@@ -9,6 +9,7 @@ import ViewerBootstrap from './_components/ViewerBootstrap'
 import ScrollManager from './_components/ScrollManager'
 import AnalyticsTracker from './_components/AnalyticsTracker'
 import GoogleAnalytics from './_components/GoogleAnalytics'
+import AppFrame from './_components/AppFrame'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -71,10 +72,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
         <Suspense fallback={null}>
           <ScrollManager />
         </Suspense>
-        <div className="min-h-screen pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pt-[4.5rem] lg:pb-0">
-          {children}
-          {modal}
-        </div>
+        <AppFrame modal={modal}>{children}</AppFrame>
         <MobileDockVisibility />
         <Toasts />
       </body>
