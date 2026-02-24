@@ -15,6 +15,11 @@ Commands:
   _DEV.py stop          # stop detached
   _DEV.py status        # show status
   _DEV.py logs [N]      # tail logs (default 100)
+
+Managed processes:
+- web    (@civil/web dev)
+- api    (@civil/api dev)
+- worker (@civil/worker dev)
 """
 
 from __future__ import annotations
@@ -46,9 +51,11 @@ CYBERTRON_MINIO_PORT = int(os.environ.get("CYBERTRON_MINIO_PORT", "9102"))
 
 WEB_PID_FILE = Path("/tmp/civil-dev-web.pid")
 API_PID_FILE = Path("/tmp/civil-dev-api.pid")
+WORKER_PID_FILE = Path("/tmp/civil-dev-worker.pid")
 
 WEB_LOG = Path("/tmp/civil-web.log")
 API_LOG = Path("/tmp/civil-api.log")
+WORKER_LOG = Path("/tmp/civil-worker.log")
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -105,6 +112,8 @@ def _is_repo_dev_process(pid: int) -> bool:
     if "next" in cmd and "dev" in cmd and "@civil/web" in cmd:
         return True
     if "tsx" in cmd and "watch" in cmd and "apps/api" in cmd:
+        return True
+    if "tsx" in cmd and "watch" in cmd and "apps/worker" in cmd:
         return True
     if "concurrently" in cmd and "@civil/api" in cmd:
         return True
@@ -299,7 +308,7 @@ def _apply_prisma_migrations(pnpm: str, env: dict[str, str]) -> None:
 def stop() -> int:
     stopped_any = False
 
-    for label, pid_file in (("web", WEB_PID_FILE), ("api", API_PID_FILE)):
+    for label, pid_file in (("web", WEB_PID_FILE), ("api", API_PID_FILE), ("worker", WORKER_PID_FILE)):
         pid = _read_pid(pid_file)
         if pid and _pid_is_alive(pid):
             print(f"⏹ Stopping {label} (pid {pid})")
@@ -381,10 +390,10 @@ def start() -> int:
         print("   Refusing to kill it. Free the port and retry.")
         return 1
 
-    print(f"▶ Starting web (detached) on :{WEB_PORT} (log: {WEB_LOG})")
+    print(f"▶ Starting web (detached, Next Turbo) on :{WEB_PORT} (log: {WEB_LOG})")
     env["CIVIL_WEB_PORT"] = str(WEB_PORT)
     _spawn_detached(
-        [pnpm, "--filter", "@civil/web", "dev"],
+        [pnpm, "--filter", "@civil/web", "exec", "next", "dev", "--turbo", "-H", "0.0.0.0", "-p", str(WEB_PORT)],
         cwd=CIVIL_DIR,
         pid_file=WEB_PID_FILE,
         log_file=WEB_LOG,
@@ -401,6 +410,15 @@ def start() -> int:
         pid_file=API_PID_FILE,
         log_file=API_LOG,
         env=api_env,
+    )
+
+    print(f"▶ Starting worker (detached) (log: {WORKER_LOG})")
+    _spawn_detached(
+        [pnpm, "--filter", "@civil/worker", "dev"],
+        cwd=CIVIL_DIR,
+        pid_file=WORKER_PID_FILE,
+        log_file=WORKER_LOG,
+        env=env,
     )
 
     deadline = time.time() + 20.0
@@ -441,6 +459,11 @@ def status() -> int:
 
     print(line("web", WEB_PID_FILE, WEB_PORT))
     print(line("api", API_PID_FILE, API_PORT))
+    worker_pid = _read_pid(WORKER_PID_FILE)
+    worker_alive = bool(worker_pid and _pid_is_alive(worker_pid))
+    worker_cmd = _cmdline(worker_pid) if worker_pid else ""
+    worker_extra = f" cmd={worker_cmd[:120]}" if worker_cmd else ""
+    print(f"- worker: pidFile={worker_pid if worker_pid else '-'} alive={worker_alive}{worker_extra}")
     return 0
 
 
@@ -450,6 +473,9 @@ def logs(lines: int) -> int:
     print()
     print(f"== API ({API_LOG}) last {lines} ==")
     print(_tail(API_LOG, lines))
+    print()
+    print(f"== Worker ({WORKER_LOG}) last {lines} ==")
+    print(_tail(WORKER_LOG, lines))
     return 0
 
 
