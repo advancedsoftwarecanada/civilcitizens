@@ -5862,8 +5862,8 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
             prisma.friendship.findFirst({
               where: {
                 OR: [
-                  { initiatorId: viewerId, recipientId: user.id },
-                  { initiatorId: user.id, recipientId: viewerId },
+                  { requesterId: viewerId, addresseeId: user.id },
+                  { requesterId: user.id, addresseeId: viewerId },
                 ],
               },
             }),
@@ -5885,9 +5885,9 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
             friendshipId = friendship.id
             if (friendship.status === FriendshipStatus.ACCEPTED) {
               friendshipStatus = 'friends'
-              friendshipSince = friendship.createdAt // or updatedAt? usually createdAt of acceptance if tracked, but here just createdAt
+              friendshipSince = friendship.respondedAt ?? friendship.requestedAt
             } else if (friendship.status === FriendshipStatus.PENDING) {
-              if (friendship.initiatorId === viewerId) {
+              if (friendship.requesterId === viewerId) {
                 friendshipStatus = 'outgoing'
               } else {
                 friendshipStatus = 'incoming'

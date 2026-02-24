@@ -6,9 +6,15 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "paths": {
-      "@civil/shared": ["../../packages/shared/src/index.ts"],
-      "@civil/ui": ["../../packages/ui/src/index.ts"],
-      "@civil/db": ["../../packages/db/src/index.ts"]
+      "@civil/shared": [
+        "../../packages/shared/src/index.ts"
+      ],
+      "@civil/ui": [
+        "../../packages/ui/src/index.ts"
+      ],
+      "@civil/db": [
+        "../../packages/db/src/index.ts"
+      ]
     },
     "lib": [
       "dom",
@@ -29,7 +35,8 @@
     "app",
     "components",
     "next-env.d.ts",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    "/tmp/civil-next-dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"
