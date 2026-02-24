@@ -447,14 +447,14 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
       if (!trimmed && attachments.length === 0) return
       setSending(true)
       try {
-        const payload: { body?: string; attachments?: string[] } = {}
-        if (trimmed) payload.body = trimmed
-        if (attachments.length > 0) payload.attachments = attachments
+        const requestPayload: { body?: string; attachments?: string[] } = {}
+        if (trimmed) requestPayload.body = trimmed
+        if (attachments.length > 0) requestPayload.attachments = attachments
 
         const response = await authedFetch(`/messages/threads/${threadId}/messages`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify(requestPayload),
         })
         if (response.status === 401) {
           redirectToAuthModal('login')
