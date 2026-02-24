@@ -62,6 +62,12 @@ uploads/
 !uploads/README.md
 node_modules/
 
+# Local temporary folders
+tmp/
+tmp_*/
+**/tmp/
+**/tmp_*/
+
 # Large geodata archives (tracked elsewhere)
 _geodata/
 
