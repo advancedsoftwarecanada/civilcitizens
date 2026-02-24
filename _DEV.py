@@ -360,6 +360,7 @@ def start() -> int:
     env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", "https://dev.civilcitizens.ca/media")
     env.setdefault("MEDIA_PUBLIC_BASE_URL", "https://dev.civilcitizens.ca/media")
     env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
+    env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
 
     # Ensure CybertronDev infra is up (postgres/redis/nginx/minio)
     try:
