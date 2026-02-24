@@ -13,6 +13,10 @@ type RegisterSuccess = {
   token: string
 }
 
+type LoginSuccess = {
+  token: string
+}
+
 type RegisterErrorResponse = {
   error?:
     | string
@@ -24,13 +28,7 @@ type RegisterErrorResponse = {
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
-const INVITE_CODE = 'andyrocks'
-
 export default function RegisterPage() {
-  const [inviteCode, setInviteCode] = useState('')
-  const [inviteUnlocked, setInviteUnlocked] = useState(false)
-  const [inviteError, setInviteError] = useState<string | null>(null)
-
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -38,6 +36,7 @@ export default function RegisterPage() {
   const [acceptTerms, setAcceptTerms] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const previewHandle = useMemo(() => buildHandleBase(firstName, lastName), [firstName, lastName])
 
@@ -46,11 +45,7 @@ export default function RegisterPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-
-    if (!inviteUnlocked) {
-      setInviteError('Enter a valid invite code to register.')
-      return
-    }
+    if (isSubmitting) return
 
     setFormError(null)
     setFieldErrors({})
@@ -69,6 +64,31 @@ export default function RegisterPage() {
       return
     }
 
+    const signInAndRedirect = async (registerToken?: string) => {
+      if (typeof registerToken === 'string' && registerToken.length > 0) {
+        localStorage.setItem('token', registerToken)
+        window.location.href = '/welcome'
+        return true
+      }
+
+      const loginResponse = await fetch(buildApiUrl('/auth/login'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ emailOrHandle: email, password }),
+      })
+      const { json: loginData } = await parseApiResponse<LoginSuccess>(loginResponse)
+      if (!loginResponse.ok) return false
+
+      if (loginData && typeof loginData.token === 'string' && loginData.token.length > 0) {
+        localStorage.setItem('token', loginData.token)
+        window.location.href = '/welcome'
+        return true
+      }
+
+      return false
+    }
+
+    setIsSubmitting(true)
     try {
       const payload = {
         email,
@@ -88,6 +108,12 @@ export default function RegisterPage() {
       const safeData: Partial<RegisterSuccess & RegisterErrorResponse> = data ?? {}
 
       if (!response.ok) {
+        const apiCode = typeof safeData.error === 'string' ? safeData.error : null
+        if (apiCode === 'email_or_handle_exists') {
+          const signedIn = await signInAndRedirect()
+          if (signedIn) return
+        }
+
         const fieldErrorPayload = typeof safeData.error === 'object' && safeData.error && 'fieldErrors' in safeData.error ? safeData.error.fieldErrors : null
         if (fieldErrorPayload && typeof fieldErrorPayload === 'object') {
           setFieldErrors(fieldErrorPayload as FieldErrors)
@@ -109,14 +135,18 @@ export default function RegisterPage() {
         return
       }
 
-      if (safeData && 'token' in safeData && typeof safeData.token === 'string') {
-        localStorage.setItem('token', safeData.token)
+      const signedIn = await signInAndRedirect(safeData.token)
+      if (!signedIn) {
+        const message = 'Account created, but automatic sign-in failed. Please sign in.'
+        setFormError(message)
+        pushToast(message, 'error')
       }
-      window.location.href = '/welcome'
     } catch (error) {
       console.error('Registration request failed', error)
       pushToast('Unexpected error during registration. Please try again.', 'error')
       setFormError('Unexpected error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -126,22 +156,6 @@ export default function RegisterPage() {
         ? 'border-red-500 ring-2 ring-red-100'
         : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
     }`
-
-  const inviteInputClass =
-    `w-full rounded-2xl border px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 transition focus-visible:outline-none ${
-      inviteError ? 'border-red-500 ring-2 ring-red-100' : 'border-slate-200 focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15'
-    }`
-
-  const handleInviteSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const trimmed = inviteCode.trim()
-    if (trimmed === INVITE_CODE) {
-      setInviteUnlocked(true)
-      setInviteError(null)
-      return
-    }
-    setInviteError('Invalid invite code.')
-  }
 
   const footer = (
     <div className="space-y-2">
@@ -168,28 +182,6 @@ export default function RegisterPage() {
       hideSidePanel
       useWallpaper
     >
-      {!inviteUnlocked ? (
-        <form onSubmit={handleInviteSubmit} className="space-y-4">
-          <div className="text-center text-sm font-medium text-slate-700">Enter your invite code</div>
-          <input
-            className={inviteInputClass}
-            placeholder="Invite code"
-            value={inviteCode}
-            onChange={(event) => {
-              setInviteCode(event.target.value)
-              if (inviteError) setInviteError(null)
-            }}
-            autoComplete="off"
-          />
-          {inviteError ? <div className="text-xs text-red-600 text-center">⚠️ {inviteError}</div> : null}
-          <button
-            className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
-            type="submit"
-          >
-            Continue
-          </button>
-        </form>
-      ) : (
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="block text-sm font-medium text-slate-700">
@@ -231,11 +223,10 @@ export default function RegisterPage() {
         </label>
         {hasFieldError('acceptTerms') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div> : null}
         {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
-        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
-          Create account
+        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Creating account…' : 'Create account'}
         </button>
       </form>
-      )}
     </AuthScreen>
   )
 }

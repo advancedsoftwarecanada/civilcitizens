@@ -37,6 +37,7 @@ import {
   HandleParam,
   ReactPostInput,
   ReactionTypeEnum,
+  CreateCommentInput,
   VoteCommentInput,
   UpdateProfilePhotoInput,
   PostSortEnum,
@@ -3295,6 +3296,220 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
 
     return reply.send({ post: formatPost(updatedPost, { viewerReaction: reaction }) })
+  }),
+)
+
+app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
+
+    const query = z.object({ sort: CommentSortEnum.optional() }).safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { id: true } })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    const viewerId = (req as any).user?.id as string | undefined
+    const sortMode = query.data.sort ?? 'hot'
+
+    const commentRows: CommentWithUser[] = await prisma.comment.findMany({
+      where: { postId: params.data.id },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            premiumStatus: true,
+          },
+        },
+      },
+    })
+
+    let viewerCommentVotes: Record<string, number> = {}
+    if (viewerId && commentRows.length) {
+      const commentIds = commentRows.map((comment) => comment.id)
+      const votes = await prisma.commentVote.findMany({
+        where: { userId: viewerId, commentId: { in: commentIds } },
+        select: { commentId: true, value: true },
+      })
+      const voteMap: Record<string, number> = {}
+      for (const vote of votes) {
+        voteMap[vote.commentId] = vote.value
+      }
+      viewerCommentVotes = voteMap
+    }
+
+    return reply.send({
+      comments: buildCommentTree(commentRows, viewerCommentVotes, { sort: sortMode }),
+    })
+  }),
+)
+
+app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = CreateCommentInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { postId, body, parentId } = parse.data
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
+    if (!user || !isPremium(user.premiumStatus)) {
+      return reply.code(403).send({ error: 'verified_required' })
+    }
+
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true, createdAt: true, updatedAt: true },
+    })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (parentId) {
+      const parent = await prisma.comment.findUnique({ where: { id: parentId }, select: { id: true, postId: true } })
+      if (!parent || parent.postId !== postId) {
+        return reply.code(400).send({ error: 'invalid_parent_comment' })
+      }
+    }
+
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const comment = await tx.comment.create({
+        data: {
+          postId,
+          userId,
+          parentId: parentId ?? null,
+          body,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
+          },
+        },
+      })
+
+      await refreshPostAggregates(tx, postId, { createdAt: post.createdAt, lastActivityAt: post.updatedAt }, { bumpActivity: true })
+
+      return comment
+    })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: postId },
+      include: POST_INCLUDE,
+    })
+
+    return reply.code(201).send({
+      comment: {
+        ...mapComment(created, 0),
+        createdAt: created.createdAt.toISOString(),
+        updatedAt: created.updatedAt.toISOString(),
+      },
+      post: updatedPost ? formatPost(updatedPost) : null,
+    })
+  }),
+)
+
+app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = VoteCommentInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
+    if (!user || !isPremium(user.premiumStatus)) {
+      return reply.code(403).send({ error: 'verified_required' })
+    }
+
+    const { commentId, value } = parse.data
+    const existing = await prisma.comment.findUnique({
+      where: { id: commentId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            premiumStatus: true,
+          },
+        },
+        post: {
+          select: { id: true, createdAt: true, updatedAt: true },
+        },
+      },
+    })
+
+    if (!existing) return reply.code(404).send({ error: 'comment_not_found' })
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (value === 0) {
+        await tx.commentVote.deleteMany({
+          where: {
+            userId,
+            commentId,
+          },
+        })
+      } else {
+        await tx.commentVote.upsert({
+          where: {
+            userId_commentId: {
+              userId,
+              commentId,
+            },
+          },
+          create: {
+            userId,
+            commentId,
+            value,
+          },
+          update: {
+            value,
+          },
+        })
+      }
+
+      await refreshCommentAggregates(tx, commentId)
+      await refreshPostAggregates(tx, existing.postId, { createdAt: existing.post.createdAt, lastActivityAt: existing.post.updatedAt }, { bumpActivity: false })
+
+      const updatedComment = await tx.comment.findUnique({
+        where: { id: commentId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              premiumStatus: true,
+            },
+          },
+        },
+      })
+
+      return updatedComment
+    })
+
+    if (!result) return reply.code(404).send({ error: 'comment_not_found' })
+
+    return reply.send({
+      comment: {
+        ...mapComment(result, value),
+        createdAt: result.createdAt.toISOString(),
+        updatedAt: result.updatedAt.toISOString(),
+      },
+    })
   }),
 )
 
