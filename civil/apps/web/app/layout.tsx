@@ -13,7 +13,18 @@ import AppFrame from './_components/AppFrame'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
-const baseUrl = 'https://app.civilcitizens.dev'
+function resolveMetadataBaseUrl(): string {
+  const raw = (process.env.NEXT_PUBLIC_BASE_URL || '').trim()
+  const hostFallback = (process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca').trim()
+  const fallback = hostFallback.startsWith('http') ? hostFallback : `https://${hostFallback}`
+
+  if (!raw) return fallback
+  const normalized = raw.startsWith('http') ? raw : `https://${raw}`
+  if (/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(normalized)) return fallback
+  return normalized
+}
+
+const baseUrl = resolveMetadataBaseUrl()
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),

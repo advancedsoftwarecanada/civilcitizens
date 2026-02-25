@@ -1,0 +1,9 @@
+# Generated manifests are environment-specific; never push them between envs.
+apps/client/public/**/*manifest*.json
+apps/client/public/assets/models.json
+apps/client/public/assets/rts_runtime_registry.json
+apps/client/public/assets/bake_manifest_index.v1.json
+apps/client/public/assets/maps/*.json
+apps/client/public/assets/ultrabikes/ultrabikes_defs.v1.json
+apps/client/public/assets/ultrag_thrusters_defs.v1.json
+apps/client/public/assets/ultrabikes/ultrag_thrusters_defs.v1.json
