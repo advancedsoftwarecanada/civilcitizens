@@ -102,7 +102,7 @@ export default function CommunityOrganizationsList({ province, municipality }: {
       {owned.map((org) => (
         <Link
           key={org.id}
-          href={`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(org.slug)}`}
+          href={`/com/${encodeURIComponent(org.provinceCode ?? province)}/${encodeURIComponent(org.communitySlug ?? municipality)}/orgs/${encodeURIComponent(org.slug)}`}
           className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300"
         >
           <div className="flex items-start justify-between gap-3">

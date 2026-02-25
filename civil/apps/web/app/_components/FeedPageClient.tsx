@@ -89,6 +89,12 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
       redirectToAuthModal('login')
       return
     }
+    if (!cursor) {
+      setPosts([])
+      setNextCursor(undefined)
+      setHasMore(false)
+      setLastViewedAt(null)
+    }
     setLoading(true)
     try {
       const query = new URLSearchParams(filterQuery)
@@ -100,6 +106,10 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
         },
       })
       if (response.status === 401) {
+        setPosts([])
+        setNextCursor(undefined)
+        setHasMore(false)
+        setLastViewedAt(null)
         localStorage.removeItem('token')
         redirectToAuthModal('login')
         return
@@ -113,6 +123,13 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
       if (!cursor && data.lastViewedAt) {
         setLastViewedAt(data.lastViewedAt)
       }
+    } catch {
+      if (!cursor) {
+        setPosts([])
+        setNextCursor(undefined)
+        setHasMore(false)
+      }
+      pushToast('Unable to load the feed right now.', 'error')
     } finally {
       setLoading(false)
     }

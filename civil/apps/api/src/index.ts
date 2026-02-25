@@ -21,6 +21,7 @@ import {
   MessageThreadType,
   MessageType,
   MessageParticipantRole,
+  BusinessRole,
 } from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
 import {
@@ -816,6 +817,7 @@ const FRIEND_USER_SELECT = {
   handle: true,
   name: true,
   avatarUrl: true,
+  coverUrl: true,
   premiumStatus: true,
 } satisfies Prisma.UserSelect
 
@@ -827,6 +829,7 @@ function formatFriendUser(user: FriendUser) {
     handle: user.handle,
     name: user.name,
     avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+    coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
     isPremium: isPremium(user.premiumStatus),
     isVerified: isPremium(user.premiumStatus),
   }
@@ -2107,6 +2110,7 @@ registerCommunityRoute(
       const where: Prisma.PostWhereInput = {
         provinceCode: communityRecord.province,
         communitySlug: communityRecord.slug,
+        visibility: 'public',
         ...(jurisdiction ? { jurisdiction } : {}),
       }
 
@@ -3177,7 +3181,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
-    const { body, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId } = parse.data
+    const { body, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility } = parse.data
 
     if (sharedPostId && (!body || body.trim().length === 0)) {
       return reply.code(400).send({ error: 'Commentary is required when sharing a post.' })
@@ -3193,6 +3197,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         data: {
           authorId: userId,
           ...(business ? { businessId: business.id } : {}),
+          ...(visibility ? { visibility } : {}),
           body,
           mediaUrl,
           images: images ? (images as any) : undefined,
@@ -3234,6 +3239,18 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({ where: { id: postId } })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (post.visibility === 'members' && post.businessId) {
+      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: post.businessId, userId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'post_not_found' })
+    }
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (reaction) {
@@ -3307,10 +3324,27 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
     const query = z.object({ sort: CommentSortEnum.optional() }).safeParse(req.query ?? {})
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { id: true } })
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      select: { id: true, visibility: true, businessId: true },
+    })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
+
+    if (post.visibility === 'members' && post.businessId) {
+      if (!viewerId) return reply.code(404).send({ error: 'post_not_found' })
+      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === viewerId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: post.businessId, userId: viewerId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'post_not_found' })
+    }
+
     const sortMode = query.data.sort ?? 'hot'
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -3366,9 +3400,21 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, createdAt: true, updatedAt: true },
+      select: { id: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (post.visibility === 'members' && post.businessId) {
+      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: post.businessId, userId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'post_not_found' })
+    }
 
     if (parentId) {
       const parent = await prisma.comment.findUnique({ where: { id: parentId }, select: { id: true, postId: true } })
@@ -3446,12 +3492,24 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
           },
         },
         post: {
-          select: { id: true, createdAt: true, updatedAt: true },
+          select: { id: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
         },
       },
     })
 
     if (!existing) return reply.code(404).send({ error: 'comment_not_found' })
+
+    if (existing.post.visibility === 'members' && existing.post.businessId) {
+      const business = await prisma.business.findUnique({ where: { id: existing.post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: existing.post.businessId, userId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'comment_not_found' })
+    }
 
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       if (value === 0) {
@@ -4490,6 +4548,11 @@ const CommunityOrgSettingsBody = z.object({
   websiteUrl: z.string().trim().max(2048).optional().nullable(),
   address: z.string().trim().max(500).optional().nullable(),
   schedule: z.string().trim().max(2000).optional().nullable(),
+  isPublic: z.boolean().optional(),
+})
+
+const CommunityOrgMemberParams = CommunityOrgSlugParams.extend({
+  userId: z.string().cuid(),
 })
 
 type CommunityOrgRecord = {
@@ -4772,14 +4835,6 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
-    const viewerFollowed = viewerId
-      ? Boolean(
-          await prisma.businessFollow.findUnique({
-            where: { businessId_userId: { businessId: org.id, userId: viewerId } },
-            select: { id: true },
-          }),
-        )
-      : false
 
     const viewerRole = viewerId
       ? org.ownerId === viewerId
@@ -4789,6 +4844,18 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
             select: { role: true },
           }))?.role as 'OWNER' | 'MANAGER' | undefined) ?? null
       : null
+
+    if (org.status !== 'ACTIVE' && !viewerRole) {
+      return reply.code(404).send({ error: 'organization_not_found' })
+    }
+    const viewerFollowed = viewerId
+      ? Boolean(
+          await prisma.businessFollow.findUnique({
+            where: { businessId_userId: { businessId: org.id, userId: viewerId } },
+            select: { id: true },
+          }),
+        )
+      : false
 
     return reply.send({ org: buildCommunityOrgPayload(org, viewerFollowed, viewerRole) })
   }),
@@ -4942,7 +5009,7 @@ app.delete('/communities/:province/:municipality/orgs/:slug/follow', async (req:
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug },
-      select: { id: true },
+      select: { id: true, ownerId: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
@@ -5007,6 +5074,9 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
       const next = body.data.schedule
       nextData.schedule = next ? next : null
     }
+    if ('isPublic' in body.data && typeof body.data.isPublic === 'boolean') {
+      nextData.status = body.data.isPublic ? 'ACTIVE' : 'DRAFT'
+    }
 
     if (body.data.logoMediaId) {
       const asset = await prisma.mediaAsset.findFirst({
@@ -5057,6 +5127,194 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     })) as CommunityOrgRecord
 
     return reply.send({ org: buildCommunityOrgPayload(updated, true, membership.role as any) })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: org.id, userId } },
+          select: { role: true },
+        })
+    if (!membership) return reply.code(403).send({ error: 'forbidden' })
+
+    const [owner, managers, followers] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: org.ownerId },
+        select: { id: true, handle: true, name: true, avatarUrl: true },
+      }),
+      prisma.businessMembership.findMany({
+        where: { businessId: org.id, userId: { not: org.ownerId } },
+        orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          userId: true,
+          role: true,
+          createdAt: true,
+          user: { select: { id: true, handle: true, name: true, avatarUrl: true } },
+        },
+      }),
+      prisma.businessFollow.findMany({
+        where: { businessId: org.id, userId: { not: org.ownerId } },
+        orderBy: { createdAt: 'asc' },
+        select: {
+          userId: true,
+          createdAt: true,
+          user: { select: { id: true, handle: true, name: true, avatarUrl: true } },
+        },
+      }),
+    ])
+
+    const managerIds = new Set(managers.map((row: { userId: string }) => row.userId))
+
+    const memberItems = [
+      ...(owner
+        ? [
+            {
+              userId: owner.id,
+              role: 'OWNER' as const,
+              joinedAt: null,
+              user: {
+                id: owner.id,
+                handle: owner.handle,
+                name: owner.name,
+                avatarUrl: normalizeMediaUrl(owner.avatarUrl ?? null),
+              },
+            },
+          ]
+        : []),
+      ...managers.map((row: { userId: string; role: BusinessRole; createdAt: Date; user: { id: string; handle: string; name: string | null; avatarUrl: string | null } }) => ({
+        userId: row.userId,
+        role: row.role,
+        joinedAt: row.createdAt,
+        user: {
+          id: row.user.id,
+          handle: row.user.handle,
+          name: row.user.name,
+          avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
+        },
+      })),
+    ]
+
+    const followerItems = followers
+      .filter((row: { userId: string }) => !managerIds.has(row.userId))
+      .map((row: { userId: string; createdAt: Date; user: { id: string; handle: string; name: string | null; avatarUrl: string | null } }) => ({
+        userId: row.userId,
+        role: 'FOLLOWER' as const,
+        joinedAt: row.createdAt,
+        user: {
+          id: row.user.id,
+          handle: row.user.handle,
+          name: row.user.name,
+          avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
+        },
+      }))
+
+    return reply.send({ members: memberItems, followers: followerItems })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/members/:userId/promote', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMemberParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    if (org.ownerId !== userId) return reply.code(403).send({ error: 'forbidden' })
+    if (params.data.userId === org.ownerId) return reply.code(400).send({ error: 'cannot_promote_owner' })
+
+    const follow = await prisma.businessFollow.findUnique({
+      where: { businessId_userId: { businessId: org.id, userId: params.data.userId } },
+      select: { id: true },
+    })
+    if (!follow) return reply.code(400).send({ error: 'user_must_follow_org' })
+
+    await prisma.businessMembership.upsert({
+      where: { businessId_userId: { businessId: org.id, userId: params.data.userId } },
+      create: { businessId: org.id, userId: params.data.userId, role: 'MANAGER' },
+      update: { role: 'MANAGER' },
+      select: { id: true },
+    })
+
+    return reply.send({ ok: true })
+  }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug/members/:userId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMemberParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const slug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    if (org.ownerId !== userId) return reply.code(403).send({ error: 'forbidden' })
+    if (params.data.userId === org.ownerId) return reply.code(400).send({ error: 'cannot_remove_owner' })
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.businessMembership.deleteMany({ where: { businessId: org.id, userId: params.data.userId } })
+      await tx.businessFollow.deleteMany({ where: { businessId: org.id, userId: params.data.userId } })
+    })
+
+    return reply.send({ ok: true })
   }),
 )
 
@@ -5220,6 +5478,8 @@ app.get('/organizations/follows', async (req: FastifyRequest, reply: FastifyRepl
         provinceCode: string
         communitySlug: string
         isVerified: boolean
+        logoUrl: string | null
+        coverUrl: string | null
       } | null
     }> = (await prisma.businessFollow.findMany({
       where: { userId },
@@ -5234,6 +5494,8 @@ app.get('/organizations/follows', async (req: FastifyRequest, reply: FastifyRepl
             provinceCode: true,
             communitySlug: true,
             isVerified: true,
+            logoUrl: true,
+            coverUrl: true,
           },
         },
       },
@@ -5249,6 +5511,8 @@ app.get('/organizations/follows', async (req: FastifyRequest, reply: FastifyRepl
               provinceCode: row.business.provinceCode,
               communitySlug: row.business.communitySlug,
               isVerified: row.business.isVerified,
+              logoUrl: normalizeMediaUrl(row.business.logoUrl ?? null),
+              coverUrl: normalizeMediaUrl(row.business.coverUrl ?? null),
             },
           ]
         : [],
@@ -5275,6 +5539,8 @@ app.get('/organizations/owned', async (req: FastifyRequest, reply: FastifyReply)
         communitySlug: true,
         isVerified: true,
         status: true,
+        logoUrl: true,
+        coverUrl: true,
       },
     })) as Array<{
       id: string
@@ -5284,6 +5550,8 @@ app.get('/organizations/owned', async (req: FastifyRequest, reply: FastifyReply)
       communitySlug: string | null
       isVerified: boolean
       status: BusinessStatus
+      logoUrl: string | null
+      coverUrl: string | null
     }>
 
     const items = organizations.map((org) => ({
@@ -5294,6 +5562,8 @@ app.get('/organizations/owned', async (req: FastifyRequest, reply: FastifyReply)
       communitySlug: org.communitySlug,
       isVerified: org.isVerified,
       status: org.status,
+      logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
     }))
 
     return reply.send({ items })
@@ -5323,7 +5593,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug },
-      select: { id: true },
+      select: { id: true, ownerId: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
@@ -5333,6 +5603,23 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
     const where: Prisma.PostWhereInput = {
       businessId: org.id,
       ...(jurisdiction ? { jurisdiction } : {}),
+    }
+
+    const viewerId = (req as any).user?.id as string | undefined
+
+    if (viewerId) {
+      const isOwner = org.ownerId === viewerId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: org.id, userId: viewerId } },
+            select: { role: true },
+          })
+      if (!membership) {
+        where.visibility = 'public'
+      }
+    } else {
+      where.visibility = 'public'
     }
 
     let posts: PostWithAuthor[] = []
@@ -5360,7 +5647,6 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
       posts = queryResult
     }
 
-    const viewerId = (req as any).user?.id as string | undefined
     let reactionsByPost: Record<string, ReactionType> = {}
     if (viewerId && posts.length) {
       const reactions = await prisma.postReaction.findMany({
@@ -5405,6 +5691,20 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!post) return reply.code(404).send({ error: 'not found' })
 
     const viewerId = (req as any).user?.id as string | undefined
+
+    if (post.visibility === 'members' && post.businessId) {
+      if (!viewerId) return reply.code(404).send({ error: 'not found' })
+      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === viewerId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: post.businessId, userId: viewerId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'not found' })
+    }
+
     let viewerReaction: ReactionType | null = null
     if (viewerId) {
       const reaction = await prisma.postReaction.findUnique({
@@ -5478,6 +5778,20 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     })
     if (!post) return reply.code(404).send({ error: 'not found' })
     const viewerId = (req as any).user?.id as string | undefined
+
+    if (post.visibility === 'members' && post.businessId) {
+      if (!viewerId) return reply.code(404).send({ error: 'not found' })
+      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === viewerId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: post.businessId, userId: viewerId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'not found' })
+    }
+
     let viewerReaction: ReactionType | null = null
     if (viewerId) {
       const reaction = await prisma.postReaction.findUnique({
@@ -5572,7 +5886,44 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const viewerId = (req as any).user?.id as string | undefined
 
+    // Privacy: members-only business posts should never leak into public feeds.
+    // - Community-filtered views are public.
+    // - Anonymous home feed is public.
+    // - Logged-in home feed includes members-only only when user is a business member/owner.
+    let memberBusinessIds: string[] = []
+    if (province && community) {
+      where.visibility = 'public'
+    } else if (!viewerId) {
+      where.visibility = 'public'
+    }
+
+    if (!viewerId && scope !== 'all' && !province && !community) {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+
     if (viewerId && !province && !community) {
+      const [ownedBusinesses, memberships] = await Promise.all([
+        prisma.business.findMany({ where: { ownerId: viewerId }, select: { id: true } }) as Promise<Array<{ id: string }>>,
+        prisma.businessMembership.findMany({ where: { userId: viewerId }, select: { businessId: true } }) as Promise<
+          Array<{ businessId: string }>
+        >,
+      ])
+      memberBusinessIds = Array.from(new Set([...ownedBusinesses.map((row) => row.id), ...memberships.map((row) => row.businessId)]))
+
+      const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
+      where.AND = [
+        ...existingAnd,
+        {
+          OR: [
+            { visibility: 'public' },
+            {
+              visibility: 'members',
+              businessId: { in: memberBusinessIds },
+            },
+          ],
+        },
+      ]
+
       const includeFriends = scope === 'all' || scope === 'friends'
       const includeCommunities = scope === 'all' || scope === 'communities'
       const includeOrganizations = scope === 'all' || scope === 'organizations'
@@ -5618,12 +5969,17 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
 
       if (includeOrganizations) {
-        const businessFollows: Array<{ businessId: string }> = await prisma.businessFollow.findMany({
+        const businessFollows = (await prisma.businessFollow.findMany({
           where: { userId: viewerId },
           select: { businessId: true },
-        })
+        })) as Array<{ businessId: string }>
 
-        const businessIds = Array.from(new Set(businessFollows.map((follow) => follow.businessId)))
+        const businessIds = Array.from(
+          new Set([
+            ...businessFollows.map((follow) => follow.businessId),
+            ...memberBusinessIds,
+          ]),
+        )
         if (businessIds.length) {
           accessibleFilters.push({ businessId: { in: businessIds } })
         }
@@ -5916,6 +6272,31 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     // Privacy: If not self and not friends, only show community posts
     if (relationship.friendshipStatus !== 'self' && relationship.friendshipStatus !== 'friends') {
       where.communitySlug = { not: null }
+    }
+
+    if (!viewerId) {
+      where.visibility = 'public'
+    } else {
+      const [ownedBusinesses, memberships] = await Promise.all([
+        prisma.business.findMany({ where: { ownerId: viewerId }, select: { id: true } }) as Promise<Array<{ id: string }>>,
+        prisma.businessMembership.findMany({ where: { userId: viewerId }, select: { businessId: true } }) as Promise<
+          Array<{ businessId: string }>
+        >,
+      ])
+      const memberBusinessIds = Array.from(new Set([...ownedBusinesses.map((row) => row.id), ...memberships.map((row) => row.businessId)]))
+      const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
+      where.AND = [
+        ...existingAnd,
+        {
+          OR: [
+            { visibility: 'public' },
+            {
+              visibility: 'members',
+              businessId: { in: memberBusinessIds },
+            },
+          ],
+        },
+      ]
     }
 
     const province = provinceParam ? normalizeProvinceCode(provinceParam) : null
@@ -7361,12 +7742,15 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
       handle: true,
       name: true,
       avatarUrl: true,
+      coverUrl: true,
       bio: true,
       communityMeta: true, // To get home community
     },
   })
 
-  const friendsWithCounts = friends.map((friend: any) => ({
+  const normalizedFriends = friends.map((friend: any) => normalizeUserMedia(friend))
+
+  const friendsWithCounts = normalizedFriends.map((friend: any) => ({
     ...friend,
     newPosts: friendCountMap.get(friend.id) ?? 0,
   }))

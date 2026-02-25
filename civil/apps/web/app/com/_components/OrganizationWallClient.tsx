@@ -23,13 +23,14 @@ export default function OrganizationWallClient({
   province: string
   municipality: string
   slug: string
-  initialOrg: CommunityOrganization
+  initialOrg: CommunityOrganization | null
 }) {
-  const [org, setOrg] = useState<CommunityOrganization>(initialOrg)
+  const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [viewerId, setViewerId] = useState<string | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [orgLoading, setOrgLoading] = useState(false)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('new')
 
   const token = useMemo(() => {
@@ -37,7 +38,58 @@ export default function OrganizationWallClient({
     return window.localStorage.getItem('token')
   }, [])
 
+  const loadOrg = useCallback(async () => {
+    if (org) return
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setOrgLoading(true)
+    setError(null)
+
+    try {
+      const res = await fetch(
+        buildApiUrl(
+          `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
+        ),
+        { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+      )
+
+      if (res.status === 401) {
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem('token')
+        }
+        redirectToAuthModal('login')
+        return
+      }
+
+      if (res.status === 404) {
+        setError('Organization not found.')
+        return
+      }
+
+      if (!res.ok) {
+        setError('Unable to load this organization right now.')
+        return
+      }
+
+      const payload = (await res.json().catch(() => null)) as { org?: CommunityOrganization } | null
+      if (payload?.org) {
+        setOrg(payload.org)
+      } else {
+        setError('Organization not found.')
+      }
+    } catch (err) {
+      console.error('Failed to load org', err)
+      setError('Unable to load this organization right now.')
+    } finally {
+      setOrgLoading(false)
+    }
+  }, [municipality, org, province, slug, token])
+
   const loadPosts = useCallback(async () => {
+    if (!org) return
     setLoading(true)
     setError(null)
 
@@ -80,6 +132,10 @@ export default function OrganizationWallClient({
       setLoading(false)
     }
   }, [municipality, province, slug, sortMode, token])
+
+  useEffect(() => {
+    void loadOrg()
+  }, [loadOrg])
 
   useEffect(() => {
     void loadPosts()
@@ -130,8 +186,9 @@ export default function OrganizationWallClient({
     }
   }, [municipality, province, slug, token])
 
-  const canPostAsOrg = Boolean(viewerId && (org.viewerRole === 'OWNER' || org.viewerRole === 'MANAGER' || org.ownerId === viewerId))
-  const communityTarget = org.provinceCode && org.communitySlug ? { provinceCode: org.provinceCode, communitySlug: org.communitySlug } : null
+  const canPostAsOrg = Boolean(viewerId && org && (org.viewerRole === 'OWNER' || org.viewerRole === 'MANAGER' || org.ownerId === viewerId))
+  const communityTarget = org?.provinceCode && org?.communitySlug ? { provinceCode: org.provinceCode, communitySlug: org.communitySlug } : null
+  const businessId = org?.id ?? null
 
   const handlePostCreated = useCallback((post: ApiPost) => {
     setPosts((prev) => [post, ...prev])
@@ -165,17 +222,23 @@ export default function OrganizationWallClient({
 
   return (
     <div className="space-y-6">
-      {canPostAsOrg && communityTarget ? (
+      {!org ? (
+        <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
+          {error ? error : orgLoading ? 'Loading organization…' : 'Loading organization…'}
+        </section>
+      ) : null}
+
+      {canPostAsOrg && communityTarget && businessId ? (
         <PostComposer
           className="rounded-3xl border border-slate-200 bg-white shadow-sm"
           communityTarget={communityTarget}
-          businessTarget={{ businessId: org.id }}
-          defaultAudience="community"
+          businessTarget={{ businessId, businessName: org?.name ?? null }}
+          defaultAudience="business"
           onPostCreated={handlePostCreated}
         />
       ) : null}
 
-      {org.description ? (
+      {org?.description ? (
         <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
           <h2 className="text-lg font-semibold text-slate-900">About</h2>
           <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{org.description}</p>
@@ -186,7 +249,7 @@ export default function OrganizationWallClient({
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Posts</p>
-            <h2 className="text-lg font-semibold text-slate-900">Updates from {org.name}</h2>
+            <h2 className="text-lg font-semibold text-slate-900">Updates from {org?.name ?? 'this organization'}</h2>
           </div>
           <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
             {SORT_OPTIONS.map((option) => (

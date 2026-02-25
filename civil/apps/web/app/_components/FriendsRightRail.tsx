@@ -18,6 +18,7 @@ export type FriendListEntry = {
     handle: string
     name: string | null
     avatarUrl: string | null
+    coverUrl?: string | null
     isPremium: boolean
     isVerified: boolean
   }
@@ -127,6 +128,11 @@ export default function FriendsRightRail() {
           return (
             <li key={friend.id} className="flex items-center justify-between">
               <Link href={`/u/${friend.user.handle}`} className="group flex items-center gap-2">
+                <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
+                  {friend.user.coverUrl ? (
+                    <img src={friend.user.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                  ) : null}
+                </span>
                 <VerifiedAvatar
                   src={friend.user.avatarUrl}
                   alt={displayName}

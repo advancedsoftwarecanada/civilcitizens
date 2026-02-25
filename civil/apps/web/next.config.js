@@ -25,6 +25,23 @@ const nextConfig = {
     }
     return config
   },
+
+  async rewrites() {
+    // Local dev convenience:
+    // When `NEXT_PUBLIC_API_BASE` is `/api`, client + SSR fetches hit the web origin.
+    // If the web server is running directly on localhost (not behind nginx), proxy to the API dev port.
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || '/api'
+    const normalized = apiBase.replace(/\/+$/, '')
+    if (normalized !== '/api') return []
+
+    const apiPort = process.env.CIVIL_API_PORT || '3012'
+    return [
+      {
+        source: '/api/:path*',
+        destination: `http://127.0.0.1:${apiPort}/:path*`,
+      },
+    ]
+  },
 }
 
 module.exports = nextConfig

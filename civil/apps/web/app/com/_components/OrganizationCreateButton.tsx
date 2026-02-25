@@ -13,6 +13,8 @@ type Props = {
 type CreateOrgResponse = {
   org?: {
     slug: string
+    provinceCode?: string | null
+    communitySlug?: string | null
   }
   error?: unknown
 }
@@ -157,10 +159,12 @@ export default function OrganizationCreateButton({ province, municipality, defau
       }
 
       const orgSlug = payload.org.slug
+      const provinceCode = payload.org.provinceCode ?? province
+      const communitySlug = payload.org.communitySlug ?? municipality
       pushToast('Organization created.', 'success')
       reset()
       setOpen(false)
-      window.location.href = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(orgSlug)}`
+      window.location.href = `/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(orgSlug)}`
     } catch (err) {
       console.error('Unable to create organization', err)
       pushToast('Unable to create organization. Please try again.', 'error')

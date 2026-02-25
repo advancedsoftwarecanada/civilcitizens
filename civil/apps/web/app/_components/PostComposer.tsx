@@ -9,6 +9,7 @@ import { buildApiUrl } from '../_lib/api'
 import { pushToast } from './useToasts'
 
 export type PostType = 'post' | 'article' | 'photo'
+export type PostVisibility = 'public' | 'members'
 
 const POST_TYPE_CHOICES: Array<{ type: PostType | 'poll' | 'link' | 'video'; label: string; icon: string; comingSoon?: boolean }> = [
   { type: 'post', label: 'Post', icon: '📝' },
@@ -94,10 +95,10 @@ type PostComposerProps = {
   defaultPostType?: PostType
   communityTarget?: CommunityTarget | null
   communityOptions?: CommunityTarget[]
-  businessTarget?: { businessId: string } | null
+  businessTarget?: { businessId: string; businessName?: string | null } | null
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
-  defaultAudience?: 'friends' | 'community'
+  defaultAudience?: 'friends' | 'community' | 'business'
 }
 
 const MAX_POST_LENGTH = 5000
@@ -108,6 +109,7 @@ const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/h
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
 const FRIENDS_VALUE = 'friends'
+const BUSINESS_VALUE = 'business'
 const COMMUNITY_PREFIX = 'community:'
 const COMMUNITY_PROMPT_VALUE = `${COMMUNITY_PREFIX}__prompt`
 
@@ -124,9 +126,11 @@ const formatCommunityLabel = (target: CommunityTarget) => {
 
 const deriveInitialAudienceSelection = (
   currentTarget: CommunityTarget | null,
-  defaultAudience: 'friends' | 'community',
+  defaultAudience: 'friends' | 'community' | 'business',
   options: CommunityTarget[],
+  businessTarget: PostComposerProps['businessTarget'],
 ) => {
+  if (businessTarget?.businessId) return BUSINESS_VALUE
   if (currentTarget) return buildCommunityValue(currentTarget)
   if (defaultAudience === 'community') {
     if (options.length === 1) {
@@ -137,6 +141,7 @@ const deriveInitialAudienceSelection = (
     }
     return COMMUNITY_PROMPT_VALUE
   }
+  if (defaultAudience === 'business') return BUSINESS_VALUE
   return FRIENDS_VALUE
 }
 
@@ -216,6 +221,7 @@ export default function PostComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [visibility, setVisibility] = useState<PostVisibility>('public')
   const normalizedCommunityOptions = useMemo(() => {
     return communityOptions.map((option) => ({
       ...option,
@@ -225,22 +231,27 @@ export default function PostComposer({
   }, [communityOptions])
 
   const [audienceSelection, setAudienceSelection] = useState(() =>
-    deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions),
+    deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions, businessTarget),
   )
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
 
-  const audienceLocked = Boolean(communityTarget)
+  const audienceLocked = Boolean((communityTarget && !businessTarget?.businessId) || businessTarget?.businessId)
   const isPromptSelected = audienceSelection === COMMUNITY_PROMPT_VALUE
   const audienceBlocked = !communityTarget && isPromptSelected
   const activeCommunity = useMemo(() => {
+    if (businessTarget?.businessId) return null
     if (communityTarget) return communityTarget
     if (!audienceSelection.startsWith(COMMUNITY_PREFIX) || isPromptSelected) return null
     const key = audienceSelection.slice(COMMUNITY_PREFIX.length)
     return normalizedCommunityOptions.find((option) => buildCommunityKey(option) === key) ?? null
-  }, [audienceSelection, communityTarget, isPromptSelected, normalizedCommunityOptions])
+  }, [audienceSelection, businessTarget, communityTarget, isPromptSelected, normalizedCommunityOptions])
 
   useEffect(() => {
+    if (businessTarget?.businessId) {
+      setAudienceSelection(BUSINESS_VALUE)
+      return
+    }
     if (communityTarget) {
       setAudienceSelection(buildCommunityValue(communityTarget))
       return
@@ -270,7 +281,7 @@ export default function PostComposer({
       }
       return prev
     })
-  }, [communityTarget, defaultAudience, normalizedCommunityOptions])
+  }, [businessTarget, communityTarget, defaultAudience, normalizedCommunityOptions])
 
   const startPhotoUpload = useCallback(async (id: string, file: File) => {
     setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
@@ -440,11 +451,12 @@ export default function PostComposer({
     setArticleTitle('')
     setArticleBody('<p></p>')
     setPostType(defaultPostType)
-    setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions))
+    setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions, businessTarget))
+    setVisibility('public')
     setError(null)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
-  }, [communityTarget, defaultAudience, defaultPostType, normalizedCommunityOptions, photos])
+  }, [businessTarget, communityTarget, defaultAudience, defaultPostType, normalizedCommunityOptions, photos])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -484,6 +496,7 @@ export default function PostComposer({
 
       if (businessTarget?.businessId) {
         payload.businessId = businessTarget.businessId
+        payload.visibility = visibility
       }
 
       const res = await fetch(buildApiUrl('/posts'), {
@@ -524,7 +537,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeCommunity, articleBody, articleTitle, audienceSelection, businessTarget, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting])
+  }, [activeCommunity, articleBody, articleTitle, audienceSelection, businessTarget, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting, visibility])
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -644,32 +657,41 @@ export default function PostComposer({
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
           <select
             className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
-            value={audienceLocked && activeCommunity ? buildCommunityValue(activeCommunity) : audienceSelection}
+            value={businessTarget?.businessId ? BUSINESS_VALUE : audienceLocked && activeCommunity ? buildCommunityValue(activeCommunity) : audienceSelection}
             onChange={(event) => setAudienceSelection(event.target.value)}
             disabled={audienceLocked}
           >
-            <option value={FRIENDS_VALUE}>Friends</option>
-            {!communityTarget && isPromptSelected ? (
-              <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
-                Select a community
-              </option>
-            ) : null}
-            {communityTarget ? (
-              <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
-            ) : null}
-            {!communityTarget
-              ? normalizedCommunityOptions.map((option) => (
-                  <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
-                    {formatCommunityLabel(option)}
+            {businessTarget?.businessId ? (
+              <option value={BUSINESS_VALUE}>{businessTarget.businessName ?? 'Organization'}</option>
+            ) : (
+              <>
+                <option value={FRIENDS_VALUE}>Friends</option>
+                {!communityTarget && isPromptSelected ? (
+                  <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
+                    Select a community
                   </option>
-                ))
-              : null}
+                ) : null}
+                {communityTarget ? (
+                  <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
+                ) : null}
+                {!communityTarget
+                  ? normalizedCommunityOptions.map((option) => (
+                      <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
+                        {formatCommunityLabel(option)}
+                      </option>
+                    ))
+                  : null}
+              </>
+            )}
           </select>
           {showCommunityWarning ? (
             <p className="text-xs text-slate-500">Follow a community to publish in its public feed.</p>
           ) : null}
-          {isPromptSelected ? (
+          {!businessTarget?.businessId && isPromptSelected ? (
             <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
+          ) : null}
+          {businessTarget?.businessId ? (
+            <p className="text-xs text-slate-500">Posting to {businessTarget.businessName ?? 'this organization'}</p>
           ) : null}
           {activeCommunity && !audienceLocked && !isPromptSelected ? (
             <p className="text-xs text-slate-500">
@@ -677,6 +699,36 @@ export default function PostComposer({
             </p>
           ) : null}
         </div>
+
+        {businessTarget?.businessId ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Visibility</span>
+            <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+              <button
+                type="button"
+                className={clsx(
+                  'rounded-full px-4 py-1 transition',
+                  visibility === 'public' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                )}
+                onClick={() => setVisibility('public')}
+                disabled={submitting}
+              >
+                Public
+              </button>
+              <button
+                type="button"
+                className={clsx(
+                  'rounded-full px-4 py-1 transition',
+                  visibility === 'members' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                )}
+                onClick={() => setVisibility('members')}
+                disabled={submitting}
+              >
+                Members only
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="flex flex-col gap-2">
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Type</span>
           <div className="inline-flex rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500">

@@ -3,7 +3,6 @@ import { OrganizationContextProvider } from '../../../../_components/Organizatio
 import OrganizationNav from '../../../../_components/OrganizationNav'
 import OrganizationRightColumn from '../../../../_components/OrganizationRightColumn'
 import OrganizationHeader from '../../../../_components/OrganizationHeader'
-import { fetchCommunityOrganization } from '../../../../../_lib/organizations'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,15 +23,15 @@ type LayoutProps = {
 
 export default async function OrganizationLayout({ children, params }: LayoutProps) {
   const slug = params.organization.trim().toLowerCase()
-  const org = await fetchCommunityOrganization({ province: params.province, municipality: params.municipality, slug })
-  const name = org?.name ?? titleCase(slug)
+  const org = null
+  const name = titleCase(slug)
 
   return (
     <OrganizationContextProvider value={{ slug, name }}>
       <div className="mx-auto max-w-screen-2xl px-4 py-8 sm:px-8">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-10">
           <div className="space-y-6">
-            <OrganizationHeader org={org} fallbackName={name} />
+            <OrganizationHeader org={org} fallbackName={name} province={params.province} municipality={params.municipality} slug={slug} />
             {children}
           </div>
           <aside className="hidden lg:block">
