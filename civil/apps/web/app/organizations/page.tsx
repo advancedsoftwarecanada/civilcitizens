@@ -10,7 +10,7 @@ export default function OrganizationsPage() {
       description="Updates from organizations you follow."
       emptyState="No organization updates yet. Follow organizations in your community to see their posts here."
       emptyStateCta={{ label: 'Browse Communities', href: '/communities' }}
-      rightRail={<RightRail mode="organizations" />}
+      rightRail={<RightRail showOrganizations hideContacts />}
     />
   )
 }

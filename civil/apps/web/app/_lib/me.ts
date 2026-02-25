@@ -14,6 +14,7 @@ export type MeResponse = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  coverUrl?: string | null
   homeCommunity?: HomeCommunitySummary | null
   homeChamber?: HomeChamberSummary | null
   isPremium?: boolean

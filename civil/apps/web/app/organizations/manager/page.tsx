@@ -16,6 +16,8 @@ type OrganizationRow = {
   communitySlug: string
   isVerified?: boolean
   status?: string
+  logoUrl?: string | null
+  coverUrl?: string | null
 }
 
 type Status = 'loading' | 'ready' | 'unauthorized' | 'error'
@@ -105,11 +107,16 @@ export default function OrganizationsManagerPage() {
                 {followedOrganizations.length ? (
                   <ul className="space-y-2">
                     {followedOrganizations.slice(0, 25).map((org) => (
-                      <li key={org.id}>
+                      <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-800">
+                        {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                        <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
                         <Link
                           href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                          className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                          className="relative flex items-center gap-2 px-3 py-2 text-sm font-medium text-white hover:text-white"
                         >
+                          <span className="h-8 w-8 overflow-hidden rounded-full border border-white/40 bg-white/20">
+                            {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
+                          </span>
                           {org.name}
                         </Link>
                       </li>
@@ -127,11 +134,16 @@ export default function OrganizationsManagerPage() {
                 {ownedOrganizations.length ? (
                   <ul className="space-y-2">
                     {ownedOrganizations.slice(0, 25).map((org) => (
-                      <li key={org.id}>
+                      <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-800">
+                        {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                        <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
                         <Link
                           href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                          className="text-sm font-medium text-slate-700 hover:text-slate-900"
+                          className="relative flex items-center gap-2 px-3 py-2 text-sm font-medium text-white hover:text-white"
                         >
+                          <span className="h-8 w-8 overflow-hidden rounded-full border border-white/40 bg-white/20">
+                            {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
+                          </span>
                           {org.name}
                         </Link>
                       </li>

@@ -149,34 +149,29 @@ export default function OrganizationDirectoryPageClient() {
         {status === 'ready' && !items.length ? <p className="text-sm text-slate-500">No organizations found.</p> : null}
 
         {items.length ? (
-          <ul className="divide-y divide-slate-100">
+          <ul className="space-y-3">
             {items.map((org) => (
-              <li key={org.id} className="py-3">
-                <div className="flex items-start justify-between gap-3">
+              <li key={org.id} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-800 p-4">
+                {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
+                <div className="relative flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
-                    <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                      {org.coverUrl ? (
-                        <img src={org.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                      ) : null}
-                      <div className="absolute -bottom-3 left-2 h-10 w-10 overflow-hidden rounded-full border border-slate-200 bg-white">
-                        {org.logoUrl ? (
-                          <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                        ) : null}
-                      </div>
+                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/40 bg-white/20">
+                      {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
                     </div>
 
                     <div className="min-w-0">
                       <Link
                         href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                        className="block truncate text-sm font-semibold text-slate-900 hover:underline"
+                        className="block truncate text-base font-semibold text-white hover:underline"
                       >
                         {org.name}
                       </Link>
-                      <p className="mt-1 text-xs text-slate-500">
+                      <p className="mt-1 text-xs text-white/85">
                         {formatTypeLabel(org.type)} · {org.provinceCode.toUpperCase()} · {org.communitySlug}
                       </p>
 
-                      <div className="mt-2 space-y-1 text-xs text-slate-600">
+                      <div className="mt-2 space-y-1 text-xs text-white/80">
                         {org.phone ? <p className="truncate">{org.phone}</p> : null}
                         {org.websiteUrl ? (
                           <p className="truncate">
@@ -197,7 +192,7 @@ export default function OrganizationDirectoryPageClient() {
                   </div>
 
                   {org.isVerified ? (
-                    <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">Verified</span>
+                    <span className="shrink-0 rounded-full border border-white/40 bg-white/10 px-2 py-1 text-xs font-semibold text-white">Verified</span>
                   ) : null}
                 </div>
               </li>

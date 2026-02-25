@@ -214,6 +214,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       ? formatDisplayName(post.author.name)
       : post.author.handle
   const avatarInitials = authorDisplayName || organization?.name || post.author.handle
+  const authorCoverUrl = organization?.coverUrl ?? post.author.coverUrl ?? null
   const isAuthor = viewerId === post.author.id
 
   useEffect(() => {
@@ -243,7 +244,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       } else {
         pushToast('Failed to delete post', 'error')
       }
-    } catch (err) {
+    } catch {
       pushToast('Failed to delete post', 'error')
     } finally {
       setIsDeleting(false)
@@ -273,7 +274,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       } else {
         pushToast('Failed to update post', 'error')
       }
-    } catch (err) {
+    } catch {
       pushToast('Failed to update post', 'error')
     }
   }
@@ -327,7 +328,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   return (
     <article className="surface-card space-y-4 px-6 py-5 shadow-subtle">
       <header className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
+        <div className="relative flex flex-1 items-start gap-3 overflow-hidden rounded-xl border border-slate-200 px-3 py-2">
+          {authorCoverUrl ? <img src={authorCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" loading="lazy" /> : null}
+          <div className={clsx('absolute inset-0', authorCoverUrl ? 'bg-white/78' : 'bg-slate-50')} />
           <VerifiedAvatar
             src={organization ? (organization.logoUrl ?? null) : post.author.avatarUrl}
             alt={authorDisplayName ?? post.author.handle}
@@ -335,16 +338,20 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             size={48}
             isVerified={isVerifiedAuthor}
             isBusiness={isBusinessAuthor}
-            className="shrink-0"
+            className="shrink-0 relative z-[1]"
             href={profileHref}
           />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
-              <Link href={profileHref} className="font-semibold text-slate-900 hover:underline" title={`View ${authorDisplayName ?? post.author.handle}`}>
-                {authorDisplayName ?? post.author.handle}
-              </Link>
-              {organization ? <span className="text-xs font-semibold text-slate-400">Organization</span> : null}
-              <span className="text-xs">• {formattedDate}</span>
+          <div className="min-w-0 relative z-[1]">
+            <div className="space-y-0.5 text-sm">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Link href={profileHref} className="font-semibold text-slate-900 hover:underline" title={`View ${authorDisplayName ?? post.author.handle}`}>
+                  {authorDisplayName ?? post.author.handle}
+                </Link>
+                {organization ? <span className="text-xs font-semibold text-slate-500">Organization</span> : null}
+              </div>
+              <div className="text-xs text-slate-500">
+                {formattedDate}
+              </div>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-500">
               {communityUrl ? (
@@ -367,6 +374,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             <button
               onClick={() => setMenuOpen(!menuOpen)}
               className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+              disabled={isDeleting}
             >
               <HiEllipsisHorizontal className="h-5 w-5" />
             </button>
@@ -385,7 +393,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 <button
                   onClick={() => {
                     setMenuOpen(false)
-                    handleDelete()
+                    void handleDelete()
                   }}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                 >
@@ -399,7 +407,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       </header>
 
       <div className="space-y-3 text-[15px] leading-6 text-slate-800">
-
         <PostImageGrid images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
 
         {post.type === 'article' && post.title ? (
@@ -425,7 +432,21 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
 
         {post.sharedPost ? (
           <Link href={buildPostUrl(post.sharedPost)} className="block mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition-colors">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="relative mb-2 flex items-center gap-2 overflow-hidden rounded-lg border border-slate-200 px-2 py-1.5">
+              {post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ? (
+                <img
+                  src={post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ?? ''}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover opacity-30"
+                  loading="lazy"
+                />
+              ) : null}
+              <div
+                className={clsx(
+                  'absolute inset-0',
+                  post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ? 'bg-white/78' : 'bg-slate-50',
+                )}
+              />
               <VerifiedAvatar
                 src={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
                 alt={
@@ -441,21 +462,26 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 size={24}
                 isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
                 isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
+                className="relative z-[1]"
               />
-              <span className="text-sm font-semibold text-slate-900 hover:underline">
-                {post.sharedPost.organization?.name
-                  ? formatDisplayName(post.sharedPost.organization.name)
-                  : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
-              </span>
-              <span className="text-xs text-slate-500">• {new Date(post.sharedPost.createdAt).toLocaleDateString()}</span>
+              <div className="relative z-[1] min-w-0">
+                <div className="text-sm font-semibold text-slate-900">
+                  {post.sharedPost.organization?.name
+                    ? formatDisplayName(post.sharedPost.organization.name)
+                    : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {new Date(post.sharedPost.createdAt).toLocaleDateString()}
+                </div>
+              </div>
             </div>
             <div className="text-sm text-slate-800">
               {post.sharedPost.body}
-              {post.sharedPost.images && post.sharedPost.images.length > 0 && (
-                 <div className="mt-2">
-                   <PostImageGrid images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />
-                 </div>
-              )}
+              {post.sharedPost.images && post.sharedPost.images.length > 0 ? (
+                <div className="mt-2">
+                  <PostImageGrid images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />
+                </div>
+              ) : null}
             </div>
           </Link>
         ) : null}
