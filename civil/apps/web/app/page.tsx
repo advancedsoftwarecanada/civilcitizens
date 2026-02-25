@@ -22,10 +22,6 @@ import {
   FaBalanceScale,
   FaIdCard,
   FaChartLine,
-  FaSeedling,
-  FaTractor,
-  FaStoreAlt,
-  FaHandsHelping,
 } from 'react-icons/fa'
 
 function IconWrap({ children }: { children: ReactNode }) {
@@ -199,24 +195,6 @@ export default function Home() {
               <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
                 <Link href="/register" className="btn-primary-cc">Register</Link>
                 <Link href="/login" className="btn-primary-cc">Login</Link>
-              </div>
-
-              <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
-                <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                  <p className="text-sm font-semibold text-white">Build your professional profile</p>
-                </div>
-                <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                  <p className="text-sm font-semibold text-white">Show real experience</p>
-                </div>
-                <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur-sm">
-                  <p className="text-sm font-semibold text-white">Connect with verified Canadian companies</p>
-                </div>
-              </div>
-
-              <div className="mt-6 rounded-2xl border border-white/20 bg-white/10 p-6 text-left backdrop-blur-sm">
-                <p className="text-white/90">No engagement bait.</p>
-                <p className="text-white/90 mt-2">No influencer culture.</p>
-                <p className="text-white/90 mt-2">Just real professional growth.</p>
               </div>
             </div>
           </div>

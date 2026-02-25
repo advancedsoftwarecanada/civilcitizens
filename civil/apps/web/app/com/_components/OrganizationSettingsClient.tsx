@@ -33,6 +33,35 @@ type MediaAssetStatusResponse = {
   }
 }
 
+type OrgMemberItem = {
+  userId: string
+  role: 'OWNER' | 'MANAGER'
+  joinedAt: string | null
+  user: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+}
+
+type OrgFollowerItem = {
+  userId: string
+  role: 'FOLLOWER'
+  joinedAt: string | null
+  user: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+}
+
+type OrgMembersResponse = {
+  members?: OrgMemberItem[]
+  followers?: OrgFollowerItem[]
+}
+
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
@@ -71,15 +100,6 @@ const COVER_EXPORT_HEIGHT = 640
 const COVER_ASPECT_RATIO = COVER_EXPORT_WIDTH / COVER_EXPORT_HEIGHT
 const LOGO_EXPORT_SIZE = 1024
 const MAX_CROP_ZOOM = 3
-
-function safeParseAbsoluteUrl(candidate: string | null | undefined): URL | null {
-  if (!candidate) return null
-  try {
-    return new URL(candidate)
-  } catch {
-    return null
-  }
-}
 
 async function waitForAssetReady(token: string, assetId: string, label: string) {
   const POLL_MAX_ATTEMPTS = 30
@@ -127,6 +147,11 @@ export default function OrganizationSettingsClient({
     schedule: '',
   })
   const [detailsDirty, setDetailsDirty] = useState(false)
+  const [members, setMembers] = useState<OrgMemberItem[]>([])
+  const [followers, setFollowers] = useState<OrgFollowerItem[]>([])
+  const [membersLoading, setMembersLoading] = useState(false)
+  const [memberActionUserId, setMemberActionUserId] = useState<string | null>(null)
+  const [visibilitySaving, setVisibilitySaving] = useState(false)
 
   const [photoModalCategory, setPhotoModalCategory] = useState<BusinessMediaCategory | null>(null)
   const [photoCaption, setPhotoCaption] = useState('')
@@ -143,10 +168,39 @@ export default function OrganizationSettingsClient({
 
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('token') : null), [])
   const canManage = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || (me?.id && org?.ownerId && me.id === org.ownerId))
+  const isOwner = Boolean(org?.viewerRole === 'OWNER' || (me?.id && org?.ownerId && me.id === org.ownerId))
 
   const orgApiPath = useMemo(() => {
     return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
   }, [municipality, province, slug])
+
+  const loadMembers = useCallback(async () => {
+    if (!token) {
+      setMembers([])
+      setFollowers([])
+      return
+    }
+    setMembersLoading(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/members`), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        setMembers([])
+        setFollowers([])
+        return
+      }
+      const { json } = await parseApiResponse<OrgMembersResponse>(res)
+      setMembers(Array.isArray(json?.members) ? json.members : [])
+      setFollowers(Array.isArray(json?.followers) ? json.followers : [])
+    } catch {
+      setMembers([])
+      setFollowers([])
+    } finally {
+      setMembersLoading(false)
+    }
+  }, [orgApiPath, token])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -181,6 +235,10 @@ export default function OrganizationSettingsClient({
   }, [load])
 
   useEffect(() => {
+    void loadMembers()
+  }, [loadMembers])
+
+  useEffect(() => {
     if (!org) return
     setDetails({
       phone: org.phone ?? '',
@@ -189,7 +247,7 @@ export default function OrganizationSettingsClient({
       schedule: org.schedule ?? '',
     })
     setDetailsDirty(false)
-  }, [org?.id])
+  }, [org])
 
   const saveDetails = useCallback(async () => {
     if (!token) {
@@ -240,6 +298,101 @@ export default function OrganizationSettingsClient({
       setSaving(false)
     }
   }, [details.address, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
+
+  const toggleVisibility = useCallback(async () => {
+    if (!token || !org || !canManage) return
+    const currentlyPublic = org.status === 'ACTIVE'
+    setVisibilitySaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ isPublic: !currentlyPublic }),
+      })
+      const { json } = await parseApiResponse<{ org?: CommunityOrganization; error?: unknown }>(res)
+      if (!res.ok) {
+        const rawError =
+          typeof (json as any)?.error === 'string'
+            ? (json as any).error
+            : typeof (json as any)?.error?.message === 'string'
+              ? (json as any).error.message
+              : null
+        pushToast(rawError ?? 'Unable to update visibility right now.', 'error')
+        return
+      }
+      if (json?.org) setOrg(json.org)
+      pushToast(!currentlyPublic ? 'Organization is now public.' : 'Organization is now private.', 'success')
+    } catch {
+      pushToast('Unable to update visibility right now.', 'error')
+    } finally {
+      setVisibilitySaving(false)
+    }
+  }, [canManage, org, orgApiPath, token])
+
+  const promoteFollower = useCallback(
+    async (targetUserId: string) => {
+      if (!token || !isOwner) return
+      setMemberActionUserId(targetUserId)
+      try {
+        const res = await fetch(buildApiUrl(`${orgApiPath}/members/${encodeURIComponent(targetUserId)}/promote`), {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          const { json } = await parseApiResponse<{ error?: unknown }>(res)
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Unable to promote this member right now.', 'error')
+          return
+        }
+        pushToast('Promoted to manager.', 'success')
+        await loadMembers()
+      } catch {
+        pushToast('Unable to promote this member right now.', 'error')
+      } finally {
+        setMemberActionUserId(null)
+      }
+    },
+    [isOwner, loadMembers, orgApiPath, token],
+  )
+
+  const removeMember = useCallback(
+    async (targetUserId: string) => {
+      if (!token || !isOwner) return
+      setMemberActionUserId(targetUserId)
+      try {
+        const res = await fetch(buildApiUrl(`${orgApiPath}/members/${encodeURIComponent(targetUserId)}`), {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${token}` },
+        })
+        if (!res.ok) {
+          const { json } = await parseApiResponse<{ error?: unknown }>(res)
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Unable to remove this member right now.', 'error')
+          return
+        }
+        pushToast('Member removed.', 'success')
+        await loadMembers()
+      } catch {
+        pushToast('Unable to remove this member right now.', 'error')
+      } finally {
+        setMemberActionUserId(null)
+      }
+    },
+    [isOwner, loadMembers, orgApiPath, token],
+  )
 
   const updateDraft = useCallback((category: BusinessMediaCategory, updater: (prev: PhotoDraftState) => PhotoDraftState) => {
     setDrafts((prev) => ({ ...prev, [category]: updater(prev[category]) }))
@@ -560,7 +713,7 @@ export default function OrganizationSettingsClient({
       setPhotoPosting(false)
       setSaving(false)
     }
-  }, [closePhotoModal, ensureFullSizeAsset, ensurePhotoApplied, load, orgApiPath, orgApiPath, photoCaption, photoModalCategory, token])
+  }, [closePhotoModal, ensureFullSizeAsset, ensurePhotoApplied, load, orgApiPath, photoCaption, photoModalCategory, token])
 
   const handleFileChange = useCallback(
     (category: BusinessMediaCategory) =>
@@ -741,6 +894,99 @@ export default function OrganizationSettingsClient({
           className="hidden"
           onChange={handleFileChange('business_cover')}
         />
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-slate-900">Visibility</h3>
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <span
+            className={
+              org.status === 'ACTIVE'
+                ? 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+                : 'inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700'
+            }
+          >
+            {org.status === 'ACTIVE' ? 'Public' : 'Private'}
+          </span>
+          <p className="text-xs text-slate-600">Public organizations are discoverable. Private organizations are only visible to admins.</p>
+          <button
+            type="button"
+            onClick={toggleVisibility}
+            disabled={visibilitySaving || !canManage}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {visibilitySaving ? 'Saving…' : org.status === 'ACTIVE' ? 'Make private' : 'Make public'}
+          </button>
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-slate-900">Members</h3>
+        {membersLoading ? <p className="text-xs text-slate-500">Loading members…</p> : null}
+        {!membersLoading && !members.length ? <p className="text-xs text-slate-500">No members yet.</p> : null}
+        {members.length ? (
+          <ul className="space-y-2">
+            {members.map((entry) => {
+              const displayName = entry.user.name ?? entry.user.handle
+              const canRemove = isOwner && entry.role !== 'OWNER'
+              return (
+                <li key={`${entry.userId}-${entry.role}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <VerifiedAvatar src={entry.user.avatarUrl} alt={displayName} initials={displayName} size={32} />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
+                      <p className="truncate text-xs text-slate-500">@{entry.user.handle} · {entry.role}</p>
+                    </div>
+                  </div>
+                  {canRemove ? (
+                    <button
+                      type="button"
+                      onClick={() => removeMember(entry.userId)}
+                      disabled={memberActionUserId === entry.userId}
+                      className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                    >
+                      {memberActionUserId === entry.userId ? 'Removing…' : 'Remove'}
+                    </button>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-slate-900">Followers</h3>
+        <p className="text-xs text-slate-500">Promote a follower to manager so they can help run this organization.</p>
+        {!followers.length ? <p className="text-xs text-slate-500">No followers available to promote.</p> : null}
+        {followers.length ? (
+          <ul className="space-y-2">
+            {followers.map((entry) => {
+              const displayName = entry.user.name ?? entry.user.handle
+              return (
+                <li key={entry.userId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <VerifiedAvatar src={entry.user.avatarUrl} alt={displayName} initials={displayName} size={32} />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
+                      <p className="truncate text-xs text-slate-500">@{entry.user.handle}</p>
+                    </div>
+                  </div>
+                  {isOwner ? (
+                    <button
+                      type="button"
+                      onClick={() => promoteFollower(entry.userId)}
+                      disabled={memberActionUserId === entry.userId}
+                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {memberActionUserId === entry.userId ? 'Promoting…' : 'Promote'}
+                    </button>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
       </section>
 
       <section className="space-y-3">

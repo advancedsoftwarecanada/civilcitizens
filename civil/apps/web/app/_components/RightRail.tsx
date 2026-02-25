@@ -15,6 +15,7 @@ type RightRailData = {
     handle: string
     name: string | null
     avatarUrl: string | null
+    coverUrl?: string | null
     newPosts: number
   }>
   communities: Array<{
@@ -32,6 +33,8 @@ type FollowedOrganization = {
   provinceCode: string
   communitySlug: string
   isVerified?: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
 }
 
 type OwnedOrganization = {
@@ -42,6 +45,8 @@ type OwnedOrganization = {
   communitySlug: string | null
   isVerified?: boolean
   status?: string
+  logoUrl?: string | null
+  coverUrl?: string | null
 }
 
 type OrganizationsFollowsResponse = {
@@ -205,9 +210,17 @@ export function RightRail({
                   <li key={org.id} className="flex items-center justify-between">
                     <Link
                       href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                      className="max-w-[200px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
+                      className="group flex items-center gap-2"
                     >
-                      {org.name}
+                      <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
+                        {org.coverUrl ? (
+                          <img src={org.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : null}
+                      </span>
+                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                      <span className="max-w-[140px] truncate text-sm font-medium text-slate-700 group-hover:text-slate-900">
+                        {org.name}
+                      </span>
                     </Link>
                   </li>
                 ))}
@@ -224,9 +237,17 @@ export function RightRail({
                   <li key={org.id} className="flex items-center justify-between">
                     <Link
                       href={`/com/${String(org.provinceCode).toLowerCase()}/${String(org.communitySlug).toLowerCase()}/orgs/${org.slug}`}
-                      className="max-w-[200px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
+                      className="group flex items-center gap-2"
                     >
-                      {org.name}
+                      <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
+                        {org.coverUrl ? (
+                          <img src={org.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        ) : null}
+                      </span>
+                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                      <span className="max-w-[140px] truncate text-sm font-medium text-slate-700 group-hover:text-slate-900">
+                        {org.name}
+                      </span>
                     </Link>
                   </li>
                 ))}
@@ -246,9 +267,17 @@ export function RightRail({
                 <li key={org.id} className="flex items-center justify-between">
                   <Link
                     href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                    className="max-w-[180px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
+                    className="group flex items-center gap-2"
                   >
-                    {org.name}
+                    <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
+                      {org.coverUrl ? (
+                        <img src={org.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                      ) : null}
+                    </span>
+                    <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                    <span className="max-w-[120px] truncate text-sm font-medium text-slate-700 group-hover:text-slate-900">
+                      {org.name}
+                    </span>
                   </Link>
                 </li>
               ))}
@@ -271,9 +300,17 @@ export function RightRail({
                 <li key={org.id} className="flex items-center justify-between">
                   <Link
                     href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                    className="max-w-[180px] truncate text-sm font-medium text-slate-700 hover:text-slate-900"
+                    className="group flex items-center gap-2"
                   >
-                    {org.name}
+                    <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
+                      {org.coverUrl ? (
+                        <img src={org.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                      ) : null}
+                    </span>
+                    <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                    <span className="max-w-[120px] truncate text-sm font-medium text-slate-700 group-hover:text-slate-900">
+                      {org.name}
+                    </span>
                   </Link>
                 </li>
               ))}
@@ -299,6 +336,11 @@ export function RightRail({
             {data.friends.map((friend) => (
               <li key={friend.id} className="flex items-center justify-between">
                 <Link href={`/u/${friend.handle}`} className="group flex items-center gap-2">
+                  <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
+                    {friend.coverUrl ? (
+                      <img src={friend.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    ) : null}
+                  </span>
                   <VerifiedAvatar
                     src={friend.avatarUrl}
                     alt={friend.name || friend.handle}

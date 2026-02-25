@@ -14,6 +14,7 @@ Commands:
   _DEV.py start         # start detached
   _DEV.py stop          # stop detached
   _DEV.py status        # show status
+    _DEV.py doctor        # show resolved ports/env + connectivity
   _DEV.py logs [N]      # tail logs (default 100)
 
 Managed processes:
@@ -356,9 +357,9 @@ def start() -> int:
     env["REDIS_URL"] = f"redis://localhost:{CYBERTRON_REDIS_PORT}"
     env.setdefault("JWT_SECRET", "dev_secret")
     env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
-    env.setdefault("NEXT_PUBLIC_BASE_URL", "https://dev.civilcitizens.ca")
-    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", "https://dev.civilcitizens.ca/media")
-    env.setdefault("MEDIA_PUBLIC_BASE_URL", "https://dev.civilcitizens.ca/media")
+    env.setdefault("NEXT_PUBLIC_BASE_URL", f"http://localhost:{WEB_PORT}")
+    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"http://localhost:{CYBERTRON_MINIO_PORT}/civil-media")
+    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"http://localhost:{CYBERTRON_MINIO_PORT}/civil-media")
     env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
     env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
 
@@ -393,6 +394,7 @@ def start() -> int:
 
     print(f"▶ Starting web (detached, Next Turbo) on :{WEB_PORT} (log: {WEB_LOG})")
     env["CIVIL_WEB_PORT"] = str(WEB_PORT)
+    env["CIVIL_API_PORT"] = str(API_PORT)
     _spawn_detached(
         [pnpm, "--filter", "@civil/web", "exec", "next", "dev", "--turbo", "-H", "0.0.0.0", "-p", str(WEB_PORT)],
         cwd=CIVIL_DIR,
@@ -480,6 +482,57 @@ def logs(lines: int) -> int:
     return 0
 
 
+def doctor() -> int:
+    file_env = _load_env_file(REPO_ROOT / ".env.dev")
+
+    database_url = os.environ.get(
+        "DATABASE_URL",
+        file_env.get("DATABASE_URL", f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"),
+    )
+    redis_url = os.environ.get("REDIS_URL", file_env.get("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}"))
+    api_base = os.environ.get("NEXT_PUBLIC_API_BASE", file_env.get("NEXT_PUBLIC_API_BASE", "/api"))
+    base_url = os.environ.get("NEXT_PUBLIC_BASE_URL", file_env.get("NEXT_PUBLIC_BASE_URL", f"http://localhost:{WEB_PORT}"))
+    media_base = os.environ.get(
+        "NEXT_PUBLIC_MEDIA_BASE_URL",
+        file_env.get("NEXT_PUBLIC_MEDIA_BASE_URL", f"http://localhost:{CYBERTRON_MINIO_PORT}/civil-media"),
+    )
+
+    print("== Effective dev configuration ==")
+    print(f"- CIVIL_WEB_PORT={WEB_PORT}")
+    print(f"- CIVIL_API_PORT={API_PORT}")
+    print(f"- CYBERTRON_POSTGRES_PORT={CYBERTRON_POSTGRES_PORT}")
+    print(f"- CYBERTRON_REDIS_PORT={CYBERTRON_REDIS_PORT}")
+    print(f"- CYBERTRON_MINIO_PORT={CYBERTRON_MINIO_PORT}")
+    print(f"- NEXT_PUBLIC_API_BASE={api_base}")
+    print(f"- NEXT_PUBLIC_BASE_URL={base_url}")
+    print(f"- NEXT_PUBLIC_MEDIA_BASE_URL={media_base}")
+    print(f"- DATABASE_URL={database_url}")
+    print(f"- REDIS_URL={redis_url}")
+    print()
+
+    print("== Connectivity ==")
+    print(f"- localhost:{WEB_PORT} open={_port_open('127.0.0.1', WEB_PORT)} (web)")
+    print(f"- localhost:{API_PORT} open={_port_open('127.0.0.1', API_PORT)} (api)")
+    print(f"- localhost:{CYBERTRON_POSTGRES_PORT} open={_port_open('127.0.0.1', CYBERTRON_POSTGRES_PORT)} (postgres)")
+    print(f"- localhost:{CYBERTRON_REDIS_PORT} open={_port_open('127.0.0.1', CYBERTRON_REDIS_PORT)} (redis)")
+    print(f"- localhost:{CYBERTRON_MINIO_PORT} open={_port_open('127.0.0.1', CYBERTRON_MINIO_PORT)} (minio)")
+
+    db_env = _load_env_file(CIVIL_DIR / "packages" / "db" / ".env")
+    db_url = db_env.get("DATABASE_URL")
+    if db_url:
+        m = re.search(r"@([^:/]+):(\d+)", db_url)
+        if m:
+            host, port_s = m.group(1), m.group(2)
+            try:
+                port = int(port_s)
+            except ValueError:
+                port = -1
+            if port > 0:
+                print(f"- packages/db/.env -> {host}:{port} open={_port_open(host, port)}")
+
+    return 0
+
+
 def _usage() -> str:
     return (
         "Usage:\n"
@@ -487,6 +540,7 @@ def _usage() -> str:
         "  _DEV.py start         # start detached\n"
         "  _DEV.py stop          # stop detached\n"
         "  _DEV.py status        # show status\n"
+        "  _DEV.py doctor        # show resolved ports/env + connectivity\n"
         "  _DEV.py logs [N]      # tail logs (default 100)\n"
     )
 
@@ -506,6 +560,8 @@ def main(argv: list[str]) -> int:
         return start()
     if cmd == "status":
         return status()
+    if cmd == "doctor":
+        return doctor()
     if cmd == "logs":
         n = 100
         if len(argv) > 2:
