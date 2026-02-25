@@ -383,6 +383,19 @@ export const CreateDirectThreadInput = z.object({
 })
 export type CreateDirectThreadInput = z.infer<typeof CreateDirectThreadInput>
 
+export const CreateGroupThreadInput = z.object({
+  participantIds: z
+    .array(z.string().cuid().or(z.string().uuid()))
+    .min(2)
+    .max(20),
+})
+export type CreateGroupThreadInput = z.infer<typeof CreateGroupThreadInput>
+
+export const GroupParticipantInput = z.object({
+  userId: z.string().cuid().or(z.string().uuid()),
+})
+export type GroupParticipantInput = z.infer<typeof GroupParticipantInput>
+
 export const SendMessageInput = z
   .object({
     body: z

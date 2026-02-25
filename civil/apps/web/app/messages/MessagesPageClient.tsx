@@ -19,6 +19,7 @@ import {
   HiOutlineChevronLeft,
   HiOutlinePhoto,
   HiOutlineXMark,
+  HiOutlineCog6Tooth,
 } from 'react-icons/hi2'
 
 const THREAD_PAGE_LIMIT = 20
@@ -29,6 +30,7 @@ type ThreadUser = {
   handle: string
   name: string | null
   avatarUrl: string | null
+  coverUrl?: string | null
   isPremium: boolean
   isVerified: boolean
 }
@@ -89,6 +91,11 @@ type MessageListResponse = {
 type RealtimePayload = {
   type?: string
   data?: Record<string, unknown>
+}
+
+type FriendListItem = {
+  id: string
+  user: ThreadUser
 }
 
 type MessagesPageClientProps = {
@@ -174,6 +181,19 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const [streamKey, setStreamKey] = useState(0)
   const [attachments, setAttachments] = useState<string[]>([])
   const [isUploading, setIsUploading] = useState(false)
+  const [groupModalOpen, setGroupModalOpen] = useState(false)
+  const [groupContactsLoading, setGroupContactsLoading] = useState(false)
+  const [groupContacts, setGroupContacts] = useState<ThreadUser[]>([])
+  const [groupContactFilter, setGroupContactFilter] = useState('')
+  const [selectedGroupContactIds, setSelectedGroupContactIds] = useState<string[]>([])
+  const [creatingGroupChat, setCreatingGroupChat] = useState(false)
+  const [manageMembersOpen, setManageMembersOpen] = useState(false)
+  const [groupCandidatesLoading, setGroupCandidatesLoading] = useState(false)
+  const [groupCandidates, setGroupCandidates] = useState<ThreadUser[]>([])
+  const [groupCandidateFilter, setGroupCandidateFilter] = useState('')
+  const [groupMemberFilter, setGroupMemberFilter] = useState('')
+  const [memberActionLoadingId, setMemberActionLoadingId] = useState<string | null>(null)
+  const [leavingGroup, setLeavingGroup] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -242,6 +262,23 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         if (thread) {
           upsertThread(thread)
         }
+        return
+      }
+      if (payload.type === 'thread.removed') {
+        const threadId = typeof payload.data?.threadId === 'string' ? payload.data.threadId : null
+        if (!threadId) return
+        setThreads((prev) => prev.filter((thread) => thread.id !== threadId))
+        setMessagesByThread((prev) => {
+          const next = { ...prev }
+          delete next[threadId]
+          return next
+        })
+        setMessageCursors((prev) => {
+          const next = { ...prev }
+          delete next[threadId]
+          return next
+        })
+        setSelectedThreadId((prev) => (prev === threadId ? null : prev))
         return
       }
       if (payload.type === 'message.created') {
@@ -656,6 +693,202 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     [fetchThreadDetail, markThreadRead, messagesByThread],
   )
 
+  const loadGroupContacts = useCallback(async () => {
+    setGroupContactsLoading(true)
+    try {
+      const response = await authedFetch('/friends')
+      if (!response.ok) {
+        throw new Error('failed_friends')
+      }
+      const payload = (await response.json()) as { items?: FriendListItem[] }
+      const contacts = Array.isArray(payload.items) ? payload.items.map((entry) => entry.user).filter(Boolean) : []
+      setGroupContacts(contacts)
+    } catch (err) {
+      console.error('Failed to load friends for group chat', err)
+      pushToast('Unable to load contacts right now.', 'error')
+      setGroupContacts([])
+    } finally {
+      setGroupContactsLoading(false)
+    }
+  }, [authedFetch])
+
+  const openGroupChatModal = useCallback(() => {
+    setGroupModalOpen(true)
+    setGroupContactFilter('')
+    setSelectedGroupContactIds([])
+    void loadGroupContacts()
+  }, [loadGroupContacts])
+
+  const createGroupChat = useCallback(async () => {
+    if (selectedGroupContactIds.length < 2) {
+      pushToast('Select at least 2 contacts for a group chat.', 'info')
+      return
+    }
+    setCreatingGroupChat(true)
+    try {
+      const response = await authedFetch('/messages/threads/group', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ participantIds: selectedGroupContactIds }),
+      })
+      const payload = (await response.json().catch(() => null)) as { thread?: ThreadSummary; error?: string } | null
+      if (!response.ok || !payload?.thread) {
+        pushToast(payload?.error ?? 'Unable to create group chat right now.', 'error')
+        return
+      }
+      upsertThread(payload.thread)
+      setSelectedThreadId(payload.thread.id)
+      setGroupModalOpen(false)
+      setSelectedGroupContactIds([])
+      pushToast('Group chat created.', 'success')
+    } catch (err) {
+      console.error('Failed to create group chat', err)
+      pushToast('Unable to create group chat right now.', 'error')
+    } finally {
+      setCreatingGroupChat(false)
+    }
+  }, [authedFetch, selectedGroupContactIds, upsertThread])
+
+  const activeViewerParticipant = useMemo(
+    () => activeThread?.participants.find((participant) => participant.isViewer) ?? null,
+    [activeThread],
+  )
+  const isActiveGroupThread = activeThread?.type === 'group'
+  const isActiveGroupOwner = isActiveGroupThread && activeViewerParticipant?.role === 'admin'
+
+  const filteredGroupContacts = useMemo(() => {
+    const q = groupContactFilter.trim().toLowerCase()
+    if (!q) return groupContacts
+    return groupContacts.filter((contact) => {
+      const display = (contact.name || contact.handle).toLowerCase()
+      return display.includes(q) || contact.handle.toLowerCase().includes(q)
+    })
+  }, [groupContactFilter, groupContacts])
+
+  const filteredGroupCandidates = useMemo(() => {
+    const q = groupCandidateFilter.trim().toLowerCase()
+    if (!q) return groupCandidates
+    return groupCandidates.filter((contact) => {
+      const display = (contact.name || contact.handle).toLowerCase()
+      return display.includes(q) || contact.handle.toLowerCase().includes(q)
+    })
+  }, [groupCandidateFilter, groupCandidates])
+
+  const filteredCurrentMembers = useMemo(() => {
+    const source = activeThread?.participants.filter((participant) => !participant.isViewer) ?? []
+    const q = groupMemberFilter.trim().toLowerCase()
+    if (!q) return source
+    return source.filter((participant) => {
+      const display = (participant.user.name || participant.user.handle).toLowerCase()
+      return display.includes(q) || participant.user.handle.toLowerCase().includes(q)
+    })
+  }, [activeThread?.participants, groupMemberFilter])
+
+  const loadGroupCandidates = useCallback(async () => {
+    if (!activeThread || !isActiveGroupOwner) return
+    setGroupCandidatesLoading(true)
+    try {
+      const response = await authedFetch(`/messages/threads/${activeThread.id}/candidates`)
+      if (!response.ok) {
+        throw new Error('failed_candidates')
+      }
+      const payload = (await response.json()) as { items?: ThreadUser[] }
+      setGroupCandidates(Array.isArray(payload.items) ? payload.items : [])
+    } catch (err) {
+      console.error('Failed to load group candidates', err)
+      setGroupCandidates([])
+      pushToast('Unable to load addable contacts right now.', 'error')
+    } finally {
+      setGroupCandidatesLoading(false)
+    }
+  }, [activeThread, authedFetch, isActiveGroupOwner])
+
+  const openManageMembersModal = useCallback(() => {
+    if (!activeThread || !isActiveGroupOwner) return
+    setManageMembersOpen(true)
+    setGroupCandidateFilter('')
+    setGroupMemberFilter('')
+    void loadGroupCandidates()
+  }, [activeThread, isActiveGroupOwner, loadGroupCandidates])
+
+  const addGroupMember = useCallback(
+    async (targetUserId: string) => {
+      if (!activeThread) return
+      setMemberActionLoadingId(targetUserId)
+      try {
+        const response = await authedFetch(`/messages/threads/${activeThread.id}/participants`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ userId: targetUserId }),
+        })
+        const payload = (await response.json().catch(() => null)) as { thread?: ThreadSummary; error?: string } | null
+        if (!response.ok || !payload?.thread) {
+          pushToast(payload?.error ?? 'Unable to add member right now.', 'error')
+          return
+        }
+        upsertThread(payload.thread)
+        await loadGroupCandidates()
+        pushToast('Member added.', 'success')
+      } catch (err) {
+        console.error('Failed to add group member', err)
+        pushToast('Unable to add member right now.', 'error')
+      } finally {
+        setMemberActionLoadingId(null)
+      }
+    },
+    [activeThread, authedFetch, loadGroupCandidates, upsertThread],
+  )
+
+  const removeGroupMember = useCallback(
+    async (targetUserId: string) => {
+      if (!activeThread) return
+      setMemberActionLoadingId(targetUserId)
+      try {
+        const response = await authedFetch(`/messages/threads/${activeThread.id}/participants/${targetUserId}`, {
+          method: 'DELETE',
+        })
+        const payload = (await response.json().catch(() => null)) as { thread?: ThreadSummary; error?: string } | null
+        if (!response.ok || !payload?.thread) {
+          pushToast(payload?.error ?? 'Unable to remove member right now.', 'error')
+          return
+        }
+        upsertThread(payload.thread)
+        await loadGroupCandidates()
+        pushToast('Member removed.', 'info')
+      } catch (err) {
+        console.error('Failed to remove group member', err)
+        pushToast('Unable to remove member right now.', 'error')
+      } finally {
+        setMemberActionLoadingId(null)
+      }
+    },
+    [activeThread, authedFetch, loadGroupCandidates, upsertThread],
+  )
+
+  const leaveActiveGroup = useCallback(async () => {
+    if (!activeThread || !isActiveGroupThread) return
+    setLeavingGroup(true)
+    try {
+      const response = await authedFetch(`/messages/threads/${activeThread.id}/leave`, {
+        method: 'POST',
+      })
+      const payload = (await response.json().catch(() => null)) as { success?: boolean; error?: string } | null
+      if (!response.ok || !payload?.success) {
+        pushToast(payload?.error ?? 'Unable to leave group right now.', 'error')
+        return
+      }
+      setThreads((prev) => prev.filter((thread) => thread.id !== activeThread.id))
+      setSelectedThreadId(null)
+      setManageMembersOpen(false)
+      pushToast('You left the group chat.', 'info')
+    } catch (err) {
+      console.error('Failed to leave group', err)
+      pushToast('Unable to leave group right now.', 'error')
+    } finally {
+      setLeavingGroup(false)
+    }
+  }, [activeThread, authedFetch, isActiveGroupThread])
+
   const renderThreadList = () => {
     if (threadsLoading && threads.length === 0) {
       return <p className="text-sm text-slate-500">Loading your conversations…</p>
@@ -680,37 +913,62 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
       <ul className="space-y-2">
         {threads.map((thread) => {
           const title = getThreadTitle(thread)
+          const isGroupThread = thread.type === 'group'
           const active = thread.id === selectedThreadId
           const unread = threadHasUnread(thread)
           const lastSnippet = thread.lastMessage?.body?.trim() || (thread.lastMessage?.attachments.length ? 'Attachment' : 'Say hello!')
+          const threadCoverUrl = isGroupThread ? null : thread.participants.find((p) => !p.isViewer)?.user.coverUrl ?? null
+          const groupParticipants = thread.participants.filter((p) => !p.isViewer).slice(0, 4)
           return (
             <li key={thread.id}>
               <button
                 type="button"
                 className={clsx(
-                  'w-full rounded-2xl border px-4 py-3 text-left transition',
-                  active ? 'border-[var(--cc-primary)] bg-white shadow-lg shadow-[var(--cc-primary)]/10' : 'border-slate-200 bg-white/70 hover:border-slate-300',
+                  'relative w-full overflow-hidden rounded-2xl border px-4 py-3 text-left transition',
+                  active
+                    ? 'border-[var(--cc-primary)] shadow-lg shadow-[var(--cc-primary)]/20'
+                    : 'border-slate-200 bg-white/70 hover:border-slate-300',
                 )}
                 onClick={() => handleThreadSelect(thread.id)}
               >
-                <div className="flex items-start gap-3">
+                {threadCoverUrl ? <img src={threadCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" /> : null}
+                {threadCoverUrl ? <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" /> : null}
+                <div className="relative flex items-start gap-3">
                   <div className="relative">
-                    <VerifiedAvatar
-                      src={thread.participants.find((p) => !p.isViewer)?.user.avatarUrl ?? null}
-                      alt={title}
-                      initials={title}
-                      size={48}
-                      isVerified={thread.participants.some((p) => !p.isViewer && p.user.isVerified)}
-                      isBusiness={thread.participants.some((p) => !p.isViewer && p.user.isPremium)}
-                    />
+                    {isGroupThread ? (
+                      <div className="relative h-12 w-14">
+                        {groupParticipants.map((participant, index) => (
+                          <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: groupParticipants.length - index }}>
+                            <VerifiedAvatar
+                              src={participant.user.avatarUrl}
+                              alt={participant.user.name || participant.user.handle}
+                              initials={participant.user.name || participant.user.handle}
+                              size={34}
+                              isVerified={participant.user.isVerified}
+                              isBusiness={participant.user.isPremium}
+                              className="border-2 border-white"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <VerifiedAvatar
+                        src={thread.participants.find((p) => !p.isViewer)?.user.avatarUrl ?? null}
+                        alt={title}
+                        initials={title}
+                        size={48}
+                        isVerified={thread.participants.some((p) => !p.isViewer && p.user.isVerified)}
+                        isBusiness={thread.participants.some((p) => !p.isViewer && p.user.isPremium)}
+                      />
+                    )}
                     {unread ? <span className="absolute -right-1 -top-1 inline-flex h-2 w-2 rounded-full bg-[var(--cc-primary)]" /> : null}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-semibold text-slate-900">{title}</p>
-                      <span className="text-xs text-slate-400">{formatTimestamp(thread.lastMessageAt)}</span>
+                      <p className={clsx('truncate text-sm font-semibold', threadCoverUrl ? 'text-white' : 'text-slate-900')}>{title}</p>
+                      <span className={clsx('text-xs', threadCoverUrl ? 'text-white/80' : 'text-slate-400')}>{formatTimestamp(thread.lastMessageAt)}</span>
                     </div>
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-500">{lastSnippet}</p>
+                    <p className={clsx('mt-1 line-clamp-2 text-xs', threadCoverUrl ? 'text-white/80' : 'text-slate-500')}>{lastSnippet}</p>
                   </div>
                 </div>
               </button>
@@ -734,6 +992,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     const otherParticipant = activeThread.participants.find((p) => !p.isViewer)
     const otherUser = otherParticipant?.user
     const title = getThreadTitle(activeThread)
+    const headerGroupParticipants = activeThread.participants.filter((p) => !p.isViewer).slice(0, 5)
 
     return (
       <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
@@ -745,7 +1004,23 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
           >
             <HiOutlineChevronLeft className="h-5 w-5" />
           </button>
-          {otherUser ? (
+          {isActiveGroupThread ? (
+            <div className="relative h-10 w-20 shrink-0">
+              {headerGroupParticipants.map((participant, index) => (
+                <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: headerGroupParticipants.length - index }}>
+                  <VerifiedAvatar
+                    src={participant.user.avatarUrl}
+                    alt={participant.user.name || participant.user.handle}
+                    initials={participant.user.name || participant.user.handle}
+                    size={36}
+                    isVerified={participant.user.isVerified}
+                    isBusiness={participant.user.isPremium}
+                    className="border-2 border-white"
+                  />
+                </div>
+              ))}
+            </div>
+          ) : otherUser ? (
             <Link href={`/u/${otherUser.handle}`} className="shrink-0">
               <VerifiedAvatar
                 src={otherUser.avatarUrl}
@@ -765,6 +1040,33 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
             <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
             <p className="text-xs text-slate-500">{activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}</p>
           </div>
+          {isActiveGroupThread ? (
+            <details className="group relative">
+              <summary className="inline-flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                <HiOutlineCog6Tooth className="h-5 w-5" />
+              </summary>
+              <div className="absolute right-0 top-full z-20 mt-2 min-w-[190px] rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                {isActiveGroupOwner ? (
+                  <button
+                    type="button"
+                    className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                    onClick={openManageMembersModal}
+                  >
+                    Manage members
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                    onClick={leaveActiveGroup}
+                    disabled={leavingGroup}
+                  >
+                    {leavingGroup ? 'Leaving…' : 'Leave group'}
+                  </button>
+                )}
+              </div>
+            </details>
+          ) : null}
         </header>
         <div className="mt-4 flex-1 overflow-hidden">
           <div className="flex h-full flex-col">
@@ -913,18 +1215,23 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   const inboxPanel = (
     <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
-      <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Inbox</p>
-          <h2 className="text-xl font-semibold text-slate-900">Messages</h2>
+      <div className="flex items-center justify-end border-b border-slate-100 pb-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openGroupChatModal}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+          >
+            <HiOutlinePlusCircle className="h-4 w-4" />
+            Group Chat
+          </button>
+          <Link
+            href={me ? `/u/${me.handle}/friends` : '/friends'}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+          >
+            All Contacts
+          </Link>
         </div>
-        <Link
-          href={me ? `/u/${me.handle}/friends` : '/friends'}
-          className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-        >
-          <HiOutlinePlusCircle className="h-4 w-4" />
-          All Contacts
-        </Link>
       </div>
       <div className="mt-4 flex-1 overflow-y-auto pr-1">
         {renderThreadList()}
@@ -966,6 +1273,192 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                 className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               />
+            </div>,
+            document.body,
+          )
+        : null}
+      {groupModalOpen
+        ? createPortal(
+            <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4" onClick={() => setGroupModalOpen(false)}>
+              <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Create Group Chat</h3>
+                    <p className="text-xs text-slate-500">Select friends to start a group conversation.</p>
+                  </div>
+                  <button type="button" className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100" onClick={() => setGroupModalOpen(false)}>
+                    <HiOutlineXMark className="h-5 w-5" />
+                  </button>
+                </div>
+                <div className="sticky top-0 z-10 mb-3 bg-white pb-2">
+                  <input
+                    type="text"
+                    value={groupContactFilter}
+                    onChange={(event) => setGroupContactFilter(event.target.value)}
+                    placeholder="Filter by name or @handle"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-300"
+                  />
+                </div>
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                  {groupContactsLoading ? <p className="text-sm text-slate-500">Loading contacts…</p> : null}
+                  {!groupContactsLoading && filteredGroupContacts.length === 0 ? (
+                    <p className="text-sm text-slate-500">No friends available yet.</p>
+                  ) : null}
+                  {filteredGroupContacts.map((contact) => {
+                    const checked = selectedGroupContactIds.includes(contact.id)
+                    return (
+                      <label
+                        key={contact.id}
+                        className={clsx(
+                          'flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-2 transition',
+                          checked ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5' : 'border-slate-200 bg-slate-50 hover:border-slate-300',
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={checked}
+                          onChange={() => {
+                            setSelectedGroupContactIds((prev) =>
+                              prev.includes(contact.id) ? prev.filter((id) => id !== contact.id) : [...prev, contact.id],
+                            )
+                          }}
+                        />
+                        <div>
+                          <VerifiedAvatar
+                            src={contact.avatarUrl}
+                            alt={contact.name || contact.handle}
+                            initials={contact.name || contact.handle}
+                            size={42}
+                            isVerified={contact.isVerified}
+                            isBusiness={contact.isPremium}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{contact.name || contact.handle}</p>
+                          <p className="truncate text-xs text-slate-500">@{contact.handle}</p>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <p className="text-xs text-slate-500">Selected: {selectedGroupContactIds.length}</p>
+                  <button
+                    type="button"
+                    className={clsx(
+                      'rounded-full px-4 py-2 text-sm font-semibold text-white transition',
+                      selectedGroupContactIds.length < 2 || creatingGroupChat
+                        ? 'cursor-not-allowed bg-slate-300'
+                        : 'bg-[var(--cc-primary)] hover:brightness-110',
+                    )}
+                    disabled={selectedGroupContactIds.length < 2 || creatingGroupChat}
+                    onClick={createGroupChat}
+                  >
+                    {creatingGroupChat ? 'Creating…' : 'Create Group Chat'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {manageMembersOpen && activeThread && isActiveGroupOwner
+        ? createPortal(
+            <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4" onClick={() => setManageMembersOpen(false)}>
+              <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Manage Group Members</h3>
+                    <p className="text-xs text-slate-500">Add or remove members for this group chat.</p>
+                  </div>
+                  <button type="button" className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100" onClick={() => setManageMembersOpen(false)}>
+                    <HiOutlineXMark className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="min-h-0 grid flex-1 gap-5 md:grid-cols-2">
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Add Members</p>
+                    <input
+                      type="text"
+                      value={groupCandidateFilter}
+                      onChange={(event) => setGroupCandidateFilter(event.target.value)}
+                      placeholder="Filter addable contacts"
+                      className="mb-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-300"
+                    />
+                    <div className="max-h-[40vh] space-y-2 overflow-y-auto pr-1">
+                      {groupCandidatesLoading ? <p className="text-sm text-slate-500">Loading…</p> : null}
+                      {!groupCandidatesLoading && filteredGroupCandidates.length === 0 ? <p className="text-sm text-slate-500">No available contacts to add.</p> : null}
+                      {filteredGroupCandidates.map((contact) => (
+                        <div key={contact.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <VerifiedAvatar src={contact.avatarUrl} alt={contact.name || contact.handle} initials={contact.name || contact.handle} size={34} />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-900">{contact.name || contact.handle}</p>
+                              <p className="truncate text-xs text-slate-500">@{contact.handle}</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                            onClick={() => addGroupMember(contact.id)}
+                            disabled={memberActionLoadingId === contact.id}
+                          >
+                            {memberActionLoadingId === contact.id ? 'Adding…' : 'Add'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Current Members</p>
+                    <input
+                      type="text"
+                      value={groupMemberFilter}
+                      onChange={(event) => setGroupMemberFilter(event.target.value)}
+                      placeholder="Filter current members"
+                      className="mb-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-300"
+                    />
+                    <div className="max-h-[40vh] space-y-2 overflow-y-auto pr-1">
+                      {filteredCurrentMembers.map((participant) => {
+                          const removable = participant.role !== 'admin'
+                          return (
+                            <div key={participant.userId} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <VerifiedAvatar
+                                  src={participant.user.avatarUrl}
+                                  alt={participant.user.name || participant.user.handle}
+                                  initials={participant.user.name || participant.user.handle}
+                                  size={34}
+                                  isVerified={participant.user.isVerified}
+                                  isBusiness={participant.user.isPremium}
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-900">{participant.user.name || participant.user.handle}</p>
+                                  <p className="truncate text-xs text-slate-500">{participant.role === 'admin' ? 'Owner' : 'Member'}</p>
+                                </div>
+                              </div>
+                              {removable ? (
+                                <button
+                                  type="button"
+                                  className="rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+                                  onClick={() => removeGroupMember(participant.userId)}
+                                  disabled={memberActionLoadingId === participant.userId}
+                                >
+                                  {memberActionLoadingId === participant.userId ? 'Removing…' : 'Remove'}
+                                </button>
+                              ) : (
+                                <span className="text-xs font-semibold text-slate-400">Owner</span>
+                              )}
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>,
             document.body,
           )
