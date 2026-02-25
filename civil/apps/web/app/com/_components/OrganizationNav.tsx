@@ -11,8 +11,8 @@ const ORG_LINKS = [
   { key: 'overview', label: 'Overview', segment: '' },
   { key: 'posts', label: 'Posts', segment: 'posts' },
   { key: 'events', label: 'Events', segment: 'events' },
+  { key: 'members', label: 'Members', segment: 'members' },
   { key: 'jobs', label: 'Jobs', segment: 'jobs' },
-  { key: 'gigs', label: 'Gigs', segment: 'gigs' },
   { key: 'discussions', label: 'Discussions', segment: 'discussions' },
   { key: 'settings', label: 'Settings', segment: 'settings' },
 ]

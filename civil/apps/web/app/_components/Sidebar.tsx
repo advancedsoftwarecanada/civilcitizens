@@ -51,6 +51,7 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Civic Pulse', href: '/home', icon: HiOutlineHome },
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleLeftRight },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUserGroup },
+  { key: 'network', label: 'Network', href: '/network', icon: HiOutlineBriefcase },
   {
     key: 'communities',
     label: 'Communities',

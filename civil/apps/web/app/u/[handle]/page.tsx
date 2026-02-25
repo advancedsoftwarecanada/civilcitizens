@@ -43,8 +43,12 @@ type UserProfile = {
   experiences?: UserExperience[]
   isPremium?: boolean
   isVerified?: boolean
+  friendCount?: number
   followerCount?: number
   followingCount?: number
+  communityCount?: number
+  organizationCount?: number
+  connectionCount?: number
 }
 
 type UserExperience = {
@@ -63,6 +67,9 @@ type ProfileRelationship = {
   friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
   friendshipId?: string
   friendshipSince?: string | null
+  connectionStatus: 'self' | 'connected' | 'incoming' | 'outgoing' | 'none'
+  connectionId?: string
+  connectionSince?: string | null
   following: boolean
 }
 
@@ -76,6 +83,22 @@ type FriendRequestPayload = {
 
 type FriendAcceptResponse = {
   friend?: {
+    id: string
+    since?: string | null
+  }
+  error?: string
+}
+
+type ConnectionRequestPayload = {
+  id: string
+  direction: 'incoming' | 'outgoing'
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED'
+  requestedAt: string
+  respondedAt: string | null
+}
+
+type ConnectionAcceptResponse = {
+  connection?: {
     id: string
     since?: string | null
   }
@@ -139,7 +162,9 @@ export default function UserPostsPage({ params }: PageProps) {
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
   const [relationship, setRelationship] = useState<ProfileRelationship | null>(null)
   const [friendshipAction, setFriendshipAction] = useState<'send' | 'accept' | 'reject' | null>(null)
+  const [connectionAction, setConnectionAction] = useState<'send' | 'accept' | 'reject' | null>(null)
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
+  const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
   const [followLoading, setFollowLoading] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
 
@@ -295,13 +320,23 @@ export default function UserPostsPage({ params }: PageProps) {
       friendshipStatus: isOwner ? 'self' : 'none',
       friendshipId: undefined,
       friendshipSince: null,
+      connectionStatus: isOwner ? 'self' : 'none',
+      connectionId: undefined,
+      connectionSince: null,
       following: false,
     }
   const followerCount = profile?.followerCount ?? 0
   const followingCount = profile?.followingCount ?? 0
+  const friendCount = profile?.friendCount ?? 0
+  const communityCount = profile?.communityCount ?? 0
+  const organizationCount = profile?.organizationCount ?? 0
+  const connectionCount = profile?.connectionCount ?? 0
   const isSendingFriendRequest = friendshipAction === 'send'
   const isAcceptingFriendRequest = friendshipAction === 'accept'
   const isRejectingFriendRequest = friendshipAction === 'reject'
+  const isSendingConnectionRequest = connectionAction === 'send'
+  const isAcceptingConnectionRequest = connectionAction === 'accept'
+  const isRejectingConnectionRequest = connectionAction === 'reject'
   const renderFriendshipPrimaryCta = () => {
     switch (resolvedRelationship.friendshipStatus) {
       case 'incoming':
@@ -338,21 +373,37 @@ export default function UserPostsPage({ params }: PageProps) {
         )
       case 'friends':
         return (
-          <div className="flex flex-col items-center gap-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700">
+          <details className="group relative w-full sm:w-auto">
+            <summary className="inline-flex w-full cursor-pointer list-none items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 sm:w-auto [&::-webkit-details-marker]:hidden">
               <span role="img" aria-label="Handshake">
                 🤝
               </span>
-              Friends since {resolvedRelationship.friendshipSince ? formatDate(resolvedRelationship.friendshipSince) : 'today'}
+              Friends
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="transition group-open:rotate-180"
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </summary>
+            <div className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:absolute sm:left-0 sm:top-full sm:z-20 sm:min-w-[180px] sm:w-auto">
+              <button
+                type="button"
+                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                onClick={() => setRemoveFriendModalOpen(true)}
+              >
+                Remove friend
+              </button>
             </div>
-            <button
-              type="button"
-              className="text-xs text-slate-500 hover:text-red-600 hover:underline"
-              onClick={() => setRemoveFriendModalOpen(true)}
-            >
-              Remove friend
-            </button>
-          </div>
+          </details>
         )
       case 'self':
         return null
@@ -369,6 +420,91 @@ export default function UserPostsPage({ params }: PageProps) {
         )
     }
   }
+
+  const renderConnectionPrimaryCta = () => {
+    switch (resolvedRelationship.connectionStatus) {
+      case 'incoming':
+        return (
+          <div className="flex flex-col gap-2 text-sm font-semibold">
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-center text-sky-700">
+              This person sent you a connection request.
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-full bg-slate-900 px-5 py-2 text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleAcceptConnectionRequest}
+                disabled={!relationship?.connectionId || isAcceptingConnectionRequest}
+              >
+                Accept connect
+              </button>
+              <button
+                type="button"
+                className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleRejectConnectionRequest}
+                disabled={!relationship?.connectionId || isRejectingConnectionRequest}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )
+      case 'outgoing':
+        return (
+          <div className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-5 py-2 text-sm font-semibold text-sky-700">
+            Connect request sent
+          </div>
+        )
+      case 'connected':
+        return (
+          <details className="group relative w-full sm:w-auto">
+            <summary className="inline-flex w-full cursor-pointer list-none items-center justify-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-5 py-2 text-sm font-semibold text-sky-700 transition hover:border-sky-300 sm:w-auto [&::-webkit-details-marker]:hidden">
+              <span role="img" aria-label="Professional connection">
+                🧑‍💼
+              </span>
+              Business Connected
+              <svg
+                aria-hidden="true"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="transition group-open:rotate-180"
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </summary>
+            <div className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:absolute sm:left-0 sm:top-full sm:z-20 sm:min-w-[200px] sm:w-auto">
+              <button
+                type="button"
+                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                onClick={() => setRemoveConnectionModalOpen(true)}
+              >
+                Remove connection
+              </button>
+            </div>
+          </details>
+        )
+      case 'self':
+        return null
+      default:
+        return (
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            onClick={handleSendConnectionRequest}
+            disabled={isSendingConnectionRequest}
+          >
+            Business Connect
+          </button>
+        )
+    }
+  }
+
   const rightRailContent = (
     <div className="sticky top-8 space-y-4">
       <RightRail />
@@ -417,6 +553,9 @@ export default function UserPostsPage({ params }: PageProps) {
         friendshipStatus: 'outgoing',
         friendshipId: payload?.request?.id ?? prev?.friendshipId,
         friendshipSince: null,
+        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+        connectionId: prev?.connectionId,
+        connectionSince: prev?.connectionSince ?? null,
         following: prev?.following ?? false,
       }))
       pushToast('Friend request sent.', 'success')
@@ -450,6 +589,9 @@ export default function UserPostsPage({ params }: PageProps) {
         friendshipStatus: 'friends',
         friendshipId: payload?.friend?.id ?? prev?.friendshipId ?? relationship.friendshipId,
         friendshipSince: sinceIso,
+        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+        connectionId: prev?.connectionId,
+        connectionSince: prev?.connectionSince ?? null,
         following: prev?.following ?? false,
       }))
       pushToast('Friend request accepted.', 'success')
@@ -482,6 +624,9 @@ export default function UserPostsPage({ params }: PageProps) {
         friendshipStatus: 'none',
         friendshipId: undefined,
         friendshipSince: null,
+        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+        connectionId: prev?.connectionId,
+        connectionSince: prev?.connectionSince ?? null,
         following: prev?.following ?? false,
       }))
       pushToast('Friend request dismissed.', 'info')
@@ -516,13 +661,60 @@ export default function UserPostsPage({ params }: PageProps) {
         friendshipStatus: 'none',
         friendshipId: undefined,
         friendshipSince: null,
+        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+        connectionId: prev?.connectionId,
+        connectionSince: prev?.connectionSince ?? null,
         following: prev?.following ?? false,
       }))
+      setProfile((prev) => {
+        if (!prev) return prev
+        return { ...prev, friendCount: Math.max(0, (prev.friendCount ?? 0) - 1) }
+      })
       pushToast('Friend removed.', 'info')
       setRemoveFriendModalOpen(false)
     } catch (err) {
       console.error('Failed to remove friend', err)
       pushToast('Unable to remove friend right now.', 'error')
+    }
+  }
+
+  const handleRemoveConnection = async () => {
+    if (!profile || !relationship?.connectionId) return
+    const token = requireAuthToken()
+    if (!token) return
+
+    try {
+      const res = await fetch(buildApiUrl(`/connections/${relationship.connectionId}`), {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        pushToast(payload?.error ?? 'Unable to remove connection.', 'error')
+        return
+      }
+
+      setRelationship((prev) => ({
+        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+        friendshipId: prev?.friendshipId,
+        friendshipSince: prev?.friendshipSince ?? null,
+        connectionStatus: 'none',
+        connectionId: undefined,
+        connectionSince: null,
+        following: prev?.following ?? false,
+      }))
+      setProfile((prev) => {
+        if (!prev) return prev
+        return { ...prev, connectionCount: Math.max(0, (prev.connectionCount ?? 0) - 1) }
+      })
+      pushToast('Connection removed.', 'info')
+      setRemoveConnectionModalOpen(false)
+    } catch (err) {
+      console.error('Failed to remove connection', err)
+      pushToast('Unable to remove connection right now.', 'error')
     }
   }
 
@@ -552,6 +744,9 @@ export default function UserPostsPage({ params }: PageProps) {
           friendshipStatus: isOwner ? 'self' : 'none',
           friendshipId: undefined,
           friendshipSince: null,
+          connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+          connectionId: prev?.connectionId,
+          connectionSince: prev?.connectionSince ?? null,
           following: !currentlyFollowing,
         }
       })
@@ -567,6 +762,114 @@ export default function UserPostsPage({ params }: PageProps) {
       pushToast('Unable to update follow right now.', 'error')
     } finally {
       setFollowLoading(false)
+    }
+  }
+
+  const handleSendConnectionRequest = async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+    setConnectionAction('send')
+    try {
+      const res = await fetch(buildApiUrl('/connections/requests'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: profile.id }),
+      })
+      const payload = (await res.json().catch(() => null)) as { request?: ConnectionRequestPayload; error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to send connection request right now.', 'error')
+        return
+      }
+      setRelationship((prev) => ({
+        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+        friendshipId: prev?.friendshipId,
+        friendshipSince: prev?.friendshipSince ?? null,
+        connectionStatus: 'outgoing',
+        connectionId: payload?.request?.id ?? prev?.connectionId,
+        connectionSince: null,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Connection request sent.', 'success')
+    } catch (err) {
+      console.error('Failed to send connection request', err)
+      pushToast('Unable to send connection request right now.', 'error')
+    } finally {
+      setConnectionAction(null)
+    }
+  }
+
+  const handleAcceptConnectionRequest = async () => {
+    if (!relationship?.connectionId) return
+    const token = requireAuthToken()
+    if (!token) return
+    setConnectionAction('accept')
+    try {
+      const res = await fetch(buildApiUrl(`/connections/requests/${relationship.connectionId}/accept`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as ConnectionAcceptResponse | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to accept connection request.', 'error')
+        return
+      }
+      const sinceIso = payload?.connection?.since ? new Date(payload.connection.since).toISOString() : new Date().toISOString()
+      setRelationship((prev) => ({
+        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+        friendshipId: prev?.friendshipId,
+        friendshipSince: prev?.friendshipSince ?? null,
+        connectionStatus: 'connected',
+        connectionId: payload?.connection?.id ?? prev?.connectionId ?? relationship.connectionId,
+        connectionSince: sinceIso,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Connection request accepted.', 'success')
+    } catch (err) {
+      console.error('Failed to accept connection request', err)
+      pushToast('Unable to accept connection request.', 'error')
+    } finally {
+      setConnectionAction(null)
+    }
+  }
+
+  const handleRejectConnectionRequest = async () => {
+    if (!relationship?.connectionId) return
+    const token = requireAuthToken()
+    if (!token) return
+    setConnectionAction('reject')
+    try {
+      const res = await fetch(buildApiUrl(`/connections/requests/${relationship.connectionId}/reject`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to dismiss connection request.', 'error')
+        return
+      }
+      setRelationship((prev) => ({
+        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+        friendshipId: prev?.friendshipId,
+        friendshipSince: prev?.friendshipSince ?? null,
+        connectionStatus: 'none',
+        connectionId: undefined,
+        connectionSince: null,
+        following: prev?.following ?? false,
+      }))
+      pushToast('Connection request dismissed.', 'info')
+    } catch (err) {
+      console.error('Failed to reject connection request', err)
+      pushToast('Unable to dismiss connection request.', 'error')
+    } finally {
+      setConnectionAction(null)
     }
   }
 
@@ -815,7 +1118,8 @@ export default function UserPostsPage({ params }: PageProps) {
                     </div>
                     <div>
                       <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{profile.name ?? profile.handle}</h1>
-                      <p className="text-sm text-slate-500">@{profile.handle} · Joined {formatDate(profile.createdAt) || '—'}</p>
+                      <p className="text-sm text-slate-500">@{profile.handle}</p>
+                      <p className="text-sm text-slate-500">Joined {formatDate(profile.createdAt) || '—'}</p>
                     </div>
                   </div>
                   {isOwner ? (
@@ -828,6 +1132,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   ) : (
                     <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
                       {renderFriendshipPrimaryCta()}
+                      {renderConnectionPrimaryCta()}
                       {resolvedRelationship.friendshipStatus === 'friends' ? (
                         <button
                           type="button"
@@ -870,13 +1175,49 @@ export default function UserPostsPage({ params }: PageProps) {
                     <p className="mt-1 text-lg font-semibold text-slate-900">{formatDate(profile.createdAt) || '—'}</p>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-4 text-sm font-semibold text-slate-600">
-                  <span>
-                    <span className="text-base text-slate-900">{formatCount(followerCount)}</span> Followers
-                  </span>
-                  <span>
-                    <span className="text-base text-slate-900">{formatCount(followingCount)}</span> Following
-                  </span>
+                <div className="mt-5 grid grid-cols-2 gap-3 text-sm font-semibold text-slate-600 sm:grid-cols-3 xl:grid-cols-6">
+                  <Link
+                    href={`/u/${encodeURIComponent(profile.handle)}/friends`}
+                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                  >
+                    <span className="text-lg font-bold text-slate-900">{formatCount(friendCount)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Friends</span>
+                  </Link>
+                  <Link
+                    href={`/u/${encodeURIComponent(profile.handle)}/following`}
+                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                  >
+                    <span className="text-lg font-bold text-slate-900">{formatCount(followingCount)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Following</span>
+                  </Link>
+                  <Link
+                    href={`/u/${encodeURIComponent(profile.handle)}/followers`}
+                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                  >
+                    <span className="text-lg font-bold text-slate-900">{formatCount(followerCount)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Followers</span>
+                  </Link>
+                  <Link
+                    href={`/u/${encodeURIComponent(profile.handle)}/communities`}
+                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                  >
+                    <span className="text-lg font-bold text-slate-900">{formatCount(communityCount)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Communities</span>
+                  </Link>
+                  <Link
+                    href={`/u/${encodeURIComponent(profile.handle)}/organizations`}
+                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                  >
+                    <span className="text-lg font-bold text-slate-900">{formatCount(organizationCount)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Organizations</span>
+                  </Link>
+                  <Link
+                    href={`/u/${encodeURIComponent(profile.handle)}/connections`}
+                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                  >
+                    <span className="text-lg font-bold text-slate-900">{formatCount(connectionCount)}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Business Connections</span>
+                  </Link>
                 </div>
               </>
             ) : loading ? (
@@ -1057,6 +1398,33 @@ export default function UserPostsPage({ params }: PageProps) {
                 onClick={handleRemoveFriend}
               >
                 Remove friend
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          open={removeConnectionModalOpen}
+          onClose={() => setRemoveConnectionModalOpen(false)}
+          title="Remove connection?"
+          maxWidthClassName="max-w-md"
+        >
+          <div className="p-6">
+            <p className="mb-6 text-slate-600">Are you sure you want to remove @{profile?.handle} from your business connections?</p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                className="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                onClick={() => setRemoveConnectionModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                onClick={handleRemoveConnection}
+              >
+                Remove connection
               </button>
             </div>
           </div>

@@ -6,6 +6,9 @@ export const PostTypeEnum = z.enum(['post', 'article', 'photo'])
 export const PostVisibilityEnum = z.enum(['public', 'members'])
 export type PostVisibility = z.infer<typeof PostVisibilityEnum>
 
+export const PostAudienceEnum = z.enum(['friends', 'network'])
+export type PostAudience = z.infer<typeof PostAudienceEnum>
+
 export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])
 export type Jurisdiction = z.infer<typeof JurisdictionEnum>
 
@@ -13,6 +16,7 @@ export const CreatePostInput = z
   .object({
     type: PostTypeEnum.default('post'),
     businessId: z.string().cuid().optional(),
+    audience: PostAudienceEnum.optional(),
     visibility: PostVisibilityEnum.optional(),
     title: z
       .string()

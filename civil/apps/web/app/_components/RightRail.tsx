@@ -57,6 +57,25 @@ type OrganizationsOwnedResponse = {
   items?: OwnedOrganization[]
 }
 
+type ConnectionEntry = {
+  id: string
+  status: string
+  since: string | null
+  user: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    coverUrl?: string | null
+    isPremium: boolean
+    isVerified: boolean
+  }
+}
+
+type ConnectionsResponse = {
+  items?: ConnectionEntry[]
+}
+
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 
 export function RightRail({
@@ -67,7 +86,7 @@ export function RightRail({
   hideContacts = false,
   hideCommunities = false,
 }: {
-  mode?: 'default' | 'organizations' | 'organizationsDirectory'
+  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network'
   showOrganizations?: boolean
   sticky?: boolean
   hideContactsAndCommunities?: boolean
@@ -78,10 +97,12 @@ export function RightRail({
   const [data, setData] = useState<RightRailData | null>(null)
   const [organizations, setOrganizations] = useState<FollowedOrganization[]>([])
   const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
+  const [connections, setConnections] = useState<ConnectionEntry[]>([])
 
-  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory'
-  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || showOrganizations
+  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network'
+  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || showOrganizations
   const shouldLoadOwnedOrganizations = mode === 'organizationsDirectory'
+  const shouldLoadConnections = mode === 'network'
   const shouldLoadHomeRail = !hideSocialBlocks
 
   const subscribedOrganizations = useMemo(
@@ -101,7 +122,7 @@ export function RightRail({
       return
     }
     try {
-      const requests: Array<{ key: 'home' | 'follows' | 'owned'; promise: Promise<Response> }> = []
+      const requests: Array<{ key: 'home' | 'follows' | 'owned' | 'connections'; promise: Promise<Response> }> = []
 
       if (shouldLoadHomeRail) {
         requests.push({
@@ -130,14 +151,24 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadConnections) {
+        requests.push({
+          key: 'connections',
+          promise: fetch(buildApiUrl('/connections'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        })
+      }
+
       const results = await Promise.all(requests.map((entry) => entry.promise))
       const byKey = new Map(requests.map((entry, index) => [entry.key, results[index] as Response]))
 
       const homeRes = byKey.get('home')
       const followsRes = byKey.get('follows')
       const ownedRes = byKey.get('owned')
+      const connectionsRes = byKey.get('connections')
 
-      if (homeRes?.status === 401 || followsRes?.status === 401 || ownedRes?.status === 401) {
+      if (homeRes?.status === 401 || followsRes?.status === 401 || ownedRes?.status === 401 || connectionsRes?.status === 401) {
         setStatus('unauthorized')
         return
       }
@@ -145,12 +176,14 @@ export function RightRail({
       const requiredHomeOk = shouldLoadHomeRail ? Boolean(homeRes?.ok) : true
       const requiredFollowsOk = shouldLoadOrganizations ? Boolean(followsRes?.ok) : true
       const requiredOwnedOk = shouldLoadOwnedOrganizations ? Boolean(ownedRes?.ok) : true
+      const requiredConnectionsOk = shouldLoadConnections ? Boolean(connectionsRes?.ok) : true
 
-      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk) {
+      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredConnectionsOk) {
         setStatus('error')
         if (!shouldLoadHomeRail) setData(null)
         if (!shouldLoadOrganizations) setOrganizations([])
         if (!shouldLoadOwnedOrganizations) setOwnedOrganizations([])
+        if (!shouldLoadConnections) setConnections([])
         return
       }
 
@@ -177,12 +210,20 @@ export function RightRail({
         setOwnedOrganizations([])
       }
 
+      if (connectionsRes?.ok) {
+        const payload = (await connectionsRes.json().catch(() => null)) as ConnectionsResponse | null
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        setConnections(items)
+      } else {
+        setConnections([])
+      }
+
       setStatus('ready')
     } catch (err) {
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadConnections])
 
   useEffect(() => {
     void loadData()
@@ -293,10 +334,69 @@ export function RightRail({
         </Block>
       ) : null}
 
+      {mode === 'network' ? (
+        <>
+          <Block title="Organizations" action={{ label: 'See all', href: '/organizations/directory' }}>
+            {organizations.length ? (
+              <ul className="space-y-3">
+                {organizations.slice(0, 8).map((org) => (
+                  <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                    {org.coverUrl ? (
+                      <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+                    ) : null}
+                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                    <Link
+                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                      className="group relative flex items-center gap-2.5 px-3 py-2"
+                    >
+                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                      <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No organizations followed.</p>
+            )}
+          </Block>
+
+          <Block title="Professionals" action={{ label: 'See all', href: '/network/professionals' }}>
+            {connections.length ? (
+              <ul className="space-y-3">
+                {connections.slice(0, 8).map((connection) => {
+                  const displayName = connection.user.name || connection.user.handle
+                  return (
+                    <li key={connection.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                      {connection.user.coverUrl ? (
+                        <img src={connection.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+                      ) : null}
+                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                      <Link href={`/u/${connection.user.handle}`} className="group relative flex items-center gap-2.5 px-3 py-2">
+                        <VerifiedAvatar
+                          src={connection.user.avatarUrl}
+                          alt={displayName}
+                          initials={displayName}
+                          size={32}
+                          isVerified={connection.user.isVerified}
+                          isBusiness={connection.user.isPremium}
+                        />
+                        <span className="max-w-[160px] truncate text-sm font-semibold text-white">{displayName}</span>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No professional connections yet.</p>
+            )}
+          </Block>
+        </>
+      ) : null}
+
       {/* Friends Section */}
       {!hideSocialBlocks && !hideContacts ? (
       <Block
-        title="Contacts"
+        title="Friends"
         action={
           data?.userHandle && (data.totalFriends ?? 0) > 0
             ? { label: `View all (${data.totalFriends})`, href: `/u/${data.userHandle}/friends` }
@@ -339,7 +439,7 @@ export function RightRail({
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-slate-500">No contacts yet.</p>
+          <p className="text-sm text-slate-500">No friends yet.</p>
         )}
       </Block>
       ) : null}
