@@ -10,7 +10,7 @@ export default function CommunitiesFeedPage() {
       description="Only posts from the ridings, chambers, and local groups you follow."
       emptyState="No community updates yet. Follow a few more ridings or chambers to start building this feed."
       emptyStateCta={{ label: 'Open Community Settings', href: '/communities/settings' }}
-      rightRail={<RightRail showOrganizations />}
+      rightRail={<RightRail showOrganizations hideContacts />}
     />
   )
 }

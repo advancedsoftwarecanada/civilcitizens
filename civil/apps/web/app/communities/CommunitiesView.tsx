@@ -869,27 +869,27 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               const cityLabel = chamber.name || follow.communitySlug.replace(/-/g, ' ')
               const avatarInitial = cityLabel?.[0]?.toUpperCase() ?? '#'
               return (
-                <div key={key} className="rounded-2xl border border-slate-200 p-4">
+                <div key={key} className="rounded-3xl border border-slate-700 bg-slate-900 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-3">
-                      <span className={`flex h-9 w-9 items-center justify-center rounded-full ${isHome ? 'bg-amber-100' : 'bg-slate-100'}`}>
-                        {isHome ? <HiMiniStar className="h-4 w-4 text-amber-700" /> : <span className="text-xs font-semibold text-slate-500">{avatarInitial}</span>}
+                      <span className={`flex h-10 w-10 items-center justify-center rounded-full ${isHome ? 'bg-amber-200/20' : 'bg-slate-700'}`}>
+                        {isHome ? <HiMiniStar className="h-4 w-4 text-amber-300" /> : <span className="text-xs font-semibold text-slate-200">{avatarInitial}</span>}
                       </span>
                       <div>
-                        <div className="text-base font-semibold text-gray-900">{cityLabel}</div>
-                        <div className="text-sm text-gray-500">Province: {provinceName}</div>
+                        <div className="text-lg font-semibold text-white">{cityLabel}</div>
+                        <div className="text-sm text-slate-200">Province: {provinceName}</div>
                       </div>
                     </div>
-                    {isHome ? <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">Home</span> : null}
+                    {isHome ? <span className="rounded-full bg-amber-200/20 px-2 py-1 text-xs font-semibold text-amber-300">Home</span> : null}
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <Link className={visitButtonClass} href={visitHref}>
+                    <Link className="border border-white/40 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/10" href={visitHref}>
                       Visit
                     </Link>
                     {!isHome ? (
                       <button
                         type="button"
-                        className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                        className="border border-white/40 bg-white/10 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={() => setHomeCommunity(chamber.province, chamber.slug, 'list')}
                         disabled={isUpdating}
                       >
@@ -898,7 +898,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                     ) : null}
                     <button
                       type="button"
-                      className="border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="border border-red-300/60 px-3 py-1.5 text-sm font-semibold text-red-200 hover:bg-red-300/10 disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => handleUnfollow(follow)}
                       disabled={isRemoving}
                     >
@@ -929,17 +929,17 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               const isSaving = suggestionSavingKey === key
               const distanceLabel = typeof city.distanceKm === 'number' ? `${city.distanceKm.toFixed(1)} km away` : null
               return (
-                <div key={key} className="rounded-2xl border border-slate-200 p-4">
-                  <div className="text-sm font-semibold text-gray-900">{city.name}</div>
-                  <div className="text-xs uppercase tracking-wide text-gray-500">{city.provinceName}</div>
-                  {distanceLabel ? <div className="text-xs text-gray-400">{distanceLabel}</div> : null}
+                <div key={key} className="rounded-3xl border border-slate-700 bg-slate-900 p-5">
+                  <div className="text-base font-semibold text-white">{city.name}</div>
+                  <div className="text-xs uppercase tracking-wide text-slate-300">{city.provinceName}</div>
+                  {distanceLabel ? <div className="text-xs text-slate-300">{distanceLabel}</div> : null}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Link className={visitButtonClass} href={visitHref}>
+                    <Link className="border border-white/40 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/10" href={visitHref}>
                       Visit
                     </Link>
                     <button
                       type="button"
-                      className="bg-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
+                      className="border border-white/40 bg-white/10 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={() => handleFollowSuggestion(city)}
                       disabled={isFollowing || isSaving}
                     >

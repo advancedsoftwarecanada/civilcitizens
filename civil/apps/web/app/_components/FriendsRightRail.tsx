@@ -127,26 +127,30 @@ export default function FriendsRightRail() {
           const displayName = formatDisplayName(friend.user.name ?? friend.user.handle) || friend.user.handle
           return (
             <li key={friend.id} className="flex items-center justify-between">
-              <Link href={`/u/${friend.user.handle}`} className="group flex items-center gap-2">
-                <span className="relative h-10 w-14 overflow-hidden rounded-lg bg-slate-100">
-                  {friend.user.coverUrl ? (
-                    <img src={friend.user.coverUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                </span>
-                <VerifiedAvatar
-                  src={friend.user.avatarUrl}
-                  alt={displayName}
-                  initials={displayName}
-                  size={32}
-                  isVerified={friend.user.isVerified}
-                  isBusiness={friend.user.isPremium}
-                />
-                <div className="flex flex-col">
-                  <span className="max-w-[120px] truncate text-sm font-medium text-slate-700 group-hover:text-slate-900">
+              <Link
+                href={`/u/${friend.user.handle}`}
+                className="group relative flex min-h-[56px] items-center overflow-hidden rounded-xl border border-slate-200 bg-slate-700 px-3 py-2"
+              >
+                {friend.user.coverUrl ? (
+                  <img
+                    src={friend.user.coverUrl}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    loading="lazy"
+                  />
+                ) : null}
+                <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                <div className="relative flex items-center gap-2.5">
+                  <VerifiedAvatar
+                    src={friend.user.avatarUrl}
+                    alt={displayName}
+                    initials={displayName}
+                    size={32}
+                    isVerified={friend.user.isVerified}
+                    isBusiness={friend.user.isPremium}
+                  />
+                  <span className="max-w-[135px] truncate text-sm font-semibold text-white">
                     {displayName}
-                  </span>
-                  <span className="max-w-[120px] truncate text-xs text-slate-400">
-                    @{friend.user.handle}
                   </span>
                 </div>
               </Link>

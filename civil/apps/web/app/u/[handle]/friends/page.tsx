@@ -17,6 +17,7 @@ type Friend = {
   handle: string
   name: string | null
   avatarUrl: string | null
+  coverUrl: string | null
   bio: string | null
   newPosts: number
   homeCommunity: {
@@ -89,7 +90,7 @@ export default function FriendsPage({ params }: PageProps) {
 
   if (loading) {
     return (
-      <DashboardShell sidebar={<Sidebar active="friends" />} rightRail={<RightRail />}>
+      <DashboardShell sidebar={<Sidebar active="friends" />} rightRail={<RightRail hideContacts />}>
         <div className="surface-card p-8 text-center text-slate-500">Loading contacts...</div>
       </DashboardShell>
     )
@@ -97,14 +98,14 @@ export default function FriendsPage({ params }: PageProps) {
 
   if (error) {
     return (
-      <DashboardShell sidebar={<Sidebar active="friends" />} rightRail={<RightRail />}>
+      <DashboardShell sidebar={<Sidebar active="friends" />} rightRail={<RightRail hideContacts />}>
         <div className="surface-card p-8 text-center text-red-500">{error}</div>
       </DashboardShell>
     )
   }
 
   return (
-    <DashboardShell sidebar={<Sidebar active="friends" />} rightRail={<RightRail />}>
+    <DashboardShell sidebar={<Sidebar active="friends" />} rightRail={<RightRail hideContacts />}>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-slate-900">Contacts</h1>
@@ -120,49 +121,53 @@ export default function FriendsPage({ params }: PageProps) {
         ) : (
           <div className="grid gap-4">
             {friends.map((friend) => (
-              <div key={friend.id} className="surface-card flex items-center justify-between p-4 transition hover:shadow-md">
-                <div className="flex items-center gap-4">
-                  <Link href={`/u/${friend.handle}`}>
-                    <VerifiedAvatar
-                      src={friend.avatarUrl}
-                      alt={friend.name || friend.handle}
-                      initials={friend.name || friend.handle}
-                      size={56}
-                    />
-                  </Link>
-                  <div>
-                    <Link href={`/u/${friend.handle}`} className="block font-semibold text-slate-900 hover:underline">
-                      {formatDisplayName(friend.name) || friend.handle}
-                    </Link>
-                    <Link href={`/u/${friend.handle}`} className="text-sm text-slate-500 hover:underline">
-                      @{friend.handle}
-                    </Link>
-                    {friend.homeCommunity && (
-                      <div className="mt-1 text-xs text-slate-400">
-                        📍 {friend.homeCommunity.name}, {friend.homeCommunity.province.toUpperCase()}
-                      </div>
-                    )}
-                  </div>
-                </div>
+              <div key={friend.id} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm">
+                {friend.coverUrl ? (
+                  <img src={friend.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+                ) : null}
+                <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
 
-                <div className="flex items-center gap-3">
-                  {friend.newPosts > 0 && (
-                    <Link
-                      href={`/u/${friend.handle}`}
-                      className="flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100"
-                    >
-                      <HiOutlineBell className="h-4 w-4" />
-                      {friend.newPosts} new posts
+                <div className="relative flex min-h-[96px] items-center justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <Link href={`/u/${friend.handle}`}>
+                      <VerifiedAvatar
+                        src={friend.avatarUrl}
+                        alt={friend.name || friend.handle}
+                        initials={friend.name || friend.handle}
+                        size={64}
+                      />
                     </Link>
-                  )}
-                  
-                  <Link
-                    href={`/messages?userId=${friend.id}`}
-                    className="flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-                  >
-                    <HiOutlineChatBubbleLeftRight className="h-4 w-4" />
-                    Message
-                  </Link>
+                    <div className="min-w-0">
+                      <Link href={`/u/${friend.handle}`} className="block truncate text-2xl font-semibold text-white hover:underline">
+                        {formatDisplayName(friend.name) || friend.handle}
+                      </Link>
+                      {friend.homeCommunity && (
+                        <div className="mt-1 truncate text-sm text-white/80">
+                          {friend.homeCommunity.name}, {friend.homeCommunity.province.toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {friend.newPosts > 0 && (
+                      <Link
+                        href={`/u/${friend.handle}`}
+                        className="flex items-center gap-1 rounded-full border border-white/30 bg-black/20 px-3 py-1.5 text-xs font-semibold text-white hover:bg-black/30"
+                      >
+                        <HiOutlineBell className="h-4 w-4" />
+                        {friend.newPosts} new posts
+                      </Link>
+                    )}
+
+                    <Link
+                      href={`/messages?userId=${friend.id}`}
+                      className="flex items-center gap-2 rounded-full border border-white/40 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                    >
+                      <HiOutlineChatBubbleLeftRight className="h-4 w-4" />
+                      Message
+                    </Link>
+                  </div>
                 </div>
               </div>
             ))}

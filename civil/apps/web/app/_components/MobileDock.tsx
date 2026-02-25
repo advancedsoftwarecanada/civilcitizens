@@ -462,45 +462,55 @@ export default function MobileDock() {
             )}
             style={drawerSpacingVars}
           >
-            <div className="flex items-center gap-2">
+            <div className="relative">
               {viewer?.handle ? (
                 <Link
                   href={`/u/${viewer.handle}`}
                   onClick={handleCloseMenu}
-                  className="flex flex-1 items-center gap-2 rounded-[var(--drawer-item-radius)] p-1 transition hover:bg-slate-100"
+                  className="relative flex min-h-[64px] w-[calc(100%-48px)] items-center gap-2 overflow-hidden rounded-[var(--drawer-item-radius)] border border-slate-200 px-2.5 py-2 transition hover:border-slate-300"
                 >
+                  {viewer?.coverUrl ? <img src={viewer.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                  <div className={clsx('absolute inset-0', viewer?.coverUrl ? 'bg-slate-900/52' : 'bg-slate-700')} />
                   <VerifiedAvatar
                     src={viewer?.avatarUrl ?? null}
                     alt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
                     initials={viewer?.name ?? viewer?.handle ?? 'C'}
-                    size={48}
+                    size={42}
                     isVerified={Boolean(viewer?.isVerified)}
                     isBusiness={Boolean(viewer?.isPremium)}
+                    className="relative z-[1]"
                   />
-                  <div className="flex-1">
-                    <p className="text-[clamp(13px,3.4vw,14px)] font-semibold text-slate-900 leading-tight">{viewer?.name ?? 'Civil Citizen'}</p>
-                    <p className="text-[12px] text-slate-500">@{viewer?.handle ?? 'civil'}</p>
+                  <div className="relative z-[1] min-w-0 flex-1">
+                    <p className="truncate text-[clamp(13px,3.4vw,14px)] font-semibold leading-tight text-white">
+                      {viewer?.name ?? 'Civil Citizen'}
+                    </p>
+                    <p className="truncate text-[12px] text-white/80">View profile</p>
                   </div>
                 </Link>
               ) : (
-                <div className="flex flex-1 items-center gap-2">
+                <div className="relative flex min-h-[64px] w-[calc(100%-48px)] items-center gap-2 overflow-hidden rounded-[var(--drawer-item-radius)] border border-slate-200 px-2.5 py-2">
+                  {viewer?.coverUrl ? <img src={viewer.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                  <div className={clsx('absolute inset-0', viewer?.coverUrl ? 'bg-slate-900/52' : 'bg-slate-700')} />
                   <VerifiedAvatar
                     src={viewer?.avatarUrl ?? null}
                     alt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
                     initials={viewer?.name ?? viewer?.handle ?? 'C'}
-                    size={48}
+                    size={42}
                     isVerified={Boolean(viewer?.isVerified)}
                     isBusiness={Boolean(viewer?.isPremium)}
+                    className="relative z-[1]"
                   />
-                  <div className="flex-1">
-                    <p className="text-[clamp(13px,3.4vw,14px)] font-semibold text-slate-900 leading-tight">{viewer?.name ?? 'Civil Citizen'}</p>
-                    <p className="text-[12px] text-slate-500">@{viewer?.handle ?? 'civil'}</p>
+                  <div className="relative z-[1] min-w-0 flex-1">
+                    <p className="truncate text-[clamp(13px,3.4vw,14px)] font-semibold leading-tight text-white">
+                      {viewer?.name ?? 'Civil Citizen'}
+                    </p>
+                    <p className="truncate text-[12px] text-white/80">View profile</p>
                   </div>
                 </div>
               )}
               <button
                 type="button"
-                className="rounded-full border border-slate-200 p-2 text-slate-500"
+                className="absolute right-0 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white p-2 text-slate-500"
                 onClick={handleCloseMenu}
                 aria-label="Close menu"
               >
