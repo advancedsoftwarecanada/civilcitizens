@@ -41,6 +41,7 @@ export type ApiPost = {
     slug: string
     isVerified: boolean
     logoUrl?: string | null
+    coverUrl?: string | null
     provinceCode: string | null
     communitySlug: string | null
   } | null
@@ -49,6 +50,7 @@ export type ApiPost = {
     handle: string
     name?: string | null
     avatarUrl?: string | null
+    coverUrl?: string | null
     isPremium?: boolean
     isVerified?: boolean
   }

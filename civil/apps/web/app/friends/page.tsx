@@ -10,7 +10,7 @@ export default function FriendsFeedPage() {
       description="Updates from the people you follow and trust on Civil."
       emptyState="No friend activity yet. Once your friends start posting, their updates will land here."
       emptyStateCta={{ label: 'Find Friends', href: '/search' }}
-      rightRail={<RightRail />}
+      rightRail={<RightRail hideCommunities />}
     />
   )
 }

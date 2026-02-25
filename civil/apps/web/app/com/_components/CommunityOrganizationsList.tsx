@@ -12,6 +12,8 @@ type CommunityOrganization = {
   communitySlug: string | null
   name: string
   slug: string
+  logoUrl: string | null
+  coverUrl: string | null
   description: string | null
   status: 'DRAFT' | 'ACTIVE' | 'SUSPENDED' | 'CANCELED'
   isVerified: boolean
@@ -103,19 +105,27 @@ export default function CommunityOrganizationsList({ province, municipality }: {
         <Link
           key={org.id}
           href={`/com/${encodeURIComponent(org.provinceCode ?? province)}/${encodeURIComponent(org.communitySlug ?? municipality)}/orgs/${encodeURIComponent(org.slug)}`}
-          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300"
+          className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-800 p-4 transition hover:border-slate-300"
         >
-          <div className="flex items-start justify-between gap-3">
+          {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+          <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
+
+          <div className="relative flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold text-slate-900">{org.name}</p>
-              {org.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600">{org.description}</p> : null}
+              <div className="flex items-center gap-2">
+                <span className="h-9 w-9 overflow-hidden rounded-full border border-white/40 bg-white/20">
+                  {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
+                </span>
+                <p className="font-semibold text-white">{org.name}</p>
+              </div>
+              {org.description ? <p className="mt-2 line-clamp-2 text-sm text-white/85">{org.description}</p> : null}
             </div>
             <div className="flex flex-col items-end gap-1">
-              <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+              <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">
                 {org.status === 'DRAFT' ? 'Draft' : 'Live'}
               </span>
               {org.isVerified ? (
-                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">
                   Verified
                 </span>
               ) : null}
