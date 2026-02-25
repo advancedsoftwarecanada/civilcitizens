@@ -59,6 +59,8 @@ import {
   MediaAssetIdSchema,
   CitySummarySchema,
   CreateDirectThreadInput,
+  CreateGroupThreadInput,
+  GroupParticipantInput,
   SendMessageInput,
   MessageThreadListQuery,
   UpdatePostInput,
@@ -1196,6 +1198,11 @@ async function usersAreFriends(userId: string, targetUserId: string): Promise<bo
   return Boolean(friendship)
 }
 
+async function loadFriendIdSet(userId: string): Promise<Set<string>> {
+  const ids = await loadAcceptedFriendIds(userId)
+  return new Set(ids)
+}
+
 async function loadThreadForUser(threadId: string, userId: string) {
   return prisma.messageThread.findFirst({
     where: {
@@ -1258,6 +1265,10 @@ const FriendshipIdParam = z.object({ id: z.string().cuid() })
 const ConnectionRequestInput = z.object({ userId: z.string().trim().min(1).max(120) })
 const ConnectionIdParam = z.object({ id: z.string().trim().min(1).max(120) })
 const MessageThreadIdParam = z.object({ id: z.string().cuid() })
+const MessageThreadParticipantParams = z.object({
+  id: z.string().cuid(),
+  userId: z.string().cuid().or(z.string().uuid()),
+})
 const NotificationAckInput = z
   .object({
     ids: z.array(z.string().cuid()).min(1).max(50).optional(),
@@ -4432,6 +4443,258 @@ app.post('/messages/threads/direct', async (req: FastifyRequest, reply: FastifyR
     )
 
     return reply.send({ thread: formatThreadSummaryRecord(thread, userId) })
+  }),
+)
+
+app.post('/messages/threads/group', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = CreateGroupThreadInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const participantIds: string[] = Array.from(new Set((parse.data.participantIds as string[]).filter((id: string) => id !== userId)))
+    if (participantIds.length < 2) {
+      return reply.code(400).send({ error: 'group_requires_at_least_two_friends' })
+    }
+
+    const friendIdSet = await loadFriendIdSet(userId)
+    const hasNonFriend = participantIds.some((id) => !friendIdSet.has(id))
+    if (hasNonFriend) {
+      return reply.code(403).send({ error: 'group_members_must_be_friends' })
+    }
+
+    const users = await prisma.user.findMany({ where: { id: { in: participantIds } }, select: { id: true } })
+    const userIdSet = new Set(users.map((row: { id: string }) => row.id))
+    if (participantIds.some((id) => !userIdSet.has(id))) {
+      return reply.code(404).send({ error: 'user_not_found' })
+    }
+
+    const now = new Date()
+    const thread = await prisma.messageThread.create({
+      data: {
+        type: MessageThreadType.group,
+        uniqueKey: null,
+        lastMessageAt: now,
+        participants: {
+          create: [
+            { userId, role: MessageParticipantRole.admin, lastReadAt: now, lastActivityAt: now },
+            ...participantIds.map((id: string) => ({ userId: id, role: MessageParticipantRole.member, lastActivityAt: now })),
+          ],
+        },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+
+    await Promise.all(
+      thread.participants
+        .filter((participant: ThreadParticipantRecord) => participant.userId !== userId)
+        .map((participant: ThreadParticipantRecord) =>
+          dispatchRealtimeEvent(participant.userId, {
+            type: 'thread.created',
+            data: { thread: formatThreadSummaryRecord(thread, participant.userId) },
+          }),
+        ),
+    )
+
+    return reply.code(201).send({ thread: formatThreadSummaryRecord(thread, userId) })
+  }),
+)
+
+app.get('/messages/threads/:id/candidates', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const thread = await loadThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+    if (thread.type !== MessageThreadType.group) return reply.code(400).send({ error: 'not_group_thread' })
+
+    const viewerParticipant = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId === userId)
+    if (!viewerParticipant || viewerParticipant.role !== MessageParticipantRole.admin) {
+      return reply.code(403).send({ error: 'only_owner_can_manage_members' })
+    }
+
+    const friendIdSet = await loadFriendIdSet(userId)
+    const existingIds = new Set(thread.participants.map((participant: ThreadParticipantRecord) => participant.userId))
+    const candidateIds = [...friendIdSet].filter((id) => !existingIds.has(id))
+    if (!candidateIds.length) return reply.send({ items: [] })
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: candidateIds } },
+      select: FRIEND_USER_SELECT,
+      orderBy: [{ name: 'asc' }, { handle: 'asc' }],
+    })
+
+    return reply.send({ items: users.map((user: FriendUser) => formatFriendUser(user)) })
+  }),
+)
+
+app.post('/messages/threads/:id/participants', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+    const parse = GroupParticipantInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const thread = await loadThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+    if (thread.type !== MessageThreadType.group) return reply.code(400).send({ error: 'not_group_thread' })
+
+    const viewerParticipant = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId === userId)
+    if (!viewerParticipant || viewerParticipant.role !== MessageParticipantRole.admin) {
+      return reply.code(403).send({ error: 'only_owner_can_manage_members' })
+    }
+
+    const targetUserId = parse.data.userId
+    if (targetUserId === userId) return reply.code(400).send({ error: 'cannot_add_self' })
+    if (thread.participants.some((participant: ThreadParticipantRecord) => participant.userId === targetUserId)) {
+      const existingThread = await prisma.messageThread.findUnique({ where: { id: thread.id }, include: THREAD_SUMMARY_INCLUDE })
+      if (!existingThread) return reply.code(404).send({ error: 'thread_not_found' })
+      return reply.send({ thread: formatThreadSummaryRecord(existingThread, userId) })
+    }
+
+    const friendIdSet = await loadFriendIdSet(userId)
+    if (!friendIdSet.has(targetUserId)) {
+      return reply.code(403).send({ error: 'group_members_must_be_friends' })
+    }
+
+    const targetExists = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
+    if (!targetExists) return reply.code(404).send({ error: 'user_not_found' })
+
+    await prisma.messageParticipant.create({
+      data: {
+        threadId: thread.id,
+        userId: targetUserId,
+        role: MessageParticipantRole.member,
+        lastActivityAt: new Date(),
+      },
+    })
+
+    const updatedThread = await prisma.messageThread.findUnique({ where: { id: thread.id }, include: THREAD_SUMMARY_INCLUDE })
+    if (!updatedThread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    await Promise.all(
+      updatedThread.participants.map((participant: ThreadParticipantRecord) =>
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'thread.created',
+          data: { thread: formatThreadSummaryRecord(updatedThread, participant.userId) },
+        }),
+      ),
+    )
+
+    return reply.send({ thread: formatThreadSummaryRecord(updatedThread, userId) })
+  }),
+)
+
+app.delete('/messages/threads/:id/participants/:userId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadParticipantParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const thread = await loadThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+    if (thread.type !== MessageThreadType.group) return reply.code(400).send({ error: 'not_group_thread' })
+
+    const viewerParticipant = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId === userId)
+    if (!viewerParticipant || viewerParticipant.role !== MessageParticipantRole.admin) {
+      return reply.code(403).send({ error: 'only_owner_can_manage_members' })
+    }
+
+    const targetUserId = params.data.userId
+    if (targetUserId === userId) return reply.code(400).send({ error: 'owner_cannot_remove_self' })
+
+    const targetParticipant = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId === targetUserId)
+    if (!targetParticipant) return reply.code(404).send({ error: 'participant_not_found' })
+    if (targetParticipant.role === MessageParticipantRole.admin) {
+      return reply.code(400).send({ error: 'cannot_remove_owner' })
+    }
+
+    await prisma.messageParticipant.delete({
+      where: {
+        threadId_userId: {
+          threadId: thread.id,
+          userId: targetUserId,
+        },
+      },
+    })
+
+    const updatedThread = await prisma.messageThread.findUnique({ where: { id: thread.id }, include: THREAD_SUMMARY_INCLUDE })
+    if (!updatedThread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    await dispatchRealtimeEvent(targetUserId, {
+      type: 'thread.removed',
+      data: { threadId: thread.id },
+    })
+
+    await Promise.all(
+      updatedThread.participants.map((participant: ThreadParticipantRecord) =>
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'thread.created',
+          data: { thread: formatThreadSummaryRecord(updatedThread, participant.userId) },
+        }),
+      ),
+    )
+
+    return reply.send({ thread: formatThreadSummaryRecord(updatedThread, userId) })
+  }),
+)
+
+app.post('/messages/threads/:id/leave', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const thread = await loadThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+    if (thread.type !== MessageThreadType.group) return reply.code(400).send({ error: 'not_group_thread' })
+
+    const viewerParticipant = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId === userId)
+    if (!viewerParticipant) return reply.code(404).send({ error: 'participant_not_found' })
+    if (viewerParticipant.role === MessageParticipantRole.admin) {
+      return reply.code(400).send({ error: 'owner_cannot_leave' })
+    }
+
+    await prisma.messageParticipant.delete({
+      where: {
+        threadId_userId: {
+          threadId: thread.id,
+          userId,
+        },
+      },
+    })
+
+    const updatedThread = await prisma.messageThread.findUnique({ where: { id: thread.id }, include: THREAD_SUMMARY_INCLUDE })
+    if (updatedThread) {
+      await Promise.all(
+        updatedThread.participants.map((participant: ThreadParticipantRecord) =>
+          dispatchRealtimeEvent(participant.userId, {
+            type: 'thread.created',
+            data: { thread: formatThreadSummaryRecord(updatedThread, participant.userId) },
+          }),
+        ),
+      )
+    }
+
+    await dispatchRealtimeEvent(userId, {
+      type: 'thread.removed',
+      data: { threadId: thread.id },
+    })
+
+    return reply.send({ success: true })
   }),
 )
 
