@@ -168,7 +168,8 @@ const MEDIA_S3_ACCESS_KEY = process.env.MEDIA_S3_ACCESS_KEY || 'minioadmin'
 const MEDIA_S3_SECRET_KEY = process.env.MEDIA_S3_SECRET_KEY || 'minioadmin'
 const MEDIA_BUCKET_PUBLIC = process.env.MEDIA_BUCKET_PUBLIC || 'civil-media'
 const MEDIA_BUCKET_ORIGINAL = process.env.MEDIA_BUCKET_ORIGINAL || 'civil-media-raw'
-const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `http://127.0.0.1:9000/${MEDIA_BUCKET_PUBLIC}`).replace(/\/$/, '')
+const CIVIL_PUBLIC_HOST = process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca'
+const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `https://${CIVIL_PUBLIC_HOST}/media`).replace(/\/$/, '')
 const MEDIA_SIGNED_URL_TTL = Number(process.env.MEDIA_SIGNED_URL_TTL_SECONDS || 900)
 const LEGACY_MEDIA_BASE_URLS = [
   'http://localhost:9000/civil-media',
@@ -505,10 +506,10 @@ const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
   cover: 20 * MB,
   business_logo: 8 * MB,
   business_cover: 20 * MB,
-  post_image: 25 * MB,
-  attachment: 40 * MB,
+  post_image: 80 * MB,
+  attachment: 200 * MB,
 }
-const MEDIA_PROXY_UPLOAD_LIMIT = 50 * MB
+const MEDIA_PROXY_UPLOAD_LIMIT = 250 * MB
 
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif'])
 const MIME_EXTENSION_MAP: Record<string, string> = {

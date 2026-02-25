@@ -1,58 +1,36 @@
 #!/usr/bin/env python3
-"""Helper entrypoint for prod Civil Citizens stack."""
-from __future__ import annotations
+"""Civil production deploy helper (local).
 
-import os
-import subprocess
-from pathlib import Path
-from typing import Mapping
+This script performs direct server deploys (no git runners):
+- uploads the repository to the production host via rsync/scp
+- optionally checks/prepares remote directories and services
 
-from docker_helper import run_helper
+Usage:
+    python3 _PROD.py              # deploy (default: upload/sync only)
+    python3 _PROD.py check        # remote sanity checks
+    python3 _PROD.py prep         # create remote CIVIL/CIVIL_DATA dirs
+    python3 _PROD.py ssh          # open interactive SSH shell
+"""
 
-ROOT_DIR = Path(__file__).resolve().parent
-CIVIL_DIR = ROOT_DIR / "civil"
+import sys
 
 
-def run_admin_bootstrap(command: str, overrides: Mapping[str, str]) -> None:
-    if command not in {"up", "rebuild", "rebuild-all", "infra-up"}:
-        return
+def main(argv: list[str]) -> int:
+    from _production_server.deploy import main as remote_main
 
-    env = os.environ.copy()
-    env.update(overrides)
-    env.setdefault(
-        "DATABASE_URL",
-        f"postgresql://postgres:postgres@localhost:{env.get('POSTGRES_HOST_PORT', '5432')}/civil",
-    )
+    sub = (argv[0] if argv else "deploy").strip().lower()
+    if sub in {"deploy", "sync", "upload", ""}:
+        return int(remote_main(["deploy"]))
+    if sub in {"check", "doctor"}:
+        return int(remote_main([sub]))
+    if sub in {"prep", "prepare"}:
+        return int(remote_main(["prep"]))
+    if sub in {"ssh", "shell"}:
+        return int(remote_main(["ssh"]))
 
-    # Prefer explicit pnpm override, else try nvm node 20 bin, else fall back to pnpm on PATH.
-    pnpm_bin = env.get("PNPM_BIN", "pnpm")
-    nvm_node20 = Path.home() / ".nvm/versions/node/v20.19.6/bin"
-    if nvm_node20.exists():
-        env["PATH"] = f"{nvm_node20}:{env.get('PATH','')}"
-
-    bootstrap_cmd = [
-        pnpm_bin,
-        "--filter",
-        "@civil/api",
-        "exec",
-        "tsx",
-        "scripts/bootstrap-admin.ts",
-    ]
-
-    print("-> Running admin bootstrap check...")
-    try:
-        subprocess.run(bootstrap_cmd, check=True, cwd=CIVIL_DIR, env=env)
-    except FileNotFoundError:
-        print("-> pnpm not found; skipping admin bootstrap.")
-    except subprocess.CalledProcessError:
-        print("-> Admin bootstrap failed. See output above for details.")
-        raise
+    print("Usage: python3 _PROD.py [check|prep|deploy|ssh]", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
-    run_helper(
-        default_env_candidates=[Path(".env.production"), Path(".env"), Path(".env.prod")],
-        default_project_name="civil_prod",
-        default_command="rebuild",
-        post_command=run_admin_bootstrap,
-    )
+    raise SystemExit(main(sys.argv[1:]))

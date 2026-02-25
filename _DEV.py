@@ -356,10 +356,11 @@ def start() -> int:
     env["DATABASE_URL"] = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
     env["REDIS_URL"] = f"redis://localhost:{CYBERTRON_REDIS_PORT}"
     env.setdefault("JWT_SECRET", "dev_secret")
+    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
     env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
-    env.setdefault("NEXT_PUBLIC_BASE_URL", f"http://localhost:{WEB_PORT}")
-    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"http://localhost:{CYBERTRON_MINIO_PORT}/civil-media")
-    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"http://localhost:{CYBERTRON_MINIO_PORT}/civil-media")
+    env.setdefault("NEXT_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}")
+    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
+    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
     env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
     env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
 
@@ -491,10 +492,11 @@ def doctor() -> int:
     )
     redis_url = os.environ.get("REDIS_URL", file_env.get("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}"))
     api_base = os.environ.get("NEXT_PUBLIC_API_BASE", file_env.get("NEXT_PUBLIC_API_BASE", "/api"))
-    base_url = os.environ.get("NEXT_PUBLIC_BASE_URL", file_env.get("NEXT_PUBLIC_BASE_URL", f"http://localhost:{WEB_PORT}"))
+    public_host = os.environ.get("CIVIL_PUBLIC_HOST", file_env.get("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca"))
+    base_url = os.environ.get("NEXT_PUBLIC_BASE_URL", file_env.get("NEXT_PUBLIC_BASE_URL", f"https://{public_host}"))
     media_base = os.environ.get(
         "NEXT_PUBLIC_MEDIA_BASE_URL",
-        file_env.get("NEXT_PUBLIC_MEDIA_BASE_URL", f"http://localhost:{CYBERTRON_MINIO_PORT}/civil-media"),
+        file_env.get("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{public_host}/media"),
     )
 
     print("== Effective dev configuration ==")
@@ -503,6 +505,7 @@ def doctor() -> int:
     print(f"- CYBERTRON_POSTGRES_PORT={CYBERTRON_POSTGRES_PORT}")
     print(f"- CYBERTRON_REDIS_PORT={CYBERTRON_REDIS_PORT}")
     print(f"- CYBERTRON_MINIO_PORT={CYBERTRON_MINIO_PORT}")
+    print(f"- CIVIL_PUBLIC_HOST={public_host}")
     print(f"- NEXT_PUBLIC_API_BASE={api_base}")
     print(f"- NEXT_PUBLIC_BASE_URL={base_url}")
     print(f"- NEXT_PUBLIC_MEDIA_BASE_URL={media_base}")
