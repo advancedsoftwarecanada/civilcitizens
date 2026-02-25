@@ -4552,7 +4552,7 @@ const CommunityOrgSettingsBody = z.object({
 })
 
 const CommunityOrgMemberParams = CommunityOrgSlugParams.extend({
-  userId: z.string().cuid(),
+  userId: z.string().uuid(),
 })
 
 type CommunityOrgRecord = {
