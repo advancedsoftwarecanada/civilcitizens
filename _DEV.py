@@ -393,11 +393,11 @@ def start() -> int:
         print("   Refusing to kill it. Free the port and retry.")
         return 1
 
-    print(f"▶ Starting web (detached, Next Turbo) on :{WEB_PORT} (log: {WEB_LOG})")
+    print(f"▶ Starting web (detached, Next Webpack) on :{WEB_PORT} (log: {WEB_LOG})")
     env["CIVIL_WEB_PORT"] = str(WEB_PORT)
     env["CIVIL_API_PORT"] = str(API_PORT)
     _spawn_detached(
-        [pnpm, "--filter", "@civil/web", "exec", "next", "dev", "--turbo", "-H", "0.0.0.0", "-p", str(WEB_PORT)],
+        [pnpm, "--filter", "@civil/web", "exec", "next", "dev", "-H", "0.0.0.0", "-p", str(WEB_PORT)],
         cwd=CIVIL_DIR,
         pid_file=WEB_PID_FILE,
         log_file=WEB_LOG,
