@@ -100,7 +100,7 @@ type PostComposerProps = {
   businessTarget?: { businessId: string; businessName?: string | null } | null
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
-  defaultAudience?: 'friends' | 'community' | 'business'
+  defaultAudience?: 'friends' | 'network' | 'community' | 'business'
 }
 
 const MAX_POST_LENGTH = 5000
@@ -111,6 +111,7 @@ const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/h
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
 const FRIENDS_VALUE = 'friends'
+const NETWORK_VALUE = 'network'
 const BUSINESS_VALUE = 'business'
 const COMMUNITY_PREFIX = 'community:'
 const COMMUNITY_PROMPT_VALUE = `${COMMUNITY_PREFIX}__prompt`
@@ -128,7 +129,7 @@ const formatCommunityLabel = (target: CommunityTarget) => {
 
 const deriveInitialAudienceSelection = (
   currentTarget: CommunityTarget | null,
-  defaultAudience: 'friends' | 'community' | 'business',
+  defaultAudience: 'friends' | 'network' | 'community' | 'business',
   options: CommunityTarget[],
   businessTarget: PostComposerProps['businessTarget'],
 ) => {
@@ -144,6 +145,7 @@ const deriveInitialAudienceSelection = (
     return COMMUNITY_PROMPT_VALUE
   }
   if (defaultAudience === 'business') return BUSINESS_VALUE
+  if (defaultAudience === 'network') return NETWORK_VALUE
   return FRIENDS_VALUE
 }
 
@@ -260,7 +262,7 @@ export default function PostComposer({
     }
     setAudienceSelection((prev) => {
       if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience !== 'community') {
-        return FRIENDS_VALUE
+        return defaultAudience === 'network' ? NETWORK_VALUE : FRIENDS_VALUE
       }
       if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience === 'community' && normalizedCommunityOptions.length === 1) {
         const firstOption = normalizedCommunityOptions[0]
@@ -278,7 +280,7 @@ export default function PostComposer({
               return buildCommunityValue(firstOption)
             }
           }
-          return FRIENDS_VALUE
+          return defaultAudience === 'network' ? NETWORK_VALUE : FRIENDS_VALUE
         }
       }
       return prev
@@ -494,6 +496,13 @@ export default function PostComposer({
         payload.communityProvince = targetCommunity.provinceCode
         payload.communitySlug = targetCommunity.communitySlug
       }
+      payload.audience = targetCommunity
+        ? 'community'
+        : businessTarget?.businessId
+          ? 'organization'
+          : audienceSelection === NETWORK_VALUE
+            ? 'network'
+            : 'friends'
       payload.jurisdiction = targetCommunity ? 'municipal' : 'self'
 
       if (businessTarget?.businessId) {
@@ -667,6 +676,7 @@ export default function PostComposer({
               <option value={BUSINESS_VALUE}>{businessTarget.businessName ?? 'Organization'}</option>
             ) : (
               <>
+                <option value={NETWORK_VALUE}>Network</option>
                 <option value={FRIENDS_VALUE}>Friends</option>
                 {!communityTarget && isPromptSelected ? (
                   <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>

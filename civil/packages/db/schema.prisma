@@ -65,6 +65,8 @@ model User {
   postReactions             PostReaction[]
   friendshipsRequested      Friendship[]         @relation("friendshipsRequested")
   friendshipsReceived       Friendship[]         @relation("friendshipsReceived")
+  connectionsRequested      Connection[]         @relation("connectionsRequested")
+  connectionsReceived       Connection[]         @relation("connectionsReceived")
   messageParticipants       MessageParticipant[]
   messagesSent              Message[]
   communityMeta             Json?
@@ -77,6 +79,7 @@ model Post {
   id             String        @id @default(cuid())
   authorId       String
   businessId     String?
+  audience       String        @default("friends")
   visibility     String        @default("public")
   body           String
   title          String?
@@ -235,6 +238,22 @@ model Friendship {
   @@index([addresseeId, status])
 }
 
+model Connection {
+  id           String           @id @default(cuid())
+  requesterId  String
+  addresseeId  String
+  status       ConnectionStatus @default(PENDING)
+  requestedAt  DateTime         @default(now())
+  respondedAt  DateTime?
+
+  requester User @relation("connectionsRequested", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("connectionsReceived", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+}
+
 model MessageThread {
   id           String             @id @default(cuid())
   type         MessageThreadType  @default(direct)
@@ -283,6 +302,12 @@ model Message {
 }
 
 enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum ConnectionStatus {
   PENDING
   ACCEPTED
   REJECTED

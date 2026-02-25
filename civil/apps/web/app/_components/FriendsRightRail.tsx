@@ -101,7 +101,7 @@ export default function FriendsRightRail() {
     if (state === 'error') {
       return (
         <div className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
-          Unable to load your contacts right now.
+          Unable to load your friends right now.
           <button type="button" className="ml-2 font-semibold underline" onClick={loadFriends}>
             Retry
           </button>
@@ -114,7 +114,7 @@ export default function FriendsRightRail() {
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
           No friends yet.
           <Link href="/search?type=people" className="ml-1 font-semibold text-[var(--cc-primary)] hover:underline">
-            Find new contacts
+            Find new friends
           </Link>
           .
         </div>
@@ -164,7 +164,7 @@ export default function FriendsRightRail() {
   return (
     <div className="sticky top-8 space-y-6">
       <Block
-        title="Contacts"
+        title="Friends"
         action={sortedFriends.length ? { label: String(sortedFriends.length), href: '#' } : undefined}
       >
         {renderContent()}
