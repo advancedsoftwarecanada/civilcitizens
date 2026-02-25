@@ -334,7 +334,10 @@ export default function MobileDock() {
   }), [])
 
   const morePanelContent = useMemo(() => {
-    if (pathname?.startsWith('/friends')) {
+    if (pathname?.startsWith('/friends') || pathname?.startsWith('/network')) {
+      if (pathname?.startsWith('/network')) {
+        return <RightRail mode="network" sticky={false} />
+      }
       return <FriendsRightRail />
     }
     if (pathname?.startsWith('/organizations')) {

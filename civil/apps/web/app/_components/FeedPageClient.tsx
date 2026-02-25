@@ -16,7 +16,7 @@ import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
 
 
-export type FeedScope = 'all' | 'friends' | 'communities' | 'organizations'
+export type FeedScope = 'all' | 'friends' | 'network' | 'communities' | 'organizations'
 
 export type FeedPageClientProps = {
   scope: FeedScope
@@ -306,7 +306,8 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
   }
 
   const emptyLabel = emptyState ?? "No updates yet. Once the community starts posting, you'll see them here."
-  const composerDefaultAudience: 'friends' | 'community' = scope === 'communities' ? 'community' : 'friends'
+  const composerDefaultAudience: 'friends' | 'network' | 'community' =
+    scope === 'communities' ? 'community' : scope === 'network' ? 'network' : 'friends'
 
   const resolvedRightRail = rightRail ?? <RightRail />
 

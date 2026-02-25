@@ -17,6 +17,7 @@ import {
   BusinessType,
   StripeWebhookStatus,
   FriendshipStatus,
+  ConnectionStatus,
   ReactionType,
   MessageThreadType,
   MessageType,
@@ -979,6 +980,75 @@ async function loadAcceptedFriendIds(userId: string): Promise<string[]> {
   return [...result]
 }
 
+type ConnectionStatusValue = 'PENDING' | 'ACCEPTED' | 'REJECTED'
+
+type ConnectionRow = {
+  id: string
+  requesterId: string
+  addresseeId: string
+  status: ConnectionStatusValue
+  requestedAt: Date
+  respondedAt: Date | null
+}
+
+function isConnectionTableMissingError(err: unknown): boolean {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2021' || err.code === 'P2010') return true
+  }
+  const message = typeof (err as any)?.message === 'string' ? (err as any).message : ''
+  return /"Connection"|ConnectionStatus|relation .*Connection.* does not exist/i.test(message)
+}
+
+async function findConnectionBetween(userId: string, targetUserId: string): Promise<ConnectionRow | null> {
+  try {
+    const rows = await prisma.$queryRaw<ConnectionRow[]>`
+      SELECT "id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt"
+      FROM "Connection"
+      WHERE ("requesterId" = ${userId} AND "addresseeId" = ${targetUserId})
+         OR ("requesterId" = ${targetUserId} AND "addresseeId" = ${userId})
+      LIMIT 1
+    `
+    return rows[0] ?? null
+  } catch (error) {
+    if (isConnectionTableMissingError(error)) return null
+    throw error
+  }
+}
+
+async function findConnectionById(id: string): Promise<ConnectionRow | null> {
+  try {
+    const rows = await prisma.$queryRaw<ConnectionRow[]>`
+      SELECT "id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt"
+      FROM "Connection"
+      WHERE "id" = ${id}
+      LIMIT 1
+    `
+    return rows[0] ?? null
+  } catch (error) {
+    if (isConnectionTableMissingError(error)) return null
+    throw error
+  }
+}
+
+async function loadAcceptedConnectionIds(userId: string): Promise<string[]> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ requesterId: string; addresseeId: string }>>`
+      SELECT "requesterId", "addresseeId"
+      FROM "Connection"
+      WHERE "status" = 'ACCEPTED'
+        AND ("requesterId" = ${userId} OR "addresseeId" = ${userId})
+    `
+    const ids = new Set<string>()
+    for (const row of rows) {
+      ids.add(row.requesterId === userId ? row.addresseeId : row.requesterId)
+    }
+    return [...ids]
+  } catch (error) {
+    if (isConnectionTableMissingError(error)) return []
+    throw error
+  }
+}
+
 async function loadFollowingTargetIds(userId: string): Promise<string[]> {
   const rows: Pick<Prisma.FollowGetPayload<{ select: { targetId: true } }>, 'targetId'>[] = await prisma.follow.findMany({
     where: { followerId: userId },
@@ -1185,6 +1255,8 @@ function isSchemaOutOfDateError(err: unknown): boolean {
 const MediaAssetParam = z.object({ id: MediaAssetIdSchema })
 const FriendRequestInput = z.object({ userId: z.string().trim().min(1).max(120) })
 const FriendshipIdParam = z.object({ id: z.string().cuid() })
+const ConnectionRequestInput = z.object({ userId: z.string().trim().min(1).max(120) })
+const ConnectionIdParam = z.object({ id: z.string().trim().min(1).max(120) })
 const MessageThreadIdParam = z.object({ id: z.string().cuid() })
 const NotificationAckInput = z
   .object({
@@ -3182,7 +3254,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
-    const { body, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility } = parse.data
+    const { body, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience } = parse.data
 
     if (sharedPostId && (!body || body.trim().length === 0)) {
       return reply.code(400).send({ error: 'Commentary is required when sharing a post.' })
@@ -3190,6 +3262,13 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
     const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
+    const normalizedAudience = business
+      ? 'organization'
+      : provinceCode && communitySlug
+        ? 'community'
+        : audience === 'network'
+          ? 'network'
+          : 'friends'
 
     const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const seoSlug = await generateUniquePostSlug(slugBase, tx)
@@ -3199,6 +3278,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           authorId: userId,
           ...(business ? { businessId: business.id } : {}),
           ...(visibility ? { visibility } : {}),
+          ...(normalizedAudience ? ({ audience: normalizedAudience } as any) : {}),
           body,
           mediaUrl,
           images: images ? (images as any) : undefined,
@@ -3995,6 +4075,273 @@ app.delete('/friends/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     return reply.send({ success: true })
+  }),
+)
+
+app.get('/connections', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    try {
+      const rows = (await prisma.$queryRaw<ConnectionRow[]>`
+        SELECT "id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt"
+        FROM "Connection"
+        WHERE "status" = 'ACCEPTED'
+          AND ("requesterId" = ${userId} OR "addresseeId" = ${userId})
+        ORDER BY COALESCE("respondedAt", "requestedAt") DESC
+      `) as ConnectionRow[]
+
+      const counterpartIds = Array.from(
+        new Set(rows.map((row: ConnectionRow) => (row.requesterId === userId ? row.addresseeId : row.requesterId))),
+      )
+      const users: FriendUser[] = counterpartIds.length
+        ? await prisma.user.findMany({ where: { id: { in: counterpartIds } }, select: FRIEND_USER_SELECT })
+        : []
+      const userMap = new Map<string, FriendUser>(users.map((user: FriendUser) => [user.id, user]))
+
+      const items = rows
+        .map((row: ConnectionRow) => {
+          const counterpartId = row.requesterId === userId ? row.addresseeId : row.requesterId
+          const counterpart = userMap.get(counterpartId)
+          if (!counterpart) return null
+          return {
+            id: row.id,
+            status: row.status,
+            since: row.respondedAt ?? row.requestedAt,
+            user: formatFriendUser(counterpart),
+          }
+        })
+        .filter((item: NonNullable<ReturnType<typeof formatFriendship>> | null): item is NonNullable<ReturnType<typeof formatFriendship>> => Boolean(item))
+
+      return reply.send({ items })
+    } catch (error) {
+      if (isConnectionTableMissingError(error)) return reply.send({ items: [] })
+      throw error
+    }
+  }),
+)
+
+app.get('/connections/requests', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    try {
+      const rows = (await prisma.$queryRaw<ConnectionRow[]>`
+        SELECT "id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt"
+        FROM "Connection"
+        WHERE "status" = 'PENDING'
+          AND ("requesterId" = ${userId} OR "addresseeId" = ${userId})
+        ORDER BY "requestedAt" ASC
+      `) as ConnectionRow[]
+
+      const counterpartIds = Array.from(
+        new Set(rows.map((row: ConnectionRow) => (row.requesterId === userId ? row.addresseeId : row.requesterId))),
+      )
+      const users: FriendUser[] = counterpartIds.length
+        ? await prisma.user.findMany({ where: { id: { in: counterpartIds } }, select: FRIEND_USER_SELECT })
+        : []
+      const userMap = new Map<string, FriendUser>(users.map((user: FriendUser) => [user.id, user]))
+
+      const incoming: Array<Record<string, unknown>> = []
+      const outgoing: Array<Record<string, unknown>> = []
+
+      for (const row of rows) {
+        const direction = row.requesterId === userId ? 'outgoing' : 'incoming'
+        const counterpartId = row.requesterId === userId ? row.addresseeId : row.requesterId
+        const counterpart = userMap.get(counterpartId)
+        if (!counterpart) continue
+        const payload = {
+          id: row.id,
+          status: row.status,
+          direction,
+          requestedAt: row.requestedAt,
+          respondedAt: row.respondedAt ?? null,
+          user: formatFriendUser(counterpart),
+        }
+        if (direction === 'incoming') incoming.push(payload)
+        else outgoing.push(payload)
+      }
+
+      return reply.send({ incoming, outgoing })
+    } catch (error) {
+      if (isConnectionTableMissingError(error)) return reply.send({ incoming: [], outgoing: [] })
+      throw error
+    }
+  }),
+)
+
+app.post('/connections/requests', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = ConnectionRequestInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const targetUserId = parse.data.userId
+    if (targetUserId === userId) return reply.code(400).send({ error: 'cannot_connect_self' })
+
+    const targetExists = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
+    if (!targetExists) return reply.code(404).send({ error: 'user_not_found' })
+
+    try {
+      const existing = await findConnectionBetween(userId, targetUserId)
+      if (existing) {
+        if (existing.status === 'ACCEPTED') {
+          return reply.code(409).send({ error: 'already_connected' })
+        }
+        if (existing.status === 'PENDING') {
+          const direction = existing.requesterId === userId ? 'outgoing' : 'incoming'
+          return reply.code(409).send({ error: 'connection_pending', direction })
+        }
+
+        const now = new Date()
+        await prisma.$executeRaw`
+          UPDATE "Connection"
+          SET "requesterId" = ${userId},
+              "addresseeId" = ${targetUserId},
+              "status" = 'PENDING',
+              "requestedAt" = ${now},
+              "respondedAt" = NULL
+          WHERE "id" = ${existing.id}
+        `
+
+        return reply.code(201).send({
+          request: {
+            id: existing.id,
+            status: 'PENDING',
+            direction: 'outgoing',
+            requestedAt: now,
+            respondedAt: null,
+          },
+        })
+      }
+
+      const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      const now = new Date()
+      await prisma.$executeRaw`
+        INSERT INTO "Connection" ("id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt")
+        VALUES (${id}, ${userId}, ${targetUserId}, 'PENDING', ${now}, NULL)
+      `
+
+      return reply.code(201).send({
+        request: {
+          id,
+          status: 'PENDING',
+          direction: 'outgoing',
+          requestedAt: now,
+          respondedAt: null,
+        },
+      })
+    } catch (error) {
+      if (isConnectionTableMissingError(error)) {
+        return reply
+          .code(503)
+          .send({ error: 'connections_unavailable', message: 'Connections table is missing. Apply the latest DB migration.' })
+      }
+      throw error
+    }
+  }),
+)
+
+app.post('/connections/requests/:id/accept', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = ConnectionIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    try {
+      const connection = await findConnectionById(params.data.id)
+      if (!connection) return reply.code(404).send({ error: 'connection_not_found' })
+      if (connection.addresseeId !== userId) return reply.code(403).send({ error: 'not_addressee' })
+      if (connection.status !== 'PENDING') return reply.code(409).send({ error: 'connection_not_pending' })
+
+      const now = new Date()
+      await prisma.$executeRaw`
+        UPDATE "Connection"
+        SET "status" = 'ACCEPTED', "respondedAt" = ${now}
+        WHERE "id" = ${connection.id}
+      `
+
+      return reply.send({
+        connection: {
+          id: connection.id,
+          status: 'ACCEPTED',
+          since: now,
+        },
+      })
+    } catch (error) {
+      if (isConnectionTableMissingError(error)) {
+        return reply
+          .code(503)
+          .send({ error: 'connections_unavailable', message: 'Connections table is missing. Apply the latest DB migration.' })
+      }
+      throw error
+    }
+  }),
+)
+
+app.post('/connections/requests/:id/reject', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = ConnectionIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    try {
+      const connection = await findConnectionById(params.data.id)
+      if (!connection) return reply.code(404).send({ error: 'connection_not_found' })
+      if (connection.addresseeId !== userId) return reply.code(403).send({ error: 'not_addressee' })
+      if (connection.status !== 'PENDING') return reply.code(409).send({ error: 'connection_not_pending' })
+
+      await prisma.$executeRaw`
+        UPDATE "Connection"
+        SET "status" = 'REJECTED', "respondedAt" = ${new Date()}
+        WHERE "id" = ${connection.id}
+      `
+
+      return reply.send({ request: { id: connection.id, status: 'REJECTED' } })
+    } catch (error) {
+      if (isConnectionTableMissingError(error)) {
+        return reply
+          .code(503)
+          .send({ error: 'connections_unavailable', message: 'Connections table is missing. Apply the latest DB migration.' })
+      }
+      throw error
+    }
+  }),
+)
+
+app.delete('/connections/:id', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = ConnectionIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    try {
+      const connection = await findConnectionById(params.data.id)
+      if (!connection) return reply.code(404).send({ error: 'connection_not_found' })
+      if (connection.requesterId !== userId && connection.addresseeId !== userId) {
+        return reply.code(403).send({ error: 'not_participant' })
+      }
+
+      await prisma.$executeRaw`DELETE FROM "Connection" WHERE "id" = ${connection.id}`
+      return reply.send({ success: true })
+    } catch (error) {
+      if (isConnectionTableMissingError(error)) {
+        return reply
+          .code(503)
+          .send({ error: 'connections_unavailable', message: 'Connections table is missing. Apply the latest DB migration.' })
+      }
+      throw error
+    }
   }),
 )
 
@@ -5134,9 +5481,6 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
 
 app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
     const params = CommunityOrgSlugParams.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
 
@@ -5156,19 +5500,10 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
-    const isOwner = org.ownerId === userId
-    const membership = isOwner
-      ? { role: 'OWNER' as const }
-      : await prisma.businessMembership.findUnique({
-          where: { businessId_userId: { businessId: org.id, userId } },
-          select: { role: true },
-        })
-    if (!membership) return reply.code(403).send({ error: 'forbidden' })
-
     const [owner, managers, followers] = await Promise.all([
       prisma.user.findUnique({
         where: { id: org.ownerId },
-        select: { id: true, handle: true, name: true, avatarUrl: true },
+        select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true },
       }),
       prisma.businessMembership.findMany({
         where: { businessId: org.id, userId: { not: org.ownerId } },
@@ -5177,7 +5512,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
           userId: true,
           role: true,
           createdAt: true,
-          user: { select: { id: true, handle: true, name: true, avatarUrl: true } },
+          user: { select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true } },
         },
       }),
       prisma.businessFollow.findMany({
@@ -5186,7 +5521,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
         select: {
           userId: true,
           createdAt: true,
-          user: { select: { id: true, handle: true, name: true, avatarUrl: true } },
+          user: { select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true } },
         },
       }),
     ])
@@ -5205,11 +5540,12 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
                 handle: owner.handle,
                 name: owner.name,
                 avatarUrl: normalizeMediaUrl(owner.avatarUrl ?? null),
+                coverUrl: normalizeMediaUrl(owner.coverUrl ?? null),
               },
             },
           ]
         : []),
-      ...managers.map((row: { userId: string; role: BusinessRole; createdAt: Date; user: { id: string; handle: string; name: string | null; avatarUrl: string | null } }) => ({
+      ...managers.map((row: { userId: string; role: BusinessRole; createdAt: Date; user: { id: string; handle: string; name: string | null; avatarUrl: string | null; coverUrl: string | null } }) => ({
         userId: row.userId,
         role: row.role,
         joinedAt: row.createdAt,
@@ -5218,13 +5554,14 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
           handle: row.user.handle,
           name: row.user.name,
           avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
+          coverUrl: normalizeMediaUrl(row.user.coverUrl ?? null),
         },
       })),
     ]
 
     const followerItems = followers
       .filter((row: { userId: string }) => !managerIds.has(row.userId))
-      .map((row: { userId: string; createdAt: Date; user: { id: string; handle: string; name: string | null; avatarUrl: string | null } }) => ({
+      .map((row: { userId: string; createdAt: Date; user: { id: string; handle: string; name: string | null; avatarUrl: string | null; coverUrl: string | null } }) => ({
         userId: row.userId,
         role: 'FOLLOWER' as const,
         joinedAt: row.createdAt,
@@ -5233,6 +5570,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
           handle: row.user.handle,
           name: row.user.name,
           avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
+          coverUrl: normalizeMediaUrl(row.user.coverUrl ?? null),
         },
       }))
 
@@ -5855,7 +6193,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         limit: z.coerce.number().int().min(1).max(50).default(20),
         jurisdiction: JurisdictionEnum.optional(),
         sort: PostSortEnum.optional(),
-        scope: z.enum(['all', 'friends', 'communities', 'organizations']).optional(),
+        scope: z.enum(['all', 'friends', 'network', 'communities', 'organizations']).optional(),
         province: z.string().optional(),
         community: z.string().optional(),
       })
@@ -5927,6 +6265,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       ]
 
       const includeFriends = scope === 'all' || scope === 'friends'
+      const includeNetwork = scope === 'all' || scope === 'network'
       const includeCommunities = scope === 'all' || scope === 'communities'
       const includeOrganizations = scope === 'all' || scope === 'organizations'
 
@@ -5943,14 +6282,27 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           // However, the current schema might not have an explicit 'audience' field that distinguishes this easily other than provinceCode/communitySlug being null.
           // Let's check if we can filter by provinceCode: null.
           
-          if (scope === 'friends') {
-             accessibleFilters.push({ 
-               authorId: { in: [...allowedAuthorIds] },
-               communitySlug: null 
-             })
-          } else {
-             accessibleFilters.push({ authorId: { in: [...allowedAuthorIds] } })
-          }
+          accessibleFilters.push({
+            authorId: { in: [...allowedAuthorIds] },
+            communitySlug: null,
+            ...(scope === 'friends'
+              ? ({ audience: 'friends' } as any)
+              : ({ audience: { in: ['friends'] } } as any)),
+          })
+        }
+      }
+
+      if (includeNetwork) {
+        const connectionIds = await loadAcceptedConnectionIds(viewerId)
+        const allowedAuthorIds = new Set<string>([viewerId, ...connectionIds])
+        if (allowedAuthorIds.size) {
+          accessibleFilters.push({
+            authorId: { in: [...allowedAuthorIds] },
+            communitySlug: null,
+            ...(scope === 'network'
+              ? ({ audience: 'network' } as any)
+              : ({ audience: { in: ['network'] } } as any)),
+          })
         }
       }
 
@@ -6041,6 +6393,8 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         if (!cursor) {
           prisma.user.update({ where: { id: viewerId }, data: { lastViewedFriendsAt: new Date() } }).catch(console.error)
         }
+      } else if (scope === 'network') {
+        lastViewedAt = null
       } else if (scope === 'communities') {
         const u = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedCommunitiesAt: true } })
         lastViewedAt = u?.lastViewedCommunitiesAt ?? null
@@ -6121,13 +6475,43 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
     let followersCount = 0
     let followingCount = 0
+    let friendsCount = 0
+    let communitiesCount = 0
+    let organizationsCount = 0
+    let connectionsCount = 0
     try {
-      const [followers, following] = await Promise.all([
+      const [followers, following, friends, communities, organizations, connections] = await Promise.all([
         prisma.follow.count({ where: { targetId: userRecord.id } }),
         prisma.follow.count({ where: { followerId: userRecord.id } }),
+        prisma.friendship.count({
+          where: {
+            status: FriendshipStatus.ACCEPTED,
+            OR: [{ requesterId: userRecord.id }, { addresseeId: userRecord.id }],
+          },
+        }),
+        prisma.communityFollow.count({ where: { userId: userRecord.id } }),
+        prisma.business.count({
+          where: {
+            OR: [
+              { ownerId: userRecord.id },
+              { memberships: { some: { userId: userRecord.id } } },
+              { follows: { some: { userId: userRecord.id } } },
+            ],
+          },
+        }),
+        prisma.connection.count({
+          where: {
+            status: ConnectionStatus.ACCEPTED,
+            OR: [{ requesterId: userRecord.id }, { addresseeId: userRecord.id }],
+          },
+        }),
       ])
       followersCount = followers
       followingCount = following
+      friendsCount = friends
+      communitiesCount = communities
+      organizationsCount = organizations
+      connectionsCount = connections
     } catch (error) {
       // Ignore
     }
@@ -6176,8 +6560,12 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       ...restProfile,
       isPremium: isPremium(premiumStatus),
       isVerified: isPremium(premiumStatus),
+      friendCount: friendsCount,
       followerCount: followersCount,
       followingCount,
+      communityCount: communitiesCount,
+      organizationCount: organizationsCount,
+      connectionCount: connectionsCount,
     }
 
     const query = CursorQuery.extend({
@@ -6203,20 +6591,27 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
       friendshipId: string | null
       friendshipSince: Date | null
+      connectionStatus: 'self' | 'connected' | 'incoming' | 'outgoing' | 'none'
+      connectionId: string | null
+      connectionSince: Date | null
       following: boolean
     } = {
       friendshipStatus: 'none',
       friendshipId: null,
       friendshipSince: null,
+      connectionStatus: 'none',
+      connectionId: null,
+      connectionSince: null,
       following: false,
     }
 
     if (viewerId) {
       if (viewerId === user.id) {
         relationship.friendshipStatus = 'self'
+        relationship.connectionStatus = 'self'
       } else {
         try {
-          const [friendship, followRecord] = await Promise.all([
+          const [friendship, followRecord, connection] = await Promise.all([
             prisma.friendship.findFirst({
               where: {
                 OR: [
@@ -6233,11 +6628,15 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
                 },
               },
             }),
+            findConnectionBetween(viewerId, user.id),
           ])
 
           let friendshipStatus: 'none' | 'friends' | 'incoming' | 'outgoing' = 'none'
           let friendshipId: string | null = null
           let friendshipSince: Date | null = null
+          let connectionStatus: 'none' | 'connected' | 'incoming' | 'outgoing' = 'none'
+          let connectionId: string | null = null
+          let connectionSince: Date | null = null
 
           if (friendship) {
             friendshipId = friendship.id
@@ -6253,10 +6652,27 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
             }
           }
 
+          if (connection) {
+            connectionId = connection.id
+            if (connection.status === 'ACCEPTED') {
+              connectionStatus = 'connected'
+              connectionSince = connection.respondedAt ?? connection.requestedAt
+            } else if (connection.status === 'PENDING') {
+              if (connection.requesterId === viewerId) {
+                connectionStatus = 'outgoing'
+              } else {
+                connectionStatus = 'incoming'
+              }
+            }
+          }
+
           relationship = {
             friendshipStatus,
             friendshipId,
             friendshipSince,
+            connectionStatus,
+            connectionId,
+            connectionSince,
             following: Boolean(followRecord),
           }
         } catch (error) {
@@ -6271,9 +6687,26 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       ...(jurisdiction ? { jurisdiction } : {}),
     }
 
-    // Privacy: If not self and not friends, only show community posts
-    if (relationship.friendshipStatus !== 'self' && relationship.friendshipStatus !== 'friends') {
-      where.communitySlug = { not: null }
+    if (relationship.friendshipStatus !== 'self') {
+      const allowedAudiences: string[] = []
+      if (relationship.friendshipStatus === 'friends') {
+        allowedAudiences.push('friends')
+      }
+      if (relationship.connectionStatus === 'connected') {
+        allowedAudiences.push('network')
+      }
+
+      const audienceGate: Prisma.PostWhereInput = allowedAudiences.length
+        ? {
+            OR: [
+              { communitySlug: { not: null } },
+              ({ audience: { in: allowedAudiences } } as any),
+            ],
+          }
+        : { communitySlug: { not: null } }
+
+      const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
+      where.AND = [...existingAnd, audienceGate]
     }
 
     if (!viewerId) {
@@ -7815,50 +8248,20 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   }
 })
 
-// Restore the missing /users/:handle/friends endpoint.
 app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const { handle } = req.params as { handle: string }
-    const viewerId = (req as any).user?.id
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
-    if (!viewerId) return reply.code(401).send({ error: 'unauthorized' })
-
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
     const user = await prisma.user.findUnique({
       where: { handle },
-      select: { id: true, handle: true, lastViewedFriendsAt: true, lastViewedHomeAt: true },
+      select: { id: true, handle: true },
     })
 
     if (!user) return reply.code(404).send({ error: 'not_found' })
 
-    // Privacy check: only the user can view their own full friends list (for now)
-    if (user.id !== viewerId) {
-      return reply.code(403).send({ error: 'forbidden' })
-    }
-
     const friendIds = await loadAcceptedFriendIds(user.id)
-    
-    // Determine threshold for new posts
-    const friendsThreshold = [
-      user.lastViewedFriendsAt,
-      user.lastViewedHomeAt
-    ]
-      .filter((d): d is Date => !!d)
-      .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
-
-    // Get new post counts
-    const activeFriendCounts = await prisma.post.groupBy({
-      by: ['authorId'],
-      where: {
-        authorId: { in: friendIds },
-        createdAt: { gt: friendsThreshold },
-      },
-      _count: { id: true },
-    })
-
-    const friendCountMap = new Map<string, number>()
-    activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
-      friendCountMap.set(row.authorId, row._count.id)
-    })
 
     const friends = await prisma.user.findMany({
       where: { id: { in: friendIds } },
@@ -7869,45 +8272,259 @@ app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyRepl
         avatarUrl: true,
         coverUrl: true,
         bio: true,
-        communityMeta: true, // To get home community
+      },
+      orderBy: [{ name: 'asc' }, { handle: 'asc' }],
+    })
+
+    const items = friends.map((friend: any) => ({
+      id: friend.id,
+      handle: friend.handle,
+      name: friend.name,
+      avatarUrl: normalizeMediaUrl(friend.avatarUrl ?? null),
+      coverUrl: normalizeMediaUrl(friend.coverUrl ?? null),
+      bio: friend.bio,
+    }))
+
+    return { userHandle: user.handle, items }
+  }),
+)
+
+app.get('/users/:handle/followers', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true },
+    })
+
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    const followers = await prisma.follow.findMany({
+      where: { targetId: user.id },
+      include: {
+        follower: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            bio: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const items = followers.map((entry: any) => ({
+      id: entry.follower.id,
+      handle: entry.follower.handle,
+      name: entry.follower.name,
+      avatarUrl: normalizeMediaUrl(entry.follower.avatarUrl ?? null),
+      coverUrl: normalizeMediaUrl(entry.follower.coverUrl ?? null),
+      bio: entry.follower.bio,
+      since: entry.createdAt.toISOString(),
+    }))
+
+    return { userHandle: user.handle, items }
+  }),
+)
+
+app.get('/users/:handle/following', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true },
+    })
+
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    const following = await prisma.follow.findMany({
+      where: { followerId: user.id },
+      include: {
+        target: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            bio: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const items = following.map((entry: any) => ({
+      id: entry.target.id,
+      handle: entry.target.handle,
+      name: entry.target.name,
+      avatarUrl: normalizeMediaUrl(entry.target.avatarUrl ?? null),
+      coverUrl: normalizeMediaUrl(entry.target.coverUrl ?? null),
+      bio: entry.target.bio,
+      since: entry.createdAt.toISOString(),
+    }))
+
+    return { userHandle: user.handle, items }
+  }),
+)
+
+app.get('/users/:handle/connections', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true },
+    })
+
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    const connections = await prisma.connection.findMany({
+      where: {
+        status: ConnectionStatus.ACCEPTED,
+        OR: [{ requesterId: user.id }, { addresseeId: user.id }],
+      },
+      include: {
+        requester: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            bio: true,
+          },
+        },
+        addressee: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            bio: true,
+          },
+        },
+      },
+      orderBy: { respondedAt: 'desc' },
+    })
+
+    const items = connections
+      .map((entry: any) => {
+        const other = entry.requesterId === user.id ? entry.addressee : entry.requester
+        if (!other) return null
+        return {
+          id: other.id,
+          handle: other.handle,
+          name: other.name,
+          avatarUrl: normalizeMediaUrl(other.avatarUrl ?? null),
+          coverUrl: normalizeMediaUrl(other.coverUrl ?? null),
+          bio: other.bio,
+          since: (entry.respondedAt ?? entry.requestedAt).toISOString(),
+        }
+      })
+      .filter(Boolean)
+
+    return { userHandle: user.handle, items }
+  }),
+)
+
+app.get('/users/:handle/communities', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true },
+    })
+
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    const follows = await prisma.communityFollow.findMany({
+      where: { userId: user.id },
+      orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        provinceCode: true,
+        communitySlug: true,
+        home: true,
+        createdAt: true,
       },
     })
 
-    const items = friends.map((friend: any) => {
-      // Extract home community from communityMeta if available
-      // communityMeta structure: { home: { province: 'on', community: 'york-durham' } }
-      let homeCommunity = null
-      if (friend.communityMeta?.home) {
-        const { province, community } = friend.communityMeta.home
-        const city = findCommunity(province, community)
-        if (city) {
-          homeCommunity = {
-            province,
-            community,
-            name: city.name,
-          }
-        }
-      }
-
+    const items = follows.map((entry: any) => {
+      const city = findCommunity(entry.provinceCode, entry.communitySlug)
       return {
-        id: friend.id,
-        handle: friend.handle,
-        name: friend.name,
-        avatarUrl: normalizeMediaUrl(friend.avatarUrl ?? null),
-        coverUrl: normalizeMediaUrl(friend.coverUrl ?? null),
-        bio: friend.bio,
-        newPosts: friendCountMap.get(friend.id) ?? 0,
-        homeCommunity,
+        id: entry.id,
+        provinceCode: entry.provinceCode,
+        communitySlug: entry.communitySlug,
+        name: city?.name ?? entry.communitySlug,
+        home: entry.home,
+        since: entry.createdAt.toISOString(),
       }
     })
 
-    // Sort by new posts desc, then name
-    items.sort((a: any, b: any) => {
-      if (b.newPosts !== a.newPosts) return b.newPosts - a.newPosts
-      return (a.name || a.handle).localeCompare(b.name || b.handle)
+    return { userHandle: user.handle, items }
+  }),
+)
+
+app.get('/users/:handle/organizations', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = HandleParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+    const user = await prisma.user.findUnique({
+      where: { handle },
+      select: { id: true, handle: true },
     })
 
-    return { items }
+    if (!user) return reply.code(404).send({ error: 'not_found' })
+
+    const organizations = await prisma.business.findMany({
+      where: {
+        OR: [
+          { ownerId: user.id },
+          { memberships: { some: { userId: user.id } } },
+          { follows: { some: { userId: user.id } } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        provinceCode: true,
+        communitySlug: true,
+        logoUrl: true,
+        coverUrl: true,
+      },
+      orderBy: [{ name: 'asc' }],
+    })
+
+    const items = organizations.map((org: any) => ({
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      provinceCode: org.provinceCode,
+      communitySlug: org.communitySlug,
+      logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+    }))
+
+    return { userHandle: user.handle, items }
   }),
 )
 
