@@ -63,6 +63,7 @@ export default function OrganizationDirectoryPageClient() {
   const [type, setType] = useState<'' | OrgDirectoryItem['type']>('')
   const [items, setItems] = useState<OrgDirectoryItem[]>([])
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const apiUrl = useMemo(() => {
     const params = new URLSearchParams()
@@ -74,10 +75,22 @@ export default function OrganizationDirectoryPageClient() {
 
   const load = useCallback(async () => {
     setStatus('loading')
+    setErrorMessage(null)
     try {
       const res = await fetch(apiUrl, { cache: 'no-store' })
-      if (!res.ok) throw new Error('request_failed')
-      const payload = (await res.json().catch(() => null)) as DirectoryResponse | null
+      const payload = (await res.json().catch(() => null)) as (DirectoryResponse & { error?: unknown; message?: unknown }) | null
+      if (!res.ok) {
+        const errorCode = typeof payload?.error === 'string' ? payload.error : null
+        const message = typeof payload?.message === 'string' ? payload.message : null
+        setErrorMessage(
+          message
+            ? message
+            : errorCode
+              ? `Request failed (${res.status} ${errorCode}).`
+              : `Request failed (${res.status}).`,
+        )
+        throw new Error('request_failed')
+      }
       setItems(Array.isArray(payload?.items) ? payload!.items! : [])
       setStatus('ready')
     } catch {
@@ -130,7 +143,9 @@ export default function OrganizationDirectoryPageClient() {
 
       <div className="surface-card p-5">
         {status === 'loading' ? <p className="text-sm text-slate-500">Loading…</p> : null}
-        {status === 'error' ? <p className="text-sm text-slate-500">Unable to load directory.</p> : null}
+        {status === 'error' ? (
+          <p className="text-sm text-slate-500">{errorMessage ?? 'Unable to load directory.'}</p>
+        ) : null}
         {status === 'ready' && !items.length ? <p className="text-sm text-slate-500">No organizations found.</p> : null}
 
         {items.length ? (

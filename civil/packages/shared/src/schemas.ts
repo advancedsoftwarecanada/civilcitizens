@@ -3,6 +3,9 @@ import { normalizeProvinceCode } from './chambers.js'
 
 export const PostTypeEnum = z.enum(['post', 'article', 'photo'])
 
+export const PostVisibilityEnum = z.enum(['public', 'members'])
+export type PostVisibility = z.infer<typeof PostVisibilityEnum>
+
 export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])
 export type Jurisdiction = z.infer<typeof JurisdictionEnum>
 
@@ -10,6 +13,7 @@ export const CreatePostInput = z
   .object({
     type: PostTypeEnum.default('post'),
     businessId: z.string().cuid().optional(),
+    visibility: PostVisibilityEnum.optional(),
     title: z
       .string()
       .trim()
@@ -29,6 +33,14 @@ export const CreatePostInput = z
     const hasBusinessId = typeof data.businessId === 'string' && data.businessId.trim().length > 0
     const hasProvince = typeof data.communityProvince === 'string' && data.communityProvince.trim().length > 0
     const hasCommunitySlug = typeof data.communitySlug === 'string' && data.communitySlug.trim().length > 0
+
+    if (data.visibility === 'members' && !hasBusinessId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Members-only visibility is only supported for organization posts',
+        path: ['visibility'],
+      })
+    }
 
     if (!hasBusinessId && hasProvince !== hasCommunitySlug) {
       ctx.addIssue({
