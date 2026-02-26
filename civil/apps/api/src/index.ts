@@ -1556,6 +1556,22 @@ async function loadAuthenticatedUser(req: FastifyRequest) {
   return prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, name: true } })
 }
 
+async function resolveUserId(req: FastifyRequest): Promise<string | null> {
+  const existing = (req as any).user?.id
+  if (typeof existing === 'string' && existing) return existing
+
+  const auth = req.headers.authorization
+  if (!auth?.startsWith('Bearer ')) return null
+
+  try {
+    const payload = (await (req as any).jwtVerify()) as { sub?: string }
+    if (payload?.sub && typeof payload.sub === 'string') return payload.sub
+  } catch {
+    // ignore
+  }
+  return null
+}
+
 async function withSchemaGuard<T>(
   req: FastifyRequest,
   reply: FastifyReply,
@@ -6361,7 +6377,7 @@ app.delete('/communities/:province/:municipality/orgs/:slug/members/:userId', as
 
 app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const viewerId = (req as any).user?.id as string | undefined
+    const viewerId = (await resolveUserId(req)) ?? undefined
     const params = CommunityOrgSlugParams.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
 
@@ -6577,7 +6593,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
 
 app.put('/communities/:province/:municipality/orgs/:slug/shop/settings', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgSlugParams.safeParse(req.params)
@@ -6650,7 +6666,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/settings', async (
 
 app.post('/communities/:province/:municipality/orgs/:slug/shop/warehouses', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgSlugParams.safeParse(req.params)
@@ -6691,7 +6707,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/warehouses', asyn
 
 app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgSlugParams.safeParse(req.params)
@@ -6746,7 +6762,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async 
 
 app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/:catalogId', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgShopCatalogParams.safeParse(req.params)
@@ -6799,7 +6815,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/:catalogI
 
 app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/reorder', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgSlugParams.safeParse(req.params)
@@ -6865,7 +6881,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/reorder',
 
 app.post('/communities/:province/:municipality/orgs/:slug/shop/products/draft', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgSlugParams.safeParse(req.params)
@@ -6912,7 +6928,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products/draft', 
 
 app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgShopProductParams.safeParse(req.params)
@@ -6988,7 +7004,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
 app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgSlugParams.safeParse(req.params)
@@ -7079,7 +7095,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
 
 app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/inventory', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgShopProductParams.safeParse(req.params)
@@ -7141,7 +7157,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
 app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/photos', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id as string | undefined
+    const userId = (await resolveUserId(req)) ?? undefined
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
     const params = CommunityOrgShopProductParams.safeParse(req.params)

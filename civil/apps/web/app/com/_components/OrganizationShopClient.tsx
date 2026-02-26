@@ -218,6 +218,33 @@ export default function OrganizationShopClient({
         return
       }
       const payload = (await res.json().catch(() => null)) as ShopResponse | null
+
+      let canManageFinal = Boolean(payload?.canManage)
+      if (!canManageFinal && token) {
+        try {
+          const [meRes, orgRes] = await Promise.all([
+            fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
+            fetch(
+              buildApiUrl(
+                `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
+              ),
+              { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+            ),
+          ])
+
+          const mePayload = meRes.ok ? ((await meRes.json().catch(() => null)) as { id?: string } | null) : null
+          const orgPayload = orgRes.ok
+            ? ((await orgRes.json().catch(() => null)) as { org?: { ownerId?: string | null; viewerRole?: 'OWNER' | 'MANAGER' | null } } | null)
+            : null
+
+          const viewerRole = orgPayload?.org?.viewerRole ?? null
+          const inferredOwner = Boolean(mePayload?.id && orgPayload?.org?.ownerId && mePayload.id === orgPayload.org.ownerId)
+          canManageFinal = Boolean(inferredOwner || viewerRole === 'OWNER' || viewerRole === 'MANAGER')
+        } catch {
+          // ignore; keep shop-provided canManage
+        }
+      }
+
       const nextProducts = Array.isArray(payload?.products) ? payload.products : []
       const nextCatalogs = (Array.isArray(payload?.catalogs) ? payload.catalogs : []).sort((a, b) => {
         const orderA = Number(a.sortOrder ?? 0)
@@ -229,7 +256,7 @@ export default function OrganizationShopClient({
       setProducts(nextProducts)
       setCatalogs(nextCatalogs)
       setWarehouses(nextWarehouses)
-      setCanManage(Boolean(payload?.canManage))
+      setCanManage(canManageFinal)
 
       const nextInventoryDraft: Record<string, Record<string, number>> = {}
       const nextProductDrafts: Record<string, ProductEditDraft> = {}
@@ -262,7 +289,7 @@ export default function OrganizationShopClient({
     } finally {
       setLoading(false)
     }
-  }, [shopPath])
+  }, [municipality, province, shopPath, slug])
 
   useEffect(() => {
     void load()
@@ -521,7 +548,7 @@ export default function OrganizationShopClient({
         setUploadingProductId(null)
       }
     },
-    [load, productDrafts, savePhotos, uploadMediaFile],
+    [load, productDrafts, pushToast, savePhotos, updateProductDraft, uploadMediaFile],
   )
 
   const handleGalleryPhotoUpload = useCallback(
@@ -550,7 +577,7 @@ export default function OrganizationShopClient({
         setUploadingProductId(null)
       }
     },
-    [load, productDrafts, savePhotos, uploadMediaFile],
+    [load, productDrafts, pushToast, savePhotos, updateProductDraft, uploadMediaFile],
   )
 
   const saveInventory = useCallback(

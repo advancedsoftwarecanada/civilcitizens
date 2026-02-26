@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
@@ -41,6 +41,7 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
   const [me, setMe] = useState<MeResponse | null>(null)
 
   const isOwner = Boolean(me?.id && org?.ownerId && me.id === org.ownerId)
+  const canManageShop = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || isOwner)
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -130,6 +131,36 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
               link.key === 'posts'
                 ? pathname === basePath || pathname === `${basePath}/posts` || pathname?.startsWith(`${basePath}/posts/`)
                 : pathname === href || (link.segment && pathname?.startsWith(`${href}`))
+
+            if (link.key === 'shop' && canManageShop) {
+              const manageHref = `${basePath}/shop/manage`
+              const manageActive = pathname === manageHref || pathname?.startsWith(`${manageHref}`) || pathname?.startsWith(`${basePath}/shop/new`)
+
+              return (
+                <Fragment key={link.key}>
+                  <Link
+                    href={href}
+                    className={clsx(
+                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
+                      'border-b border-slate-100',
+                      active ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
+                    )}
+                  >
+                    <span>{link.label}</span>
+                  </Link>
+                  <Link
+                    href={manageHref}
+                    className={clsx(
+                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
+                      'border-b border-slate-100',
+                      manageActive ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
+                    )}
+                  >
+                    <span>Manage Shop</span>
+                  </Link>
+                </Fragment>
+              )
+            }
 
             return (
               <Link
