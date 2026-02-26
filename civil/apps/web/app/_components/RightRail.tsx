@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
+import { formatUserDisplayName } from '../_lib/text'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
 
@@ -364,7 +365,7 @@ export function RightRail({
             {connections.length ? (
               <ul className="space-y-3">
                 {connections.slice(0, 8).map((connection) => {
-                  const displayName = connection.user.name || connection.user.handle
+                  const displayName = formatUserDisplayName(connection.user.name, connection.user.handle) || connection.user.handle
                   return (
                     <li key={connection.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
                       {connection.user.coverUrl ? (
@@ -396,7 +397,7 @@ export function RightRail({
       {/* Friends Section */}
       {!hideSocialBlocks && !hideContacts ? (
       <Block
-        title="Friends"
+        title="Your Friends"
         action={
           data?.userHandle && (data.totalFriends ?? 0) > 0
             ? { label: `View all (${data.totalFriends})`, href: `/u/${data.userHandle}/friends` }
@@ -405,7 +406,9 @@ export function RightRail({
       >
         {data?.friends.length ? (
           <ul className="space-y-3">
-            {data.friends.map((friend) => (
+            {data.friends.map((friend) => {
+              const displayName = formatUserDisplayName(friend.name, friend.handle) || friend.handle
+              return (
               <li key={friend.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
                 {friend.coverUrl ? (
                   <img
@@ -420,12 +423,12 @@ export function RightRail({
                   <Link href={`/u/${friend.handle}`} className="group flex min-w-0 items-center gap-2.5">
                     <VerifiedAvatar
                       src={friend.avatarUrl}
-                      alt={friend.name || friend.handle}
-                      initials={friend.name || friend.handle}
+                      alt={displayName}
+                      initials={displayName}
                       size={32}
                     />
                     <span className="max-w-[130px] truncate text-sm font-semibold text-white">
-                      {friend.name || friend.handle}
+                      {displayName}
                     </span>
                   </Link>
                   {friend.newPosts > 0 && (
@@ -436,7 +439,8 @@ export function RightRail({
                   )}
                 </div>
               </li>
-            ))}
+              )
+            })}
           </ul>
         ) : (
           <p className="text-sm text-slate-500">No friends yet.</p>

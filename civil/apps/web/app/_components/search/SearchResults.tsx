@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { HiOutlineMapPin, HiOutlineUser } from 'react-icons/hi2'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import VerifiedAvatar from '../VerifiedAvatar'
 
@@ -174,7 +175,9 @@ export function SearchResults({ query, open }: SearchResultsProps) {
             </div>
           ) : (
             <ul className="mt-2 divide-y divide-slate-100">
-              {peopleResults.map((person) => (
+              {peopleResults.map((person) => {
+                const displayName = formatUserDisplayName(person.name, person.handle) || person.handle
+                return (
                 <li key={person.id}>
                   <Link
                     href={`/u/${person.handle}`}
@@ -183,22 +186,23 @@ export function SearchResults({ query, open }: SearchResultsProps) {
                   >
                     <VerifiedAvatar
                       src={person.avatarUrl}
-                      alt={person.name ?? person.handle}
-                      initials={person.name}
+                      alt={displayName}
+                      initials={displayName}
                       size={40}
                       isVerified={person.isVerified}
                       isBusiness={person.isPremium}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-slate-900">
-                        <span className="truncate font-semibold">{person.name ?? `@${person.handle}`}</span>
+                        <span className="truncate font-semibold">{displayName}</span>
                         <span className="truncate text-xs text-slate-500">@{person.handle}</span>
                       </div>
                       <p className="truncate text-xs text-slate-500">{renderHomeCommunity(person.homeCommunity)}</p>
                     </div>
                   </Link>
                 </li>
-              ))}
+                )
+              })}
             </ul>
           )}
           {(peopleResults.length > 0 || peopleHasMore) && (
@@ -221,7 +225,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
               {communityResults.map((community) => (
                 <li key={`${community.provinceCode}:${community.slug}`}>
                   <Link
-                    href={`/communities/${community.provinceCode}/${encodeURIComponent(community.slug)}`}
+                    href={`/${community.provinceCode.toLowerCase()}/${encodeURIComponent(community.slug)}`}
                     className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50"
                     onClick={(event) => event.currentTarget.blur()}
                   >

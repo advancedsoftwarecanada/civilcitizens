@@ -123,6 +123,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
           <div className="grid gap-4">
             {items.map((entry) => {
               if ('handle' in entry) {
+                const displayName = formatDisplayName(entry.name) || formatDisplayName(entry.handle) || entry.handle
                 return (
                   <div key={`user-${entry.id}`} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm">
                     {entry.coverUrl ? <img src={entry.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
@@ -131,11 +132,11 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
                     <div className="relative flex min-h-[96px] items-center justify-between gap-4">
                       <div className="flex min-w-0 items-center gap-4">
                         <Link href={`/u/${entry.handle}`}>
-                          <VerifiedAvatar src={entry.avatarUrl} alt={entry.name || entry.handle} initials={entry.name || entry.handle} size={64} />
+                          <VerifiedAvatar src={entry.avatarUrl} alt={displayName} initials={displayName} size={64} />
                         </Link>
                         <div className="min-w-0">
                           <Link href={`/u/${entry.handle}`} className="block truncate text-2xl font-semibold text-white hover:underline">
-                            {formatDisplayName(entry.name) || entry.handle}
+                            {displayName}
                           </Link>
                           <div className="mt-1 truncate text-sm text-white/80">@{entry.handle}</div>
                         </div>
@@ -167,7 +168,11 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
               }
 
               return (
-                <div key={`community-${entry.id}`} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm">
+                <Link
+                  key={`community-${entry.id}`}
+                  href={`/${encodeURIComponent(entry.provinceCode.toLowerCase())}/${encodeURIComponent(entry.communitySlug.toLowerCase())}`}
+                  className="relative block overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm transition hover:brightness-105"
+                >
                   <div className="absolute inset-0 bg-gradient-to-r from-slate-700 via-slate-800 to-slate-900" aria-hidden="true" />
                   <span className="absolute inset-0 bg-slate-900/35" aria-hidden="true" />
                   <div className="relative flex min-h-[96px] items-center gap-4">
@@ -179,7 +184,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
                       <p className="mt-1 truncate text-sm text-white/80">{entry.provinceCode.toUpperCase()} · {entry.communitySlug}</p>
                     </div>
                   </div>
-                </div>
+                </Link>
               )
             })}
           </div>

@@ -7,6 +7,7 @@ import { buildApiUrl } from '../../_lib/api'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { pushToast } from '../../_components/useToasts'
+import { formatUserDisplayName } from '../../_lib/text'
 
 type ThreadUser = {
   id: string
@@ -472,7 +473,7 @@ export default function OrganizationChannelsClient({
                     <option value="">Invite member…</option>
                     {memberOptions.map((entry) => (
                       <option key={entry.userId} value={entry.userId}>
-                        {entry.user.name || entry.user.handle}
+                        {formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle}
                       </option>
                     ))}
                   </select>
@@ -491,7 +492,7 @@ export default function OrganizationChannelsClient({
               ) : (
                 messages.map((message) => (
                   <div key={message.id} className={clsx('flex flex-col', message.isMine ? 'items-end' : 'items-start')}>
-                    <p className="mb-1 text-xs font-semibold text-slate-500">{message.isMine ? 'You' : message.sender.name || `@${message.sender.handle}`}</p>
+                    <p className="mb-1 text-xs font-semibold text-slate-500">{message.isMine ? 'You' : formatUserDisplayName(message.sender.name, message.sender.handle) || `@${message.sender.handle}`}</p>
                     <div className={clsx('max-w-[80%] rounded-2xl px-3 py-2 text-sm', message.isMine ? 'bg-[var(--cc-primary)] text-white' : 'border border-slate-200 bg-slate-50 text-slate-800')}>
                       {message.body}
                     </div>

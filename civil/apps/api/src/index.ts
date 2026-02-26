@@ -1436,6 +1436,8 @@ async function searchCommunitiesForQuery(query: string, limit: number): Promise<
 
   const slugQuery = slugifyCommunityName(normalizedQuery)
   const tokens = normalizedQuery.split(' ').filter(Boolean)
+  const tokenLowers = tokens.map((token) => token.toLowerCase())
+  const normalizedLower = normalizedQuery.toLowerCase()
 
   const insensitiveMode = Prisma.QueryMode.insensitive
 
@@ -1479,7 +1481,74 @@ async function searchCommunitiesForQuery(query: string, limit: number): Promise<
     take: limit,
   })
 
-  return cities.map((city: CityModel) => formatCitySummary(city))
+  const dbSummaries = cities.map((city: CityModel) => formatCitySummary(city))
+
+  const seenKeys = new Set(dbSummaries.map((entry: CitySummaryType) => `${entry.provinceCode}:${entry.communitySlug}`))
+  const staticMatches: CitySummaryType[] = []
+
+  for (const province of PROVINCES) {
+    const communities = getCommunitiesByProvince(province.code)
+    for (const community of communities) {
+      const communityNameLower = community.name.toLowerCase()
+      const communitySlugLower = community.slug.toLowerCase()
+      const matches =
+        communityNameLower.includes(normalizedLower) ||
+        communitySlugLower.includes(slugQuery) ||
+        tokens.every((token) => communityNameLower.includes(token.toLowerCase()))
+
+      if (!matches) continue
+
+      const key = `${community.province}:${community.slug}`
+      if (seenKeys.has(key)) continue
+
+      seenKeys.add(key)
+      staticMatches.push({
+        name: community.name,
+        slug: community.slug,
+        provinceCode: community.province,
+        provinceName: getProvinceDisplayName(community.province),
+        communitySlug: community.slug,
+        communityName: community.name,
+        latitude: 0,
+        longitude: 0,
+        population: null,
+      })
+    }
+  }
+
+  const rankCommunityMatch = (entry: CitySummaryType) => {
+    const label = (entry.communityName || entry.name || '').toLowerCase()
+    const slug = (entry.communitySlug || entry.slug || '').toLowerCase()
+    let score = 0
+
+    if (label === normalizedLower || slug === slugQuery) score += 1000
+    if (label.startsWith(normalizedLower) || slug.startsWith(slugQuery)) score += 600
+    if (label.includes(normalizedLower) || slug.includes(slugQuery)) score += 300
+
+    if (tokenLowers.length) {
+      const tokenHits = tokenLowers.filter((token) => label.includes(token) || slug.includes(token)).length
+      score += tokenHits * 80
+      if (tokenHits === tokenLowers.length) score += 120
+    }
+
+    if (typeof entry.population === 'number' && entry.population > 0) {
+      score += Math.min(entry.population / 1000, 50)
+    }
+
+    return score
+  }
+
+  const combined = [...dbSummaries, ...staticMatches]
+  combined.sort((a, b) => {
+    const scoreDelta = rankCommunityMatch(b) - rankCommunityMatch(a)
+    if (scoreDelta !== 0) return scoreDelta
+    const popA = typeof a.population === 'number' ? a.population : -1
+    const popB = typeof b.population === 'number' ? b.population : -1
+    if (popB !== popA) return popB - popA
+    return (a.communityName || a.name).localeCompare(b.communityName || b.name)
+  })
+
+  return combined.slice(0, limit)
 }
 
 async function loadAuthenticatedUser(req: FastifyRequest) {

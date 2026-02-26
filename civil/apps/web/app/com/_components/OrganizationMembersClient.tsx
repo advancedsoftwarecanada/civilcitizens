@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
+import { formatUserDisplayName } from '../../_lib/text'
 
 type MemberRow = {
   userId: string
@@ -90,8 +91,8 @@ export default function OrganizationMembersClient({
       const order = { OWNER: 0, MANAGER: 1, FOLLOWER: 2 }
       const roleDelta = order[a.role] - order[b.role]
       if (roleDelta !== 0) return roleDelta
-      const aName = (a.user.name ?? a.user.handle).toLowerCase()
-      const bName = (b.user.name ?? b.user.handle).toLowerCase()
+      const aName = (formatUserDisplayName(a.user.name, a.user.handle) || a.user.handle).toLowerCase()
+      const bName = (formatUserDisplayName(b.user.name, b.user.handle) || b.user.handle).toLowerCase()
       return aName.localeCompare(bName)
     })
   }, [items])
@@ -110,7 +111,9 @@ export default function OrganizationMembersClient({
 
   return (
     <div className="grid gap-4">
-      {sortedItems.map((entry) => (
+      {sortedItems.map((entry) => {
+        const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
+        return (
         <Link
           key={entry.userId}
           href={`/u/${entry.user.handle}`}
@@ -125,12 +128,12 @@ export default function OrganizationMembersClient({
             <div className="flex min-w-0 items-center gap-4">
               <VerifiedAvatar
                 src={entry.user.avatarUrl}
-                alt={entry.user.name || entry.user.handle}
-                initials={entry.user.name || entry.user.handle}
+                alt={displayName}
+                initials={displayName}
                 size={64}
               />
               <div className="min-w-0">
-                <p className="truncate text-2xl font-semibold text-white">{entry.user.name || entry.user.handle}</p>
+                <p className="truncate text-2xl font-semibold text-white">{displayName}</p>
                 <p className="mt-1 truncate text-sm text-white/80">@{entry.user.handle}</p>
               </div>
             </div>
@@ -139,7 +142,8 @@ export default function OrganizationMembersClient({
             </span>
           </div>
         </Link>
-      ))}
+        )
+      })}
     </div>
   )
 }
