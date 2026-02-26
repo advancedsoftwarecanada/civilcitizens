@@ -42,8 +42,10 @@ function LoginPageInner() {
     setFormError(null)
     setFieldErrors({})
 
+    const normalizedEmailOrHandle = emailOrHandle.trim().replace(/^@+/, '')
+
     const validationErrors: Record<string, string[]> = {}
-    if (!emailOrHandle || emailOrHandle.trim().length < 3) {
+    if (!normalizedEmailOrHandle || normalizedEmailOrHandle.length < 3) {
       validationErrors.emailOrHandle = ['Enter your email or handle']
     }
     if (!password || password.length < 8) {
@@ -60,7 +62,7 @@ function LoginPageInner() {
       const response = await fetch(buildApiUrl('/auth/login'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ emailOrHandle, password }),
+        body: JSON.stringify({ emailOrHandle: normalizedEmailOrHandle, password }),
       })
 
       const { json, text: fallbackText } = await parseApiResponse<LoginSuccess & LoginErrorResponse>(response)

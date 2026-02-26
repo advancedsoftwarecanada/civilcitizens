@@ -7,6 +7,7 @@ import Sidebar from '../../_components/Sidebar'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
 import type { MeResponse } from '../../_lib/me'
+import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
 
 type OrganizationRow = {
   id: string
@@ -32,6 +33,8 @@ export default function OrganizationsManagerPage() {
     if (typeof window === 'undefined') return null
     return window.localStorage.getItem('token')
   }, [])
+  const homeCommunity = me?.homeCommunity ?? me?.homeChamber ?? null
+  const canCreateOrganization = Boolean(me?.isPremium && homeCommunity?.provinceCode && homeCommunity?.communitySlug)
 
   useEffect(() => {
     let cancelled = false
@@ -94,6 +97,27 @@ export default function OrganizationsManagerPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Organizations</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-900">Organization manager</h1>
         <p className="mt-3 text-sm text-slate-600">Manage the organizations you follow and the organizations you own.</p>
+        {status === 'ready' ? (
+          <div className="mt-4">
+            {canCreateOrganization && homeCommunity ? (
+              <OrganizationCreateButton
+                province={homeCommunity.provinceCode.toLowerCase()}
+                municipality={homeCommunity.communitySlug.toLowerCase()}
+              />
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                {me?.isPremium
+                  ? 'Set your home community to create organizations.'
+                  : 'Premium is required to create an organization.'}
+                {!me?.isPremium ? (
+                  <Link href="/settings/billing" className="ml-2 font-semibold text-[var(--cc-primary)] hover:underline">
+                    Upgrade
+                  </Link>
+                ) : null}
+              </div>
+            )}
+          </div>
+        ) : null}
 
         {status === 'loading' ? <div className="mt-6 h-24 animate-pulse rounded-2xl border border-slate-200 bg-white" /> : null}
         {status === 'unauthorized' ? <p className="mt-6 text-sm text-slate-600">Please sign in to continue.</p> : null}
