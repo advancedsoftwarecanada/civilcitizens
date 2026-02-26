@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { buildApiUrl } from '../../_lib/api'
+import { formatUserDisplayName } from '../../_lib/text'
 
 type ForumPost = {
   id: string
@@ -113,7 +114,7 @@ export default function OrganizationForumClient({
                     </Link>
                     <p className="mt-0.5 text-xs text-slate-500">{post.commentCount ?? 0} comments</p>
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{post.author?.name ?? `@${post.author?.handle ?? 'unknown'}`}</td>
+                  <td className="px-4 py-3 text-slate-600">{formatUserDisplayName(post.author?.name, post.author?.handle) || `@${post.author?.handle ?? 'unknown'}`}</td>
                   <td className="px-4 py-3 text-slate-500">{new Date(post.createdAt).toLocaleDateString()}</td>
                 </tr>
               ))

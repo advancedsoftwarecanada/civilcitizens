@@ -14,6 +14,7 @@ import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
+import { formatUserDisplayName } from '../../../../_lib/text'
 import VerifiedAvatar from '../../../../_components/VerifiedAvatar'
 import { useRegisterPageView } from '../../../../_components/AnalyticsTracker'
 
@@ -467,6 +468,8 @@ export default function UserPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
+  const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
       <div className="border-b border-white/60 bg-white/80 py-4 shadow-sm backdrop-blur lg:hidden">
@@ -511,8 +514,8 @@ export default function UserPostPage({ params }: PageProps) {
                 <header className="flex flex-col gap-4 md:flex-row md:items-start">
                   <VerifiedAvatar
                     src={post.author.avatarUrl}
-                    alt={post.author.name ?? post.author.handle}
-                    initials={post.author.name ?? post.author.handle}
+                    alt={postAuthorDisplayName}
+                    initials={postAuthorDisplayName}
                     size={56}
                     isVerified={Boolean(post.author.isVerified)}
                     isBusiness={Boolean(post.author.isPremium)}
@@ -522,7 +525,7 @@ export default function UserPostPage({ params }: PageProps) {
                   <div className="min-w-0 flex-1 space-y-4">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
                       <Link href={`/u/${post.author.handle}`} className="font-semibold text-slate-900 hover:underline">
-                        {post.author.name ?? post.author.handle}
+                        {postAuthorDisplayName}
                       </Link>
                       <span>@{post.author.handle}</span>
                       <span className="text-xs">• {formatDateTime(post.createdAt)}</span>

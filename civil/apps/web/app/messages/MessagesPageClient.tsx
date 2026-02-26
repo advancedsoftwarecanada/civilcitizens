@@ -11,6 +11,7 @@ import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import type { MeResponse } from '../_lib/me'
+import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
 import {
   HiOutlineArrowPath,
@@ -137,8 +138,20 @@ const getThreadTitle = (thread: ThreadSummary) => {
   const others = thread.participants.filter((participant) => !participant.isViewer)
   if (others.length === 0) return 'You'
   return others
-    .map((participant) => participant.user.name || `@${participant.user.handle}`)
+    .map((participant) => formatUserDisplayName(participant.user.name, participant.user.handle) || `@${participant.user.handle}`)
     .join(', ')
+}
+
+function dismissMobileKeyboard() {
+  if (typeof window === 'undefined') return
+  if (!window.matchMedia('(max-width: 1023px)').matches) return
+  const activeElement = document.activeElement as HTMLElement | null
+  activeElement?.blur()
+}
+
+function isMobileMessagesViewport() {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia('(max-width: 1023px)').matches
 }
 
 const threadHasUnread = (thread: ThreadSummary) => {
@@ -147,10 +160,25 @@ const threadHasUnread = (thread: ThreadSummary) => {
   return new Date(thread.lastMessage.createdAt).getTime() > new Date(viewer.lastReadAt).getTime()
 }
 
+function getOtherParticipants(thread: ThreadSummary, viewerId?: string | null) {
+  const byFlag = thread.participants.filter((participant) => !participant.isViewer)
+  if (byFlag.length > 0) return byFlag
+  if (viewerId) {
+    const byId = thread.participants.filter((participant) => participant.userId !== viewerId)
+    if (byId.length > 0) return byId
+  }
+  return thread.participants
+}
+
+function getPrimaryOtherParticipant(thread: ThreadSummary, viewerId?: string | null) {
+  return getOtherParticipants(thread, viewerId)[0]
+}
+
 export default function MessagesPageClient({ initialThreadId }: MessagesPageClientProps) {
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
+  const smoothScrollPendingRef = useRef(false)
   const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
   const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
@@ -195,10 +223,18 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const [memberActionLoadingId, setMemberActionLoadingId] = useState<string | null>(null)
   const [leavingGroup, setLeavingGroup] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId
   }, [selectedThreadId])
+
+  useEffect(() => {
+    if (!isMobileMessagesViewport()) return
+    setSelectedThreadId(null)
+    selectedThreadRef.current = null
+    initialThreadIdRef.current = null
+  }, [])
 
   useEffect(() => {
     const token = getStoredToken()
@@ -392,7 +428,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
           base.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime())
           return base
         })
-        if (!selectedThreadRef.current) {
+        if (!selectedThreadRef.current && !isMobileMessagesViewport()) {
           const nextSelection = initialThreadIdRef.current ?? payload.items[0]?.id ?? null
           if (nextSelection) {
             setSelectedThreadId(nextSelection)
@@ -501,6 +537,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
           throw new Error('failed_send')
         }
         const payload = (await response.json()) as { message: MessagePayload }
+        smoothScrollPendingRef.current = true
         setMessagesByThread((prev) => {
           const existing = prev[threadId] ?? []
           if (existing.some((item) => item.id === payload.message.id)) return prev
@@ -508,6 +545,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         })
         setComposerText('')
         setAttachments([])
+        dismissMobileKeyboard()
         void markThreadRead(threadId, payload.message.id)
       } catch (err) {
         console.error('Failed to send message', err)
@@ -665,6 +703,10 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   }, [authReady, loadMe, loadThreads])
 
   const activeThread = useMemo(() => threads.find((thread) => thread.id === selectedThreadId) ?? null, [threads, selectedThreadId])
+  const orderedThreads = useMemo(
+    () => [...threads].sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime()),
+    [threads],
+  )
 
   useEffect(() => {
     if (!selectedThreadId) return
@@ -672,7 +714,9 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     if (messageCount === 0) return
     const container = messagesViewportRef.current
     if (!container) return
-    container.scrollTop = container.scrollHeight
+    const behavior: ScrollBehavior = smoothScrollPendingRef.current ? 'smooth' : 'auto'
+    container.scrollTo({ top: container.scrollHeight, behavior })
+    smoothScrollPendingRef.current = false
   }, [messagesByThread, selectedThreadId, activeThread])
   const activeMessages = selectedThreadId ? messagesByThread[selectedThreadId] ?? [] : []
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
@@ -890,13 +934,14 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   }, [activeThread, authedFetch, isActiveGroupThread])
 
   const renderThreadList = () => {
-    if (threadsLoading && threads.length === 0) {
+    const mobileViewport = isMobileMessagesViewport()
+    if (threadsLoading && orderedThreads.length === 0) {
       return <p className="text-sm text-slate-500">Loading your conversations…</p>
     }
-    if (threadsError && threads.length === 0) {
+    if (threadsError && orderedThreads.length === 0) {
       return <p className="text-sm text-rose-600">{threadsError}</p>
     }
-    if (threads.length === 0) {
+    if (orderedThreads.length === 0) {
       return (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-center text-sm text-slate-500">
           <p>No messages yet.</p>
@@ -911,14 +956,15 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     }
     return (
       <ul className="space-y-2">
-        {threads.map((thread) => {
+        {orderedThreads.map((thread) => {
           const title = getThreadTitle(thread)
           const isGroupThread = thread.type === 'group'
           const active = thread.id === selectedThreadId
           const unread = threadHasUnread(thread)
           const lastSnippet = thread.lastMessage?.body?.trim() || (thread.lastMessage?.attachments.length ? 'Attachment' : 'Say hello!')
-          const threadCoverUrl = isGroupThread ? null : thread.participants.find((p) => !p.isViewer)?.user.coverUrl ?? null
-          const groupParticipants = thread.participants.filter((p) => !p.isViewer).slice(0, 4)
+          const primaryParticipant = getPrimaryOtherParticipant(thread, me?.id)
+          const threadCoverUrl = isGroupThread ? null : primaryParticipant?.user.coverUrl ?? null
+          const groupParticipants = getOtherParticipants(thread, me?.id).slice(0, 4)
           return (
             <li key={thread.id}>
               <button
@@ -927,6 +973,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                   'relative w-full overflow-hidden rounded-2xl border px-4 py-3 text-left transition',
                   active
                     ? 'border-[var(--cc-primary)] shadow-lg shadow-[var(--cc-primary)]/20'
+                    : unread && mobileViewport
+                      ? 'border-red-300 bg-red-50/70 shadow-md shadow-red-100 hover:border-red-400'
                     : 'border-slate-200 bg-white/70 hover:border-slate-300',
                 )}
                 onClick={() => handleThreadSelect(thread.id)}
@@ -937,31 +985,34 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                   <div className="relative">
                     {isGroupThread ? (
                       <div className="relative h-12 w-14">
-                        {groupParticipants.map((participant, index) => (
-                          <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: groupParticipants.length - index }}>
-                            <VerifiedAvatar
-                              src={participant.user.avatarUrl}
-                              alt={participant.user.name || participant.user.handle}
-                              initials={participant.user.name || participant.user.handle}
-                              size={34}
-                              isVerified={participant.user.isVerified}
-                              isBusiness={participant.user.isPremium}
-                              className="border-2 border-white"
-                            />
-                          </div>
-                        ))}
+                        {groupParticipants.map((participant, index) => {
+                          const participantName = formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle
+                          return (
+                            <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: groupParticipants.length - index }}>
+                              <VerifiedAvatar
+                                src={participant.user.avatarUrl}
+                                alt={participantName}
+                                initials={participantName}
+                                size={34}
+                                isVerified={participant.user.isVerified}
+                                isBusiness={participant.user.isPremium}
+                                className="border-2 border-white"
+                              />
+                            </div>
+                          )
+                        })}
                       </div>
                     ) : (
                       <VerifiedAvatar
-                        src={thread.participants.find((p) => !p.isViewer)?.user.avatarUrl ?? null}
+                        src={primaryParticipant?.user.avatarUrl ?? null}
                         alt={title}
                         initials={title}
                         size={48}
-                        isVerified={thread.participants.some((p) => !p.isViewer && p.user.isVerified)}
-                        isBusiness={thread.participants.some((p) => !p.isViewer && p.user.isPremium)}
+                        isVerified={Boolean(primaryParticipant?.user.isVerified)}
+                        isBusiness={Boolean(primaryParticipant?.user.isPremium)}
                       />
                     )}
-                    {unread ? <span className="absolute -right-1 -top-1 inline-flex h-2 w-2 rounded-full bg-[var(--cc-primary)]" /> : null}
+                    {unread ? <span className={clsx('absolute -right-1 -top-1 inline-flex h-2 w-2 rounded-full', mobileViewport ? 'bg-red-500' : 'bg-[var(--cc-primary)]')} /> : null}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
@@ -989,10 +1040,10 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
       )
     }
 
-    const otherParticipant = activeThread.participants.find((p) => !p.isViewer)
+    const otherParticipant = getPrimaryOtherParticipant(activeThread, me?.id)
     const otherUser = otherParticipant?.user
     const title = getThreadTitle(activeThread)
-    const headerGroupParticipants = activeThread.participants.filter((p) => !p.isViewer).slice(0, 5)
+    const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
 
     return (
       <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
@@ -1006,19 +1057,22 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
           </button>
           {isActiveGroupThread ? (
             <div className="relative h-10 w-20 shrink-0">
-              {headerGroupParticipants.map((participant, index) => (
-                <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: headerGroupParticipants.length - index }}>
-                  <VerifiedAvatar
-                    src={participant.user.avatarUrl}
-                    alt={participant.user.name || participant.user.handle}
-                    initials={participant.user.name || participant.user.handle}
-                    size={36}
-                    isVerified={participant.user.isVerified}
-                    isBusiness={participant.user.isPremium}
-                    className="border-2 border-white"
-                  />
-                </div>
-              ))}
+              {headerGroupParticipants.map((participant, index) => {
+                const participantName = formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle
+                return (
+                  <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: headerGroupParticipants.length - index }}>
+                    <VerifiedAvatar
+                      src={participant.user.avatarUrl}
+                      alt={participantName}
+                      initials={participantName}
+                      size={36}
+                      isVerified={participant.user.isVerified}
+                      isBusiness={participant.user.isPremium}
+                      className="border-2 border-white"
+                    />
+                  </div>
+                )
+              })}
             </div>
           ) : otherUser ? (
             <Link href={`/u/${otherUser.handle}`} className="shrink-0">
@@ -1087,6 +1141,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
               ) : null}
               {activeMessages.map((message) => {
                 const isMine = message.isMine
+                const senderDisplayName = formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle
+                const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
                 const bubbleClasses = clsx(
                   'max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow transition',
                   isMine
@@ -1094,31 +1150,57 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                     : 'mr-auto border border-slate-100 bg-white text-slate-800',
                 )
                 return (
-                  <div key={message.id} className={clsx('flex flex-col', isMine ? 'items-end' : 'items-start')}>
-                    <p className="mb-1 text-xs font-semibold text-slate-500">{isMine ? 'You' : message.sender.name || `@${message.sender.handle}`}</p>
-                    <div className={bubbleClasses}>
-                      {message.deletedAt ? (
-                        <p className="italic text-slate-400">Message removed.</p>
-                      ) : (
-                        <>
-                          {message.body ? <p className="whitespace-pre-wrap">{message.body}</p> : null}
-                          {message.attachments.length > 0 ? (
-                            <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
-                              {message.attachments.map((url, i) => (
-                                <img
-                                  key={i}
-                                  src={url}
-                                  alt="Attachment"
-                                  className="rounded-lg object-cover max-h-60 w-full cursor-pointer transition hover:opacity-90"
-                                  onClick={() => setLightboxUrl(url)}
-                                />
-                              ))}
-                            </div>
-                          ) : null}
-                        </>
-                      )}
+                  <div key={message.id} className={clsx('flex w-full', isMine ? 'justify-end' : 'justify-start')}>
+                    {!isMine ? (
+                      <Link href={`/u/${encodeURIComponent(message.sender.handle)}`} className="mr-2 mt-5 shrink-0">
+                        <VerifiedAvatar
+                          src={message.sender.avatarUrl}
+                          alt={senderDisplayName}
+                          initials={senderDisplayName}
+                          size={30}
+                          isVerified={message.sender.isVerified}
+                          isBusiness={message.sender.isPremium}
+                        />
+                      </Link>
+                    ) : null}
+                    <div className={clsx('flex flex-col', isMine ? 'items-end' : 'items-start')}>
+                      <p className="mb-1 text-xs font-semibold text-slate-500">{isMine ? 'You' : senderDisplayName}</p>
+                      <div className={bubbleClasses}>
+                        {message.deletedAt ? (
+                          <p className="italic text-slate-400">Message removed.</p>
+                        ) : (
+                          <>
+                            {message.body ? <p className="whitespace-pre-wrap">{message.body}</p> : null}
+                            {message.attachments.length > 0 ? (
+                              <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
+                                {message.attachments.map((url, i) => (
+                                  <img
+                                    key={i}
+                                    src={url}
+                                    alt="Attachment"
+                                    className="rounded-lg object-cover max-h-60 w-full cursor-pointer transition hover:opacity-90"
+                                    onClick={() => setLightboxUrl(url)}
+                                  />
+                                ))}
+                              </div>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                      <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
                     </div>
-                    <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                    {isMine ? (
+                      <Link href={me?.handle ? `/u/${encodeURIComponent(me.handle)}` : '/profile'} className="ml-2 mt-5 shrink-0">
+                        <VerifiedAvatar
+                          src={me?.avatarUrl ?? null}
+                          alt={viewerDisplayName}
+                          initials={viewerDisplayName}
+                          size={30}
+                          isVerified={Boolean(me?.isVerified)}
+                          isBusiness={Boolean(me?.isPremium)}
+                        />
+                      </Link>
+                    ) : null}
                   </div>
                 )
               })}
@@ -1149,6 +1231,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                 </div>
               ) : null}
               <textarea
+                ref={composerTextareaRef}
                 value={composerText}
                 onChange={(event) => setComposerText(event.target.value)}
                 onKeyDown={(event) => {
@@ -1306,6 +1389,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                   ) : null}
                   {filteredGroupContacts.map((contact) => {
                     const checked = selectedGroupContactIds.includes(contact.id)
+                    const displayName = formatUserDisplayName(contact.name, contact.handle) || contact.handle
                     return (
                       <label
                         key={contact.id}
@@ -1327,15 +1411,15 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                         <div>
                           <VerifiedAvatar
                             src={contact.avatarUrl}
-                            alt={contact.name || contact.handle}
-                            initials={contact.name || contact.handle}
+                            alt={displayName}
+                            initials={displayName}
                             size={42}
                             isVerified={contact.isVerified}
                             isBusiness={contact.isPremium}
                           />
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">{contact.name || contact.handle}</p>
+                          <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
                           <p className="truncate text-xs text-slate-500">@{contact.handle}</p>
                         </div>
                       </label>
@@ -1393,9 +1477,14 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                       {filteredGroupCandidates.map((contact) => (
                         <div key={contact.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                           <div className="flex min-w-0 items-center gap-2">
-                            <VerifiedAvatar src={contact.avatarUrl} alt={contact.name || contact.handle} initials={contact.name || contact.handle} size={34} />
+                            <VerifiedAvatar
+                              src={contact.avatarUrl}
+                              alt={formatUserDisplayName(contact.name, contact.handle) || contact.handle}
+                              initials={formatUserDisplayName(contact.name, contact.handle) || contact.handle}
+                              size={34}
+                            />
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-slate-900">{contact.name || contact.handle}</p>
+                              <p className="truncate text-sm font-semibold text-slate-900">{formatUserDisplayName(contact.name, contact.handle) || contact.handle}</p>
                               <p className="truncate text-xs text-slate-500">@{contact.handle}</p>
                             </div>
                           </div>
@@ -1429,14 +1518,14 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                               <div className="flex min-w-0 items-center gap-2">
                                 <VerifiedAvatar
                                   src={participant.user.avatarUrl}
-                                  alt={participant.user.name || participant.user.handle}
-                                  initials={participant.user.name || participant.user.handle}
+                                  alt={formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle}
+                                  initials={formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle}
                                   size={34}
                                   isVerified={participant.user.isVerified}
                                   isBusiness={participant.user.isPremium}
                                 />
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-slate-900">{participant.user.name || participant.user.handle}</p>
+                                  <p className="truncate text-sm font-semibold text-slate-900">{formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle}</p>
                                   <p className="truncate text-xs text-slate-500">{participant.role === 'admin' ? 'Owner' : 'Member'}</p>
                                 </div>
                               </div>

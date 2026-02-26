@@ -6,6 +6,7 @@ import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import type { CommunityOrganization } from '../../_lib/organizations'
+import { formatUserDisplayName } from '../../_lib/text'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import PhotoUpdateModal from '../../_components/PhotoUpdateModal'
 import { computeFallbackCropArea, generateCroppedImageBlob, readImageDimensions } from '../../_lib/imageCrop'
@@ -1087,7 +1088,7 @@ export default function OrganizationSettingsClient({
         {members.length ? (
           <ul className="space-y-2">
             {members.map((entry) => {
-              const displayName = entry.user.name ?? entry.user.handle
+              const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
               const canRemove = isOwner && entry.role !== 'OWNER'
               return (
                 <li key={`${entry.userId}-${entry.role}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
@@ -1122,7 +1123,7 @@ export default function OrganizationSettingsClient({
         {followers.length ? (
           <ul className="space-y-2">
             {followers.map((entry) => {
-              const displayName = entry.user.name ?? entry.user.handle
+              const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
               return (
                 <li key={entry.userId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
                   <div className="flex items-center gap-2">
