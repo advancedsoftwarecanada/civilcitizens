@@ -182,7 +182,7 @@ export default function RegisterPage() {
       hideSidePanel
       useWallpaper
     >
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="block text-sm font-medium text-slate-700">
             First name
