@@ -51,6 +51,23 @@
   background: var(--cc-primary-700);
 }
 
+.btn-transparent-cc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.65rem;
+  font-weight: 600;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  background: transparent;
+}
+
+.btn-transparent-cc:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: #fff;
+}
+
 .btn-outline-primary-cc {
   display: inline-flex;
   align-items: center;

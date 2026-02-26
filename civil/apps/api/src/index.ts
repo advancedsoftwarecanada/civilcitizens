@@ -180,13 +180,34 @@ const LEGACY_MEDIA_BASE_URLS = [
   'http://minio:9000/civil-media',
 ]
 
+function isPrivateOrLocalNetworkUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    const host = url.hostname.toLowerCase()
+    if (host === 'localhost' || host === 'minio') return true
+    if (host === '127.0.0.1' || host === '::1') return true
+    if (host.startsWith('10.')) return true
+    if (host.startsWith('192.168.')) return true
+
+    const match172 = host.match(/^172\.(\d{1,3})\./)
+    if (match172) {
+      const secondOctet = Number(match172[1])
+      if (Number.isInteger(secondOctet) && secondOctet >= 16 && secondOctet <= 31) return true
+    }
+
+    return false
+  } catch {
+    return false
+  }
+}
+
 const STRIPE_API_VERSION = '2024-06-20'
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || ''
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || ''
 const STRIPE_PRICE_PREMIUM = process.env.STRIPE_PRICE_PREMIUM_MONTHLY || ''
 const STRIPE_PRICE_BUSINESS = process.env.STRIPE_PRICE_BUSINESS_MONTHLY || ''
 const STRIPE_PUBLISHABLE_KEY = (process.env.STRIPE_PUBLIC_KEY || process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '').trim()
-const BILLING_PORTAL_RETURN_FALLBACK = process.env.BILLING_RETURN_URL || 'http://localhost:3001/settings/billing'
+const BILLING_PORTAL_RETURN_FALLBACK = process.env.BILLING_RETURN_URL || `https://${CIVIL_PUBLIC_HOST}/settings/billing`
 const MAX_BUSINESSES_PER_USER = 5
 const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
 const COMMUNITY_FOLLOW_TARGET = 3
@@ -1249,11 +1270,16 @@ const POSITIVE_REACTIONS: ReactionType[] = ['maple', 'heart', 'haha', 'wow', 'fi
 const SUPPORT_REACTIONS: ReactionType[] = ['sad']
 
 const SCHEMA_MISMATCH_MESSAGE =
-  'Database schema is missing the social feed columns. Apply the latest Prisma migration (pnpm --filter @civil/db prisma migrate deploy) and restart the API.'
+  'Database schema is out of date for this API version. Apply the latest Prisma migration (pnpm --filter @civil/db prisma migrate deploy) and restart the API.'
 
 function isSchemaOutOfDateError(err: unknown): boolean {
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    return err.code === 'P2021' || err.code === 'P2022' || err.code === 'P2010'
+    if (err.code === 'P2021' || err.code === 'P2022') return true
+    if (err.code === 'P2010') {
+      const rawMessage = typeof (err.meta as any)?.message === 'string' ? (err.meta as any).message : ''
+      return /does not exist|unknown column|undefined table|undefined column/i.test(rawMessage)
+    }
+    return false
   }
   const message = typeof (err as any)?.message === 'string' ? (err as any).message : ''
   return /does not exist|unknown column|undefined table|undefined column/i.test(message)
@@ -3067,16 +3093,19 @@ app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
       ContentType: mime,
     })
     const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: MEDIA_SIGNED_URL_TTL })
+    const allowDirectUploadUrl = !isPrivateOrLocalNetworkUrl(uploadUrl)
 
     return reply.send({
       assetId: asset.id,
-      upload: {
-        url: uploadUrl,
-        method: 'PUT',
-        headers: {
-          'content-type': mime,
-        },
-      },
+      upload: allowDirectUploadUrl
+        ? {
+            url: uploadUrl,
+            method: 'PUT',
+            headers: {
+              'content-type': mime,
+            },
+          }
+        : undefined,
       proxyPath: `/media/uploads/${asset.id}/proxy`,
       expiresInSeconds: MEDIA_SIGNED_URL_TTL,
       bucket: MEDIA_BUCKET_ORIGINAL,
@@ -5167,6 +5196,346 @@ const CommunityOrgMemberParams = CommunityOrgSlugParams.extend({
   userId: z.string().uuid(),
 })
 
+const CommunityOrgChannelCreateBody = z.object({
+  name: z.string().trim().min(2).max(80),
+  visibility: z.enum(['public', 'private']).default('public'),
+})
+
+const CommunityOrgChannelParams = CommunityOrgSlugParams.extend({
+  channelId: z.string().cuid(),
+})
+
+const CommunityOrgChannelInviteBody = z.object({
+  userId: z.string().trim().min(1).max(120),
+})
+
+const CommunityOrgChannelNotificationBody = z
+  .object({
+    muteChannel: z.boolean().optional(),
+    mentionsOnly: z.boolean().optional(),
+  })
+  .refine((value) => typeof value.muteChannel === 'boolean' || typeof value.mentionsOnly === 'boolean', {
+    message: 'at_least_one_setting_required',
+  })
+
+const CommunityOrgServerNotificationBody = z
+  .object({
+    muteServer: z.boolean().optional(),
+    mentionsOnly: z.boolean().optional(),
+  })
+  .refine((value) => typeof value.muteServer === 'boolean' || typeof value.mentionsOnly === 'boolean', {
+    message: 'at_least_one_setting_required',
+  })
+
+const CommunityOrgShopProductCreateBody = z.object({
+  name: z.string().trim().min(2).max(160),
+  description: z.string().trim().max(5000).optional().nullable(),
+  catalogId: z.string().trim().min(1).max(120).optional().nullable(),
+  priceCents: z.coerce.number().int().min(0).max(100_000_000),
+  currency: z.string().trim().min(3).max(3).default('CAD'),
+  sku: z.string().trim().max(80).optional().nullable(),
+  primaryImageUrl: z.string().trim().url().max(2048).optional().nullable(),
+  galleryImageUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+  weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
+  shippingPolicy: z.enum(['local_community', 'provincial', 'national']).default('local_community'),
+  allowShippingContracts: z.boolean().default(false),
+  trackInventory: z.boolean().default(true),
+  initialInventory: z.coerce.number().int().min(0).max(1_000_000).default(0),
+})
+
+const CommunityOrgShopProductUpdateBody = z.object({
+  name: z.string().trim().min(2).max(160).optional(),
+  description: z.string().trim().max(5000).optional().nullable(),
+  catalogId: z.string().trim().min(1).max(120).optional().nullable(),
+  priceCents: z.coerce.number().int().min(0).max(100_000_000).optional(),
+  currency: z.string().trim().min(3).max(3).optional(),
+  sku: z.string().trim().max(80).optional().nullable(),
+  trackInventory: z.boolean().optional(),
+  weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
+  shippingPolicy: z.enum(['local_community', 'provincial', 'national']).optional(),
+  allowShippingContracts: z.boolean().optional(),
+  isDraft: z.boolean().optional(),
+})
+
+const CommunityOrgShopSettingsBody = z.object({
+  headOfficeAddress: z.string().trim().max(500).optional().nullable(),
+  warehouseSameAsHeadOffice: z.boolean().optional(),
+  directDepositTransit: z.string().trim().max(20).optional().nullable(),
+  directDepositInstitution: z.string().trim().max(20).optional().nullable(),
+  directDepositAccount: z.string().trim().max(40).optional().nullable(),
+})
+
+const CommunityOrgShopWarehouseCreateBody = z.object({
+  name: z.string().trim().min(2).max(120),
+  address: z.string().trim().max(500).optional().nullable(),
+})
+
+const CommunityOrgShopCatalogCreateBody = z.object({
+  title: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(240).optional().nullable(),
+  imageUrl: z.string().trim().url().max(2048).optional().nullable(),
+  enabled: z.boolean().default(true),
+})
+
+const CommunityOrgShopCatalogUpdateBody = z.object({
+  title: z.string().trim().min(2).max(120).optional(),
+  description: z.string().trim().max(240).optional().nullable(),
+  imageUrl: z.string().trim().url().max(2048).optional().nullable(),
+  enabled: z.boolean().optional(),
+})
+
+const CommunityOrgShopCatalogReorderBody = z.object({
+  catalogIds: z.array(z.string().trim().min(1).max(120)).min(1),
+})
+
+const CommunityOrgShopProductParams = CommunityOrgSlugParams.extend({
+  productId: z.string().trim().min(1).max(120),
+})
+
+const CommunityOrgShopCatalogParams = CommunityOrgSlugParams.extend({
+  catalogId: z.string().trim().min(1).max(120),
+})
+
+const CommunityOrgShopInventoryUpdateBody = z.object({
+  quantities: z.array(z.object({ warehouseId: z.string().trim().min(1).max(120), quantity: z.coerce.number().int().min(0).max(1_000_000) })).min(1),
+})
+
+const CommunityOrgShopProductPhotosUpdateBody = z.object({
+  primaryImageUrl: z.string().trim().url().max(2048).optional().nullable(),
+  galleryImageUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+})
+
+const ORG_CHANNEL_CONTEXT_TYPE = 'organization_channel'
+
+function slugifyChannelName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+}
+
+function buildOrgChannelContextId(orgId: string, visibility: 'public' | 'private', slug: string, name: string) {
+  return `${orgId}|${visibility}|${slug}|${encodeURIComponent(name)}`
+}
+
+function parseOrgChannelContextId(contextId: string | null | undefined): null | {
+  orgId: string
+  visibility: 'public' | 'private'
+  slug: string
+  name: string
+} {
+  if (!contextId) return null
+  const [orgId, visibilityRaw, slug, encodedName] = contextId.split('|')
+  if (!orgId || !visibilityRaw || !slug || !encodedName) return null
+  const visibility = visibilityRaw === 'private' ? 'private' : visibilityRaw === 'public' ? 'public' : null
+  if (!visibility) return null
+  return {
+    orgId,
+    visibility,
+    slug,
+    name: decodeURIComponent(encodedName),
+  }
+}
+
+type OrgChatPrefs = {
+  muteServer?: boolean
+  mentionsOnly?: boolean
+  channels?: Record<string, { muteChannel?: boolean; mentionsOnly?: boolean }>
+}
+
+let organizationShopTablesReady: Promise<void> | null = null
+
+function ensureOrganizationShopTables() {
+  if (organizationShopTablesReady) return organizationShopTablesReady
+  organizationShopTablesReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_settings (
+        business_id TEXT PRIMARY KEY REFERENCES "Business"(id) ON DELETE CASCADE,
+        head_office_address TEXT,
+        warehouse_same_as_head_office BOOLEAN NOT NULL DEFAULT TRUE,
+        direct_deposit_transit TEXT,
+        direct_deposit_institution TEXT,
+        direct_deposit_account TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_warehouse (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL REFERENCES "Business"(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        address TEXT,
+        is_head_office BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_catalog (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL REFERENCES "Business"(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        description TEXT,
+        image_url TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_product (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL REFERENCES "Business"(id) ON DELETE CASCADE,
+        catalog_id TEXT REFERENCES organization_shop_catalog(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        price_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'CAD',
+        sku TEXT,
+        primary_image_url TEXT,
+        gallery_image_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+        weight_grams INTEGER,
+        shipping_policy TEXT NOT NULL DEFAULT 'local_community',
+        allow_shipping_contracts BOOLEAN NOT NULL DEFAULT FALSE,
+        is_draft BOOLEAN NOT NULL DEFAULT FALSE,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        track_inventory BOOLEAN NOT NULL DEFAULT TRUE,
+        created_by TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_inventory (
+        product_id TEXT NOT NULL REFERENCES organization_shop_product(id) ON DELETE CASCADE,
+        warehouse_id TEXT NOT NULL REFERENCES organization_shop_warehouse(id) ON DELETE CASCADE,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (product_id, warehouse_id)
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_warehouse_business_id_idx
+      ON organization_shop_warehouse (business_id);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_catalog_business_id_idx
+      ON organization_shop_catalog (business_id, created_at DESC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_catalog_business_sort_idx
+      ON organization_shop_catalog (business_id, sort_order ASC, created_at ASC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_product_business_id_idx
+      ON organization_shop_product (business_id, created_at DESC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS primary_image_url TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS gallery_image_urls JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS weight_grams INTEGER;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS shipping_policy TEXT NOT NULL DEFAULT 'local_community';
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS allow_shipping_contracts BOOLEAN NOT NULL DEFAULT FALSE;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS is_draft BOOLEAN NOT NULL DEFAULT FALSE;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS catalog_id TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_catalog
+      ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (PARTITION BY business_id ORDER BY created_at ASC, id ASC) - 1 AS next_order
+        FROM organization_shop_catalog
+      )
+      UPDATE organization_shop_catalog c
+      SET sort_order = ranked.next_order
+      FROM ranked
+      WHERE c.id = ranked.id
+        AND c.sort_order = 0
+        AND ranked.next_order > 0;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'organization_shop_product_catalog_id_fkey'
+        ) THEN
+          ALTER TABLE organization_shop_product
+          ADD CONSTRAINT organization_shop_product_catalog_id_fkey
+          FOREIGN KEY (catalog_id)
+          REFERENCES organization_shop_catalog(id)
+          ON DELETE SET NULL;
+        END IF;
+      END $$;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_product_catalog_id_idx
+      ON organization_shop_product (catalog_id);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_inventory_warehouse_id_idx
+      ON organization_shop_inventory (warehouse_id);
+    `)
+  })()
+  return organizationShopTablesReady
+}
+
+function readOrgChatPrefs(meta: unknown, orgId: string): OrgChatPrefs {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return {}
+  const typed = meta as Record<string, unknown>
+  const orgChatPrefs = typed.orgChatPrefs
+  if (!orgChatPrefs || typeof orgChatPrefs !== 'object' || Array.isArray(orgChatPrefs)) return {}
+  const perOrg = (orgChatPrefs as Record<string, unknown>)[orgId]
+  if (!perOrg || typeof perOrg !== 'object' || Array.isArray(perOrg)) return {}
+  return perOrg as OrgChatPrefs
+}
+
 type CommunityOrgRecord = {
   id: string
   ownerId: string
@@ -5918,6 +6287,1333 @@ app.delete('/communities/:province/:municipality/orgs/:slug/members/:userId', as
     })
 
     return reply.send({ ok: true })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const viewerId = (req as any).user?.id as string | undefined
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, status: true, name: true, slug: true, provinceCode: true, communitySlug: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const [membership, follow] = viewerId
+      ? await Promise.all([
+          prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId: viewerId } }, select: { role: true } }),
+          prisma.businessFollow.findUnique({ where: { businessId_userId: { businessId: org.id, userId: viewerId } }, select: { id: true } }),
+        ])
+      : [null, null]
+
+    const isOwner = viewerId ? org.ownerId === viewerId : false
+    const canManage = Boolean(isOwner || membership?.role === 'MANAGER' || membership?.role === 'OWNER')
+    const isAssociated = Boolean(canManage || follow)
+    if (org.status !== 'ACTIVE' && !isAssociated) {
+      return reply.code(404).send({ error: 'organization_not_found' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    type ShopSettingsRow = {
+      business_id: string
+      head_office_address: string | null
+      warehouse_same_as_head_office: boolean
+      direct_deposit_transit: string | null
+      direct_deposit_institution: string | null
+      direct_deposit_account: string | null
+    }
+
+    type ShopWarehouseRow = {
+      id: string
+      business_id: string
+      name: string
+      address: string | null
+      is_head_office: boolean
+      created_at: Date
+      updated_at: Date
+    }
+
+    type ShopProductRow = {
+      id: string
+      business_id: string
+      catalog_id: string | null
+      name: string
+      description: string | null
+      price_cents: number
+      currency: string
+      sku: string | null
+      primary_image_url: string | null
+      gallery_image_urls: unknown
+      weight_grams: number | null
+      shipping_policy: string
+      allow_shipping_contracts: boolean
+      is_draft: boolean
+      is_active: boolean
+      track_inventory: boolean
+      created_at: Date
+      updated_at: Date
+      inventory_total: bigint | number | null
+    }
+
+    type ShopInventoryRow = {
+      product_id: string
+      warehouse_id: string
+      quantity: number
+      updated_at: Date
+    }
+
+    type ShopCatalogRow = {
+      id: string
+      business_id: string
+      title: string
+      description: string | null
+      image_url: string | null
+      sort_order: number
+      enabled: boolean
+      created_at: Date
+      updated_at: Date
+    }
+
+    const [settingsRows, warehouseRows, catalogRows, productRows, inventoryRows] = await Promise.all([
+      prisma.$queryRaw<ShopSettingsRow[]>`
+        SELECT business_id, head_office_address, warehouse_same_as_head_office, direct_deposit_transit, direct_deposit_institution, direct_deposit_account
+        FROM organization_shop_settings
+        WHERE business_id = ${org.id}
+        LIMIT 1
+      `,
+      prisma.$queryRaw<ShopWarehouseRow[]>`
+        SELECT id, business_id, name, address, is_head_office, created_at, updated_at
+        FROM organization_shop_warehouse
+        WHERE business_id = ${org.id}
+        ORDER BY is_head_office DESC, created_at ASC
+      `,
+      prisma.$queryRaw<ShopCatalogRow[]>`
+        SELECT id, business_id, title, description, image_url, sort_order, enabled, created_at, updated_at
+        FROM organization_shop_catalog
+        WHERE business_id = ${org.id}
+        ORDER BY sort_order ASC, created_at ASC
+      `,
+      prisma.$queryRaw<ShopProductRow[]>`
+        SELECT
+          p.id,
+          p.business_id,
+          p.catalog_id,
+          p.name,
+          p.description,
+          p.price_cents,
+          p.currency,
+          p.sku,
+          p.primary_image_url,
+          p.gallery_image_urls,
+          p.weight_grams,
+          p.shipping_policy,
+          p.allow_shipping_contracts,
+          p.is_draft,
+          p.is_active,
+          p.track_inventory,
+          p.created_at,
+          p.updated_at,
+          COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total
+        FROM organization_shop_product p
+        LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
+        WHERE p.business_id = ${org.id}
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
+      `,
+      prisma.$queryRaw<ShopInventoryRow[]>`
+        SELECT i.product_id, i.warehouse_id, i.quantity, i.updated_at
+        FROM organization_shop_inventory i
+        INNER JOIN organization_shop_product p ON p.id = i.product_id
+        WHERE p.business_id = ${org.id}
+      `,
+    ])
+
+    const settings = settingsRows[0] ?? null
+    const inventoryByProduct = new Map<string, Array<{ warehouseId: string; quantity: number; updatedAt: string }>>()
+    for (const row of inventoryRows) {
+      const current = inventoryByProduct.get(row.product_id) ?? []
+      current.push({ warehouseId: row.warehouse_id, quantity: Number(row.quantity) || 0, updatedAt: row.updated_at.toISOString() })
+      inventoryByProduct.set(row.product_id, current)
+    }
+
+    return reply.send({
+      organization: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        province: org.provinceCode?.toLowerCase() ?? null,
+        municipality: org.communitySlug ?? null,
+      },
+      canManage,
+      settings: {
+        headOfficeAddress: settings?.head_office_address ?? null,
+        warehouseSameAsHeadOffice: settings ? Boolean(settings.warehouse_same_as_head_office) : true,
+        directDepositTransit: settings?.direct_deposit_transit ?? null,
+        directDepositInstitution: settings?.direct_deposit_institution ?? null,
+        directDepositAccount: settings?.direct_deposit_account ?? null,
+      },
+      warehouses: warehouseRows.map((row: ShopWarehouseRow) => ({
+        id: row.id,
+        name: row.name,
+        address: row.address,
+        isHeadOffice: row.is_head_office,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+      catalogs: catalogRows.map((row: ShopCatalogRow) => ({
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        imageUrl: row.image_url,
+        sortOrder: Number(row.sort_order) || 0,
+        enabled: row.enabled,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+      products: productRows.map((row: ShopProductRow) => ({
+        id: row.id,
+        catalogId: row.catalog_id,
+        name: row.name,
+        description: row.description,
+        priceCents: Number(row.price_cents) || 0,
+        currency: row.currency,
+        sku: row.sku,
+        primaryImageUrl: row.primary_image_url,
+        galleryImageUrls: Array.isArray(row.gallery_image_urls)
+          ? row.gallery_image_urls.filter((value): value is string => typeof value === 'string')
+          : [],
+        weightGrams: row.weight_grams,
+        shippingPolicy: row.shipping_policy,
+        allowShippingContracts: row.allow_shipping_contracts,
+        isDraft: row.is_draft,
+        isActive: row.is_active,
+        trackInventory: row.track_inventory,
+        inventoryTotal: Number(row.inventory_total ?? 0) || 0,
+        inventoryByWarehouse: inventoryByProduct.get(row.id) ?? [],
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      })),
+    })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/shop/settings', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopSettingsBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, address: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const headOfficeAddress = body.data.headOfficeAddress ?? null
+    const warehouseSameAsHeadOffice =
+      typeof body.data.warehouseSameAsHeadOffice === 'boolean' ? body.data.warehouseSameAsHeadOffice : true
+
+    await prisma.$executeRaw`
+      INSERT INTO organization_shop_settings (business_id, head_office_address, warehouse_same_as_head_office, direct_deposit_transit, direct_deposit_institution, direct_deposit_account, updated_at)
+      VALUES (${org.id}, ${headOfficeAddress}, ${warehouseSameAsHeadOffice}, ${body.data.directDepositTransit ?? null}, ${body.data.directDepositInstitution ?? null}, ${body.data.directDepositAccount ?? null}, NOW())
+      ON CONFLICT (business_id)
+      DO UPDATE SET
+        head_office_address = EXCLUDED.head_office_address,
+        warehouse_same_as_head_office = EXCLUDED.warehouse_same_as_head_office,
+        direct_deposit_transit = EXCLUDED.direct_deposit_transit,
+        direct_deposit_institution = EXCLUDED.direct_deposit_institution,
+        direct_deposit_account = EXCLUDED.direct_deposit_account,
+        updated_at = NOW()
+    `
+
+    if (warehouseSameAsHeadOffice) {
+      const existingHeadOffice = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM organization_shop_warehouse
+        WHERE business_id = ${org.id} AND is_head_office = TRUE
+        LIMIT 1
+      `
+      const resolvedAddress = headOfficeAddress ?? org.address ?? null
+      if (existingHeadOffice[0]) {
+        await prisma.$executeRaw`
+          UPDATE organization_shop_warehouse
+          SET address = ${resolvedAddress}, updated_at = NOW()
+          WHERE id = ${existingHeadOffice[0].id}
+        `
+      } else {
+        await prisma.$executeRaw`
+          INSERT INTO organization_shop_warehouse (id, business_id, name, address, is_head_office)
+          VALUES (${randomUUID()}, ${org.id}, ${'Head Office Warehouse'}, ${resolvedAddress}, TRUE)
+        `
+      }
+    }
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/shop/warehouses', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopWarehouseCreateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const warehouseId = randomUUID()
+    await prisma.$executeRaw`
+      INSERT INTO organization_shop_warehouse (id, business_id, name, address, is_head_office)
+      VALUES (${warehouseId}, ${org.id}, ${body.data.name.trim()}, ${body.data.address ?? null}, FALSE)
+    `
+
+    return reply.code(201).send({ warehouse: { id: warehouseId, name: body.data.name.trim(), address: body.data.address ?? null, isHeadOffice: false } })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopCatalogCreateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const catalogId = randomUUID()
+    const sortOrderRows = await prisma.$queryRaw<Array<{ next_sort_order: number | null }>>`
+      SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+      FROM organization_shop_catalog
+      WHERE business_id = ${org.id}
+    `
+    const nextSortOrder = Number(sortOrderRows[0]?.next_sort_order ?? 0)
+    await prisma.$executeRaw`
+      INSERT INTO organization_shop_catalog (id, business_id, title, description, image_url, sort_order, enabled, updated_at)
+      VALUES (${catalogId}, ${org.id}, ${body.data.title.trim()}, ${body.data.description ?? null}, ${body.data.imageUrl ?? null}, ${nextSortOrder}, ${body.data.enabled}, NOW())
+    `
+
+    return reply.code(201).send({
+      catalog: {
+        id: catalogId,
+        title: body.data.title.trim(),
+        description: body.data.description ?? null,
+        imageUrl: body.data.imageUrl ?? null,
+        enabled: body.data.enabled,
+      },
+    })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/:catalogId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgShopCatalogParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopCatalogUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const catalogRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM organization_shop_catalog
+      WHERE id = ${params.data.catalogId} AND business_id = ${org.id}
+      LIMIT 1
+    `
+    if (!catalogRows[0]) return reply.code(404).send({ error: 'catalog_not_found' })
+
+    await prisma.$executeRaw`
+      UPDATE organization_shop_catalog
+      SET title = COALESCE(${body.data.title?.trim() ?? null}, title),
+          description = CASE WHEN ${'description' in body.data} THEN ${body.data.description ?? null} ELSE description END,
+          image_url = CASE WHEN ${'imageUrl' in body.data} THEN ${body.data.imageUrl ?? null} ELSE image_url END,
+          enabled = COALESCE(${typeof body.data.enabled === 'boolean' ? body.data.enabled : null}, enabled),
+          updated_at = NOW()
+      WHERE id = ${params.data.catalogId}
+    `
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/reorder', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopCatalogReorderBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const existingRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM organization_shop_catalog
+      WHERE business_id = ${org.id}
+    `
+
+    const existingIds = new Set(existingRows.map((row: { id: string }) => row.id))
+    const incomingIds = body.data.catalogIds
+    const uniqueIncomingIds = Array.from(new Set(incomingIds))
+    if (uniqueIncomingIds.length !== incomingIds.length) {
+      return reply.code(400).send({ error: 'invalid_catalog_order' })
+    }
+    if (existingIds.size !== uniqueIncomingIds.length) {
+      return reply.code(400).send({ error: 'invalid_catalog_order' })
+    }
+    if (uniqueIncomingIds.some((catalogId) => !existingIds.has(catalogId))) {
+      return reply.code(400).send({ error: 'invalid_catalog_order' })
+    }
+
+    await prisma.$transaction(
+      uniqueIncomingIds.map((catalogId, index) =>
+        prisma.$executeRaw`
+          UPDATE organization_shop_catalog
+          SET sort_order = ${index},
+              updated_at = NOW()
+          WHERE id = ${catalogId}
+            AND business_id = ${org.id}
+        `,
+      ),
+    )
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/shop/products/draft', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const productId = randomUUID()
+    await prisma.$executeRaw`
+      INSERT INTO organization_shop_product (
+        id, business_id, name, description, price_cents, currency, sku,
+        primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
+        allow_shipping_contracts, is_draft, is_active, track_inventory, created_by
+      )
+      VALUES (
+        ${productId}, ${org.id}, ${'Draft Product'}, ${null}, ${0}, ${'CAD'}, ${null},
+        ${null}, ${JSON.stringify([])}::jsonb, ${null}, ${'local_community'},
+        ${false}, ${true}, ${true}, ${true}, ${userId}
+      )
+    `
+
+    return reply.code(201).send({ product: { id: productId, isDraft: true } })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgShopProductParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopProductUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM organization_shop_product
+      WHERE id = ${params.data.productId} AND business_id = ${org.id}
+      LIMIT 1
+    `
+    if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+
+    const catalogProvided = Object.prototype.hasOwnProperty.call(body.data, 'catalogId')
+    let resolvedCatalogId: string | null | undefined = undefined
+    if (catalogProvided) {
+      if (body.data.catalogId == null) {
+        resolvedCatalogId = null
+      } else {
+        const catalogRows = await prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+          FROM organization_shop_catalog
+          WHERE id = ${body.data.catalogId} AND business_id = ${org.id}
+          LIMIT 1
+        `
+        if (!catalogRows[0]) return reply.code(400).send({ error: 'invalid_catalog' })
+        resolvedCatalogId = catalogRows[0].id
+      }
+    }
+
+    await prisma.$executeRaw`
+      UPDATE organization_shop_product
+      SET catalog_id = CASE WHEN ${catalogProvided} THEN ${resolvedCatalogId ?? null} ELSE catalog_id END,
+          name = COALESCE(${body.data.name?.trim() ?? null}, name),
+          description = CASE WHEN ${'description' in body.data} THEN ${body.data.description ?? null} ELSE description END,
+          price_cents = COALESCE(${body.data.priceCents ?? null}, price_cents),
+          currency = COALESCE(${body.data.currency?.toUpperCase() ?? null}, currency),
+          sku = CASE WHEN ${'sku' in body.data} THEN ${body.data.sku ?? null} ELSE sku END,
+          track_inventory = COALESCE(${typeof body.data.trackInventory === 'boolean' ? body.data.trackInventory : null}, track_inventory),
+          weight_grams = CASE WHEN ${'weightGrams' in body.data} THEN ${body.data.weightGrams ?? null} ELSE weight_grams END,
+          shipping_policy = COALESCE(${body.data.shippingPolicy ?? null}, shipping_policy),
+          allow_shipping_contracts = COALESCE(${typeof body.data.allowShippingContracts === 'boolean' ? body.data.allowShippingContracts : null}, allow_shipping_contracts),
+          is_draft = COALESCE(${typeof body.data.isDraft === 'boolean' ? body.data.isDraft : null}, is_draft),
+          updated_at = NOW()
+      WHERE id = ${params.data.productId}
+    `
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopProductCreateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, address: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const productId = randomUUID()
+    const priceCents = body.data.priceCents
+    const currency = body.data.currency.toUpperCase()
+    const galleryImageUrls = body.data.galleryImageUrls ?? []
+    let resolvedCatalogId: string | null = null
+
+    if (body.data.catalogId != null) {
+      const catalogRows = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM organization_shop_catalog
+        WHERE id = ${body.data.catalogId} AND business_id = ${org.id}
+        LIMIT 1
+      `
+      if (!catalogRows[0]) return reply.code(400).send({ error: 'invalid_catalog' })
+      resolvedCatalogId = catalogRows[0].id
+    }
+
+    await prisma.$executeRaw`
+      INSERT INTO organization_shop_product (
+        id, business_id, catalog_id, name, description, price_cents, currency, sku,
+        primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
+        allow_shipping_contracts, is_draft, is_active, track_inventory, created_by
+      )
+      VALUES (
+        ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${body.data.description ?? null}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
+        ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
+        ${body.data.allowShippingContracts}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
+      )
+    `
+
+    if (body.data.trackInventory && body.data.initialInventory > 0) {
+      const headOfficeWarehouseRows = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM organization_shop_warehouse
+        WHERE business_id = ${org.id}
+        ORDER BY is_head_office DESC, created_at ASC
+        LIMIT 1
+      `
+
+      let warehouseId = headOfficeWarehouseRows[0]?.id
+      if (!warehouseId) {
+        warehouseId = randomUUID()
+        await prisma.$executeRaw`
+          INSERT INTO organization_shop_warehouse (id, business_id, name, address, is_head_office)
+          VALUES (${warehouseId}, ${org.id}, ${'Head Office Warehouse'}, ${org.address ?? null}, TRUE)
+        `
+      }
+
+      await prisma.$executeRaw`
+        INSERT INTO organization_shop_inventory (product_id, warehouse_id, quantity, updated_at)
+        VALUES (${productId}, ${warehouseId}, ${body.data.initialInventory}, NOW())
+        ON CONFLICT (product_id, warehouse_id)
+        DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()
+      `
+    }
+
+    return reply.code(201).send({ product: { id: productId } })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/inventory', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgShopProductParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopInventoryUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM organization_shop_product
+      WHERE id = ${params.data.productId} AND business_id = ${org.id}
+      LIMIT 1
+    `
+    if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+
+    const warehouseIds = body.data.quantities.map((entry) => entry.warehouseId)
+    const warehouseRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM organization_shop_warehouse
+      WHERE business_id = ${org.id} AND id IN (${Prisma.join(warehouseIds)})
+    `
+    const warehouseIdSet = new Set(warehouseRows.map((row: { id: string }) => row.id))
+    const invalidWarehouse = warehouseIds.find((warehouseId) => !warehouseIdSet.has(warehouseId))
+    if (invalidWarehouse) return reply.code(400).send({ error: 'invalid_warehouse' })
+
+    await prisma.$transaction(
+      body.data.quantities.map((entry) =>
+        prisma.$executeRaw`
+          INSERT INTO organization_shop_inventory (product_id, warehouse_id, quantity, updated_at)
+          VALUES (${params.data.productId}, ${entry.warehouseId}, ${entry.quantity}, NOW())
+          ON CONFLICT (product_id, warehouse_id)
+          DO UPDATE SET quantity = EXCLUDED.quantity, updated_at = NOW()
+        `,
+      ),
+    )
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/photos', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgShopProductParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgShopProductPhotosUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM organization_shop_product
+      WHERE id = ${params.data.productId} AND business_id = ${org.id}
+      LIMIT 1
+    `
+    if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+
+    const galleryImageUrls = body.data.galleryImageUrls ?? []
+    await prisma.$executeRaw`
+      UPDATE organization_shop_product
+      SET primary_image_url = ${body.data.primaryImageUrl ?? null},
+          gallery_image_urls = ${JSON.stringify(galleryImageUrls)}::jsonb,
+          updated_at = NOW()
+      WHERE id = ${params.data.productId}
+    `
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/channels', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    const communitySlug = params.data.municipality.trim().toLowerCase()
+    const community = findCommunity(province, communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const orgSlug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: orgSlug },
+      select: { id: true, ownerId: true, name: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const [membership, follow, viewer] = await Promise.all([
+      prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } }),
+      prisma.businessFollow.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { id: true } }),
+      prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } }),
+    ])
+
+    const isOwner = org.ownerId === userId
+    const viewerRole = isOwner ? 'OWNER' : membership?.role === 'MANAGER' ? 'MANAGER' : null
+    const associated = isOwner || Boolean(membership) || Boolean(follow)
+    if (!associated) return reply.code(403).send({ error: 'forbidden' })
+
+    const orgPrefs = readOrgChatPrefs(viewer?.communityMeta ?? null, org.id)
+
+    const threads = await prisma.messageThread.findMany({
+      where: {
+        type: MessageThreadType.group,
+        contextType: ORG_CHANNEL_CONTEXT_TYPE,
+        contextId: { startsWith: `${org.id}|` },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+      orderBy: [{ updatedAt: 'desc' }],
+    })
+
+    const items = threads
+      .map((thread: ThreadSummaryRecord) => {
+        const parsed = parseOrgChannelContextId(thread.contextId)
+        if (!parsed || parsed.orgId !== org.id) return null
+        const participant = thread.participants.find((entry: ThreadParticipantRecord) => entry.userId === userId)
+        if (parsed.visibility === 'private' && !participant && !viewerRole) return null
+        const channelPrefs = orgPrefs.channels?.[thread.id] ?? {}
+        const unread = thread.messages[0]
+          ? participant?.lastReadAt
+            ? new Date(thread.messages[0].createdAt).getTime() > new Date(participant.lastReadAt).getTime() && thread.messages[0].senderId !== userId
+            : thread.messages[0].senderId !== userId
+          : false
+        return {
+          id: thread.id,
+          name: parsed.name,
+          slug: parsed.slug,
+          visibility: parsed.visibility,
+          joined: Boolean(participant),
+          isOwner: participant?.role === MessageParticipantRole.admin,
+          unread,
+          participantCount: thread.participants.length,
+          lastMessageAt: thread.lastMessageAt ?? thread.updatedAt,
+          lastMessage: thread.messages[0] ? formatMessage(thread.messages[0], userId) : null,
+          notification: {
+            muteChannel: Boolean(channelPrefs?.muteChannel),
+            mentionsOnly: Boolean(channelPrefs?.mentionsOnly),
+          },
+        }
+      })
+      .filter(Boolean)
+
+    return reply.send({
+      organization: { id: org.id, name: org.name, viewerRole },
+      serverNotification: {
+        muteServer: Boolean(orgPrefs.muteServer),
+        mentionsOnly: Boolean(orgPrefs.mentionsOnly),
+      },
+      items,
+    })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/channels', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgChannelCreateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const membership =
+      org.ownerId === userId
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'MANAGER' && membership.role !== 'OWNER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const name = body.data.name.trim()
+    const slug = slugifyChannelName(name)
+    if (!slug) return reply.code(400).send({ error: 'invalid_channel_name' })
+    const uniqueKey = `orgchan:${org.id}:${slug}`
+    const now = new Date()
+
+    const existing = await prisma.messageThread.findUnique({ where: { uniqueKey } })
+    if (existing) return reply.code(409).send({ error: 'channel_exists' })
+
+    const thread = await prisma.messageThread.create({
+      data: {
+        type: MessageThreadType.group,
+        uniqueKey,
+        contextType: ORG_CHANNEL_CONTEXT_TYPE,
+        contextId: buildOrgChannelContextId(org.id, body.data.visibility, slug, name),
+        lastMessageAt: now,
+        participants: {
+          create: [{ userId, role: MessageParticipantRole.admin, lastReadAt: now, lastActivityAt: now }],
+        },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+
+    return reply.code(201).send({
+      channel: {
+        id: thread.id,
+        name,
+        slug,
+        visibility: body.data.visibility,
+      },
+      thread: formatThreadSummaryRecord(thread, userId),
+    })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/channels/:channelId/join', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const params = CommunityOrgChannelParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const thread = await prisma.messageThread.findFirst({
+      where: { id: params.data.channelId, contextType: ORG_CHANNEL_CONTEXT_TYPE, type: MessageThreadType.group },
+      include: THREAD_WITH_PARTICIPANTS_INCLUDE,
+    })
+    if (!thread) return reply.code(404).send({ error: 'channel_not_found' })
+
+    const parsed = parseOrgChannelContextId(thread.contextId)
+    if (!parsed) return reply.code(404).send({ error: 'channel_not_found' })
+    if (parsed.visibility === 'private') return reply.code(403).send({ error: 'private_channel_invite_required' })
+
+    if (!thread.participants.some((entry: ThreadParticipantRecord) => entry.userId === userId)) {
+      await prisma.messageParticipant.create({
+        data: {
+          threadId: thread.id,
+          userId,
+          role: MessageParticipantRole.member,
+          lastActivityAt: new Date(),
+        },
+      })
+    }
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/channels/:channelId/invite', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const params = CommunityOrgChannelParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgChannelInviteBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const thread = await prisma.messageThread.findFirst({
+      where: { id: params.data.channelId, contextType: ORG_CHANNEL_CONTEXT_TYPE, type: MessageThreadType.group },
+      include: THREAD_WITH_PARTICIPANTS_INCLUDE,
+    })
+    if (!thread) return reply.code(404).send({ error: 'channel_not_found' })
+
+    const inviter = thread.participants.find((entry: ThreadParticipantRecord) => entry.userId === userId)
+    if (!inviter || inviter.role !== MessageParticipantRole.admin) {
+      return reply.code(403).send({ error: 'only_channel_owner_can_invite' })
+    }
+
+    const targetUserId = body.data.userId
+    if (thread.participants.some((entry: ThreadParticipantRecord) => entry.userId === targetUserId)) {
+      return reply.send({ success: true })
+    }
+
+    await prisma.messageParticipant.create({
+      data: {
+        threadId: thread.id,
+        userId: targetUserId,
+        role: MessageParticipantRole.member,
+        lastActivityAt: new Date(),
+      },
+    })
+
+    const refreshed = await prisma.messageThread.findUnique({ where: { id: thread.id }, include: THREAD_SUMMARY_INCLUDE })
+    if (refreshed) {
+      await dispatchRealtimeEvent(targetUserId, {
+        type: 'thread.created',
+        data: { thread: formatThreadSummaryRecord(refreshed, targetUserId) },
+      })
+    }
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/channels/:channelId/leave', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const params = CommunityOrgChannelParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const participant = await prisma.messageParticipant.findUnique({
+      where: { threadId_userId: { threadId: params.data.channelId, userId } },
+      select: { role: true },
+    })
+    if (!participant) return reply.code(404).send({ error: 'not_joined' })
+    if (participant.role === MessageParticipantRole.admin) return reply.code(400).send({ error: 'owner_cannot_leave_channel' })
+
+    await prisma.messageParticipant.delete({
+      where: { threadId_userId: { threadId: params.data.channelId, userId } },
+    })
+
+    await dispatchRealtimeEvent(userId, {
+      type: 'thread.removed',
+      data: { threadId: params.data.channelId },
+    })
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/channels/:channelId/notification', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const params = CommunityOrgChannelParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgChannelNotificationBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+    const thread = await prisma.messageThread.findUnique({ where: { id: params.data.channelId }, select: { contextId: true, contextType: true } })
+    if (!thread || thread.contextType !== ORG_CHANNEL_CONTEXT_TYPE) return reply.code(404).send({ error: 'channel_not_found' })
+    const parsed = parseOrgChannelContextId(thread.contextId)
+    if (!parsed) return reply.code(404).send({ error: 'channel_not_found' })
+
+    const baseMeta = user.communityMeta && typeof user.communityMeta === 'object' && !Array.isArray(user.communityMeta)
+      ? ({ ...(user.communityMeta as Record<string, unknown>) } as Record<string, unknown>)
+      : {}
+    const currentOrgPrefs = readOrgChatPrefs(baseMeta, parsed.orgId)
+    const nextChannels = { ...(currentOrgPrefs.channels ?? {}) }
+    const channelPrefs = { ...(nextChannels[params.data.channelId] ?? {}) }
+    if (typeof body.data.muteChannel === 'boolean') channelPrefs.muteChannel = body.data.muteChannel
+    if (typeof body.data.mentionsOnly === 'boolean') channelPrefs.mentionsOnly = body.data.mentionsOnly
+    nextChannels[params.data.channelId] = channelPrefs
+
+    const orgChatPrefs = baseMeta.orgChatPrefs && typeof baseMeta.orgChatPrefs === 'object' && !Array.isArray(baseMeta.orgChatPrefs)
+      ? ({ ...(baseMeta.orgChatPrefs as Record<string, unknown>) } as Record<string, unknown>)
+      : {}
+    orgChatPrefs[parsed.orgId] = {
+      ...currentOrgPrefs,
+      channels: nextChannels,
+    }
+    baseMeta.orgChatPrefs = orgChatPrefs
+
+    await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta } })
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/channels/notification', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgServerNotificationBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+    const baseMeta = user.communityMeta && typeof user.communityMeta === 'object' && !Array.isArray(user.communityMeta)
+      ? ({ ...(user.communityMeta as Record<string, unknown>) } as Record<string, unknown>)
+      : {}
+    const currentOrgPrefs = readOrgChatPrefs(baseMeta, org.id)
+
+    const nextOrgPrefs: OrgChatPrefs = {
+      ...currentOrgPrefs,
+      channels: { ...(currentOrgPrefs.channels ?? {}) },
+    }
+    if (typeof body.data.muteServer === 'boolean') nextOrgPrefs.muteServer = body.data.muteServer
+    if (typeof body.data.mentionsOnly === 'boolean') nextOrgPrefs.mentionsOnly = body.data.mentionsOnly
+
+    const orgChatPrefs = baseMeta.orgChatPrefs && typeof baseMeta.orgChatPrefs === 'object' && !Array.isArray(baseMeta.orgChatPrefs)
+      ? ({ ...(baseMeta.orgChatPrefs as Record<string, unknown>) } as Record<string, unknown>)
+      : {}
+    orgChatPrefs[org.id] = nextOrgPrefs
+    baseMeta.orgChatPrefs = orgChatPrefs
+
+    await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta } })
+    return reply.send({ success: true })
+  }),
+)
+
+app.get('/org-channels/unread-count', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { handle: true, communityMeta: true } })
+    if (!user) return reply.send({ count: 0 })
+
+    const threads = await prisma.messageThread.findMany({
+      where: {
+        contextType: ORG_CHANNEL_CONTEXT_TYPE,
+        type: MessageThreadType.group,
+        participants: { some: { userId } },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+
+    let count = 0
+    for (const thread of threads) {
+      const parsed = parseOrgChannelContextId(thread.contextId)
+      if (!parsed) continue
+      const orgPrefs = readOrgChatPrefs(user.communityMeta ?? null, parsed.orgId)
+      if (orgPrefs.muteServer) continue
+      const channelPrefs = orgPrefs.channels?.[thread.id]
+      if (channelPrefs?.muteChannel) continue
+
+      const participant = thread.participants.find((entry: ThreadParticipantRecord) => entry.userId === userId)
+      const lastMessage = thread.messages[0]
+      if (!participant || !lastMessage || lastMessage.senderId === userId) continue
+
+      const unread = participant.lastReadAt
+        ? new Date(lastMessage.createdAt).getTime() > new Date(participant.lastReadAt).getTime()
+        : true
+      if (!unread) continue
+
+      const mentionsOnly = channelPrefs?.mentionsOnly ?? orgPrefs.mentionsOnly
+      if (mentionsOnly) {
+        const needle = `@${user.handle}`.toLowerCase()
+        if (!(lastMessage.body ?? '').toLowerCase().includes(needle)) {
+          continue
+        }
+      }
+
+      count += 1
+    }
+
+    return reply.send({ count })
+  }),
+)
+
+app.get('/org-channels', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { handle: true, communityMeta: true } })
+    if (!user) return reply.send({ items: [] })
+
+    const threads = await prisma.messageThread.findMany({
+      where: {
+        contextType: ORG_CHANNEL_CONTEXT_TYPE,
+        type: MessageThreadType.group,
+        participants: { some: { userId } },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+      orderBy: [{ updatedAt: 'desc' }],
+    })
+
+    const orgIds = Array.from(
+      new Set(
+        threads
+          .map((thread: ThreadSummaryRecord) => parseOrgChannelContextId(thread.contextId)?.orgId ?? null)
+          .filter((value: string | null): value is string => Boolean(value)),
+      ),
+    )
+
+    type OrganizationChannelOrgRow = {
+      id: string
+      name: string
+      slug: string
+      provinceCode: string | null
+      communitySlug: string | null
+      logoUrl: string | null
+      coverUrl: string | null
+    }
+
+    const orgs: OrganizationChannelOrgRow[] = orgIds.length
+      ? await prisma.business.findMany({
+          where: { id: { in: orgIds } },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+            logoUrl: true,
+            coverUrl: true,
+          },
+        })
+      : []
+    const orgById = new Map<string, OrganizationChannelOrgRow>(orgs.map((org: OrganizationChannelOrgRow) => [org.id, org]))
+
+    const items = threads
+      .map((thread: ThreadSummaryRecord) => {
+        const parsed = parseOrgChannelContextId(thread.contextId)
+        if (!parsed) return null
+        const org = orgById.get(parsed.orgId)
+        if (!org || !org.provinceCode || !org.communitySlug) return null
+
+        const orgPrefs = readOrgChatPrefs(user.communityMeta ?? null, parsed.orgId)
+        const channelPrefs = orgPrefs.channels?.[thread.id]
+
+        const participant = thread.participants.find((entry: ThreadParticipantRecord) => entry.userId === userId)
+        const lastMessage = thread.messages[0]
+        const unread =
+          Boolean(participant) &&
+          Boolean(lastMessage) &&
+          lastMessage?.senderId !== userId &&
+          (participant?.lastReadAt
+            ? new Date(lastMessage!.createdAt).getTime() > new Date(participant.lastReadAt).getTime()
+            : true)
+
+        return {
+          id: thread.id,
+          name: parsed.name,
+          slug: parsed.slug,
+          visibility: parsed.visibility,
+          unread,
+          participantCount: thread.participants.length,
+          lastMessageAt: thread.lastMessageAt ?? thread.updatedAt,
+          notification: {
+            muteServer: Boolean(orgPrefs.muteServer),
+            muteChannel: Boolean(channelPrefs?.muteChannel),
+            mentionsOnly: Boolean(channelPrefs?.mentionsOnly ?? orgPrefs.mentionsOnly),
+          },
+          lastMessage: lastMessage ? formatMessage(lastMessage, userId) : null,
+          organization: {
+            id: org.id,
+            name: org.name,
+            slug: org.slug,
+            province: org.provinceCode.toLowerCase(),
+            municipality: org.communitySlug,
+            logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+            coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+          },
+        }
+      })
+      .filter(Boolean)
+
+    return reply.send({ items })
   }),
 )
 

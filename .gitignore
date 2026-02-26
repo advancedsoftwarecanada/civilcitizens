@@ -70,6 +70,7 @@ tmp_*/
 
 # Large geodata archives (tracked elsewhere)
 _geodata/
+/civilcitizens_largefiles/
 
 # Large SQL exports
 tests/*.sql

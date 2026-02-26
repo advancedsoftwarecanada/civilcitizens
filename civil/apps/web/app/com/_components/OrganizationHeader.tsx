@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
 import type { CommunityOrganization } from '../../_lib/organizations'
+import OrganizationFollowButton from './OrganizationFollowButton'
 
 function formatShortDate(value?: string | null) {
   if (!value) return '—'
@@ -27,24 +28,43 @@ export default function OrganizationHeader({
   slug: string
 }) {
   const [resolvedOrg, setResolvedOrg] = useState<CommunityOrganization | null>(org)
+  const [memberCount, setMemberCount] = useState<number | null>(null)
 
   useEffect(() => {
-    if (resolvedOrg) return
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-    if (!token) return
-
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch(
-          buildApiUrl(
-            `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
+        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+        const authHeaders = token ? { authorization: `Bearer ${token}` } : undefined
+
+        const [orgRes, membersRes] = await Promise.all([
+          resolvedOrg
+            ? Promise.resolve(null)
+            : fetch(
+                buildApiUrl(
+                  `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
+                ),
+                { headers: authHeaders, cache: 'no-store' },
+              ),
+          fetch(
+            buildApiUrl(
+              `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/members`,
+            ),
+            { headers: authHeaders, cache: 'no-store' },
           ),
-          { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
-        )
-        if (!res.ok) return
-        const payload = (await res.json().catch(() => null)) as { org?: CommunityOrganization } | null
-        if (!cancelled && payload?.org) setResolvedOrg(payload.org)
+        ])
+
+        if (orgRes?.ok) {
+          const payload = (await orgRes.json().catch(() => null)) as { org?: CommunityOrganization } | null
+          if (!cancelled && payload?.org) setResolvedOrg(payload.org)
+        }
+
+        if (membersRes.ok) {
+          const payload = (await membersRes.json().catch(() => null)) as { members?: Array<{ userId: string }> } | null
+          if (!cancelled) {
+            setMemberCount(Array.isArray(payload?.members) ? payload.members.length : 0)
+          }
+        }
       } catch {
         // ignore
       }
@@ -102,11 +122,25 @@ export default function OrganizationHeader({
               <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{name}</h1>
               {resolvedOrg?.slug ? (
                 <p className="text-sm text-slate-500">
-                  @{resolvedOrg.slug} · Created {createdLabel}
+                  @{resolvedOrg.slug} · Organization since {createdLabel}
                 </p>
               ) : null}
+              <p className="mt-1 text-sm text-slate-500">
+                {memberCount ?? 0} members · {resolvedOrg?.followerCount ?? 0} followers
+              </p>
             </div>
           </div>
+
+          {resolvedOrg ? (
+            <div className="md:self-start">
+              <OrganizationFollowButton
+                province={province}
+                municipality={municipality}
+                slug={slug}
+                initialFollowed={resolvedOrg.viewerFollowed ?? false}
+              />
+            </div>
+          ) : null}
         </div>
       </section>
     </div>

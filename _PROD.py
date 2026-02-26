@@ -9,6 +9,7 @@ Usage:
     python3 _PROD.py              # deploy (default: upload/sync only)
     python3 _PROD.py check        # remote sanity checks
     python3 _PROD.py prep         # create remote CIVIL/CIVIL_DATA dirs
+    python3 _PROD.py geodata      # upload vendored StatsCan zips + seed admin geodata on PROD
     python3 _PROD.py ssh          # open interactive SSH shell
 """
 
@@ -25,10 +26,12 @@ def main(argv: list[str]) -> int:
         return int(remote_main([sub]))
     if sub in {"prep", "prepare"}:
         return int(remote_main(["prep"]))
+    if sub in {"geodata", "seed-geodata", "seed_geodata"}:
+        return int(remote_main(["seed-geodata"]))
     if sub in {"ssh", "shell"}:
         return int(remote_main(["ssh"]))
 
-    print("Usage: python3 _PROD.py [check|prep|deploy|ssh]", file=sys.stderr)
+    print("Usage: python3 _PROD.py [check|prep|deploy|geodata|ssh]", file=sys.stderr)
     return 2
 
 
