@@ -101,6 +101,7 @@ type PostComposerProps = {
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
   defaultAudience?: 'friends' | 'network' | 'community' | 'business'
+  hideAudience?: boolean
 }
 
 const MAX_POST_LENGTH = 5000
@@ -215,6 +216,7 @@ export default function PostComposer({
   onPostCreated,
   variant = 'card',
   defaultAudience = 'friends',
+  hideAudience = false,
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [postType, setPostType] = useState<PostType>(defaultPostType)
@@ -663,54 +665,56 @@ export default function PostComposer({
 
   return (
     <section ref={containerRef} className={containerClasses}>
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
-          <select
-            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
-            value={businessTarget?.businessId ? BUSINESS_VALUE : audienceLocked && activeCommunity ? buildCommunityValue(activeCommunity) : audienceSelection}
-            onChange={(event) => setAudienceSelection(event.target.value)}
-            disabled={audienceLocked}
-          >
+      <header className={clsx('flex flex-col gap-4', !hideAudience && 'lg:flex-row lg:items-start lg:justify-between')}>
+        {!hideAudience ? (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
+            <select
+              className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
+              value={businessTarget?.businessId ? BUSINESS_VALUE : audienceLocked && activeCommunity ? buildCommunityValue(activeCommunity) : audienceSelection}
+              onChange={(event) => setAudienceSelection(event.target.value)}
+              disabled={audienceLocked}
+            >
+              {businessTarget?.businessId ? (
+                <option value={BUSINESS_VALUE}>{businessTarget.businessName ?? 'Organization'}</option>
+              ) : (
+                <>
+                  <option value={NETWORK_VALUE}>Network</option>
+                  <option value={FRIENDS_VALUE}>Friends</option>
+                  {!communityTarget && isPromptSelected ? (
+                    <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
+                      Select a community
+                    </option>
+                  ) : null}
+                  {communityTarget ? (
+                    <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
+                  ) : null}
+                  {!communityTarget
+                    ? normalizedCommunityOptions.map((option) => (
+                        <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
+                          {formatCommunityLabel(option)}
+                        </option>
+                      ))
+                    : null}
+                </>
+              )}
+            </select>
+            {showCommunityWarning ? (
+              <p className="text-xs text-slate-500">Follow a community to publish in its public feed.</p>
+            ) : null}
+            {!businessTarget?.businessId && isPromptSelected ? (
+              <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
+            ) : null}
             {businessTarget?.businessId ? (
-              <option value={BUSINESS_VALUE}>{businessTarget.businessName ?? 'Organization'}</option>
-            ) : (
-              <>
-                <option value={NETWORK_VALUE}>Network</option>
-                <option value={FRIENDS_VALUE}>Friends</option>
-                {!communityTarget && isPromptSelected ? (
-                  <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
-                    Select a community
-                  </option>
-                ) : null}
-                {communityTarget ? (
-                  <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
-                ) : null}
-                {!communityTarget
-                  ? normalizedCommunityOptions.map((option) => (
-                      <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
-                        {formatCommunityLabel(option)}
-                      </option>
-                    ))
-                  : null}
-              </>
-            )}
-          </select>
-          {showCommunityWarning ? (
-            <p className="text-xs text-slate-500">Follow a community to publish in its public feed.</p>
-          ) : null}
-          {!businessTarget?.businessId && isPromptSelected ? (
-            <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
-          ) : null}
-          {businessTarget?.businessId ? (
-            <p className="text-xs text-slate-500">Posting to {businessTarget.businessName ?? 'this organization'}</p>
-          ) : null}
-          {activeCommunity && !audienceLocked && !isPromptSelected ? (
-            <p className="text-xs text-slate-500">
-              Posting to {activeCommunity.communityName ?? activeCommunity.communitySlug}
-            </p>
-          ) : null}
-        </div>
+              <p className="text-xs text-slate-500">Posting to {businessTarget.businessName ?? 'this organization'}</p>
+            ) : null}
+            {activeCommunity && !audienceLocked && !isPromptSelected ? (
+              <p className="text-xs text-slate-500">
+                Posting to {activeCommunity.communityName ?? activeCommunity.communitySlug}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {businessTarget?.businessId ? (
           <div className="flex flex-col gap-2">

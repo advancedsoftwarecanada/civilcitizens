@@ -8,7 +8,9 @@ import { redirectToAuthModal } from '../../_lib/authModal'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import { formatUserDisplayName } from '../../_lib/text'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
+import Modal from '../../_components/Modal'
 import PhotoUpdateModal from '../../_components/PhotoUpdateModal'
+import RichTextEditor from '../../_components/RichTextEditor'
 import { computeFallbackCropArea, generateCroppedImageBlob, readImageDimensions } from '../../_lib/imageCrop'
 
 type MeResponse = {
@@ -63,26 +65,6 @@ type OrgMembersResponse = {
   followers?: OrgFollowerItem[]
 }
 
-type ShopWarehouseItem = {
-  id: string
-  name: string
-  address: string | null
-  isHeadOffice: boolean
-}
-
-type ShopSettingsPayload = {
-  headOfficeAddress: string
-  warehouseSameAsHeadOffice: boolean
-  directDepositTransit: string
-  directDepositInstitution: string
-  directDepositAccount: string
-}
-
-type OrgShopSettingsResponse = {
-  settings?: ShopSettingsPayload
-  warehouses?: ShopWarehouseItem[]
-}
-
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
@@ -121,6 +103,14 @@ const COVER_EXPORT_HEIGHT = 640
 const COVER_ASPECT_RATIO = COVER_EXPORT_WIDTH / COVER_EXPORT_HEIGHT
 const LOGO_EXPORT_SIZE = 1024
 const MAX_CROP_ZOOM = 3
+const HEADLINE_MAX_CHARS = 60
+
+function normalizeRichText(value: string | null | undefined): string {
+  const source = (value ?? '').trim()
+  if (!source) return ''
+  const textOnly = source.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').trim()
+  return textOnly ? source : ''
+}
 
 async function waitForAssetReady(token: string, assetId: string, label: string) {
   const POLL_MAX_ATTEMPTS = 30
@@ -168,23 +158,19 @@ export default function OrganizationSettingsClient({
     schedule: '',
   })
   const [detailsDirty, setDetailsDirty] = useState(false)
+  const [organizationName, setOrganizationName] = useState('')
+  const [organizationNameSaving, setOrganizationNameSaving] = useState(false)
+  const [profileHeadline, setProfileHeadline] = useState('')
+  const [profileAbout, setProfileAbout] = useState('')
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
+  const [deleteConfirmName, setDeleteConfirmName] = useState('')
+  const [deleteSaving, setDeleteSaving] = useState(false)
   const [members, setMembers] = useState<OrgMemberItem[]>([])
   const [followers, setFollowers] = useState<OrgFollowerItem[]>([])
   const [membersLoading, setMembersLoading] = useState(false)
   const [memberActionUserId, setMemberActionUserId] = useState<string | null>(null)
   const [visibilitySaving, setVisibilitySaving] = useState(false)
-  const [shopSettings, setShopSettings] = useState<ShopSettingsPayload>({
-    headOfficeAddress: '',
-    warehouseSameAsHeadOffice: true,
-    directDepositTransit: '',
-    directDepositInstitution: '',
-    directDepositAccount: '',
-  })
-  const [shopSettingsDirty, setShopSettingsDirty] = useState(false)
-  const [shopSettingsSaving, setShopSettingsSaving] = useState(false)
-  const [warehouses, setWarehouses] = useState<ShopWarehouseItem[]>([])
-  const [warehouseDraft, setWarehouseDraft] = useState({ name: '', address: '' })
-  const [warehouseSaving, setWarehouseSaving] = useState(false)
 
   const [photoModalCategory, setPhotoModalCategory] = useState<BusinessMediaCategory | null>(null)
   const [photoCaption, setPhotoCaption] = useState('')
@@ -202,6 +188,15 @@ export default function OrganizationSettingsClient({
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('token') : null), [])
   const canManage = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || (me?.id && org?.ownerId && me.id === org.ownerId))
   const isOwner = Boolean(org?.viewerRole === 'OWNER' || (me?.id && org?.ownerId && me.id === org.ownerId))
+  const canSaveOrganizationName = Boolean(isOwner && org && organizationName.trim().length >= 3 && organizationName.trim() !== org.name)
+  const profileHeadlineTrimmed = profileHeadline.trim().slice(0, HEADLINE_MAX_CHARS)
+  const profileAboutNormalized = normalizeRichText(profileAbout)
+  const canSaveProfile = Boolean(
+    org &&
+      (profileHeadlineTrimmed !== (org.headline ?? '').trim() ||
+        profileAboutNormalized !== normalizeRichText(org.description)),
+  )
+  const deleteConfirmationMatches = Boolean(org && deleteConfirmName.trim() === org.name.trim())
 
   const orgApiPath = useMemo(() => {
     return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
@@ -232,38 +227,6 @@ export default function OrganizationSettingsClient({
       setFollowers([])
     } finally {
       setMembersLoading(false)
-    }
-  }, [orgApiPath, token])
-
-  const loadShopSettings = useCallback(async () => {
-    if (!token) {
-      setWarehouses([])
-      return
-    }
-
-    try {
-      const res = await fetch(buildApiUrl(`${orgApiPath}/shop`), {
-        headers: { authorization: `Bearer ${token}` },
-        cache: 'no-store',
-      })
-      if (!res.ok) {
-        setWarehouses([])
-        return
-      }
-
-      const { json } = await parseApiResponse<OrgShopSettingsResponse>(res)
-      const settings = json?.settings
-      setShopSettings({
-        headOfficeAddress: settings?.headOfficeAddress ?? '',
-        warehouseSameAsHeadOffice: settings?.warehouseSameAsHeadOffice ?? true,
-        directDepositTransit: settings?.directDepositTransit ?? '',
-        directDepositInstitution: settings?.directDepositInstitution ?? '',
-        directDepositAccount: settings?.directDepositAccount ?? '',
-      })
-      setShopSettingsDirty(false)
-      setWarehouses(Array.isArray(json?.warehouses) ? json.warehouses : [])
-    } catch {
-      setWarehouses([])
     }
   }, [orgApiPath, token])
 
@@ -304,11 +267,10 @@ export default function OrganizationSettingsClient({
   }, [loadMembers])
 
   useEffect(() => {
-    void loadShopSettings()
-  }, [loadShopSettings])
-
-  useEffect(() => {
     if (!org) return
+    setOrganizationName(org.name)
+    setProfileHeadline((org.headline ?? '').slice(0, HEADLINE_MAX_CHARS))
+    setProfileAbout(org.description ?? '')
     setDetails({
       phone: org.phone ?? '',
       websiteUrl: org.websiteUrl ?? '',
@@ -316,6 +278,7 @@ export default function OrganizationSettingsClient({
       schedule: org.schedule ?? '',
     })
     setDetailsDirty(false)
+    setDeleteConfirmName('')
   }, [org])
 
   const saveDetails = useCallback(async () => {
@@ -368,97 +331,154 @@ export default function OrganizationSettingsClient({
     }
   }, [details.address, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
 
-  const saveShopSettings = useCallback(async () => {
+  const saveOrganizationName = useCallback(async () => {
     if (!token) {
       redirectToAuthModal('login')
       return
     }
-    if (!canManage) return
+    if (!org || !isOwner) return
 
-    setShopSettingsSaving(true)
+    const nextName = organizationName.trim()
+    if (nextName.length < 3) {
+      pushToast('Organization name must be at least 3 characters.', 'error')
+      return
+    }
+    if (nextName === org.name) return
+
+    setOrganizationNameSaving(true)
     try {
-      const res = await fetch(buildApiUrl(`${orgApiPath}/shop/settings`), {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: nextName }),
+      })
+
+      const { json } = await parseApiResponse<{ org?: CommunityOrganization; error?: unknown }>(res)
+      if (!res.ok) {
+        if (res.status === 403) {
+          pushToast('Only the organization owner can rename this organization.', 'error')
+        } else {
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Unable to rename this organization right now.', 'error')
+        }
+        return
+      }
+
+      if (json?.org) setOrg(json.org)
+      pushToast('Organization renamed. Followers received a rename post.', 'success')
+    } catch (err) {
+      console.error('Failed to rename organization', err)
+      pushToast('Unable to rename this organization right now.', 'error')
+    } finally {
+      setOrganizationNameSaving(false)
+    }
+  }, [isOwner, org, orgApiPath, organizationName, token])
+
+  const saveProfileDetails = useCallback(async () => {
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!org) return
+
+    setProfileSaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
         method: 'PUT',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          headOfficeAddress: shopSettings.headOfficeAddress.trim() ? shopSettings.headOfficeAddress.trim() : null,
-          warehouseSameAsHeadOffice: shopSettings.warehouseSameAsHeadOffice,
-          directDepositTransit: shopSettings.directDepositTransit.trim() ? shopSettings.directDepositTransit.trim() : null,
-          directDepositInstitution: shopSettings.directDepositInstitution.trim() ? shopSettings.directDepositInstitution.trim() : null,
-          directDepositAccount: shopSettings.directDepositAccount.trim() ? shopSettings.directDepositAccount.trim() : null,
+          headline: profileHeadlineTrimmed || null,
+          description: profileAboutNormalized || null,
         }),
       })
 
-      const { json } = await parseApiResponse<{ error?: unknown }>(res)
+      const { json } = await parseApiResponse<{ org?: CommunityOrganization; error?: unknown }>(res)
       if (!res.ok) {
-        const rawError =
-          typeof (json as any)?.error === 'string'
-            ? (json as any).error
-            : typeof (json as any)?.error?.message === 'string'
-              ? (json as any).error.message
-              : null
-        pushToast(rawError ?? 'Unable to save shop settings right now.', 'error')
+        if (res.status === 403) {
+          pushToast('Only organization admins can edit profile details.', 'error')
+        } else {
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Unable to save organization profile right now.', 'error')
+        }
         return
       }
 
-      setShopSettingsDirty(false)
-      pushToast('Saved shop settings.', 'success')
-      await loadShopSettings()
-    } catch {
-      pushToast('Unable to save shop settings right now.', 'error')
+      if (json?.org) setOrg(json.org)
+      pushToast('Saved organization profile.', 'success')
+    } catch (err) {
+      console.error('Failed to save organization profile', err)
+      pushToast('Unable to save organization profile right now.', 'error')
     } finally {
-      setShopSettingsSaving(false)
+      setProfileSaving(false)
     }
-  }, [canManage, loadShopSettings, orgApiPath, shopSettings.directDepositAccount, shopSettings.directDepositInstitution, shopSettings.directDepositTransit, shopSettings.headOfficeAddress, shopSettings.warehouseSameAsHeadOffice, token])
+  }, [org, orgApiPath, profileAboutNormalized, profileHeadlineTrimmed, token])
 
-  const addWarehouse = useCallback(async () => {
+  const closeDeleteModal = useCallback(() => {
+    if (deleteSaving) return
+    setDeleteModalOpen(false)
+    setDeleteConfirmName('')
+  }, [deleteSaving])
+
+  const deleteOrganization = useCallback(async () => {
     if (!token) {
       redirectToAuthModal('login')
       return
     }
-    if (!canManage) return
-    const name = warehouseDraft.name.trim()
-    if (!name) {
-      pushToast('Warehouse name is required.', 'error')
+    if (!org || !isOwner) return
+    if (!deleteConfirmationMatches) {
+      pushToast('Type the organization name to confirm deletion.', 'error')
       return
     }
 
-    setWarehouseSaving(true)
+    setDeleteSaving(true)
     try {
-      const res = await fetch(buildApiUrl(`${orgApiPath}/shop/warehouses`), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          name,
-          address: warehouseDraft.address.trim() ? warehouseDraft.address.trim() : null,
-        }),
+      const res = await fetch(buildApiUrl(orgApiPath), {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${token}` },
       })
       const { json } = await parseApiResponse<{ error?: unknown }>(res)
       if (!res.ok) {
-        const rawError =
-          typeof (json as any)?.error === 'string'
-            ? (json as any).error
-            : typeof (json as any)?.error?.message === 'string'
-              ? (json as any).error.message
-              : null
-        pushToast(rawError ?? 'Unable to add warehouse right now.', 'error')
+        if (res.status === 403) {
+          pushToast('Only the organization owner can delete this organization.', 'error')
+        } else {
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Unable to delete this organization right now.', 'error')
+        }
         return
       }
-      setWarehouseDraft({ name: '', address: '' })
-      pushToast('Warehouse added.', 'success')
-      await loadShopSettings()
-    } catch {
-      pushToast('Unable to add warehouse right now.', 'error')
+
+      setDeleteModalOpen(false)
+      setDeleteConfirmName('')
+      pushToast('Organization deleted.', 'success')
+      window.location.href = '/organizations/manager'
+    } catch (err) {
+      console.error('Failed to delete organization', err)
+      pushToast('Unable to delete this organization right now.', 'error')
     } finally {
-      setWarehouseSaving(false)
+      setDeleteSaving(false)
     }
-  }, [canManage, loadShopSettings, orgApiPath, token, warehouseDraft.address, warehouseDraft.name])
+  }, [deleteConfirmationMatches, isOwner, org, orgApiPath, token])
 
   const toggleVisibility = useCallback(async () => {
     if (!token || !org || !canManage) return
@@ -961,6 +981,42 @@ export default function OrganizationSettingsClient({
 
   return (
     <div className="space-y-8">
+      <Modal open={deleteModalOpen} onClose={closeDeleteModal} title="Delete organization">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            This permanently deletes this organization. All posts, products, channels, and related data will be permanently deleted.
+          </p>
+          <p className="text-xs text-slate-500">
+            Type <span className="font-semibold text-slate-700">{org.name}</span> to confirm.
+          </p>
+          <input
+            value={deleteConfirmName}
+            onChange={(e) => setDeleteConfirmName(e.target.value)}
+            disabled={deleteSaving}
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder={org.name}
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeDeleteModal}
+              disabled={deleteSaving}
+              className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={deleteOrganization}
+              disabled={deleteSaving || !deleteConfirmationMatches}
+              className="rounded-full border border-rose-300 bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+            >
+              {deleteSaving ? 'Deleting…' : 'Delete permanently'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       <PhotoUpdateModal
         open={Boolean(photoModalCategory)}
         title={modalTitle}
@@ -989,280 +1045,31 @@ export default function OrganizationSettingsClient({
         onClose={closePhotoModal}
       />
 
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Display photo</h3>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          <VerifiedAvatar
-            src={logoDisplayUrl}
-            alt={org.name}
-            initials={org.name}
-            size={64}
-            isVerified={Boolean(org.isVerified)}
-            className="shrink-0"
-          />
-
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => launchPhotoFlow('business_logo', true)}
-                disabled={saving}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              >
-                Upload logo
-              </button>
-            </div>
-            <p className="text-xs text-slate-500">Up to 8MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
-          </div>
-        </div>
-        <input
-          ref={logoInputRef}
-          type="file"
-          accept={ACCEPTED_IMAGE_TYPES}
-          className="hidden"
-          onChange={handleFileChange('business_logo')}
-        />
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Cover photo</h3>
-        {coverDisplayUrl ? (
-          <img src={coverDisplayUrl} alt={`${org.name} cover`} className="h-40 w-full rounded-2xl border border-slate-200 object-cover" />
-        ) : (
-          <div className="flex h-40 w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
-            No cover photo yet.
-          </div>
-        )}
-
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => launchPhotoFlow('business_cover', true)}
-              disabled={saving}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            >
-              Upload cover
-            </button>
-          </div>
-          <p className="text-xs text-slate-500">Up to 20MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
-        </div>
-
-        <input
-          ref={coverInputRef}
-          type="file"
-          accept={ACCEPTED_IMAGE_TYPES}
-          className="hidden"
-          onChange={handleFileChange('business_cover')}
-        />
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Visibility</h3>
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <span
-            className={
-              org.status === 'ACTIVE'
-                ? 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
-                : 'inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700'
-            }
-          >
-            {org.status === 'ACTIVE' ? 'Public' : 'Private'}
-          </span>
-          <p className="text-xs text-slate-600">Public organizations are discoverable. Private organizations are only visible to admins.</p>
-          <button
-            type="button"
-            onClick={toggleVisibility}
-            disabled={visibilitySaving || !canManage}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {visibilitySaving ? 'Saving…' : org.status === 'ACTIVE' ? 'Make private' : 'Make public'}
-          </button>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Members</h3>
-        {membersLoading ? <p className="text-xs text-slate-500">Loading members…</p> : null}
-        {!membersLoading && !members.length ? <p className="text-xs text-slate-500">No members yet.</p> : null}
-        {members.length ? (
-          <ul className="space-y-2">
-            {members.map((entry) => {
-              const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
-              const canRemove = isOwner && entry.role !== 'OWNER'
-              return (
-                <li key={`${entry.userId}-${entry.role}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <VerifiedAvatar src={entry.user.avatarUrl} alt={displayName} initials={displayName} size={32} />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
-                      <p className="truncate text-xs text-slate-500">@{entry.user.handle} · {entry.role}</p>
-                    </div>
-                  </div>
-                  {canRemove ? (
-                    <button
-                      type="button"
-                      onClick={() => removeMember(entry.userId)}
-                      disabled={memberActionUserId === entry.userId}
-                      className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60"
-                    >
-                      {memberActionUserId === entry.userId ? 'Removing…' : 'Remove'}
-                    </button>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ul>
-        ) : null}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Followers</h3>
-        <p className="text-xs text-slate-500">Promote a follower to manager so they can help run this organization.</p>
-        {!followers.length ? <p className="text-xs text-slate-500">No followers available to promote.</p> : null}
-        {followers.length ? (
-          <ul className="space-y-2">
-            {followers.map((entry) => {
-              const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
-              return (
-                <li key={entry.userId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <VerifiedAvatar src={entry.user.avatarUrl} alt={displayName} initials={displayName} size={32} />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
-                      <p className="truncate text-xs text-slate-500">@{entry.user.handle}</p>
-                    </div>
-                  </div>
-                  {isOwner ? (
-                    <button
-                      type="button"
-                      onClick={() => promoteFollower(entry.userId)}
-                      disabled={memberActionUserId === entry.userId}
-                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                    >
-                      {memberActionUserId === entry.userId ? 'Promoting…' : 'Promote'}
-                    </button>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ul>
-        ) : null}
-      </section>
-
-      <section className="space-y-3">
-        <h3 className="text-sm font-semibold text-slate-900">Shop settings</h3>
-        <p className="text-xs text-slate-500">Configure your shop profile and warehouse network for inventory management.</p>
-
-        <label className="grid gap-1 text-sm font-medium text-slate-700">
-          Head office address
-          <input
-            value={shopSettings.headOfficeAddress}
-            onChange={(e) => {
-              setShopSettings((prev) => ({ ...prev, headOfficeAddress: e.target.value }))
-              setShopSettingsDirty(true)
-            }}
-            disabled={shopSettingsSaving}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
-            placeholder="Head office address"
-          />
-        </label>
-
-        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-          <input
-            type="checkbox"
-            checked={shopSettings.warehouseSameAsHeadOffice}
-            onChange={(e) => {
-              setShopSettings((prev) => ({ ...prev, warehouseSameAsHeadOffice: e.target.checked }))
-              setShopSettingsDirty(true)
-            }}
-          />
-          Warehouse office is same as head office
-        </label>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Direct deposit transit
+      {isOwner ? (
+        <section className="surface-card space-y-3 p-6 shadow-subtle">
+          <h3 className="text-sm font-semibold text-slate-900">Organization name</h3>
+          <p className="text-xs text-slate-500">Renaming the organization publishes a rename post for followers.</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
-              value={shopSettings.directDepositTransit}
-              disabled
-              className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
-              placeholder="Coming later"
-            />
-          </label>
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Direct deposit institution
-            <input
-              value={shopSettings.directDepositInstitution}
-              disabled
-              className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
-              placeholder="Coming later"
-            />
-          </label>
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Direct deposit account
-            <input
-              value={shopSettings.directDepositAccount}
-              disabled
-              className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
-              placeholder="Coming later"
-            />
-          </label>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <h4 className="text-sm font-semibold text-slate-900">Warehouses</h4>
-          {!warehouses.length ? <p className="mt-2 text-xs text-slate-500">No warehouses yet.</p> : null}
-          {warehouses.length ? (
-            <ul className="mt-2 space-y-2">
-              {warehouses.map((warehouse) => (
-                <li key={warehouse.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                  <p className="font-semibold text-slate-900">
-                    {warehouse.name} {warehouse.isHeadOffice ? <span className="text-xs text-slate-500">(Head office)</span> : null}
-                  </p>
-                  <p className="text-xs text-slate-500">{warehouse.address || 'No address provided'}</p>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-            <input
-              value={warehouseDraft.name}
-              onChange={(e) => setWarehouseDraft((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="Warehouse name"
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-            />
-            <input
-              value={warehouseDraft.address}
-              onChange={(e) => setWarehouseDraft((prev) => ({ ...prev, address: e.target.value }))}
-              placeholder="Warehouse address"
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+              value={organizationName}
+              onChange={(e) => setOrganizationName(e.target.value)}
+              disabled={organizationNameSaving}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+              placeholder="Organization name"
             />
             <button
               type="button"
-              onClick={addWarehouse}
-              disabled={warehouseSaving}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+              onClick={saveOrganizationName}
+              disabled={!canSaveOrganizationName || organizationNameSaving}
+              className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              {warehouseSaving ? 'Adding…' : 'Add warehouse'}
+              {organizationNameSaving ? 'Renaming…' : 'Save name'}
             </button>
           </div>
-        </div>
+        </section>
+      ) : null}
 
-        <div>
-          <button
-            type="button"
-            onClick={saveShopSettings}
-            disabled={shopSettingsSaving || !shopSettingsDirty}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {shopSettingsSaving ? 'Saving…' : 'Save shop settings'}
-          </button>
-        </div>
-      </section>
-
-      <section className="space-y-3">
+      <section className="surface-card space-y-3 p-6 shadow-subtle">
         <h3 className="text-sm font-semibold text-slate-900">Directory details</h3>
         <p className="text-xs text-slate-500">These appear on the organizations directory page.</p>
 
@@ -1325,7 +1132,7 @@ export default function OrganizationSettingsClient({
           />
         </label>
 
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={saveDetails}
@@ -1334,8 +1141,237 @@ export default function OrganizationSettingsClient({
           >
             Save details
           </button>
+          <a
+            href={`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/shop/manage`}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Manage shop
+          </a>
         </div>
       </section>
+
+      <section className="surface-card space-y-6 p-6 shadow-subtle">
+        <header className="space-y-1">
+          <h3 className="text-lg font-semibold text-slate-900">Photos</h3>
+          <p className="text-sm text-slate-500">Upload a cover and profile photo to personalize this organization.</p>
+        </header>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-gray-800">Cover photo</p>
+              <p className="text-xs text-gray-500">Shown at the top of your public organization page.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => launchPhotoFlow('business_cover', true)}
+              disabled={saving}
+              className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+            >
+              Upload new cover
+            </button>
+          </div>
+
+          {coverDisplayUrl ? (
+            <img src={coverDisplayUrl} alt={`${org.name} cover`} className="h-40 w-full rounded-2xl border border-slate-200 object-cover" />
+          ) : (
+            <div className="flex h-40 w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
+              No cover photo yet.
+            </div>
+          )}
+
+          <p className="mt-2 text-xs text-slate-500">Up to 20MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
+        </div>
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <VerifiedAvatar
+            src={logoDisplayUrl}
+            alt={org.name}
+            initials={org.name}
+            size={80}
+            isVerified={Boolean(org.isVerified)}
+            className="shrink-0"
+          />
+          <div className="space-y-1 text-sm text-gray-600">
+            <button
+              type="button"
+              onClick={() => launchPhotoFlow('business_logo', true)}
+              disabled={saving}
+              className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+            >
+              Upload new profile photo
+            </button>
+            <p className="text-xs text-slate-500">Up to 8MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
+          </div>
+        </div>
+
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          className="hidden"
+          onChange={handleFileChange('business_cover')}
+        />
+        <input
+          ref={logoInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          className="hidden"
+          onChange={handleFileChange('business_logo')}
+        />
+      </section>
+
+      <section className="surface-card space-y-4 p-6 shadow-subtle">
+        <header className="space-y-1">
+          <h3 className="text-lg font-semibold text-slate-900">Organization profile</h3>
+          <p className="text-sm text-slate-500">This content appears on your public organization page.</p>
+        </header>
+
+        <label className="grid gap-1 text-sm font-medium text-slate-700">
+          Headline
+          <input
+            value={profileHeadline}
+            onChange={(event) => setProfileHeadline(event.target.value.slice(0, HEADLINE_MAX_CHARS))}
+            disabled={profileSaving}
+            maxLength={HEADLINE_MAX_CHARS}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder="Short headline (60 characters max)"
+          />
+          <span className="text-xs text-slate-500">{profileHeadline.length}/{HEADLINE_MAX_CHARS}</span>
+        </label>
+
+        <div className="grid gap-1">
+          <span className="text-sm font-medium text-slate-700">About us</span>
+          <RichTextEditor
+            value={profileAbout}
+            onChange={setProfileAbout}
+            placeholder="Share your mission, values, and what this organization does."
+            minHeight={220}
+            disabled={profileSaving}
+          />
+          <p className="text-xs text-slate-500">Supports formatted text, links, and lists.</p>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={saveProfileDetails}
+            disabled={profileSaving || !canSaveProfile}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {profileSaving ? 'Saving…' : 'Save profile'}
+          </button>
+        </div>
+      </section>
+
+      <section className="surface-card space-y-3 p-6 shadow-subtle">
+        <h3 className="text-sm font-semibold text-slate-900">Visibility</h3>
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <span
+            className={
+              org.status === 'ACTIVE'
+                ? 'inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700'
+                : 'inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700'
+            }
+          >
+            {org.status === 'ACTIVE' ? 'Public' : 'Private'}
+          </span>
+          <p className="text-xs text-slate-600">Public organizations are discoverable. Private organizations are only visible to admins.</p>
+          <button
+            type="button"
+            onClick={toggleVisibility}
+            disabled={visibilitySaving || !canManage}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {visibilitySaving ? 'Saving…' : org.status === 'ACTIVE' ? 'Make private' : 'Make public'}
+          </button>
+        </div>
+      </section>
+
+      <section className="surface-card space-y-3 p-6 shadow-subtle">
+        <h3 className="text-sm font-semibold text-slate-900">Members</h3>
+        {membersLoading ? <p className="text-xs text-slate-500">Loading members…</p> : null}
+        {!membersLoading && !members.length ? <p className="text-xs text-slate-500">No members yet.</p> : null}
+        {members.length ? (
+          <ul className="space-y-2">
+            {members.map((entry) => {
+              const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
+              const canRemove = isOwner && entry.role !== 'OWNER'
+              return (
+                <li key={`${entry.userId}-${entry.role}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <VerifiedAvatar src={entry.user.avatarUrl} alt={displayName} initials={displayName} size={32} />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
+                      <p className="truncate text-xs text-slate-500">@{entry.user.handle} · {entry.role}</p>
+                    </div>
+                  </div>
+                  {canRemove ? (
+                    <button
+                      type="button"
+                      onClick={() => removeMember(entry.userId)}
+                      disabled={memberActionUserId === entry.userId}
+                      className="rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                    >
+                      {memberActionUserId === entry.userId ? 'Removing…' : 'Remove'}
+                    </button>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+      </section>
+
+      <section className="surface-card space-y-3 p-6 shadow-subtle">
+        <h3 className="text-sm font-semibold text-slate-900">Followers</h3>
+        <p className="text-xs text-slate-500">Promote a follower to manager so they can help run this organization.</p>
+        {!followers.length ? <p className="text-xs text-slate-500">No followers available to promote.</p> : null}
+        {followers.length ? (
+          <ul className="space-y-2">
+            {followers.map((entry) => {
+              const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
+              return (
+                <li key={entry.userId} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <VerifiedAvatar src={entry.user.avatarUrl} alt={displayName} initials={displayName} size={32} />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-800">{displayName}</p>
+                      <p className="truncate text-xs text-slate-500">@{entry.user.handle}</p>
+                    </div>
+                  </div>
+                  {isOwner ? (
+                    <button
+                      type="button"
+                      onClick={() => promoteFollower(entry.userId)}
+                      disabled={memberActionUserId === entry.userId}
+                      className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {memberActionUserId === entry.userId ? 'Promoting…' : 'Promote'}
+                    </button>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+      </section>
+
+      {isOwner ? (
+        <section className="surface-card space-y-3 p-6 shadow-subtle">
+          <h3 className="text-sm font-semibold text-rose-700">Danger zone</h3>
+          <p className="text-xs text-slate-600">
+            Deleting permanently removes this organization and all posts, products, channels, and related records.
+          </p>
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            className="inline-flex items-center justify-center rounded-full border border-rose-300 bg-white px-5 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+          >
+            Delete organization
+          </button>
+        </section>
+      ) : null}
     </div>
   )
 }
