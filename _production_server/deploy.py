@@ -17,6 +17,7 @@ PUSH_IGNORE_FILE = LOCAL_CONFIG_DIR / "push_ignore.txt"
 CIVIL_REMOTE_DATA_DIR = "/Users/andrewnormore/CIVIL_DATA"
 CIVIL_REMOTE_APP_DIR = "/Users/andrewnormore/CIVIL"
 CIVIL_REMOTE_MINIO_DIR = "/Volumes/CivilData/minio"
+LOCAL_LARGEFILES_DIR = ROOT_DIR / "civilcitizens_largefiles" / "_geodata"
 
 
 @dataclass(frozen=True)
@@ -167,8 +168,15 @@ def _tar_excludes() -> list[str]:
         # Never upload local secret material to production.
         "secrets",
         "node_modules",
+        "**/node_modules",
+        ".pnpm-store",
+        "**/.pnpm-store",
+        "**/.next",
+        "**/dist",
+        "**/build",
         "buildlogs",
         "__pycache__",
+        "**/__pycache__",
         ".vscode",
         ".idea",
         "_production_server/ssh.txt",
@@ -264,6 +272,41 @@ def upload_repo(cfg: RemoteConfig, *, excludes: Iterable[str] | None = None) -> 
         raise RuntimeError(f"tar failed with exit code {tar_rc}")
     if ssh_rc != 0:
         raise RuntimeError(f"ssh extract failed with exit code {ssh_rc}")
+
+
+def upload_files_rsync(cfg: RemoteConfig, local_files: list[Path], remote_dir: str) -> None:
+    rsync = shutil.which("rsync")
+    if not rsync:
+        raise RuntimeError("rsync not found on PATH")
+    if not local_files:
+        raise RuntimeError("No local files provided for upload")
+
+    missing = [str(path) for path in local_files if not path.is_file()]
+    if missing:
+        raise RuntimeError("Missing local files for upload: " + ", ".join(missing))
+
+    remote_exec(cfg, f"mkdir -p {shlex.quote(remote_dir)}")
+
+    ssh_parts = [
+        "ssh",
+        "-p",
+        shlex.quote(cfg.port),
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
+    if cfg.identity_file:
+        ssh_parts += ["-i", shlex.quote(cfg.identity_file)]
+
+    cmd: list[str] = [
+        rsync,
+        "-az",
+        "--no-times",
+        "-e",
+        " ".join(ssh_parts),
+    ]
+    cmd.extend([str(path) for path in local_files])
+    cmd.append(f"{cfg.user}@{cfg.host}:{remote_dir.rstrip('/')}/")
+    _run(cmd, cwd=ROOT_DIR)
 
 
 def remote_check(cfg: RemoteConfig) -> None:
@@ -395,6 +438,91 @@ curl -fsS -H 'Host: dev.civilcitizens.ca' http://127.0.0.1/nginx-health >/dev/nu
     print("\n✅ Production deploy completed.")
 
 
+def remote_seed_geodata(cfg: RemoteConfig) -> None:
+        local_geodata_dir = Path(os.environ.get("CIVIL_PROD_LARGEFILES_DIR", str(LOCAL_LARGEFILES_DIR))).expanduser().resolve()
+        required_archives = [
+                "lcd_000b21a_e.zip",
+                "lcsd000b21a_e.zip",
+                "lfsa000b21a_e.zip",
+        ]
+
+        if not local_geodata_dir.is_dir():
+                raise RuntimeError(f"Missing local geodata directory: {local_geodata_dir}")
+
+        missing = [name for name in required_archives if not (local_geodata_dir / name).is_file()]
+        if missing:
+                raise RuntimeError(
+                        "Missing required local geodata archives: " + ", ".join(missing) + f" in {local_geodata_dir}"
+                )
+
+        local_archive_paths = [local_geodata_dir / name for name in required_archives]
+
+        upload_repo_for_geodata = (
+            os.environ.get("CIVIL_PROD_GEODATA_UPLOAD_REPO", "").strip().lower() in {"1", "true", "yes"}
+        )
+
+        print("→ Preparing remote directories")
+        remote_prepare(cfg)
+
+        if upload_repo_for_geodata:
+            print(f"→ Uploading repo to {cfg.user}@{cfg.host}:{cfg.remote_dir}")
+            upload_repo(cfg)
+        else:
+            print("→ Skipping full repo upload for geodata run (set CIVIL_PROD_GEODATA_UPLOAD_REPO=1 to force)")
+
+        remote_geodata_dir = f"{cfg.remote_dir.rstrip('/')}/civilcitizens_largefiles/_geodata"
+        print(f"→ Uploading geodata archives to {cfg.user}@{cfg.host}:{remote_geodata_dir}")
+        upload_files_rsync(cfg, local_archive_paths, remote_geodata_dir)
+
+        print("→ Seeding PROD geodata from vendored local archives")
+        script = f"""
+set -euo pipefail
+
+BASE_DIR={shlex.quote(cfg.remote_dir)}
+if [ -d "$BASE_DIR/civil" ]; then
+    APP_DIR="$BASE_DIR/civil"
+    ROOT_DIR="$BASE_DIR"
+else
+    APP_DIR="$BASE_DIR"
+    ROOT_DIR=$(dirname "$BASE_DIR")
+fi
+
+GEO_DIR="$ROOT_DIR/civilcitizens_largefiles/_geodata"
+CD_ZIP="$GEO_DIR/lcd_000b21a_e.zip"
+CSD_ZIP="$GEO_DIR/lcsd000b21a_e.zip"
+FSA_ZIP="$GEO_DIR/lfsa000b21a_e.zip"
+
+for file in "$CD_ZIP" "$CSD_ZIP" "$FSA_ZIP"; do
+    if [ ! -f "$file" ]; then
+        echo "ERROR: missing geodata archive: $file"
+        exit 1
+    fi
+done
+
+if ! command -v pnpm >/dev/null 2>&1; then
+    echo "ERROR: pnpm is not installed on the remote host. Install pnpm (Node/Corepack) and rerun."
+    exit 1
+fi
+
+cd "$APP_DIR"
+
+echo "Using archives:"
+ls -lh "$CD_ZIP" "$CSD_ZIP" "$FSA_ZIP"
+
+export STATSCAN_CD_ZIP="$CD_ZIP"
+export STATSCAN_CSD_ZIP="$CSD_ZIP"
+export STATSCAN_FSA_ZIP="$FSA_ZIP"
+
+pnpm --filter @civil/api seed:admin
+pnpm --filter @civil/api link:cities-subdivisions
+
+echo "\nGeodata seed complete."
+""".strip()
+        remote_exec(cfg, script)
+
+        print("\n✅ Production geodata seeded from vendored archives.")
+
+
 def main(argv: list[str]) -> int:
     cfg = resolve_remote_config()
     sub = argv[0] if argv else "deploy"
@@ -408,10 +536,13 @@ def main(argv: list[str]) -> int:
     if sub in {"deploy", "sync", "upload"}:
         remote_deploy(cfg)
         return 0
+    if sub in {"seed-geodata", "geodata", "seed_geodata"}:
+        remote_seed_geodata(cfg)
+        return 0
     if sub in {"ssh", "shell"}:
         os.execvp("ssh", _ssh_base(cfg))
 
-    print("Usage: python3 _PROD.py [check|prep|deploy|ssh]", file=sys.stderr)
+    print("Usage: python3 _PROD.py [check|prep|deploy|seed-geodata|ssh]", file=sys.stderr)
     return 2
 
 

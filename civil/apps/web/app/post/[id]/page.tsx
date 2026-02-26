@@ -1,6 +1,18 @@
 import { notFound, redirect } from 'next/navigation'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'http://localhost:3000'
+const CIVIL_PUBLIC_HOST = process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca'
+
+const resolveApiBase = () => {
+  const rawApiBase = (process.env.NEXT_PUBLIC_API_BASE || '/api').trim()
+  if (/^https?:\/\//i.test(rawApiBase)) return rawApiBase.replace(/\/+$/, '')
+
+  const rawPublicBase = (process.env.NEXT_PUBLIC_BASE_URL || `https://${CIVIL_PUBLIC_HOST}`).trim()
+  const publicBase = (/^https?:\/\//i.test(rawPublicBase) ? rawPublicBase : `https://${rawPublicBase}`).replace(/\/+$/, '')
+  const apiPath = rawApiBase.startsWith('/') ? rawApiBase : `/${rawApiBase}`
+  return `${publicBase}${apiPath}`
+}
+
+const API_BASE = resolveApiBase()
 
 type PageProps = {
   params: {
