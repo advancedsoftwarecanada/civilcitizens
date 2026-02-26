@@ -6,6 +6,7 @@ export type CommunityOrganization = {
   provinceCode: string | null
   communitySlug: string | null
   name: string
+  headline?: string | null
   slug: string
   type:
     | 'LOCAL_BUSINESS'
