@@ -23,6 +23,7 @@ import {
   FaBalanceScale,
   FaIdCard,
   FaChartLine,
+  FaCalendarAlt,
   FaUserShield,
   FaEye,
   FaLock,
@@ -34,6 +35,39 @@ function IconWrap({ children }: { children: ReactNode }) {
 }
 
 export default function Home() {
+  const builderKeywords = [
+    'Entrepreneurs',
+    'Tradespeople',
+    'Farmers',
+    'Retailers',
+    'Technicians',
+    'Engineers',
+    'Operators',
+    'Managers',
+    'Students',
+    'Founders',
+    'Developers',
+    'Designers',
+    'Marketers',
+    'Sales Teams',
+    'Logistics Teams',
+    'Manufacturers',
+    'Producers',
+    'Electricians',
+    'Plumbers',
+    'Carpenters',
+    'Mechanics',
+    'Hospitality Teams',
+    'Healthcare Workers',
+    'Educators',
+    'Consultants',
+    'Accountants',
+    'Creators',
+    'Contractors',
+    'Drivers',
+    'Support Staff',
+  ]
+
   return (
     <main className="min-h-screen text-slate-900">
       <AutoRedirect />
@@ -47,7 +81,7 @@ export default function Home() {
             <div className="text-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
                 <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
-                <div className="text-center text-sm text-white/80 mt-2">Release 1.6.0 — Jan 7, 2026</div>
+                <div className="text-center text-sm text-white/80 mt-2">Release 1.7.0 - Feb 26, 2026</div>
               </div>
             </div>
 
@@ -90,19 +124,19 @@ export default function Home() {
             </article>
 
             <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBuilding size={48} /></IconWrap>
+              <IconWrap><FaHandshake size={48} /></IconWrap>
               <h3 className="text-lg font-bold">Community</h3>
-              <p className="text-slate-700 mt-3">Your local Chamber of Citizens — neighbours, leaders, local updates.</p>
+              <p className="text-slate-700 mt-3">Automatically connect with people, organizations and events around you.</p>
             </article>
 
             <article className="benefit-card p-6 flex flex-col items-center text-center">
               <IconWrap><FaBuilding size={48} /></IconWrap>
               <h3 className="text-lg font-bold">Organizations</h3>
-              <p className="text-slate-700 mt-3">Groups, clubs, local businesses, civic teams—join or create organizations that matter.</p>
+              <p className="text-slate-700 mt-3">Join groups, clubs, local businesses, with amazing tools to grow and manage.</p>
             </article>
 
             <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaHandshake size={48} /></IconWrap>
+              <IconWrap><FaCalendarAlt size={48} /></IconWrap>
               <h3 className="text-lg font-bold">Events</h3>
               <p className="text-slate-700 mt-3">Townhalls, meetups, business promotions — all locally grounded.</p>
             </article>
@@ -346,7 +380,22 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-6xl mx-auto">
             <div className="benefit-card p-6 text-left">
               <h3 className="text-xl font-bold text-slate-900">🛠 Built for Builders</h3>
-              <p className="text-slate-700 mt-3">Entrepreneurs. Tradespeople. Farmers. Retailers. Technicians. Engineers. Operators. Managers. Students.</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {builderKeywords.map((keyword, index) => (
+                  <span
+                    key={keyword}
+                    className={`inline-flex items-center rounded-full border px-3 py-1 text-sm font-semibold ${
+                      index % 3 === 0
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : index % 3 === 1
+                          ? 'border-sky-200 bg-sky-50 text-sky-700'
+                          : 'border-slate-200 bg-white text-slate-700'
+                    }`}
+                  >
+                    {keyword}
+                  </span>
+                ))}
+              </div>
             </div>
 
             <div className="benefit-card p-6 text-left">
@@ -421,7 +470,7 @@ export default function Home() {
               <p className="text-slate-700 mt-3">Matches supply and demand. Identifies trends. Structures fulfillment workflows.</p>
             </article>
 
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
+            <article className="benefit-card p-6 flex flex-col items-center text-center lg:col-start-2">
               <IconWrap><FaUsers size={42} /></IconWrap>
               <h3 className="text-lg font-bold">Community Coordination</h3>
               <p className="text-slate-700 mt-2 font-medium">“Hey Civil, organize a tee time Saturday.”</p>

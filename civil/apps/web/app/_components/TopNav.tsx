@@ -404,10 +404,14 @@ export default function TopNav() {
           <div className="flex flex-1 justify-center px-2">
             <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
               <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <form action="/search" method="GET">
+              <form action="/search" method="GET" autoComplete="off">
                 <input
                   type="search"
                   name="q"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   placeholder="Search"
                   className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
                   value={searchQuery}

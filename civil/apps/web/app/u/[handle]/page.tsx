@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
+import { HiOutlineUserPlus, HiOutlineStar, HiOutlineBriefcase } from 'react-icons/hi2'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
@@ -14,6 +15,7 @@ import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
+import { formatUserDisplayName } from '../../_lib/text'
 import { type ReactionType } from '@civil/shared'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
@@ -311,8 +313,10 @@ export default function UserPostsPage({ params }: PageProps) {
   const coverDisplayUrl = profile?.coverUrl ?? null
   const editCoverHref = '/profile/edit?photo=cover#photos'
   const editAvatarHref = '/profile/edit?photo=avatar#photos'
-  const ownerFirstName = viewer?.name?.split(' ')[0] ?? viewer?.handle ?? 'Citizen'
-  const ownerInitials = viewer?.name ?? viewer?.handle ?? 'C'
+  const ownerDisplayName = formatUserDisplayName(viewer?.name, viewer?.handle) || viewer?.handle || 'Citizen'
+  const ownerFirstName = ownerDisplayName.split(' ')[0] ?? 'Citizen'
+  const ownerInitials = ownerDisplayName || 'C'
+  const profileDisplayName = formatUserDisplayName(profile?.name, profile?.handle) || profile?.handle || 'Citizen'
   const isViewerVerified = Boolean(viewer?.isVerified)
   const isViewerBusiness = Boolean(viewer?.isPremium)
   const resolvedRelationship: ProfileRelationship =
@@ -415,6 +419,7 @@ export default function UserPostsPage({ params }: PageProps) {
             onClick={handleSendFriendRequest}
             disabled={isSendingFriendRequest}
           >
+            <HiOutlineUserPlus className="mr-2 h-4 w-4" aria-hidden="true" />
             Add friend
           </button>
         )
@@ -462,7 +467,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <span role="img" aria-label="Professional connection">
                 🧑‍💼
               </span>
-              Business Connected
+              Connected
               <svg
                 aria-hidden="true"
                 width="14"
@@ -495,11 +500,12 @@ export default function UserPostsPage({ params }: PageProps) {
         return (
           <button
             type="button"
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             onClick={handleSendConnectionRequest}
             disabled={isSendingConnectionRequest}
           >
-            Business Connect
+            <HiOutlineBriefcase className="mr-2 h-4 w-4" aria-hidden="true" />
+            Connect
           </button>
         )
     }
@@ -744,9 +750,9 @@ export default function UserPostsPage({ params }: PageProps) {
           friendshipStatus: isOwner ? 'self' : 'none',
           friendshipId: undefined,
           friendshipSince: null,
-          connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-          connectionId: prev?.connectionId,
-          connectionSince: prev?.connectionSince ?? null,
+          connectionStatus: isOwner ? 'self' : 'none',
+          connectionId: undefined,
+          connectionSince: null,
           following: !currentlyFollowing,
         }
       })
@@ -1095,12 +1101,12 @@ export default function UserPostsPage({ params }: PageProps) {
                       <div className="absolute inset-0 rounded-full bg-gradient-to-br from-rose-200 via-amber-100 to-sky-200 blur-lg" aria-hidden="true" />
                       <VerifiedAvatar
                         src={profile.avatarUrl}
-                        alt={profile.name ?? profile.handle}
-                        initials={profile.name ?? profile.handle}
+                        alt={profileDisplayName}
+                        initials={profileDisplayName}
                         size={96}
                         isVerified={Boolean(profile.isVerified)}
                         isBusiness={Boolean(profile.isPremium)}
-                        className="relative border-4 border-white"
+                        className="relative rounded-full border-4 border-white"
                         href={avatarThreadUrl ?? undefined}
                       />
                       {isOwner ? (
@@ -1117,7 +1123,7 @@ export default function UserPostsPage({ params }: PageProps) {
                       ) : null}
                     </div>
                     <div>
-                      <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{profile.name ?? profile.handle}</h1>
+                      <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{profileDisplayName}</h1>
                       <p className="text-sm text-slate-500">@{profile.handle}</p>
                       <p className="text-sm text-slate-500">Joined {formatDate(profile.createdAt) || '—'}</p>
                     </div>
@@ -1132,7 +1138,6 @@ export default function UserPostsPage({ params }: PageProps) {
                   ) : (
                     <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
                       {renderFriendshipPrimaryCta()}
-                      {renderConnectionPrimaryCta()}
                       {resolvedRelationship.friendshipStatus === 'friends' ? (
                         <button
                           type="button"
@@ -1148,15 +1153,17 @@ export default function UserPostsPage({ params }: PageProps) {
                           className={clsx(
                             'inline-flex items-center justify-center rounded-full px-5 py-2 font-semibold transition',
                             resolvedRelationship.following
-                              ? 'bg-slate-900 text-white shadow-lg hover:brightness-110'
-                              : 'border border-slate-900/10 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900',
+                              ? 'bg-amber-500 text-white shadow-lg hover:brightness-110'
+                              : 'bg-amber-400 text-slate-900 shadow-lg hover:brightness-110',
                           )}
                           onClick={handleToggleFollow}
                           disabled={followLoading}
                         >
+                          <HiOutlineStar className="mr-2 h-4 w-4" aria-hidden="true" />
                           {resolvedRelationship.following ? 'Following' : 'Follow'}
                         </button>
                       )}
+                      {renderConnectionPrimaryCta()}
                     </div>
                   )}
                 </div>
@@ -1262,7 +1269,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <div className="flex items-center gap-3">
                 <VerifiedAvatar
                   src={viewer?.avatarUrl ?? null}
-                  alt={viewer?.name ?? viewer?.handle ?? ownerFirstName}
+                  alt={ownerDisplayName}
                   initials={ownerInitials}
                   size={56}
                   isVerified={isViewerVerified}

@@ -11,6 +11,7 @@ import VerifiedAvatar from '../_components/VerifiedAvatar'
 import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
 
 const MIN_QUERY_LENGTH = 2
@@ -23,11 +24,13 @@ const SEARCH_TABS: Array<{ value: SearchType; label: string }> = [
   { value: 'communities', label: 'Communities' },
 ]
 
-export type HomeChamber = {
+export type HomeCommunitySummary = {
   provinceCode: string
   provinceName: string | null
-  chamberSlug: string
-  chamberName: string | null
+  communitySlug?: string | null
+  communityName?: string | null
+  chamberSlug?: string | null
+  chamberName?: string | null
 }
 
 export type UserSearchResult = {
@@ -37,7 +40,8 @@ export type UserSearchResult = {
   avatarUrl: string | null
   isPremium: boolean
   isVerified: boolean
-  homeChamber: HomeChamber | null
+  homeCommunity?: HomeCommunitySummary | null
+  homeChamber?: HomeCommunitySummary | null
 }
 
 type CommunitySearchResult = {
@@ -241,10 +245,11 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
     return `No ${label} found for that query yet.`
   }, [trimmedActiveQuery, tooShort, isLoading, fetchStatus, searchType, peopleResults.length, communityResults.length])
 
-  const renderHomeCommunity = (home: HomeChamber | null) => {
+  const renderHomeCommunity = (home: HomeCommunitySummary | null | undefined) => {
     if (!home) return 'No home community yet'
     const provinceLabel = home.provinceName ?? home.provinceCode.toUpperCase()
-    const chamberLabel = home.chamberName ?? home.chamberSlug
+    const chamberLabel = home.communityName ?? home.chamberName ?? home.communitySlug ?? home.chamberSlug
+    if (!chamberLabel) return 'No home community yet'
     return `${provinceLabel} / ${chamberLabel}`
   }
 
@@ -282,7 +287,9 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
       }
       return (
         <ul className="space-y-3">
-          {peopleResults.map((person) => (
+          {peopleResults.map((person) => {
+            const displayName = formatUserDisplayName(person.name, person.handle) || person.handle
+            return (
             <li key={person.id}>
               <Link
                 href={`/u/${person.handle}`}
@@ -290,22 +297,23 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
               >
                 <VerifiedAvatar
                   src={person.avatarUrl}
-                  alt={person.name ?? person.handle}
-                  initials={person.name ?? person.handle}
+                  alt={displayName}
+                  initials={displayName}
                   size={56}
                   isVerified={person.isVerified}
                   isBusiness={person.isPremium}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-                    <p className="text-lg font-semibold text-slate-900">{person.name ?? person.handle}</p>
+                    <p className="text-lg font-semibold text-slate-900">{displayName}</p>
                     <span className="text-xs text-slate-400">@{person.handle}</span>
                   </div>
-                  <p className="text-sm text-slate-500">{renderHomeCommunity(person.homeChamber)}</p>
+                  <p className="text-sm text-slate-500">{renderHomeCommunity(person.homeCommunity ?? person.homeChamber)}</p>
                 </div>
               </Link>
             </li>
-          ))}
+            )
+          })}
         </ul>
       )
     }
@@ -325,7 +333,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
           return (
             <li key={`${community.provinceCode}:${community.slug}`}>
               <Link
-                href={`/communities/${community.provinceCode}/${encodeURIComponent(community.slug)}`}
+                href={`/${community.provinceCode.toLowerCase()}/${encodeURIComponent(community.slug)}`}
                 className="block rounded-[28px] border border-white/60 bg-white/90 px-4 py-3 shadow-[0_20px_60px_rgba(15,23,42,0.08)] transition hover:border-[var(--cc-primary)]/50"
               >
                 <p className="text-lg font-semibold text-slate-900">{community.chamberName}</p>
@@ -364,10 +372,14 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
                   </button>
                 ))}
               </div>
-              <form onSubmit={handleSubmit} className="relative w-full sm:max-w-lg">
+              <form onSubmit={handleSubmit} className="relative w-full sm:max-w-lg" autoComplete="off">
                 <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="search"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={searchType === 'people' ? 'Search people' : 'Search communities'}

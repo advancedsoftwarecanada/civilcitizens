@@ -54,7 +54,7 @@ export default function VerifiedAvatar({
   const badgeAlt = badgeVariant === 'business' ? 'Business badge' : badgeVariant === 'verified' ? 'Verified badge' : undefined
 
   const wrapperProps = {
-    className: clsx('relative inline-flex items-center justify-center', className),
+    className: clsx('relative inline-flex items-center justify-center rounded-full', className),
     style: { width: dimension, height: dimension },
   }
 

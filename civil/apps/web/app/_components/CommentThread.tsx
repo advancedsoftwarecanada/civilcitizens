@@ -7,6 +7,7 @@ import type { IconType } from 'react-icons'
 import { LuArrowBigDown, LuArrowBigUp, LuDot, LuMessageSquare } from 'react-icons/lu'
 import CommentComposer from './CommentComposer'
 import { pushToast } from './useToasts'
+import { formatUserDisplayName } from '../_lib/text'
 import VerifiedAvatar from './VerifiedAvatar'
 
 export type ApiComment = {
@@ -182,6 +183,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
   const hasReplies = comment.replies.length > 0
   const showCollapseButton = hasReplies || isNested
   const canVote = Boolean(currentUser?.isVerified || currentUser?.isPremium)
+  const authorDisplayName = formatUserDisplayName(comment.author.name, comment.author.handle) || comment.author.handle
 
   const handleVote = useCallback(
     async (nextValue: -1 | 0 | 1) => {
@@ -257,8 +259,8 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
         <div className="flex items-start gap-3">
           <VerifiedAvatar
             src={comment.author.avatarUrl}
-            alt={comment.author.name ?? comment.author.handle}
-            initials={comment.author.name ?? comment.author.handle}
+            alt={authorDisplayName}
+            initials={authorDisplayName}
             size={44}
             isVerified={Boolean(comment.author.isVerified)}
             isBusiness={Boolean(comment.author.isPremium)}
@@ -268,7 +270,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
           <div className="min-w-0 flex-1 space-y-3">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
               <Link href={`/u/${comment.author.handle}`} className="font-semibold text-slate-900 hover:underline">
-                {comment.author.name ?? comment.author.handle}
+                {authorDisplayName}
               </Link>
               <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
                 <LuDot className="h-3 w-3" />@{comment.author.handle}
