@@ -62,6 +62,26 @@ type OrgMembersResponse = {
   followers?: OrgFollowerItem[]
 }
 
+type ShopWarehouseItem = {
+  id: string
+  name: string
+  address: string | null
+  isHeadOffice: boolean
+}
+
+type ShopSettingsPayload = {
+  headOfficeAddress: string
+  warehouseSameAsHeadOffice: boolean
+  directDepositTransit: string
+  directDepositInstitution: string
+  directDepositAccount: string
+}
+
+type OrgShopSettingsResponse = {
+  settings?: ShopSettingsPayload
+  warehouses?: ShopWarehouseItem[]
+}
+
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
@@ -152,6 +172,18 @@ export default function OrganizationSettingsClient({
   const [membersLoading, setMembersLoading] = useState(false)
   const [memberActionUserId, setMemberActionUserId] = useState<string | null>(null)
   const [visibilitySaving, setVisibilitySaving] = useState(false)
+  const [shopSettings, setShopSettings] = useState<ShopSettingsPayload>({
+    headOfficeAddress: '',
+    warehouseSameAsHeadOffice: true,
+    directDepositTransit: '',
+    directDepositInstitution: '',
+    directDepositAccount: '',
+  })
+  const [shopSettingsDirty, setShopSettingsDirty] = useState(false)
+  const [shopSettingsSaving, setShopSettingsSaving] = useState(false)
+  const [warehouses, setWarehouses] = useState<ShopWarehouseItem[]>([])
+  const [warehouseDraft, setWarehouseDraft] = useState({ name: '', address: '' })
+  const [warehouseSaving, setWarehouseSaving] = useState(false)
 
   const [photoModalCategory, setPhotoModalCategory] = useState<BusinessMediaCategory | null>(null)
   const [photoCaption, setPhotoCaption] = useState('')
@@ -202,6 +234,38 @@ export default function OrganizationSettingsClient({
     }
   }, [orgApiPath, token])
 
+  const loadShopSettings = useCallback(async () => {
+    if (!token) {
+      setWarehouses([])
+      return
+    }
+
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/shop`), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        setWarehouses([])
+        return
+      }
+
+      const { json } = await parseApiResponse<OrgShopSettingsResponse>(res)
+      const settings = json?.settings
+      setShopSettings({
+        headOfficeAddress: settings?.headOfficeAddress ?? '',
+        warehouseSameAsHeadOffice: settings?.warehouseSameAsHeadOffice ?? true,
+        directDepositTransit: settings?.directDepositTransit ?? '',
+        directDepositInstitution: settings?.directDepositInstitution ?? '',
+        directDepositAccount: settings?.directDepositAccount ?? '',
+      })
+      setShopSettingsDirty(false)
+      setWarehouses(Array.isArray(json?.warehouses) ? json.warehouses : [])
+    } catch {
+      setWarehouses([])
+    }
+  }, [orgApiPath, token])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -237,6 +301,10 @@ export default function OrganizationSettingsClient({
   useEffect(() => {
     void loadMembers()
   }, [loadMembers])
+
+  useEffect(() => {
+    void loadShopSettings()
+  }, [loadShopSettings])
 
   useEffect(() => {
     if (!org) return
@@ -298,6 +366,98 @@ export default function OrganizationSettingsClient({
       setSaving(false)
     }
   }, [details.address, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
+
+  const saveShopSettings = useCallback(async () => {
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!canManage) return
+
+    setShopSettingsSaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/shop/settings`), {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          headOfficeAddress: shopSettings.headOfficeAddress.trim() ? shopSettings.headOfficeAddress.trim() : null,
+          warehouseSameAsHeadOffice: shopSettings.warehouseSameAsHeadOffice,
+          directDepositTransit: shopSettings.directDepositTransit.trim() ? shopSettings.directDepositTransit.trim() : null,
+          directDepositInstitution: shopSettings.directDepositInstitution.trim() ? shopSettings.directDepositInstitution.trim() : null,
+          directDepositAccount: shopSettings.directDepositAccount.trim() ? shopSettings.directDepositAccount.trim() : null,
+        }),
+      })
+
+      const { json } = await parseApiResponse<{ error?: unknown }>(res)
+      if (!res.ok) {
+        const rawError =
+          typeof (json as any)?.error === 'string'
+            ? (json as any).error
+            : typeof (json as any)?.error?.message === 'string'
+              ? (json as any).error.message
+              : null
+        pushToast(rawError ?? 'Unable to save shop settings right now.', 'error')
+        return
+      }
+
+      setShopSettingsDirty(false)
+      pushToast('Saved shop settings.', 'success')
+      await loadShopSettings()
+    } catch {
+      pushToast('Unable to save shop settings right now.', 'error')
+    } finally {
+      setShopSettingsSaving(false)
+    }
+  }, [canManage, loadShopSettings, orgApiPath, shopSettings.directDepositAccount, shopSettings.directDepositInstitution, shopSettings.directDepositTransit, shopSettings.headOfficeAddress, shopSettings.warehouseSameAsHeadOffice, token])
+
+  const addWarehouse = useCallback(async () => {
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!canManage) return
+    const name = warehouseDraft.name.trim()
+    if (!name) {
+      pushToast('Warehouse name is required.', 'error')
+      return
+    }
+
+    setWarehouseSaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/shop/warehouses`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          address: warehouseDraft.address.trim() ? warehouseDraft.address.trim() : null,
+        }),
+      })
+      const { json } = await parseApiResponse<{ error?: unknown }>(res)
+      if (!res.ok) {
+        const rawError =
+          typeof (json as any)?.error === 'string'
+            ? (json as any).error
+            : typeof (json as any)?.error?.message === 'string'
+              ? (json as any).error.message
+              : null
+        pushToast(rawError ?? 'Unable to add warehouse right now.', 'error')
+        return
+      }
+      setWarehouseDraft({ name: '', address: '' })
+      pushToast('Warehouse added.', 'success')
+      await loadShopSettings()
+    } catch {
+      pushToast('Unable to add warehouse right now.', 'error')
+    } finally {
+      setWarehouseSaving(false)
+    }
+  }, [canManage, loadShopSettings, orgApiPath, token, warehouseDraft.address, warehouseDraft.name])
 
   const toggleVisibility = useCallback(async () => {
     if (!token || !org || !canManage) return
@@ -987,6 +1147,118 @@ export default function OrganizationSettingsClient({
             })}
           </ul>
         ) : null}
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-semibold text-slate-900">Shop settings</h3>
+        <p className="text-xs text-slate-500">Configure your shop profile and warehouse network for inventory management.</p>
+
+        <label className="grid gap-1 text-sm font-medium text-slate-700">
+          Head office address
+          <input
+            value={shopSettings.headOfficeAddress}
+            onChange={(e) => {
+              setShopSettings((prev) => ({ ...prev, headOfficeAddress: e.target.value }))
+              setShopSettingsDirty(true)
+            }}
+            disabled={shopSettingsSaving}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder="Head office address"
+          />
+        </label>
+
+        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+          <input
+            type="checkbox"
+            checked={shopSettings.warehouseSameAsHeadOffice}
+            onChange={(e) => {
+              setShopSettings((prev) => ({ ...prev, warehouseSameAsHeadOffice: e.target.checked }))
+              setShopSettingsDirty(true)
+            }}
+          />
+          Warehouse office is same as head office
+        </label>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Direct deposit transit
+            <input
+              value={shopSettings.directDepositTransit}
+              disabled
+              className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
+              placeholder="Coming later"
+            />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Direct deposit institution
+            <input
+              value={shopSettings.directDepositInstitution}
+              disabled
+              className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
+              placeholder="Coming later"
+            />
+          </label>
+          <label className="grid gap-1 text-sm font-medium text-slate-700">
+            Direct deposit account
+            <input
+              value={shopSettings.directDepositAccount}
+              disabled
+              className="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-500"
+              placeholder="Coming later"
+            />
+          </label>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <h4 className="text-sm font-semibold text-slate-900">Warehouses</h4>
+          {!warehouses.length ? <p className="mt-2 text-xs text-slate-500">No warehouses yet.</p> : null}
+          {warehouses.length ? (
+            <ul className="mt-2 space-y-2">
+              {warehouses.map((warehouse) => (
+                <li key={warehouse.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-900">
+                    {warehouse.name} {warehouse.isHeadOffice ? <span className="text-xs text-slate-500">(Head office)</span> : null}
+                  </p>
+                  <p className="text-xs text-slate-500">{warehouse.address || 'No address provided'}</p>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+            <input
+              value={warehouseDraft.name}
+              onChange={(e) => setWarehouseDraft((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Warehouse name"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+            <input
+              value={warehouseDraft.address}
+              onChange={(e) => setWarehouseDraft((prev) => ({ ...prev, address: e.target.value }))}
+              placeholder="Warehouse address"
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={addWarehouse}
+              disabled={warehouseSaving}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+            >
+              {warehouseSaving ? 'Adding…' : 'Add warehouse'}
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={saveShopSettings}
+            disabled={shopSettingsSaving || !shopSettingsDirty}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            {shopSettingsSaving ? 'Saving…' : 'Save shop settings'}
+          </button>
+        </div>
       </section>
 
       <section className="space-y-3">

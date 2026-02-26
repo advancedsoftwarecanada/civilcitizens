@@ -30,6 +30,8 @@ From repo root:
     - `/Volumes/CivilData/minio` (if `/Volumes/CivilData` is mounted)
 - `python3 _PROD.py`
   - uploads repository to `/Users/andrewnormore/CIVIL`
+- `python3 _PROD.py geodata`
+  - uploads only required geodata archives (not full repo) and seeds production geodata from vendored local archives (no StatsCan download)
 - `python3 _PROD.py ssh`
   - opens SSH shell to host
 
@@ -43,6 +45,29 @@ From repo root:
 - `CIVIL_PROD_DATA_DIR` (default `/Users/andrewnormore/CIVIL_DATA`)
 - `CIVIL_PROD_MINIO_DIR` (default `/Volumes/CivilData/minio`)
 - `CIVIL_PROD_PUBLIC_HOST` (default `civilcitizens.ca`)
+- `CIVIL_PROD_LARGEFILES_DIR` (default `<repo>/civilcitizens_largefiles/_geodata`)
+- `CIVIL_PROD_GEODATA_UPLOAD_REPO` (default off; set `1` to force full repo upload before geodata seed)
+
+## Vendored geodata source
+
+Keep large geodata sources in:
+
+- `civilcitizens_largefiles/_geodata/lcd_000b21a_e.zip`
+- `civilcitizens_largefiles/_geodata/lcsd000b21a_e.zip`
+- `civilcitizens_largefiles/_geodata/lfsa000b21a_e.zip`
+
+This folder is intentionally gitignored, but deploy upload still sends it to the server so remote seeding can run from local source files.
+
+Run:
+
+- `python3 _PROD.py geodata`
+
+This executes:
+
+- `pnpm --filter @civil/api seed:admin`
+- `pnpm --filter @civil/api link:cities-subdivisions`
+
+with `STATSCAN_*_ZIP` env vars pointed at uploaded vendored archives.
 
 ## Manual Docker steps after upload
 

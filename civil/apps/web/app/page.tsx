@@ -10,6 +10,7 @@ import {
   FaBriefcase,
   FaComments,
   FaWallet,
+  FaShoppingCart,
   FaBuilding,
   FaGlobeAmericas,
   FaNewspaper,
@@ -22,6 +23,10 @@ import {
   FaBalanceScale,
   FaIdCard,
   FaChartLine,
+  FaUserShield,
+  FaEye,
+  FaLock,
+  FaUserFriends,
 } from 'react-icons/fa'
 
 function IconWrap({ children }: { children: ReactNode }) {
@@ -47,18 +52,18 @@ export default function Home() {
             </div>
 
             <div className="text-center lg:text-left">
-              <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.35em] text-white/80 mb-3">Community. Commerce. Careers. Coordination.</p>
-              <h1 className="text-4xl font-extrabold mb-3 text-white">Canada’s Community, Commerce & Careers Platform.</h1>
-              <p className="text-lg leading-relaxed text-white/90 mb-6">
-                Built for <strong>real people, real businesses, and real opportunity</strong>—all inside one Canadian system.
+              <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.35em] text-white/80 mb-3">Community. Commerce. Careers. Governance.</p>
+              <h1 className="text-4xl font-extrabold mb-3 text-white">Together, we imagine an ideal society.</h1>
+              <p className="text-lg leading-relaxed text-white/90">
+                Civil is Canada’s integrated network for people, business, and civic life — built to connect Canadians, strengthen small business, and organize our communities for the future.
               </p>
+              <p className="text-lg leading-relaxed text-white/90 mt-4">Built by Canadians, for Canadians.</p>
+              <p className="text-lg leading-relaxed text-white/90 mt-1 mb-6">Join us in shaping the next chapter of our economy and our communities.</p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <Link href="/register" className="btn-primary-cc">Register</Link>
-                <Link href="/login" className="btn-primary-cc">Login</Link>
+                <Link href="/register" className="btn-primary-cc">Join Civil</Link>
+                <Link href="/login" className="btn-transparent-cc">Login</Link>
               </div>
-              <p className="mt-4 text-sm text-white/85">
-                Plans start at $2.99/month. No selling your data. Ads stay strictly Canadian-owned.
-              </p>
+              <p className="mt-4 text-sm text-white/85">Join for free. Pro plans start at just $2.99/month.</p>
             </div>
           </div>
         </div>
@@ -67,9 +72,9 @@ export default function Home() {
       {/* COMMUNITY */}
       <section className="bg-white py-16">
         <div className="container mx-auto px-4 text-center">
-          <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-slate-500 mb-3">🔷 Community</p>
-          <h2 className="text-3xl font-bold mb-4">Your people. Your riding. Your Canada.</h2>
-          <p className="text-lg text-slate-700 max-w-2xl mx-auto mb-10">Civil is built around verified Canadians and real communities — not global noise.</p>
+          <p className="text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-slate-500 mb-3"><span aria-hidden="true" className="text-red-600 mr-2">◆</span>Community</p>
+          <h2 className="text-2xl sm:text-3xl font-bold mb-4">Your people. Your riding. Your Canada.</h2>
+          <p className="text-base sm:text-lg text-slate-700 max-w-2xl mx-auto mb-10">Civil is built around verified Canadians and real communities — not global noise.</p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-8 max-w-6xl mx-auto">
             <article className="benefit-card p-6 flex flex-col items-center text-center">
@@ -140,13 +145,30 @@ export default function Home() {
       </section>
 
       {/* COMMERCE */}
-      <section className="bg-white py-16">
-        <div className="container mx-auto px-4 text-center">
-          <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-slate-500 mb-3">🔷 Commerce</p>
-          <h2 className="text-3xl font-bold mb-4">Keep opportunity inside Canada.</h2>
-          <p className="text-lg text-slate-700 max-w-2xl mx-auto mb-10">Buy local, sell local, and transact safely in a verified Canadian network.</p>
+      <section className="hero-section relative overflow-hidden py-14 text-white">
+        <BackgroundVideo fixed />
+        <div className="absolute inset-0 bg-slate-950/65" aria-hidden="true" />
+        <div className="relative z-10 container mx-auto px-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
+            <div className="hidden lg:flex items-center justify-center">
+              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
+                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+              </div>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-8 max-w-6xl mx-auto">
+            <div className="text-center lg:text-left">
+              <p className="inline-flex items-center rounded-lg border border-white/70 bg-white/[0.03] px-3 py-1 text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-white/85 mb-3 mx-auto lg:mx-0"><span aria-hidden="true" className="text-red-400 mr-2">◆</span>Commerce</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">Keep opportunity inside Canada.</h2>
+              <p className="text-white/90 mt-4">Buy local, sell local, and transact safely in a verified Canadian network.</p>
+              <p className="text-white/90 mt-3">Run online and in-store commerce, contracts, and delivery in one integrated system.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-16">
+        <div className="container mx-auto px-4 text-center space-y-10">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
             <article className="benefit-card p-6 flex flex-col items-center text-center">
               <IconWrap><FaStore size={48} /></IconWrap>
               <h3 className="text-lg font-bold">Market</h3>
@@ -169,6 +191,101 @@ export default function Home() {
               <h3 className="text-lg font-bold">Rides</h3>
               <p className="text-slate-700 mt-3">Book local rides and transportation inside the same trusted Canadian network — fast, convenient, and community-powered.</p>
             </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaStore size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Sell online + in-store</h3>
+              <p className="text-slate-700 mt-3">Manage customers, orders, and inventory in one place.</p>
+            </article>
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaGlobeAmericas size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Real-Time Supply Visibility</h3>
+              <p className="text-slate-700 mt-3">See buying signals. Discover suppliers. Reduce waste.</p>
+            </article>
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaHandshake size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Built-In Canadian Network</h3>
+              <p className="text-slate-700 mt-3">Connect directly with verified businesses nationwide.</p>
+            </article>
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Contracts & Delivery Included</h3>
+              <p className="text-slate-700 mt-3">Create contracts at checkout and coordinate delivery in the same workflow.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Contracts at checkout</h3>
+              <p className="text-slate-700 mt-3">Define pickup, drop-off, timing, and service scope clearly.</p>
+            </article>
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaHandshake size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Local delivery dispatch</h3>
+              <p className="text-slate-700 mt-3">Hire verified movers and drivers without jumping between tools.</p>
+            </article>
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaUsers size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Verified participants</h3>
+              <p className="text-slate-700 mt-3">Work with real Canadians in a trusted network — less fraud, less friction.</p>
+            </article>
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaShoppingCart size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Canada wide shopping</h3>
+              <p className="text-slate-700 mt-3">A single unified shopping cart allows you to buy anything from anyone, across the nation!</p>
+            </article>
+          </div>
+
+          <p className="text-slate-900 font-semibold">One system. Not five.</p>
+        </div>
+      </section>
+
+      {/* DRIVE FOR CANADA */}
+      <section className="hero-section relative overflow-hidden py-14 text-white">
+        <BackgroundVideo fixed />
+        <div className="absolute inset-0 bg-slate-950/65" aria-hidden="true" />
+        <div className="relative z-10 container mx-auto px-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
+            <div className="hidden lg:flex items-center justify-center">
+              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
+                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+              </div>
+            </div>
+
+            <div className="text-center lg:text-left">
+              <p className="inline-flex items-center rounded-lg border border-white/70 bg-white/[0.03] px-3 py-1 text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-white/85 mb-3 mx-auto lg:mx-0"><span aria-hidden="true" className="text-red-400 mr-2">◆</span>Drive For Canada</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">Drive passengers, fulfill shipments, and build your own transport income.</h2>
+              <p className="text-white/90 mt-4">Participate in ride sharing to pick up and drop off passengers. You keep the lion&apos;s share.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-16">
+        <div className="container mx-auto px-4 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaFileContract size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Shipping Contracts</h3>
+              <p className="text-slate-700 mt-3">Pick up and drop off shipping contracts created by commerce transactions.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaCar size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Short Distance</h3>
+              <p className="text-slate-700 mt-3">Short distance routes.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaGlobeAmericas size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Long Distance</h3>
+              <p className="text-slate-700 mt-3">Long distance routes.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Build Your Business</h3>
+              <p className="text-slate-700 mt-3">Start your own transport business.</p>
+            </article>
           </div>
         </div>
       </section>
@@ -186,15 +303,15 @@ export default function Home() {
             </div>
 
             <div className="text-center lg:text-left">
-              <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-white/80 mb-3">🔷 Civil Careers</p>
-              <h2 className="text-3xl sm:text-4xl font-bold text-white">Built for Canadian Professionals.</h2>
+              <p className="inline-flex items-center rounded-lg border border-white/70 bg-white/[0.03] px-3 py-1 text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-white/85 mb-3 mx-auto lg:mx-0"><span aria-hidden="true" className="text-red-400 mr-2">◆</span>Careers</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">Built for Canadian Professionals.</h2>
               <p className="text-white/90 mt-4">
                 Civil connects Canadian talent with Canadian opportunity — without vanity metrics or algorithm games.
               </p>
 
               <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <Link href="/register" className="btn-primary-cc">Register</Link>
-                <Link href="/login" className="btn-primary-cc">Login</Link>
+                <Link href="/register" className="btn-primary-cc">Join Now</Link>
+                <Link href="/login" className="btn-transparent-cc">Login</Link>
               </div>
             </div>
           </div>
@@ -245,93 +362,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* CIVIL FOR BUSINESS */}
-      <section className="hero-section relative overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 bg-slate-950/65" aria-hidden="true" />
-        <div className="relative z-10 container mx-auto px-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
-            <div className="hidden lg:flex items-center justify-center">
-              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
-              </div>
-            </div>
-
-            <div className="text-center lg:text-left">
-              <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-white/80 mb-3">🔷 Civil For Business</p>
-              <h2 className="text-3xl sm:text-4xl font-bold text-white">Run your business inside Canada’s integrated platform.</h2>
-              <p className="text-white/90 mt-4">One operating system for commerce — online and in-store.</p>
-
-              <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <Link href="/register" className="btn-primary-cc">Register</Link>
-                <Link href="/login" className="btn-primary-cc">Login</Link>
-              </div>
-
-              <div className="mt-6 rounded-2xl border border-white/20 bg-white/10 p-6 text-left backdrop-blur-sm">
-                <p className="text-white/90">Online and in-store commerce, unified.</p>
-                <p className="text-white/90 mt-2">Manage supply, contracts, and delivery in one place.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="bg-white py-16">
-        <div className="container mx-auto px-4 text-center space-y-10">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaStore size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Sell online + in-store</h3>
-              <p className="text-slate-700 mt-3">Manage customers, orders, and inventory in one place.</p>
-            </article>
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaGlobeAmericas size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Real-Time Supply Visibility</h3>
-              <p className="text-slate-700 mt-3">See buying signals. Discover suppliers. Reduce waste.</p>
-            </article>
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaHandshake size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Built-In Canadian Network</h3>
-              <p className="text-slate-700 mt-3">Connect directly with verified businesses nationwide.</p>
-            </article>
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBriefcase size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Contracts & Delivery Included</h3>
-              <p className="text-slate-700 mt-3">Create contracts at checkout and coordinate delivery in the same workflow.</p>
-            </article>
-          </div>
-
-          <p className="text-slate-900 font-semibold">One system. Not five.</p>
-        </div>
-      </section>
-
-      {/* COORDINATION */}
-      <section className="bg-white py-16">
-        <div className="container mx-auto px-4 text-center">
-          <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-slate-500 mb-3">🔷 Coordination</p>
-          <h2 className="text-3xl font-bold mb-4">Contracts and delivery that actually ship.</h2>
-          <p className="text-lg text-slate-700 max-w-2xl mx-auto mb-10">Coordinate real-world work inside the same system as your community and commerce.</p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBriefcase size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Contracts at checkout</h3>
-              <p className="text-slate-700 mt-3">Define pickup, drop-off, timing, and service scope clearly.</p>
-            </article>
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaHandshake size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Local delivery dispatch</h3>
-              <p className="text-slate-700 mt-3">Hire verified movers and drivers without jumping between tools.</p>
-            </article>
-            <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaUsers size={42} /></IconWrap>
-              <h3 className="text-lg font-bold">Verified participants</h3>
-              <p className="text-slate-700 mt-3">Work with real Canadians in a trusted network — less fraud, less friction.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
       {/* CIVIL AI */}
       <section className="hero-section relative overflow-hidden py-14 text-white">
         <BackgroundVideo fixed />
@@ -345,8 +375,8 @@ export default function Home() {
             </div>
 
             <div className="text-center lg:text-left">
-              <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-white/80 mb-3">🔷 Introducing Civil AI</p>
-              <h2 className="text-3xl sm:text-4xl font-bold text-white">The Intelligence Layer for Canadian Community & Commerce</h2>
+              <p className="inline-flex items-center rounded-lg border border-white/70 bg-white/[0.03] px-3 py-1 text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-white/85 mb-3 mx-auto lg:mx-0"><span aria-hidden="true" className="text-red-400 mr-2">◆</span>Civil AI</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">The Intelligence Layer for Canadian Community & Commerce</h2>
               <p className="text-white/90 mt-4">
                 Built specifically for Canada — our markets, regulations, and communities.
               </p>
@@ -356,8 +386,8 @@ export default function Home() {
               <p className="text-white/90 mt-3">Designed to increase trust, fairness, participation, and revenue — without silencing legitimate voices.</p>
 
               <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                <Link href="/register" className="btn-primary-cc">Register</Link>
-                <Link href="/login" className="btn-primary-cc">Login</Link>
+                <Link href="/register" className="btn-primary-cc">Join Now</Link>
+                <Link href="/login" className="btn-transparent-cc">Login</Link>
               </div>
 
               <div className="mt-6 rounded-2xl border border-white/20 bg-white/10 p-6 text-left backdrop-blur-sm">
@@ -371,7 +401,7 @@ export default function Home() {
       </section>
 
       <section className="bg-white py-16">
-        <div className="container mx-auto px-4 text-center space-y-10">
+        <div className="container mx-auto px-4 text-center">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
             <article className="benefit-card p-6 flex flex-col items-center text-center">
               <IconWrap><FaGlobeAmericas size={42} /></IconWrap>
@@ -404,45 +434,136 @@ export default function Home() {
               <p className="text-slate-700 mt-3">Less friction. More participation.</p>
             </article>
           </div>
+        </div>
+      </section>
 
-          <div className="pt-4">
-            <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.3em] text-slate-500 mb-3">🔷 Chambers of Citizens</p>
-            <h2 className="text-3xl font-bold mb-4">Civic transparency, organized by electoral district.</h2>
-            <p className="text-lg text-slate-700 max-w-3xl mx-auto mb-10">
-              When you join Civil, you are automatically placed inside your municipal ward, provincial riding, and federal electoral district — aligned with Canada’s real voting structure.
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-              <article className="benefit-card p-6 flex flex-col items-center text-center">
-                <IconWrap><FaLandmark size={42} /></IconWrap>
-                <h3 className="text-lg font-bold">Public Representation</h3>
-                <p className="text-slate-700 mt-3">See current elected officials at municipal, provincial, and federal levels.</p>
-              </article>
-
-              <article className="benefit-card p-6 flex flex-col items-center text-center">
-                <IconWrap><FaBalanceScale size={42} /></IconWrap>
-                <h3 className="text-lg font-bold">Voting Records</h3>
-                <p className="text-slate-700 mt-3">Access publicly available voting history and official decisions.</p>
-              </article>
-
-              <article className="benefit-card p-6 flex flex-col items-center text-center">
-                <IconWrap><FaIdCard size={42} /></IconWrap>
-                <h3 className="text-lg font-bold">Official Contacts</h3>
-                <p className="text-slate-700 mt-3">View verified office information and communication channels.</p>
-              </article>
-
-              <article className="benefit-card p-6 flex flex-col items-center text-center">
-                <IconWrap><FaChartLine size={42} /></IconWrap>
-                <h3 className="text-lg font-bold">Local Legislative Signals</h3>
-                <p className="text-slate-700 mt-3">Civil AI surfaces relevant council, provincial, and federal developments affecting your district.</p>
-              </article>
-
-              <article className="benefit-card p-6 flex flex-col items-center text-center">
-                <IconWrap><FaComments size={42} /></IconWrap>
-                <h3 className="text-lg font-bold">Structured Discussion</h3>
-                <p className="text-slate-700 mt-3">Discuss civic issues inside your real electoral community — grounded in representation, not anonymous chaos.</p>
-              </article>
+      {/* CHAMBERS OF CITIZENS */}
+      <section className="hero-section relative overflow-hidden py-14 text-white">
+        <BackgroundVideo fixed />
+        <div className="absolute inset-0 bg-slate-950/65" aria-hidden="true" />
+        <div className="relative z-10 container mx-auto px-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
+            <div className="hidden lg:flex items-center justify-center">
+              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
+                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+              </div>
             </div>
+
+            <div className="text-center lg:text-left">
+              <p className="inline-flex items-center rounded-lg border border-white/70 bg-white/[0.03] px-3 py-1 text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-white/85 mb-3 mx-auto lg:mx-0"><span aria-hidden="true" className="text-red-400 mr-2">◆</span>Chambers of Citizens</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">Civic transparency, organized by electoral district.</h2>
+              <p className="text-white/90 mt-4">
+                When you join Civil, you are automatically placed inside your municipal ward, provincial riding, and federal electoral district — aligned with Canada’s real voting structure.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-16">
+        <div className="container mx-auto px-4 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaLandmark size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Public Representation</h3>
+              <p className="text-slate-700 mt-3">See current elected officials at municipal, provincial, and federal levels.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaBalanceScale size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Voting Records</h3>
+              <p className="text-slate-700 mt-3">Access publicly available voting history and official decisions.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaIdCard size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Official Contacts</h3>
+              <p className="text-slate-700 mt-3">View verified office information and communication channels.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaChartLine size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Local Legislative Signals</h3>
+              <p className="text-slate-700 mt-3">Civil AI surfaces relevant council, provincial, and federal developments affecting your district.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaComments size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Structured Discussion</h3>
+              <p className="text-slate-700 mt-3">Discuss civic issues inside your real electoral community — grounded in representation, not anonymous chaos.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      {/* CIVIL FAMILY ACCOUNTS */}
+      <section className="hero-section relative overflow-hidden py-14 text-white">
+        <BackgroundVideo fixed />
+        <div className="absolute inset-0 bg-slate-950/65" aria-hidden="true" />
+        <div className="relative z-10 container mx-auto px-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
+            <div className="hidden lg:flex items-center justify-center">
+              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
+                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+              </div>
+            </div>
+
+            <div className="text-center lg:text-left">
+              <p className="inline-flex items-center rounded-lg border border-white/70 bg-white/[0.03] px-3 py-1 text-xl sm:text-2xl font-bold uppercase tracking-[0.24em] text-white/85 mb-3 mx-auto lg:mx-0"><span aria-hidden="true" className="text-red-400 mr-2">◆</span>Civil Family Accounts</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">Safe digital communication for Canadian families.</h2>
+              <p className="text-white/90 mt-4">
+                Civil Family Accounts allow parents to create and manage child sub-accounts with full transparency and oversight.
+              </p>
+              <p className="text-white/90 mt-3">Family communication — structured, supervised, and Canadian.</p>
+
+              <div className="mt-6 rounded-2xl border border-white/20 bg-white/10 p-6 text-left backdrop-blur-sm">
+                <p className="text-white/90">Family-linked digital identity</p>
+                <p className="text-white/90 mt-2">Parental governance</p>
+                <p className="text-white/90 mt-2">Transparent communication</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-white py-16">
+        <div className="container mx-auto px-4 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaUserShield size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Parent-Managed by Design</h3>
+              <p className="text-slate-700 mt-3">Child accounts are created and owned by a verified parent, who maintains full visibility and control at all times.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaEye size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Transparent Messaging</h3>
+              <p className="text-slate-700 mt-3">Messages between connected children are visible to their respective parents. No hidden chats. No anonymous access.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaUserFriends size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Parent-to-Parent Accountability</h3>
+              <p className="text-slate-700 mt-3">Parents can see and message the parents of other connected children — creating clear lines of communication between families.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaLock size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Restricted Access</h3>
+              <p className="text-slate-700 mt-3">Child accounts cannot access marketplace, contracts, rides, wallet, or adult public spaces.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaIdCard size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Age Transition at 18</h3>
+              <p className="text-slate-700 mt-3">When a child turns 18, they may request to split into a fully independent Civil account with identity verification.</p>
+            </article>
+
+            <article className="benefit-card p-6 flex flex-col items-center text-center">
+              <IconWrap><FaChartLine size={42} /></IconWrap>
+              <h3 className="text-lg font-bold">Built for Safety</h3>
+              <p className="text-slate-700 mt-3">Civil AI actively monitors for harmful language, coercion, grooming patterns, and threats — escalating concerns to parents when necessary.</p>
+            </article>
           </div>
         </div>
       </section>
@@ -450,13 +571,13 @@ export default function Home() {
       {/* FOOTER HERO CTA */}
       <section className="hero-section relative overflow-hidden py-14 text-white">
         <BackgroundVideo fixed videoClassName="opacity-100" />
-        <div className="absolute inset-0 bg-slate-950/40" aria-hidden="true" />
+        <div className="absolute inset-0 bg-slate-950/60" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4 text-center space-y-4">
           <div className="mx-auto max-w-xs sm:max-w-sm">
             <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
           </div>
           <div className="max-w-3xl mx-auto space-y-3">
-            <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.35em] text-white/80">Community. Commerce. Careers. Coordination.</p>
+            <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.35em] text-white/80">Community. Commerce. Careers. Governance.</p>
             <p className="text-lg text-white/90">All inside one Canadian platform.</p>
             <div className="text-lg font-semibold text-white max-w-2xl mx-auto space-y-1">
               <p>Build your network.</p>
@@ -466,8 +587,8 @@ export default function Home() {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Link href="/register" className="btn-primary-cc">Register</Link>
-            <Link href="/login" className="btn-primary-cc">Login</Link>
+            <Link href="/register" className="btn-primary-cc">Join Now</Link>
+            <Link href="/login" className="btn-transparent-cc">Login</Link>
           </div>
           <p className="text-sm text-white/85">Ads are verified Canadian-only. No selling your data.</p>
         </div>

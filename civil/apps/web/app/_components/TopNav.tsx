@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft } from 'react-icons/hi2'
+import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineHashtag } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
@@ -30,6 +30,7 @@ export default function TopNav() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
+  const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
@@ -106,6 +107,22 @@ export default function TopNav() {
     }
   }, [])
 
+  const fetchOrgChannelUnreadCount = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) return
+    try {
+      const res = await fetch(buildApiUrl('/org-channels/unread-count'), {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { count: number }
+        setOrgChannelUnreadCount(data.count)
+      }
+    } catch (err) {
+      console.error('Failed to load organization channel unread count', err)
+    }
+  }, [])
+
   const acknowledgeNotifications = useCallback(async () => {
     const token = getStoredToken()
     if (!token) {
@@ -155,6 +172,7 @@ export default function TopNav() {
           // But it does update the badge.
         }
         void fetchMessageUnreadCount()
+        void fetchOrgChannelUnreadCount()
         return
       }
       if (!isNotificationPayload(payload)) return
@@ -195,7 +213,7 @@ export default function TopNav() {
         setUnreadCount((prev) => prev + unreadDelta)
       }
     },
-    [fetchMessageUnreadCount, pathname],
+    [fetchMessageUnreadCount, fetchOrgChannelUnreadCount, pathname],
   )
 
   useEffect(() => {
@@ -203,15 +221,17 @@ export default function TopNav() {
     if (!token) return
     void fetchNotifications()
     void fetchMessageUnreadCount()
+    void fetchOrgChannelUnreadCount()
 
     const handleMessageRead = () => {
       void fetchMessageUnreadCount()
+      void fetchOrgChannelUnreadCount()
     }
     window.addEventListener('message.read', handleMessageRead)
     return () => {
       window.removeEventListener('message.read', handleMessageRead)
     }
-  }, [fetchNotifications, fetchMessageUnreadCount])
+  }, [fetchNotifications, fetchMessageUnreadCount, fetchOrgChannelUnreadCount])
 
   useEffect(() => {
     if (!dropdownOpen) return undefined
@@ -413,6 +433,18 @@ export default function TopNav() {
             {messageUnreadCount > 0 ? (
               <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
+              </span>
+            ) : null}
+          </Link>
+          <Link
+            href="/channels"
+            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+            aria-label="Organization channel activity"
+          >
+            <HiOutlineHashtag className="text-xl" />
+            {orgChannelUnreadCount > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
+                {orgChannelUnreadCount > 9 ? '9+' : orgChannelUnreadCount}
               </span>
             ) : null}
           </Link>

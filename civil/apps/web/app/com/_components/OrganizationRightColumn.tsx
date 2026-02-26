@@ -2,13 +2,25 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import clsx from 'clsx'
+import { usePathname } from 'next/navigation'
 import Block from '../../_components/Block'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
+import { buildCommunityPath } from '../../_lib/communityRoutes'
 import type { CommunityOrganization } from '../../_lib/organizations'
-import OrganizationFollowButton from './OrganizationFollowButton'
 import { useCommunity } from './CommunityContext'
 import { useOrganization } from './OrganizationContext'
+
+const ORG_LINKS = [
+  { key: 'posts', label: 'Posts', segment: '' },
+  { key: 'events', label: 'Events', segment: 'events' },
+  { key: 'jobs', label: 'Jobs', segment: 'jobs' },
+  { key: 'shop', label: 'Shop', segment: 'shop' },
+  { key: 'members', label: 'Members', segment: 'members' },
+  { key: 'chat-channels', label: 'Chat Channels', segment: 'chat-channels' },
+  { key: 'settings', label: 'Settings', segment: 'settings' },
+] as const
 
 type MeResponse = {
   id: string
@@ -21,6 +33,7 @@ type Props = {
 }
 
 export default function OrganizationRightColumn({ initialOrg, province, municipality }: Props) {
+  const pathname = usePathname()
   const community = useCommunity()
   const organization = useOrganization()
 
@@ -62,9 +75,16 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
     void load()
   }, [municipality, organization.slug, province])
 
-  const settingsHref = useMemo(() => {
-    return `/com/${community.provinceCode.toLowerCase()}/${community.municipalitySlug.toLowerCase()}/orgs/${organization.slug}/settings`
-  }, [community.municipalitySlug, community.provinceCode, organization.slug])
+  const basePath = useMemo(
+    () =>
+      buildCommunityPath({
+        province: community.provinceCode,
+        municipality: community.municipalitySlug,
+        segment: 'orgs',
+        remainder: [organization.slug],
+      }),
+    [community.municipalitySlug, community.provinceCode, organization.slug],
+  )
 
   return (
     <div className="space-y-6">
@@ -94,30 +114,38 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
               </p>
             </div>
           </div>
-          <OrganizationFollowButton
-            province={province}
-            municipality={municipality}
-            slug={organization.slug}
-            initialFollowed={org?.viewerFollowed ?? false}
-          />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
           {org?.isVerified ? (
             <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold text-slate-600">Verified</span>
           ) : null}
-          {org?.status ? (
-            <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold text-slate-600">{org.status}</span>
-          ) : null}
         </div>
 
-        {isOwner ? (
-          <div className="mt-4">
-            <Link href={settingsHref} className="text-sm font-semibold text-[var(--cc-primary)] hover:underline">
-              Settings
-            </Link>
-          </div>
-        ) : null}
+        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70">
+          {ORG_LINKS.map((link) => {
+            if (link.key === 'settings' && !isOwner) return null
+            const href = link.segment ? `${basePath}/${link.segment}` : basePath
+            const active =
+              link.key === 'posts'
+                ? pathname === basePath || pathname === `${basePath}/posts` || pathname?.startsWith(`${basePath}/posts/`)
+                : pathname === href || (link.segment && pathname?.startsWith(`${href}`))
+
+            return (
+              <Link
+                key={link.key}
+                href={href}
+                className={clsx(
+                  'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
+                  'border-b border-slate-100 last:border-b-0',
+                  active ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
+                )}
+              >
+                <span>{link.label}</span>
+              </Link>
+            )
+          })}
+        </div>
       </Block>
     </div>
   )
