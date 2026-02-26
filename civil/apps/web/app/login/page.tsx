@@ -129,7 +129,7 @@ function LoginPageInner() {
 
   return (
     <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your city." footer={footer} hideSidePanel useWallpaper>
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
         <label className="block text-sm font-medium text-slate-700">
           Email or handle
           <input className={`${inputClass('emailOrHandle')} mt-2`} placeholder="you@civil.ca or @handle" value={emailOrHandle} onChange={(event) => setId(event.target.value)} />
