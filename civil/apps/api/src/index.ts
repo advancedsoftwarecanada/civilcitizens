@@ -5274,6 +5274,9 @@ const CommunityOrgCreateBody = z.object({
 })
 
 const CommunityOrgSettingsBody = z.object({
+  name: z.string().trim().min(3).max(160).optional(),
+  headline: z.string().trim().max(60).optional().nullable(),
+  description: z.string().trim().max(50000).optional().nullable(),
   logoMediaId: z.string().trim().min(3).optional(),
   coverMediaId: z.string().trim().min(3).optional(),
   phone: z.string().trim().min(1).max(50).optional().nullable(),
@@ -5644,9 +5647,18 @@ type CommunityOrgRecord = {
   isVerified: boolean
   logoUrl?: string | null
   coverUrl?: string | null
+  metadata?: unknown
   createdAt: Date
   updatedAt: Date
   _count?: { follows?: number }
+}
+
+function readOrganizationHeadline(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const value = (metadata as Record<string, unknown>).headline
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, 60) : null
 }
 
 function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boolean, viewerRole: 'OWNER' | 'MANAGER' | null = null) {
@@ -5656,6 +5668,7 @@ function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boole
     provinceCode: org.provinceCode,
     communitySlug: org.communitySlug,
     name: org.name,
+    headline: readOrganizationHeadline(org.metadata),
     slug: org.slug,
     type: org.type,
     description: org.description,
@@ -5759,6 +5772,7 @@ app.get('/communities/:province/:municipality/orgs', async (req: FastifyRequest,
         slug: true,
         type: true,
         description: true,
+        metadata: true,
         status: true,
         isVerified: true,
         createdAt: true,
@@ -5894,6 +5908,7 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
         slug: true,
         type: true,
         description: true,
+        metadata: true,
         status: true,
         isVerified: true,
         logoUrl: true,
@@ -6011,6 +6026,7 @@ app.post('/communities/:province/:municipality/orgs', async (req: FastifyRequest
           slug: true,
           type: true,
           description: true,
+          metadata: true,
           status: true,
           isVerified: true,
           logoUrl: true,
@@ -6081,7 +6097,7 @@ app.delete('/communities/:province/:municipality/orgs/:slug/follow', async (req:
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, name: true, metadata: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
@@ -6129,6 +6145,13 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     if (!membership) return reply.code(403).send({ error: 'forbidden' })
 
     const nextData: Prisma.BusinessUpdateInput = {}
+    if ('name' in body.data && typeof body.data.name === 'string') {
+      if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_rename' })
+      const nextName = body.data.name.trim()
+      if (nextName && nextName !== org.name) {
+        nextData.name = nextName
+      }
+    }
 
     if ('phone' in body.data) {
       const next = body.data.phone
@@ -6145,6 +6168,23 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     if ('schedule' in body.data) {
       const next = body.data.schedule
       nextData.schedule = next ? next : null
+    }
+    if ('description' in body.data) {
+      const next = body.data.description
+      nextData.description = next ? next : null
+    }
+    if ('headline' in body.data) {
+      const currentMetadata =
+        org.metadata && typeof org.metadata === 'object' && !Array.isArray(org.metadata)
+          ? ({ ...(org.metadata as Record<string, unknown>) } as Record<string, unknown>)
+          : {}
+      const nextHeadline = body.data.headline?.trim() ?? ''
+      if (nextHeadline) {
+        currentMetadata.headline = nextHeadline.slice(0, 60)
+      } else {
+        delete currentMetadata.headline
+      }
+      nextData.metadata = currentMetadata as Prisma.InputJsonValue
     }
     if ('isPublic' in body.data && typeof body.data.isPublic === 'boolean') {
       nextData.status = body.data.isPublic ? 'ACTIVE' : 'DRAFT'
@@ -6184,6 +6224,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
         slug: true,
         type: true,
         description: true,
+        metadata: true,
         phone: true,
         websiteUrl: true,
         address: true,
@@ -6199,6 +6240,31 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     })) as CommunityOrgRecord
 
     return reply.send({ org: buildCommunityOrgPayload(updated, true, membership.role as any) })
+  }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.ownerId !== userId) return reply.code(403).send({ error: 'owner_required_for_delete' })
+
+    await prisma.business.delete({ where: { id: org.id } })
+    return reply.send({ ok: true })
   }),
 )
 
@@ -10589,4 +10655,3 @@ const start = async () => {
   }
 }
 start()
-

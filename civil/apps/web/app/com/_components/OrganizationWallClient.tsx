@@ -234,14 +234,20 @@ export default function OrganizationWallClient({
           communityTarget={communityTarget}
           businessTarget={{ businessId, businessName: org?.name ?? null }}
           defaultAudience="business"
+          hideAudience
           onPostCreated={handlePostCreated}
         />
       ) : null}
 
-      {org?.description ? (
+      {org?.headline || org?.description ? (
         <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
-          <h2 className="text-lg font-semibold text-slate-900">About</h2>
-          <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">{org.description}</p>
+          {org?.headline ? <p className="text-base font-semibold text-slate-900">{org.headline}</p> : null}
+          <h2 className={`text-lg font-semibold text-slate-900 ${org?.headline ? 'mt-2' : ''}`}>About</h2>
+          {org?.description ? (
+            <div className="prose prose-sm mt-3 max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: org.description }} />
+          ) : (
+            <p className="mt-3 text-sm text-slate-500">No about information yet.</p>
+          )}
         </section>
       ) : null}
 
