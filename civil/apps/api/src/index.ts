@@ -3863,9 +3863,15 @@ app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) =>
     const parse = LoginInput.safeParse(req.body)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
     const { emailOrHandle, password } = parse.data
+    const rawIdentifier = emailOrHandle.trim()
+    const identifier = rawIdentifier.startsWith('@') ? rawIdentifier.slice(1) : rawIdentifier
+
     const user = await prisma.user.findFirst({
       where: {
-        OR: [{ email: emailOrHandle }, { handle: emailOrHandle }],
+        OR: [
+          { email: { equals: identifier, mode: 'insensitive' } },
+          { handle: { equals: identifier, mode: 'insensitive' } },
+        ],
       },
     })
     if (!user) return reply.code(401).send({ error: 'invalid_credentials' })
