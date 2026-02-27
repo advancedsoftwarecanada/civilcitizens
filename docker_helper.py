@@ -157,6 +157,50 @@ def command_rebuild_all(compose_cmd: list[str], overrides: Mapping[str, str]) ->
     )
 
 
+def command_deploy(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    """Deploy app updates without tearing down infra.
+
+    - Ensures infra is up (postgres/redis/minio)
+    - Builds application images
+    - Restarts app services with the new images
+
+    This avoids port conflicts and preserves existing DB/Redis containers.
+    """
+
+    # Bring up infra if it's not already running.
+    run_compose(compose_cmd, ["--profile", "infra", "up", "-d"], overrides)
+
+    # Compose validates `depends_on` across enabled services. Our app services
+    # depend on infra services (postgres/redis), so we enable both profiles here,
+    # but only build the app images.
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "build", "api", "web", "worker"],
+        overrides,
+    )
+
+    # Recreate app containers so new images take effect, without restarting infra.
+    run_compose(
+        compose_cmd,
+        [
+            "--profile",
+            "infra",
+            "--profile",
+            "app",
+            "up",
+            "-d",
+            "--force-recreate",
+            "--remove-orphans",
+            "--no-deps",
+            "api",
+            "web",
+            "worker",
+            "nginx",
+        ],
+        overrides,
+    )
+
+
 def command_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
     run_compose(compose_cmd, ["--profile", "infra", "up", "-d"], overrides)
 
@@ -199,6 +243,7 @@ def parse_args(default_command: Optional[str]) -> argparse.Namespace:
         "command",
         nargs="?",
         choices=[
+            "deploy",
             "build",
             "up",
             "infra-up",
@@ -293,6 +338,7 @@ def run_helper(
     ensure_prisma_env(overrides)
 
     command_map = {
+        "deploy": command_deploy,
         "build": lambda c, o: command_build(c, o, no_cache=False),
         "up": command_up,
         "infra-up": command_infra_up,
