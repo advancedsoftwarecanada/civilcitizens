@@ -1,0 +1,45 @@
+# Build outputs / temp
+.DS_Store
+
+# Signing artifacts (never commit)
+**/*.p12
+**/*.p8
+**/*.cer
+**/*.crt
+**/*.pem
+**/*.key
+**/*.mobileprovision
+**/*.csr
+
+# Android keystores
+**/*.jks
+**/*.keystore
+
+# Push service secrets / local device token stores
+push/**/.env
+push/**/data/*.json
+
+# Local build state
+mobile/state/
+
+# Node / JS
+**/node_modules/
+**/.pnpm-store/
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+
+# iOS (Xcode/CocoaPods)
+**/Pods/
+**/DerivedData/
+**/*.xcuserstate
+**/xcuserdata/
+
+# Android (Android Studio)
+**/.idea/
+**/*.iml
+**/local.properties
+
+# Gradle / Android
+**/.gradle/
+**/build/

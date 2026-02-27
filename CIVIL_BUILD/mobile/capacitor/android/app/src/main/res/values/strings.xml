@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Civil</string>
+    <string name="title_activity_main">Civil</string>
+    <string name="package_name">ca.civilcitizens</string>
+    <string name="custom_url_scheme">ca.civilcitizens</string>
+</resources>
