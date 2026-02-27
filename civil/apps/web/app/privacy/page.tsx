@@ -1,68 +1,114 @@
+import Link from 'next/link'
+
 export const metadata = {
-  title: 'Privacy Policy – Civil Citizens',
+  title: 'Privacy Policy | Civil Citizens',
 }
 
 export default function PrivacyPage() {
   const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+
   return (
-    <div className="mx-auto max-w-3xl p-8">
-      <h1 className="text-3xl font-bold mb-4">Privacy Policy</h1>
-      <p className="text-sm text-gray-600 mb-8">Last updated: {today}</p>
+    <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-4xl space-y-6">
+        <Link
+          href="/"
+          className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+        >
+          Return home
+        </Link>
 
-      <section className="space-y-4">
-        <p>
-          This Privacy Policy explains how Civil Citizens ("we", "us", "our") collects, uses, and protects your
-          information when you use our services. By using Civil Citizens, you agree to the practices described here.
-        </p>
+        <article className="surface-card space-y-6 p-6 sm:p-8">
+          <header className="space-y-2">
+            <h1 className="text-3xl font-bold text-slate-900">Privacy Policy</h1>
+            <p className="text-sm text-slate-500">Last updated: {today}</p>
+          </header>
 
-        <h2 className="text-xl font-semibold mt-6">Information We Collect</h2>
-        <ul className="list-disc pl-6 space-y-1">
-          <li>Account details (e.g., name, handle, email)</li>
-          <li>Content you create (posts, comments, media)</li>
-          <li>Usage data and device information (e.g., IP address, browser)</li>
-        </ul>
+          <section className="space-y-4 text-slate-700">
+            <p>
+              This Privacy Policy explains how Civil Citizens collects, uses, stores, and protects personal information
+              when you use our platform, websites, and related services.
+            </p>
+            <p>
+              By accessing or using Civil Citizens, you agree to this Privacy Policy and our Terms &amp; Conditions.
+            </p>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">How We Use Information</h2>
-        <ul className="list-disc pl-6 space-y-1">
-          <li>Provide and improve the service</li>
-          <li>Secure accounts and prevent abuse</li>
-          <li>Communicate with you about updates and support</li>
-        </ul>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Information We Collect</h2>
+            <ul className="list-disc space-y-1 pl-6">
+              <li>Account information such as name, handle, email, and profile details.</li>
+              <li>Content and activity, including posts, messages, reactions, uploads, and interactions.</li>
+              <li>Device and technical information such as IP address, browser type, and usage analytics.</li>
+              <li>Transaction and billing information where paid services are used.</li>
+            </ul>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">Sharing and Disclosure</h2>
-        <p>
-          We do not sell your personal information. We may share data with service providers that help us operate the
-          platform, or when required by law. Public content you post may be visible to others as designed by the platform.
-        </p>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">How We Use Information</h2>
+            <ul className="list-disc space-y-1 pl-6">
+              <li>Operate, maintain, and improve the platform.</li>
+              <li>Authenticate users, secure accounts, and prevent fraud or abuse.</li>
+              <li>Provide support and communicate service updates.</li>
+              <li>Comply with legal obligations and enforce platform policies.</li>
+            </ul>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">Data Retention</h2>
-        <p>
-          We retain information for as long as your account is active or as needed to provide the service and comply with
-          legal obligations.
-        </p>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Sharing and Disclosure</h2>
+            <p>
+              We do not sell your personal information. We may share information with trusted processors and service
+              providers who support platform operations, or when required by law, court order, or regulatory obligation.
+            </p>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">Your Rights</h2>
-        <p>
-          Depending on your location, you may have rights to access, correct, or delete your information. Contact us to
-          make a request and we will respond as required by applicable law.
-        </p>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Data Retention</h2>
+            <p>
+              We retain information for as long as reasonably necessary to provide services, support operations, resolve
+              disputes, enforce agreements, and comply with legal requirements.
+            </p>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">Security</h2>
-        <p>
-          We implement safeguards designed to protect your information. No system is perfectly secure; please use strong
-          passwords and keep your credentials confidential.
-        </p>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Your Choices and Rights</h2>
+            <p>
+              Subject to applicable law, you may have rights to access, correct, or delete your personal information.
+              Requests can be sent to <a className="underline" href="mailto:support@civilcitizens.ca">support@civilcitizens.ca</a>.
+            </p>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">Contact</h2>
-        <p>
-          Questions about this policy? Contact us at support@civilcitizens.ca.
-        </p>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Security</h2>
+            <p>
+              We use administrative, technical, and organizational safeguards designed to protect personal information.
+              No platform is perfectly secure, and users remain responsible for protecting their login credentials.
+            </p>
+          </section>
 
-        <h2 className="text-xl font-semibold mt-6">Changes to this Policy</h2>
-        <p>
-          We may update this policy from time to time. If we make material changes, we will provide notice as appropriate.
-        </p>
-      </section>
-    </div>
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Children and Family Accounts</h2>
+            <p>
+              Where family-account features are provided, parent or guardian controls are designed to support oversight.
+              Users must comply with age and eligibility requirements in applicable jurisdictions.
+            </p>
+          </section>
+
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Changes to This Policy</h2>
+            <p>
+              We may update this Privacy Policy from time to time. Continued use of the platform after updates means the
+              revised policy applies.
+            </p>
+          </section>
+
+          <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Contact</h2>
+            <p>
+              For privacy inquiries, contact <a className="underline" href="mailto:support@civilcitizens.ca">support@civilcitizens.ca</a>.
+            </p>
+          </section>
+        </article>
+      </div>
+    </main>
   )
 }
