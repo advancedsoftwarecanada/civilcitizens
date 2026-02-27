@@ -1,11 +1,11 @@
-# Push notifications (CIVIL_BUILD-only)
+# Push notifications (builds-only)
 
-This setup enables APNs push notifications **without changing any code under `CIVIL/`**.
+This setup enables APNs push notifications **without changing any code under `civil/`**.
 
 ## Architecture (current)
 
 - iOS Capacitor shell registers with APNs.
-- The shell POSTs the device token to a tiny standalone service in `CIVIL_BUILD/push/apns-service/`.
+- The shell POSTs the device token to a tiny standalone service in `builds/push/apns-service/`.
 - That service can send a test push to a specific device token using your Apple `.p8` key.
 
 This is intentionally “build-only”: it does not yet integrate Civil’s server-side events.
@@ -17,7 +17,7 @@ This is intentionally “build-only”: it does not yet integrate Civil’s serv
 - Download the `.p8` file (only available once)
 
 Store in:
-- `CIVIL_BUILD/mobile/ios/signing/apns/AuthKey_<KEYID>.p8`
+- `builds/mobile/ios/signing/apns/AuthKey_<KEYID>.p8`
 
 Also record:
 - Key ID
@@ -25,7 +25,7 @@ Also record:
 
 ## 2) Run the standalone APNs service
 
-From `CIVIL_BUILD/push/apns-service/`:
+From `builds/push/apns-service/`:
 
 - `pnpm i`
 - Set env vars (example):
@@ -44,7 +44,7 @@ The service listens on `http://localhost:8787` by default.
 ## 3) Point the iOS app at the service
 
 Edit this file (build-only):
-- `CIVIL_BUILD/mobile/capacitor/ios/App/App/Info.plist`
+- `builds/mobile/capacitor/ios/App/App/Info.plist`
 
 Set:
 - `CIVILPushServiceURL` → `http://<your-mac-lan-ip>:8787` (device must reach it)
@@ -64,7 +64,7 @@ In Xcode logs you should see:
 - `push_device_token <hex>`
 
 The service should receive `/register` and save it in:
-- `CIVIL_BUILD/push/apns-service/data/devices.json`
+- `builds/push/apns-service/data/devices.json`
 
 ## 5) Send a test push
 

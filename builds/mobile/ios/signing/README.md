@@ -1,4 +1,4 @@
-# iOS signing (CIVIL_BUILD)
+# iOS signing (builds)
 
 This folder is the canonical place on the production Mac for iOS signing artifacts you generate during publishing and push notification setup.
 
@@ -16,11 +16,11 @@ Store:
 - `apns/key-id.txt` (the Key ID)
 - `apns/team-id.txt` (your Apple Team ID)
 
-### Using the standalone APNs service in CIVIL_BUILD
+### Using the standalone APNs service in builds
 
 If we are not modifying the main `CIVIL/` backend, you can still test push end-to-end via the standalone sender in:
 
-- `CIVIL_BUILD/push/apns-service/`
+- `builds/push/apns-service/`
 
 You will need these values from Apple:
 
@@ -44,7 +44,7 @@ You’ll create the CSR on this Mac via Keychain Access. The private key stays i
    - Select **Saved to disk**.
    - (Optional) select **Let me specify key pair information** → use RSA 2048.
 4. Save the CSR to:
-   - `CIVIL_BUILD/mobile/ios/signing/csr/civil-ios.csr`
+   - `builds/mobile/ios/signing/csr/civil-ios.csr`
 
 Create the folder `csr/` under this directory if it doesn’t exist.
 

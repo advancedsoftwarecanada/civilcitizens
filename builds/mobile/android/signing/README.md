@@ -1,4 +1,4 @@
-# Android signing (CIVIL_BUILD)
+# Android signing (builds)
 
 This folder is the canonical place for Android keystores used to sign Play Store builds.
 
