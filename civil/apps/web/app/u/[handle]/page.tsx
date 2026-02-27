@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { HiOutlineUserPlus, HiOutlineStar, HiOutlineBriefcase } from 'react-icons/hi2'
+import { HiOutlineUserPlus, HiOutlineBriefcase } from 'react-icons/hi2'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
@@ -48,8 +48,6 @@ type UserProfile = {
   isPremium?: boolean
   isVerified?: boolean
   friendCount?: number
-  followerCount?: number
-  followingCount?: number
   communityCount?: number
   organizationCount?: number
   connectionCount?: number
@@ -74,7 +72,6 @@ type ProfileRelationship = {
   connectionStatus: 'self' | 'connected' | 'incoming' | 'outgoing' | 'none'
   connectionId?: string
   connectionSince?: string | null
-  following: boolean
 }
 
 type FriendRequestPayload = {
@@ -170,7 +167,6 @@ export default function UserPostsPage({ params }: PageProps) {
   const [connectionAction, setConnectionAction] = useState<'send' | 'accept' | 'reject' | null>(null)
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
-  const [followLoading, setFollowLoading] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
 
   const loadViewer = useCallback(async () => {
@@ -335,10 +331,7 @@ export default function UserPostsPage({ params }: PageProps) {
       connectionStatus: isOwner ? 'self' : 'none',
       connectionId: undefined,
       connectionSince: null,
-      following: false,
     }
-  const followerCount = profile?.followerCount ?? 0
-  const followingCount = profile?.followingCount ?? 0
   const friendCount = profile?.friendCount ?? 0
   const communityCount = profile?.communityCount ?? 0
   const organizationCount = profile?.organizationCount ?? 0
@@ -570,7 +563,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
         connectionId: prev?.connectionId,
         connectionSince: prev?.connectionSince ?? null,
-        following: prev?.following ?? false,
       }))
       pushToast('Friend request sent.', 'success')
     } catch (err) {
@@ -606,7 +598,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
         connectionId: prev?.connectionId,
         connectionSince: prev?.connectionSince ?? null,
-        following: prev?.following ?? false,
       }))
       pushToast('Friend request accepted.', 'success')
     } catch (err) {
@@ -641,7 +632,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
         connectionId: prev?.connectionId,
         connectionSince: prev?.connectionSince ?? null,
-        following: prev?.following ?? false,
       }))
       pushToast('Friend request dismissed.', 'info')
     } catch (err) {
@@ -678,7 +668,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
         connectionId: prev?.connectionId,
         connectionSince: prev?.connectionSince ?? null,
-        following: prev?.following ?? false,
       }))
       setProfile((prev) => {
         if (!prev) return prev
@@ -718,7 +707,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: 'none',
         connectionId: undefined,
         connectionSince: null,
-        following: prev?.following ?? false,
       }))
       setProfile((prev) => {
         if (!prev) return prev
@@ -729,53 +717,6 @@ export default function UserPostsPage({ params }: PageProps) {
     } catch (err) {
       console.error('Failed to remove connection', err)
       pushToast('Unable to remove connection right now.', 'error')
-    }
-  }
-
-  const handleToggleFollow = async () => {
-    if (!profile) return
-    const token = requireAuthToken()
-    if (!token) return
-    const currentlyFollowing = relationship?.following ?? false
-    setFollowLoading(true)
-    try {
-      const res = await fetch(buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/follow`), {
-        method: currentlyFollowing ? 'DELETE' : 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-        },
-      })
-      const payload = (await res.json().catch(() => null)) as { error?: string } | null
-      if (!res.ok) {
-        pushToast(payload?.error ?? 'Unable to update follow right now.', 'error')
-        return
-      }
-      setRelationship((prev) => {
-        if (prev) {
-          return { ...prev, following: !currentlyFollowing }
-        }
-        return {
-          friendshipStatus: isOwner ? 'self' : 'none',
-          friendshipId: undefined,
-          friendshipSince: null,
-          connectionStatus: isOwner ? 'self' : 'none',
-          connectionId: undefined,
-          connectionSince: null,
-          following: !currentlyFollowing,
-        }
-      })
-      setProfile((prev) => {
-        if (!prev) return prev
-        const delta = currentlyFollowing ? -1 : 1
-        const nextCount = Math.max(0, (prev.followerCount ?? 0) + delta)
-        return { ...prev, followerCount: nextCount }
-      })
-      pushToast(currentlyFollowing ? 'Unfollowed.' : 'Now following this citizen.', 'success')
-    } catch (err) {
-      console.error('Unable to toggle follow state', err)
-      pushToast('Unable to update follow right now.', 'error')
-    } finally {
-      setFollowLoading(false)
     }
   }
 
@@ -805,7 +746,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: 'outgoing',
         connectionId: payload?.request?.id ?? prev?.connectionId,
         connectionSince: null,
-        following: prev?.following ?? false,
       }))
       pushToast('Connection request sent.', 'success')
     } catch (err) {
@@ -841,7 +781,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: 'connected',
         connectionId: payload?.connection?.id ?? prev?.connectionId ?? relationship.connectionId,
         connectionSince: sinceIso,
-        following: prev?.following ?? false,
       }))
       pushToast('Connection request accepted.', 'success')
     } catch (err) {
@@ -876,7 +815,6 @@ export default function UserPostsPage({ params }: PageProps) {
         connectionStatus: 'none',
         connectionId: undefined,
         connectionSince: null,
-        following: prev?.following ?? false,
       }))
       pushToast('Connection request dismissed.', 'info')
     } catch (err) {
@@ -1151,22 +1089,7 @@ export default function UserPostsPage({ params }: PageProps) {
                         >
                           {messageLoading ? 'Opening...' : 'Message'}
                         </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className={clsx(
-                            'inline-flex items-center justify-center rounded-full px-5 py-2 font-semibold transition',
-                            resolvedRelationship.following
-                              ? 'bg-amber-500 text-white shadow-lg hover:brightness-110'
-                              : 'bg-amber-400 text-slate-900 shadow-lg hover:brightness-110',
-                          )}
-                          onClick={handleToggleFollow}
-                          disabled={followLoading}
-                        >
-                          <HiOutlineStar className="mr-2 h-4 w-4" aria-hidden="true" />
-                          {resolvedRelationship.following ? 'Following' : 'Follow'}
-                        </button>
-                      )}
+                      ) : null}
                       {renderConnectionPrimaryCta()}
                     </div>
                   )}
@@ -1186,27 +1109,13 @@ export default function UserPostsPage({ params }: PageProps) {
                     <p className="mt-1 text-lg font-semibold text-slate-900">{formatDate(profile.createdAt) || '—'}</p>
                   </div>
                 </div>
-                <div className="mt-5 grid grid-cols-2 gap-3 text-sm font-semibold text-slate-600 sm:grid-cols-3 xl:grid-cols-6">
+                <div className="mt-5 grid grid-cols-2 gap-3 text-sm font-semibold text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
                   <Link
                     href={`/u/${encodeURIComponent(profile.handle)}/friends`}
                     className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
                   >
                     <span className="text-lg font-bold text-slate-900">{formatCount(friendCount)}</span>
                     <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Friends</span>
-                  </Link>
-                  <Link
-                    href={`/u/${encodeURIComponent(profile.handle)}/following`}
-                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
-                  >
-                    <span className="text-lg font-bold text-slate-900">{formatCount(followingCount)}</span>
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Following</span>
-                  </Link>
-                  <Link
-                    href={`/u/${encodeURIComponent(profile.handle)}/followers`}
-                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
-                  >
-                    <span className="text-lg font-bold text-slate-900">{formatCount(followerCount)}</span>
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Followers</span>
                   </Link>
                   <Link
                     href={`/u/${encodeURIComponent(profile.handle)}/communities`}
