@@ -640,6 +640,15 @@ export default function Home() {
             <Link href="/login" className="btn-transparent-cc">Login</Link>
           </div>
           <p className="text-sm text-white/85">Ads are verified Canadian-only. No selling your data.</p>
+          <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-white/90">
+            <Link href="/privacy" className="underline underline-offset-4 transition hover:text-white">
+              Privacy Policy
+            </Link>
+            <span aria-hidden="true">•</span>
+            <Link href="/terms" className="underline underline-offset-4 transition hover:text-white">
+              Terms &amp; Conditions
+            </Link>
+          </div>
         </div>
       </section>
     </main>
