@@ -146,6 +146,19 @@ export default function OrganizationWallClient({
     let cancelled = false
     const loadMe = async () => {
       try {
+        if (!cancelled && typeof window !== 'undefined') {
+          try {
+            const cachedRaw = window.localStorage.getItem('cc:viewer-cache:v1')
+            if (cachedRaw) {
+              const cached = JSON.parse(cachedRaw) as { id?: unknown } | null
+              if (typeof cached?.id === 'string') {
+                setViewerId(cached.id)
+              }
+            }
+          } catch {
+            // ignore cache parsing failures
+          }
+        }
         const res = await fetch(buildApiUrl('/auth/me'), {
           headers: { authorization: `Bearer ${token}` },
         })

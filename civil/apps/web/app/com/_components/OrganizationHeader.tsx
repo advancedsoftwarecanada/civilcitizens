@@ -101,8 +101,8 @@ export default function OrganizationHeader({
           resolvedOrg && 'rounded-t-none border-t-0',
         )}
       >
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex min-w-0 flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
             <div className="relative">
               <div
                 className="absolute inset-0 rounded-full bg-gradient-to-br from-rose-200 via-amber-100 to-sky-200 blur-lg"
@@ -118,7 +118,7 @@ export default function OrganizationHeader({
                 className="relative border-4 border-white"
               />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{name}</h1>
               {resolvedOrg?.slug ? (
                 <p className="text-sm text-slate-500">
@@ -126,7 +126,7 @@ export default function OrganizationHeader({
                 </p>
               ) : null}
               <p className="mt-1 text-sm text-slate-500">
-                {memberCount ?? 0} members · {resolvedOrg?.followerCount ?? 0} followers
+                {memberCount === null ? '—' : memberCount} members · {resolvedOrg?.followerCount ?? 0} followers
               </p>
             </div>
           </div>
