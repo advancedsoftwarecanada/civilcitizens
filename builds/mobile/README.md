@@ -5,21 +5,21 @@ This directory contains the native mobile shell(s) used for app publishing.
 ## What’s here
 
 - `capacitor/` — Capacitor wrapper project (contains `ios/` + `android/`).
-- `assets/` — Inputs synced from `../CIVIL/` (currently `logo.png`).
-- `state/` — Hash manifest and sync state (written by `_FETCH.py`).
+- `assets/` — Local inputs for native build/publishing (currently `logo.png`).
 
 ## What is intentionally *not* used
 
 - Any legacy Meteor app artifacts (e.g. `.meteor/`).
 - Generated build output from the Next.js app (e.g. `.next/`, `tmp/`).
 
-## Updating after SCP
+## Updating native shell
 
-From `builds/`:
-
-- Run `python3 _FETCH.py`
-
-This will also regenerate native icon/splash assets via `@capacitor/assets` using `mobile/capacitor/assets/logo.png` as input.
+1. Ensure `capacitor/capacitor.config.json` has the correct `server.url`.
+2. If the logo changed, copy it into:
+	- `assets/logo.png`
+	- `capacitor/assets/logo.png`
+3. Regenerate native icon/splash assets via `@capacitor/assets`:
+	- `cd capacitor && pnpm assets:generate`
 
 Then open the native projects:
 

@@ -19,6 +19,9 @@
 push/**/.env
 push/**/data/*.json
 
+# Local build state
+mobile/state/
+
 # Node / JS
 **/node_modules/
 **/.pnpm-store/
