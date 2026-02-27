@@ -6,6 +6,7 @@ import PostComposer, { type ApiPost } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { useViewerStore } from '../../_lib/viewerStore'
 import { useCommunity } from './CommunityContext'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
@@ -20,6 +21,7 @@ const LOADING_COPY = {
 
 export default function CommunityPostsFeed() {
   const community = useCommunity()
+  const cachedMe = useViewerStore((s) => s.me)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +75,13 @@ export default function CommunityPostsFeed() {
     if (typeof window === 'undefined') return
     const token = localStorage.getItem('token')
     if (!token) return
+
+    if (cachedMe) {
+      setViewerIsVerified(Boolean(cachedMe.isVerified || cachedMe.isPremium))
+      setViewerId(cachedMe.id ?? null)
+      return
+    }
+
     fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -83,7 +92,7 @@ export default function CommunityPostsFeed() {
       .catch(() => {
         /* ignore viewer state errors */
       })
-  }, [])
+  }, [cachedMe])
 
   const communityTarget = useMemo(() => {
     if (!community.communitySlug) return null

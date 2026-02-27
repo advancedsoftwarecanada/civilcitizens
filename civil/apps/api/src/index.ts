@@ -8387,8 +8387,24 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
       const accessibleFilters: Prisma.PostWhereInput[] = []
 
+      const [friendIds, connectionIds, communityFollows, businessFollows] = await Promise.all([
+        includeFriends ? loadAcceptedFriendIds(viewerId) : Promise.resolve([] as string[]),
+        includeNetwork ? loadAcceptedConnectionIds(viewerId) : Promise.resolve([] as string[]),
+        includeCommunities
+          ? prisma.communityFollow.findMany({
+              where: { userId: viewerId },
+              select: { provinceCode: true, communitySlug: true },
+            })
+          : Promise.resolve([] as Array<{ provinceCode: string; communitySlug: string }>),
+        includeOrganizations
+          ? (prisma.businessFollow.findMany({
+              where: { userId: viewerId },
+              select: { businessId: true },
+            }) as Promise<Array<{ businessId: string }>>)
+          : Promise.resolve([] as Array<{ businessId: string }>),
+      ])
+
       if (includeFriends) {
-        const friendIds = await loadAcceptedFriendIds(viewerId)
         const allowedAuthorIds = new Set<string>([viewerId, ...friendIds])
         if (allowedAuthorIds.size) {
           // If scope is strictly 'friends', we only want posts that are NOT targeted at a community
@@ -8397,7 +8413,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           // This implies we should filter out posts that have a communitySlug set, OR we should only include posts where audience is 'friends' or 'public' but not community-specific.
           // However, the current schema might not have an explicit 'audience' field that distinguishes this easily other than provinceCode/communitySlug being null.
           // Let's check if we can filter by provinceCode: null.
-          
+
           accessibleFilters.push({
             authorId: { in: [...allowedAuthorIds] },
             communitySlug: null,
@@ -8409,7 +8425,6 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
 
       if (includeNetwork) {
-        const connectionIds = await loadAcceptedConnectionIds(viewerId)
         const allowedAuthorIds = new Set<string>([viewerId, ...connectionIds])
         if (allowedAuthorIds.size) {
           accessibleFilters.push({
@@ -8423,13 +8438,8 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
 
       if (includeCommunities) {
-        const follows = await prisma.communityFollow.findMany({
-          where: { userId: viewerId },
-          select: { provinceCode: true, communitySlug: true },
-        })
-
         const seenKeys = new Set<string>()
-        for (const follow of follows) {
+        for (const follow of communityFollows) {
           if (!follow.provinceCode || !follow.communitySlug) continue
           const key = `${follow.provinceCode}:${follow.communitySlug}`
           if (seenKeys.has(key)) continue
@@ -8439,16 +8449,8 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
 
       if (includeOrganizations) {
-        const businessFollows = (await prisma.businessFollow.findMany({
-          where: { userId: viewerId },
-          select: { businessId: true },
-        })) as Array<{ businessId: string }>
-
         const businessIds = Array.from(
-          new Set([
-            ...businessFollows.map((follow) => follow.businessId),
-            ...memberBusinessIds,
-          ]),
+          new Set([...businessFollows.map((follow) => follow.businessId), ...memberBusinessIds]),
         )
         if (businessIds.length) {
           accessibleFilters.push({ businessId: { in: businessIds } })
@@ -10251,22 +10253,21 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   const friendIds = await loadAcceptedFriendIds(userId)
   
   // Determine the threshold for "new" friend posts
-  const friendsThreshold = [
-    user.lastViewedFriendsAt,
-    user.lastViewedHomeAt
-  ]
+  const friendsThreshold = [user?.lastViewedFriendsAt, user?.lastViewedHomeAt]
     .filter((d): d is Date => !!d)
     .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
 
   // Get new post counts
-  const activeFriendCounts = await prisma.post.groupBy({
-    by: ['authorId'],
-    where: {
-      authorId: { in: friendIds },
-      createdAt: { gt: friendsThreshold },
-    },
-    _count: { id: true },
-  })
+  const activeFriendCounts = friendIds.length
+    ? await prisma.post.groupBy({
+        by: ['authorId'],
+        where: {
+          authorId: { in: friendIds },
+          createdAt: { gt: friendsThreshold },
+        },
+        _count: { id: true },
+      })
+    : []
 
   const friendCountMap = new Map<string, number>()
   activeFriendCounts.forEach((row: { authorId: string; _count: { id: number } }) => {
@@ -10286,18 +10287,20 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   const shuffledOthers = otherIds.sort(() => 0.5 - Math.random())
   const selectedIds = [...activeIds, ...shuffledOthers].slice(0, 10)
   
-  const friends = await prisma.user.findMany({
-    where: { id: { in: selectedIds } },
-    select: {
-      id: true,
-      handle: true,
-      name: true,
-      avatarUrl: true,
-      coverUrl: true,
-      bio: true,
-      communityMeta: true, // To get home community
-    },
-  })
+  const friends = selectedIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: selectedIds } },
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+          avatarUrl: true,
+          coverUrl: true,
+          bio: true,
+          communityMeta: true, // To get home community
+        },
+      })
+    : []
 
   const normalizedFriends = friends.map((friend: any) => normalizeUserMedia(friend))
 
@@ -10315,43 +10318,71 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
     select: { provinceCode: true, communitySlug: true, lastViewedAt: true },
   })
 
-  const communitiesWithCounts = await Promise.all(
-    follows.map(async (follow: any) => {
-      // If the user has viewed the home feed more recently than this specific community,
-      // we can consider posts "seen" if they are older than the home feed view time.
-      // However, this is a heuristic. The user might not have scrolled down far enough.
-      // But per user request: "if my user sees the post in the /home feed... technically, we saw it"
-      // So we will use the MAX of community lastViewedAt and user.lastViewedHomeAt (and maybe lastViewedCommunitiesAt)
-      
-      const lastViewed = [
-        follow.lastViewedAt,
-        user?.lastViewedHomeAt,
-        // user?.lastViewedCommunitiesAt // Optional: include if we want the "Communities" tab to also clear it
-      ]
-        .filter((d): d is Date => !!d)
-        .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
+  const followThresholds = follows.map((follow: any) => {
+    const lastViewed = [
+      follow.lastViewedAt,
+      user?.lastViewedHomeAt,
+      // user?.lastViewedCommunitiesAt
+    ]
+      .filter((d): d is Date => !!d)
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? new Date(0)
 
-      const newPosts = await prisma.post.count({
+    return {
+      ...follow,
+      lastViewed,
+    }
+  })
+
+  const communityOr = followThresholds.map((follow: any) => ({
+    provinceCode: follow.provinceCode,
+    communitySlug: follow.communitySlug,
+    createdAt: { gt: follow.lastViewed },
+  }))
+
+  const groupedCommunityCounts = communityOr.length
+    ? await prisma.post.groupBy({
+        by: ['provinceCode', 'communitySlug'],
         where: {
-          provinceCode: follow.provinceCode,
-          communitySlug: follow.communitySlug,
-          createdAt: { gt: lastViewed },
+          OR: communityOr,
         },
+        _count: { id: true },
       })
+    : []
 
-      const city = await prisma.city.findFirst({
-        where: { provinceCode: follow.provinceCode, communitySlug: follow.communitySlug },
-        select: { name: true, communityName: true },
+  const communityCountMap = new Map<string, number>()
+  groupedCommunityCounts.forEach((row: any) => {
+    const key = `${row.provinceCode}:${row.communitySlug}`
+    communityCountMap.set(key, row._count?.id ?? 0)
+  })
+
+  const cityRows = follows.length
+    ? await prisma.city.findMany({
+        where: {
+          OR: follows.map((follow: any) => ({
+            provinceCode: follow.provinceCode,
+            communitySlug: follow.communitySlug,
+          })),
+        },
+        select: { provinceCode: true, communitySlug: true, name: true, communityName: true },
       })
+    : []
 
-      return {
-        provinceCode: follow.provinceCode,
-        communitySlug: follow.communitySlug,
-        name: city?.communityName ?? city?.name ?? follow.communitySlug,
-        newPosts,
-      }
-    }),
-  )
+  const cityNameMap = new Map<string, string>()
+  cityRows.forEach((row: any) => {
+    const key = `${row.provinceCode}:${row.communitySlug}`
+    const name = row?.communityName ?? row?.name ?? null
+    if (name) cityNameMap.set(key, name)
+  })
+
+  const communitiesWithCounts = followThresholds.map((follow: any) => {
+    const key = `${follow.provinceCode}:${follow.communitySlug}`
+    return {
+      provinceCode: follow.provinceCode,
+      communitySlug: follow.communitySlug,
+      name: cityNameMap.get(key) ?? follow.communitySlug,
+      newPosts: communityCountMap.get(key) ?? 0,
+    }
+  })
 
   // Limit 5, sort by new posts desc
   const topCommunities = communitiesWithCounts.sort((a: any, b: any) => b.newPosts - a.newPosts).slice(0, 5)

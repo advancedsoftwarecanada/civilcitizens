@@ -5,7 +5,6 @@ import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
-import Sidebar from '../_components/Sidebar'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
@@ -1326,7 +1325,6 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   return (
     <DashboardShell
       className="!min-h-0"
-      sidebar={<Sidebar me={me ?? undefined} active="messages" />}
       rightRail={inboxPanel}
       rightRailClassName="sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8"
       mainClassName="sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8"

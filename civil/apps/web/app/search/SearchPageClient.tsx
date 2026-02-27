@@ -4,11 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { HiOutlineMagnifyingGlass, HiOutlineXMark } from 'react-icons/hi2'
-import Sidebar from '../_components/Sidebar'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
-import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { formatUserDisplayName } from '../_lib/text'
@@ -71,7 +69,6 @@ type SearchResponse = {
 
 export default function SearchPageClient({ initialQuery = '', initialType = 'people' }: SearchPageClientProps) {
   const router = useRouter()
-  const [me, setMe] = useState<MeResponse | null>(null)
   const [query, setQuery] = useState(initialQuery)
   const [activeQuery, setActiveQuery] = useState(initialQuery)
   const [searchType, setSearchType] = useState<SearchType>(initialType)
@@ -92,26 +89,6 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
     if (!token) {
       redirectToAuthModal('login')
       return
-    }
-    let cancelled = false
-    const loadMe = async () => {
-      try {
-        const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-        if (!res.ok) {
-          redirectToAuthModal('login')
-          return
-        }
-        const data = (await res.json()) as MeResponse
-        if (!cancelled) {
-          setMe(data)
-        }
-      } catch (err) {
-        console.error('Failed to load viewer for search page', err)
-      }
-    }
-    void loadMe()
-    return () => {
-      cancelled = true
     }
   }, [])
 
@@ -348,7 +325,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'peo
   }
 
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} />} rightRail={<RightRail />} mainClassName="space-y-6">
+    <DashboardShell rightRail={<RightRail />} mainClassName="space-y-6">
       <section className="rounded-[32px] border border-white/70 bg-white/90 p-6 shadow-[0_35px_120px_rgba(15,23,42,0.12)] sm:p-8">
         <header className="space-y-4">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

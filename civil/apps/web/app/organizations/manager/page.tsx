@@ -3,10 +3,10 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
 import type { MeResponse } from '../../_lib/me'
+import { useViewerStore } from '../../_lib/viewerStore'
 import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
 
 type OrganizationRow = {
@@ -28,6 +28,7 @@ export default function OrganizationsManagerPage() {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [followedOrganizations, setFollowedOrganizations] = useState<OrganizationRow[]>([])
   const [ownedOrganizations, setOwnedOrganizations] = useState<OrganizationRow[]>([])
+  const cachedMe = useViewerStore((s) => s.me)
 
   const token = useMemo(() => {
     if (typeof window === 'undefined') return null
@@ -47,23 +48,29 @@ export default function OrganizationsManagerPage() {
 
       setStatus('loading')
       try {
-        const [meRes, followsRes, ownedRes] = await Promise.all([
-          fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-          fetch(buildApiUrl('/organizations/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-          fetch(buildApiUrl('/organizations/owned'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-        ])
+        const requests: Array<Promise<Response>> = []
+        if (!cachedMe) {
+          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+        }
+        requests.push(fetch(buildApiUrl('/organizations/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+        requests.push(fetch(buildApiUrl('/organizations/owned'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
 
-        if (meRes.status === 401 || followsRes.status === 401 || ownedRes.status === 401) {
+        const responses = await Promise.all(requests)
+        const meRes = cachedMe ? null : responses[0]
+        const followsRes = (cachedMe ? responses[0] : responses[1])!
+        const ownedRes = (cachedMe ? responses[1] : responses[2])!
+
+        if ((meRes && meRes.status === 401) || followsRes.status === 401 || ownedRes.status === 401) {
           if (!cancelled) setStatus('unauthorized')
           return
         }
 
-        if (!meRes.ok) {
+        if (meRes && !meRes.ok) {
           if (!cancelled) setStatus('error')
           return
         }
 
-        const viewer = (await meRes.json()) as MeResponse
+        const viewer = cachedMe ?? ((await meRes!.json()) as MeResponse)
         const followsPayload = (await followsRes.json().catch(() => null)) as { items?: OrganizationRow[] } | null
         const ownedPayload = (await ownedRes.json().catch(() => null)) as { items?: OrganizationRow[] } | null
 
@@ -84,11 +91,10 @@ export default function OrganizationsManagerPage() {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [cachedMe, token])
 
   return (
     <DashboardShell
-      sidebar={<Sidebar me={me ?? undefined} active="organizations" />}
       rightRail={<RightRail mode="organizations" />}
       className="bg-slate-50"
       mainClassName="space-y-6"

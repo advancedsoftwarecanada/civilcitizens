@@ -9,6 +9,7 @@ import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
 import { buildCommunityPath } from '../../_lib/communityRoutes'
 import type { CommunityOrganization } from '../../_lib/organizations'
+import { useViewerStore } from '../../_lib/viewerStore'
 import { useCommunity } from './CommunityContext'
 import { useOrganization } from './OrganizationContext'
 
@@ -36,6 +37,7 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
   const pathname = usePathname()
   const community = useCommunity()
   const organization = useOrganization()
+  const cachedMe = useViewerStore((s) => s.me)
 
   const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [me, setMe] = useState<MeResponse | null>(null)
@@ -47,23 +49,35 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) return
 
+    if (cachedMe?.id) {
+      setMe({ id: cachedMe.id })
+    }
+
     const load = async () => {
       try {
-        const [meRes, orgRes] = await Promise.all([
-          fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
+        const requests: Array<Promise<Response>> = []
+        if (!cachedMe) {
+          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }))
+        }
+        requests.push(
           fetch(
             buildApiUrl(
               `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization.slug)}`,
             ),
             { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
           ),
-        ])
+        )
 
-        if (meRes.ok) {
+        const responses = await Promise.all(requests)
+        const meRes = cachedMe ? null : responses[0]
+        const orgRes = cachedMe ? responses[0] : responses[1]
+
+        if (meRes?.ok) {
           const payload = (await meRes.json().catch(() => null)) as MeResponse | null
           if (payload?.id) setMe(payload)
         }
 
+        if (!orgRes) return
         if (orgRes.ok) {
           const payload = (await orgRes.json().catch(() => null)) as { org?: CommunityOrganization } | null
           if (payload?.org) setOrg(payload.org)
@@ -74,7 +88,7 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
     }
 
     void load()
-  }, [municipality, organization.slug, province])
+  }, [cachedMe, municipality, organization.slug, province])
 
   const basePath = useMemo(
     () =>

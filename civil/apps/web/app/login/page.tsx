@@ -2,7 +2,7 @@
 import { Suspense, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
@@ -23,6 +23,7 @@ const AUTH_ERROR_MESSAGES = {
 const isKnownAuthError = (code: string): code is keyof typeof AUTH_ERROR_MESSAGES => code in AUTH_ERROR_MESSAGES
 
 function LoginPageInner() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const nextParam = searchParams.get('next')
   const safeNext = useMemo(() => {
@@ -95,7 +96,7 @@ function LoginPageInner() {
         localStorage.setItem('token', data.token)
       }
       const destination = safeNext ?? '/home'
-      window.location.href = destination
+      router.replace(destination)
     } catch (error) {
       console.error('Login request failed', error)
       pushToast('Unexpected error logging in. Please try again.', 'error')

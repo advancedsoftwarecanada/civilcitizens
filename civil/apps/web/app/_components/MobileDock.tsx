@@ -22,6 +22,7 @@ import { RightRail } from './RightRail'
 import FriendsRightRail from './FriendsRightRail'
 import { getStoredToken } from '../_lib/tokenStorage'
 import Block from './Block'
+import { useViewerStore } from '../_lib/viewerStore'
 
 const NAV_BUTTONS: Array<{
   key: 'menu' | 'search' | 'notifications' | 'messages' | 'wallet' | 'more'
@@ -109,6 +110,7 @@ function OrganizationMoreBlock({
 export default function MobileDock() {
   const pathname = usePathname()
   const router = useRouter()
+  const cachedViewer = useViewerStore((s) => s.me)
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuMounted, setMenuMounted] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -130,6 +132,11 @@ export default function MobileDock() {
     const token = window.localStorage.getItem('token')
     if (!token) return
     setHasSession(true)
+
+    if (cachedViewer) {
+      setViewer(cachedViewer)
+      return
+    }
 
     let cancelled = false
     const loadViewer = async () => {
@@ -157,7 +164,7 @@ export default function MobileDock() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [cachedViewer])
 
   useEffect(() => {
     if (!hasSession) return

@@ -16,6 +16,7 @@ import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
 import { formatUserDisplayName } from '../../_lib/text'
+import { useViewerStore } from '../../_lib/viewerStore'
 import { type ReactionType } from '@civil/shared'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
@@ -152,6 +153,7 @@ function buildPostUrl(post: ApiPost) {
 export default function UserPostsPage({ params }: PageProps) {
   const handleParam = decodeURIComponent(params.handle)
   const router = useRouter()
+  const cachedViewer = useViewerStore((s) => s.me)
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
@@ -173,6 +175,12 @@ export default function UserPostsPage({ params }: PageProps) {
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) return
+
+    if (cachedViewer) {
+      setViewer(cachedViewer)
+      return
+    }
+
     try {
       const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       if (!res.ok) return
@@ -181,7 +189,7 @@ export default function UserPostsPage({ params }: PageProps) {
     } catch {
       /* ignore */
     }
-  }, [])
+  }, [cachedViewer])
 
   const loadProfilePosts = useCallback(
     async (mode: 'hot' | 'new') => {
@@ -1008,10 +1016,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const coverPostUrl = coverPost ? buildPostUrl(coverPost) : null
   const buildFallbackThreadUrl = (postId?: string | null) => {
     if (!postId) return null
-    if (profile?.handle) {
-      return `/u/${profile.handle}/posts/${postId}`
-    }
-    return `/post/${postId}`
+    return `/u/${handleParam}/posts/${postId}`
   }
   const avatarThreadUrl = avatarPostUrl ?? buildFallbackThreadUrl(profile?.avatarPostId)
   const coverThreadUrl = coverPostUrl ?? buildFallbackThreadUrl(profile?.coverPostId)
@@ -1026,7 +1031,6 @@ export default function UserPostsPage({ params }: PageProps) {
 
       <DashboardShell
         className="bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white"
-        sidebar={<Sidebar me={viewer ?? undefined} />}
         rightRail={rightRailContent}
         rightRailClassName="pt-8"
         mainClassName="space-y-8 pb-12"

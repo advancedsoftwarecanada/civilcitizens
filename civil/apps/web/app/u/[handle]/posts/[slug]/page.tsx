@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import clsx from 'clsx'
 import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
@@ -13,6 +14,7 @@ import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostC
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
+import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../_lib/text'
 import VerifiedAvatar from '../../../../_components/VerifiedAvatar'
@@ -235,6 +237,7 @@ function formatDateTime(iso: string) {
 }
 
 export default function UserPostPage({ params }: PageProps) {
+  const router = useRouter()
   const handleParam = decodeURIComponent(params.handle)
   const slugParam = decodeURIComponent(params.slug)
   const [viewer, setViewer] = useState<Viewer | null>(null)
@@ -252,6 +255,11 @@ export default function UserPostPage({ params }: PageProps) {
     const token = localStorage.getItem('token')
     if (!token) return
     try {
+      const cached = useViewerStore.getState().me
+      if (cached) {
+        setViewer(cached)
+        return
+      }
       const res = await fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } })
       if (!res.ok) return
       const data = await res.json()
@@ -292,7 +300,11 @@ export default function UserPostPage({ params }: PageProps) {
 
       if (retrievedPost.author.handle.toLowerCase() !== handleParam.toLowerCase()) {
         if (canonical?.user) {
-          window.location.replace(canonical.user)
+          if (/^https?:\/\//i.test(canonical.user)) {
+            window.location.replace(canonical.user)
+          } else {
+            router.replace(canonical.user)
+          }
           return
         }
       }
@@ -306,7 +318,7 @@ export default function UserPostPage({ params }: PageProps) {
       setComments([])
       setStatus('error')
     }
-  }, [handleParam, slugParam])
+  }, [handleParam, router, slugParam])
 
   const postId = post?.id
   useRegisterPageView(postId)
@@ -478,11 +490,8 @@ export default function UserPostPage({ params }: PageProps) {
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pr-0 xl:pl-12 xl:pr-0">
-        <div className="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)_320px] xl:grid-cols-[300px_minmax(0,1fr)_360px]">
-          <div className="hidden lg:block">
-            <Sidebar me={viewer ?? undefined} active="home" />
-          </div>
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pl-[18rem] lg:pr-0 xl:pl-[20rem] xl:pr-0">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
 
           <main className="space-y-8 py-8">
             {status === 'loading' ? (
@@ -644,5 +653,9 @@ export default function UserPostPage({ params }: PageProps) {
 }
 
 function buildLegacyPath(post: ApiPost) {
+  const slug = post.seoSlug ?? post.id
+  if (post.author?.handle) {
+    return `/u/${post.author.handle}/posts/${slug}`
+  }
   return `/post/${post.id}`
 }

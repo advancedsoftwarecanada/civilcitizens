@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import Sidebar from '../../../_components/Sidebar'
 import { RightRail } from '../../../_components/RightRail'
 import { buildApiUrl } from '../../../_lib/api'
 import DashboardShell from '../../../_components/DashboardShell'
@@ -53,7 +52,6 @@ function itemCountText(count: number, title: string) {
 export default function UserRelationshipListPage({ handle, kind, title }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [me, setMe] = useState<any>(null)
   const [items, setItems] = useState<Array<UserListItem | CommunityListItem | OrganizationListItem>>([])
 
   useEffect(() => {
@@ -61,18 +59,6 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
       setLoading(true)
       setError(null)
       try {
-        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-        if (token) {
-          const meRes = await fetch(buildApiUrl('/auth/me'), {
-            headers: { authorization: `Bearer ${token}` },
-            cache: 'no-store',
-          })
-          if (meRes.ok) {
-            const meJson = await meRes.json()
-            setMe(meJson)
-          }
-        }
-
         const endpoint = `/users/${encodeURIComponent(handle)}/${kind}`
         const res = await fetch(buildApiUrl(endpoint), { cache: 'no-store' })
         if (!res.ok) {
@@ -102,8 +88,8 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
     return `No ${kind} yet.`
   }, [kind])
 
-  return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} />} rightRail={<RightRail hideContacts />}>
+    return (
+      <DashboardShell rightRail={<RightRail hideContacts />}>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-slate-900">{title}</h1>

@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { RightRail } from '../../_components/RightRail'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
@@ -60,7 +59,7 @@ export default function NetworkProfessionalsPage() {
   }, [])
 
   return (
-    <DashboardShell sidebar={<Sidebar active="network" />} rightRail={<RightRail mode="network" />} mainClassName="space-y-6">
+    <DashboardShell rightRail={<RightRail mode="network" />} mainClassName="space-y-6">
       <section className="surface-card px-6 py-5 shadow-subtle">
         <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Network</p>
         <h1 className="mt-1 text-xl font-semibold text-slate-900">Professional Connections</h1>

@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 
 export type DashboardShellProps = {
-  sidebar: ReactNode
   children: ReactNode
   rightRail?: ReactNode
   className?: string
@@ -13,7 +12,6 @@ export type DashboardShellProps = {
 }
 
 export default function DashboardShell({
-  sidebar,
   children,
   rightRail,
   className,
@@ -28,7 +26,6 @@ export default function DashboardShell({
 
   return (
     <div className={clsx('min-h-screen', className)}>
-      <div className="hidden lg:block">{sidebar}</div>
       <div className={clsx('mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pl-[18rem] lg:pr-0 xl:pl-[20rem] xl:pr-0', containerClassName)}>
         <div className={clsx(gridTemplate, gridClassName)}>
           <main className={clsx('pt-8', mainClassName)}>{children}</main>

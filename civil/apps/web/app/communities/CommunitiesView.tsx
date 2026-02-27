@@ -11,6 +11,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import DashboardShell from '../_components/DashboardShell'
 import type { MeResponse } from '../_lib/me'
+import { useViewerStore } from '../_lib/viewerStore'
 import {
   GEOLOCATION_POSTAL_SENTINEL,
   formatStoredPostalCode,
@@ -177,6 +178,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const provinceSelectRef = useRef<HTMLSelectElement | null>(null)
   const latestPostalSelectionRef = useRef<string | null>(null)
   const router = useRouter()
+  const cachedMe = useViewerStore((s) => s.me)
   const activePostalOwnerId = postalOwnerId ?? me?.id ?? null
 
   async function loadCitiesForProvince(province: string, preselectCommunity?: string, preselectCitySlug?: string | null) {
@@ -364,15 +366,24 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     async function bootstrap() {
       setSuggestionsLoading(true)
       try {
-        const [meRes, provRes, homeRes, followsRes, dashboardRes] = await Promise.all([
-          fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
-          fetch(buildApiUrl('/communities/provinces')),
-          fetch(buildApiUrl('/communities/home'), { headers: { authorization: `Bearer ${token}` } }),
-          fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }),
-          fetch(buildApiUrl('/communities/dashboard'), { headers: { authorization: `Bearer ${token}` } }),
-        ])
+        const requests: Array<Promise<Response>> = []
+        if (!cachedMe) {
+          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }))
+        }
+        requests.push(fetch(buildApiUrl('/communities/provinces')))
+        requests.push(fetch(buildApiUrl('/communities/home'), { headers: { authorization: `Bearer ${token}` } }))
+        requests.push(fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }))
+        requests.push(fetch(buildApiUrl('/communities/dashboard'), { headers: { authorization: `Bearer ${token}` } }))
 
-        const meData = await jsonOrThrow<MeResponse>(meRes)
+        const responses = await Promise.all(requests)
+        const offset = cachedMe ? 0 : 1
+        const meRes = cachedMe ? null : responses[0]
+        const provRes = responses[offset]
+        const homeRes = responses[offset + 1]
+        const followsRes = responses[offset + 2]
+        const dashboardRes = responses[offset + 3]
+
+        const meData = cachedMe ?? (await jsonOrThrow<MeResponse>(meRes))
         setMe(meData)
         setPostalOwnerId(meData.id ?? null)
         const storedPostalRaw = readStoredPostalCode(meData.id)
@@ -701,7 +712,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         // Keep the user locked in a setup state and redirect immediately.
         // Avoid rendering intermediate screens (e.g., community follow list) while the redirect happens.
         window.setTimeout(() => {
-          window.location.replace('/home')
+          router.replace('/home')
         }, 50)
         return
       }
@@ -1403,7 +1414,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
 
       <DashboardShell
         className="min-h-screen"
-        sidebar={<Sidebar me={me ?? undefined} active="community" />}
         mainClassName="space-y-6"
       >
         {mainContent}
