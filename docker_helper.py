@@ -162,11 +162,19 @@ def command_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> No
 
 
 def command_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
-    run_compose(compose_cmd, ["down", "--remove-orphans"], overrides)
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "down", "--remove-orphans"],
+        overrides,
+    )
 
 
 def command_down_all(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
-    run_compose(compose_cmd, ["down", "-v", "--remove-orphans"], overrides)
+    run_compose(
+        compose_cmd,
+        ["--profile", "infra", "--profile", "app", "down", "-v", "--remove-orphans"],
+        overrides,
+    )
 
 
 def command_status(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
@@ -251,6 +259,8 @@ def run_helper(
 
     project_name = os.environ.get("COMPOSE_PROJECT_NAME", default_project_name)
     compose_cmd = build_compose_base(project_name, env_file, list(extra_compose_files))
+
+    print(f"→ Using docker compose project '{project_name}'")
 
     overrides: Dict[str, str] = {"COMPOSE_PROJECT_NAME": project_name}
     overrides.update(env_file_vars)
