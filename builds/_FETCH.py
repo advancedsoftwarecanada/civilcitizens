@@ -71,10 +71,11 @@ def _run(cmd: list[str], cwd: Path) -> None:
 
 
 def _resolve_inputs() -> Inputs:
-    # CIVIL_BUILD sits next to CIVIL in your home folder.
-    civil_root = (ROOT.parent / 'CIVIL').resolve()
-    if not civil_root.exists():
-        # Fallback to ~/CIVIL
+    # builds/ lives inside the civilcitizens repo.
+    # Prefer the repo root (which should contain civil/).
+    civil_root = ROOT.parent.resolve()
+    if not (civil_root / 'civil').exists():
+        # Fallback to ~/CIVIL (legacy layout on some machines)
         civil_root = (HOME / 'CIVIL').resolve()
 
     _ensure_no_meteor(civil_root)

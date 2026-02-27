@@ -1,6 +1,6 @@
 # Civil APNs Service (standalone)
 
-This is a tiny standalone APNs sender + device-token registry that lives entirely in `CIVIL_BUILD/`.
+This is a tiny standalone APNs sender + device-token registry that lives entirely in `builds/`.
 It exists because we are **not modifying** the main `CIVIL/` backend right now.
 
 ## What it does
@@ -19,7 +19,7 @@ From this folder:
 
 Required for sending:
 
-- `APNS_KEY_PATH` — path to your `.p8` file (ex: `CIVIL_BUILD/mobile/ios/signing/apns/AuthKey_XXXX.p8`)
+- `APNS_KEY_PATH` — path to your `.p8` file (ex: `builds/mobile/ios/signing/apns/AuthKey_XXXX.p8`)
 - `APNS_KEY_ID` — Apple Key ID
 - `APNS_TEAM_ID` — Apple Team ID
 - `APNS_BUNDLE_ID` — bundle id / APNs topic (ex: `ca.civilcitizens`)
