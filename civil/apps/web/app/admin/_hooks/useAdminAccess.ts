@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { redirectToAuthModal } from '../../_lib/authModal'
-import { buildApiUrl } from '../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
 import { isSuperAdmin as isSuperAdminUser } from '../../_lib/admin'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 
 export type AdminAccessState = {
@@ -62,18 +62,23 @@ export function useAdminAccess(): AdminAccessState {
           return
         }
 
-        const res = await fetch(buildApiUrl('/auth/me'), {
-          headers: { authorization: `Bearer ${storedToken}` },
-        })
-        if (!res.ok) {
-          window.localStorage.removeItem('token')
-          redirectToAuthModal('login')
+        const data = await ensureViewerMe({ token: storedToken, refresh: true, cache: 'no-store' })
+        if (!data) {
+          const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
+          if (!tokenStillPresent) {
+            redirectToAuthModal('login')
+            if (!cancelled) {
+              setState({ token: null, me: null, loading: false, error: 'Authentication required.', isSuperAdmin: false })
+            }
+            return
+          }
+
           if (!cancelled) {
-            setState({ token: null, me: null, loading: false, error: 'Authentication required.', isSuperAdmin: false })
+            setState({ token: storedToken, me: null, loading: false, error: 'Unable to load admin profile.', isSuperAdmin: false })
           }
           return
         }
-        const data = (await res.json()) as MeResponse
+
         if (!hasHomeCommunity(data)) {
           router.replace('/welcome')
           return

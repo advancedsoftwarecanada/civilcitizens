@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { redirectToAuthModal } from './authModal'
-import { buildApiUrl } from './api'
 import { hasHomeCommunity, type MeResponse } from './me'
+import { ensureViewerMe } from './viewerMe'
 import { useViewerStore } from './viewerStore'
 
 export type UseAuthedMeOptions = {
@@ -23,6 +23,7 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const cachedMe = useViewerStore((s) => s.me)
+  const hydrated = useViewerStore((s) => s.hydrated)
   const setCachedMe = useViewerStore((s) => s.setMe)
 
   useEffect(() => {
@@ -52,32 +53,44 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
       return
     }
 
-    fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-      .then(async (res) => {
-        if (res.status === 401) {
-          window.localStorage.removeItem('token')
-          redirectToAuthModal('login')
-          return null
-        }
-        if (!res.ok) {
-          return null
-        }
-        return (await res.json()) as MeResponse
-      })
-      .then((data) => {
-        if (!data) return
-        if (requireHomeCommunity && !hasHomeCommunity(data)) {
-          router.replace('/welcome')
-          return
-        }
-        setMe(data)
-        setCachedMe(data)
-      })
-      .catch(() => {
-        // Network / transient failure: don't clear token or force re-login.
-      })
-      .finally(() => setLoading(false))
-  }, [cachedMe, options?.requireHomeChamber, options?.requireHomeCommunity, router, setCachedMe])
+    setLoading(true)
+    if (!hydrated) {
+      // Wait for ViewerBootstrap to hydrate from local cache first.
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      ensureViewerMe({ token })
+        .then((data) => {
+          if (cancelled) return
+          if (!data) {
+            const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
+            if (!tokenStillPresent) {
+              redirectToAuthModal('login')
+            }
+            return
+          }
+          if (requireHomeCommunity && !hasHomeCommunity(data)) {
+            router.replace('/welcome')
+            return
+          }
+          setMe(data)
+          setCachedMe(data)
+        })
+        .catch(() => {
+          // Network / transient failure: don't clear token or force re-login.
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, 800)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [cachedMe, hydrated, options?.requireHomeChamber, options?.requireHomeCommunity, router, setCachedMe])
 
   return { me, loading }
 }

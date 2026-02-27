@@ -7,6 +7,7 @@ import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
 import type { MeResponse } from '../../_lib/me'
 import { useViewerStore } from '../../_lib/viewerStore'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
 
 type OrganizationRow = {
@@ -48,29 +49,40 @@ export default function OrganizationsManagerPage() {
 
       setStatus('loading')
       try {
-        const requests: Array<Promise<Response>> = []
-        if (!cachedMe) {
-          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
-        }
-        requests.push(fetch(buildApiUrl('/organizations/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
-        requests.push(fetch(buildApiUrl('/organizations/owned'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+        const followsPromise = fetch(buildApiUrl('/organizations/follows'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const ownedPromise = fetch(buildApiUrl('/organizations/owned'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
 
-        const responses = await Promise.all(requests)
-        const meRes = cachedMe ? null : responses[0]
-        const followsRes = (cachedMe ? responses[0] : responses[1])!
-        const ownedRes = (cachedMe ? responses[1] : responses[2])!
+        const viewerPromise = cachedMe
+          ? Promise.resolve(cachedMe)
+          : ensureViewerMe({ token, cache: 'no-store' })
 
-        if ((meRes && meRes.status === 401) || followsRes.status === 401 || ownedRes.status === 401) {
-          if (!cancelled) setStatus('unauthorized')
-          return
-        }
+        const [viewer, followsRes, ownedRes] = await Promise.all([viewerPromise, followsPromise, ownedPromise])
 
-        if (meRes && !meRes.ok) {
+        if (!viewer) {
+          if (!window.localStorage.getItem('token')) {
+            if (!cancelled) setStatus('unauthorized')
+            return
+          }
           if (!cancelled) setStatus('error')
           return
         }
 
-        const viewer = cachedMe ?? ((await meRes!.json()) as MeResponse)
+        if (followsRes.status === 401 || ownedRes.status === 401) {
+          if (!cancelled) setStatus('unauthorized')
+          return
+        }
+
+        if (!followsRes.ok || !ownedRes.ok) {
+          if (!cancelled) setStatus('error')
+          return
+        }
+
         const followsPayload = (await followsRes.json().catch(() => null)) as { items?: OrganizationRow[] } | null
         const ownedPayload = (await ownedRes.json().catch(() => null)) as { items?: OrganizationRow[] } | null
 

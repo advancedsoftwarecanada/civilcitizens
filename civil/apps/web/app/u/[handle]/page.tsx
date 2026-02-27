@@ -17,6 +17,7 @@ import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
 import { formatUserDisplayName } from '../../_lib/text'
 import { useViewerStore } from '../../_lib/viewerStore'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { type ReactionType } from '@civil/shared'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
@@ -182,9 +183,8 @@ export default function UserPostsPage({ params }: PageProps) {
     }
 
     try {
-      const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
+      const data = await ensureViewerMe({ token })
+      if (!data) return
       setViewer(data)
     } catch {
       /* ignore */

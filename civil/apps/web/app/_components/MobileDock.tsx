@@ -23,6 +23,7 @@ import FriendsRightRail from './FriendsRightRail'
 import { getStoredToken } from '../_lib/tokenStorage'
 import Block from './Block'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureViewerMe } from '../_lib/viewerMe'
 
 const NAV_BUTTONS: Array<{
   key: 'menu' | 'search' | 'notifications' | 'messages' | 'wallet' | 'more'
@@ -139,28 +140,21 @@ export default function MobileDock() {
     }
 
     let cancelled = false
-    const loadViewer = async () => {
+    void (async () => {
       try {
-        const res = await fetch(buildApiUrl('/auth/me'), {
-          headers: { authorization: `Bearer ${token}` },
-        })
-        if (!res.ok) {
-          if (res.status === 401) {
-            window.localStorage.removeItem('token')
-            setHasSession(false)
-          }
+        const data = await ensureViewerMe({ token })
+        if (cancelled) return
+        if (data) {
+          setViewer(data)
           return
         }
-        const data = (await res.json()) as MeResponse
-        if (!cancelled) {
-          setViewer(data)
+        if (!window.localStorage.getItem('token')) {
+          setHasSession(false)
         }
       } catch (err) {
         console.error('Unable to load viewer for mobile dock', err)
       }
-    }
-
-    void loadViewer()
+    })()
     return () => {
       cancelled = true
     }

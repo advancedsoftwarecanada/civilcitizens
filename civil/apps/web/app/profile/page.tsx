@@ -12,6 +12,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureViewerMe } from '../_lib/viewerMe'
 import DashboardShell from '../_components/DashboardShell'
 import PhotoUpdateModal from '../_components/PhotoUpdateModal'
 
@@ -964,19 +965,15 @@ export default function ProfileEditPage() {
         return storedToken
       }
 
-      const res = await fetch(buildApiUrl('/auth/me'), {
-        headers: {
-          authorization: `Bearer ${storedToken}`,
-        },
-      })
-      if (!res.ok) {
-        if (typeof window !== 'undefined') {
-          window.localStorage.removeItem('token')
+      const data = await ensureViewerMe({ token: storedToken })
+      if (!data) {
+        if (!window.localStorage.getItem('token')) {
           redirectToAuthModal('login')
+        } else {
+          pushToast('Unable to verify your session right now. Please try again.', 'error', 6000)
         }
         return null
       }
-      const data: MeResponse = await res.json()
       if (!hasHomeCommunity(data)) {
         router.replace('/welcome')
         return null

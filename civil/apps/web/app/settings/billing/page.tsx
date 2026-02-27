@@ -9,6 +9,7 @@ import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { buildApiUrl } from '../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 import DashboardShell from '../../_components/DashboardShell'
 import { CheckoutModal, type CheckoutSessionConfig } from './CheckoutModal'
@@ -149,22 +150,21 @@ export default function BillingSettingsPage() {
               setMe(cachedMe)
             }
           } else {
-            const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${storedToken}` } })
-            if (res.status === 401 || res.status === 403) {
-              handleUnauthorized()
-              return
-            }
-            if (res.ok) {
-              const data: MeResponse = await res.json()
+            const data = await ensureViewerMe({ token: storedToken })
+            const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
+            if (!data) {
+              if (!tokenStillPresent) {
+                handleUnauthorized()
+                return
+              }
+            } else {
               if (!hasHomeCommunity(data)) {
-                  router.replace('/welcome')
+                router.replace('/welcome')
                 return
               }
               if (!cancelled) {
                 setMe(data)
               }
-            } else {
-              console.warn('Billing bootstrap: /auth/me failed', { status: res.status })
             }
           }
         } catch (err) {

@@ -9,6 +9,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureViewerMe } from '../_lib/viewerMe'
 import PostFeedItem from './PostFeedItem'
 import DashboardShell from './DashboardShell'
 import Modal from './Modal'
@@ -195,34 +196,28 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
     const bootstrap = async () => {
       try {
-        let meRes: Response | null = null
-        let followsRes: Response
+        const followsPromise = fetch(buildApiUrl('/communities/follows'), {
+          headers: { authorization: `Bearer ${token}` },
+        })
 
-        if (cachedMe) {
-          followsRes = await fetch(buildApiUrl('/communities/follows'), {
-            headers: { authorization: `Bearer ${token}` },
-          })
-        } else {
-          const [meResponse, followsResponse] = await Promise.all([
-            fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
-            fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }),
-          ])
-          meRes = meResponse
-          followsRes = followsResponse
-        }
-
-        if (meRes && !meRes.ok) {
-          throw new Error('unauthorized')
-        }
-
-        if (meRes) {
-          const meData = (await meRes.json()) as MeResponse
-          if (!hasHomeCommunity(meData)) {
-            router.replace('/welcome')
+        const resolvedMe = cachedMe ?? (await ensureViewerMe({ token }))
+        if (!resolvedMe) {
+          if (!window.localStorage.getItem('token')) {
+            redirectToAuthModal('login')
             return
           }
-          setMe(meData)
+          pushToast('Unable to load your account right now.', 'error')
+          return
         }
+
+        if (!hasHomeCommunity(resolvedMe)) {
+          router.replace('/welcome')
+          return
+        }
+
+        setMe(resolvedMe)
+
+        const followsRes = await followsPromise
 
         if (followsRes.status === 401) {
           localStorage.removeItem('token')

@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect } from 'react'
-import { buildApiUrl } from '../_lib/api'
 import type { MeResponse } from '../_lib/me'
+import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 
 const VIEWER_CACHE_KEY = 'cc:viewer-cache:v1'
@@ -15,15 +15,6 @@ function readCachedViewer(): MeResponse | null {
     return JSON.parse(raw) as MeResponse
   } catch {
     return null
-  }
-}
-
-function writeCachedViewer(me: MeResponse) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(VIEWER_CACHE_KEY, JSON.stringify(me))
-  } catch {
-    // ignore quota / serialization issues
   }
 }
 
@@ -44,26 +35,9 @@ export default function ViewerBootstrap() {
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch(buildApiUrl('/auth/me'), {
-          headers: { authorization: `Bearer ${token}` },
-        })
+        await ensureViewerMe({ token, refresh: true, cache: 'no-store' })
 
         if (cancelled) return
-
-        if (res.status === 401) {
-          window.localStorage.removeItem('token')
-          setMe(null)
-          return
-        }
-
-        if (!res.ok) {
-          // transient error: keep cached viewer to avoid UI flashes
-          return
-        }
-
-        const data = (await res.json()) as MeResponse
-        setMe(data)
-        writeCachedViewer(data)
       } catch {
         // network error: keep cached viewer
       }

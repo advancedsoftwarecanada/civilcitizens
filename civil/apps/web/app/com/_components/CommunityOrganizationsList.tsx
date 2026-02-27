@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { buildApiUrl } from '../../_lib/api'
 import type { MeResponse } from '../../_lib/me'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 
 type CommunityOrganization = {
@@ -50,27 +51,22 @@ export default function CommunityOrganizationsList({ province, municipality }: {
 
     setStatus('loading')
     try {
-      const requests: Array<Promise<Response>> = []
-      if (!cachedMe) {
-        requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
-      }
-      requests.push(fetch(endpoint, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+      const [meJson, orgRes] = await Promise.all([
+        cachedMe ? Promise.resolve(cachedMe) : ensureViewerMe({ token }),
+        fetch(endpoint, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
+      ])
 
-      const responses = await Promise.all(requests)
-      const meRes = cachedMe ? null : responses[0]
-      const orgRes = (cachedMe ? responses[0] : responses[1])!
-
-      if ((meRes && meRes.status === 401) || orgRes.status === 401) {
+      const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
+      if (!tokenStillPresent || orgRes.status === 401) {
         setStatus('unauthorized')
         return
       }
 
-      if ((meRes && !meRes.ok) || !orgRes.ok) {
+      if (!orgRes.ok || !meJson) {
         setStatus('error')
         return
       }
 
-      const meJson = cachedMe ?? ((await meRes!.json()) as MeResponse)
       const orgJson = (await orgRes.json().catch(() => null)) as ListResponse | null
       const items = Array.isArray(orgJson?.items) ? orgJson.items : []
 

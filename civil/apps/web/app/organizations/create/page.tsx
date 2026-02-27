@@ -5,6 +5,7 @@ import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl } from '../../_lib/api'
 import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
 import { RightRail } from '../../_components/RightRail'
@@ -67,33 +68,25 @@ export default function CreateOrganizationPage() {
 
     setStatus('loading')
     try {
-      let meRes: Response | null = null
       let followsRes: Response
 
-      if (cachedMe) {
-        followsRes = await fetch(buildApiUrl('/communities/follows'), {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        })
-      } else {
-        const [meResponse, followsResponse] = await Promise.all([
-          fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-          fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-        ])
-        meRes = meResponse
-        followsRes = followsResponse
-      }
+      const [meData, followsResponse] = await Promise.all([
+        cachedMe ? Promise.resolve(cachedMe) : ensureViewerMe({ token }),
+        fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
+      ])
 
-      if ((meRes && meRes.status === 401) || followsRes.status === 401) {
+      const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
+      if (!tokenStillPresent || followsResponse.status === 401) {
         setStatus('unauthorized')
         return
       }
-      if ((meRes && !meRes.ok) || !followsRes.ok) {
+
+      if (!meData || !followsResponse.ok) {
         setStatus('error')
         return
       }
 
-      const meData = cachedMe ?? ((await meRes!.json()) as MeResponse)
+      followsRes = followsResponse
       const followsData = (await followsRes.json().catch(() => null)) as CommunityFollowsResponse | null
 
       const followItems = Array.isArray(followsData?.items) ? followsData.items : []
