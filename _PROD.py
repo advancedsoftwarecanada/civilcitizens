@@ -4,7 +4,7 @@
 This script assumes you're already SSH'd into the production machine.
 It does NOT rsync/upload code.
 
-Default behavior is to rebuild and restart the production stack using docker compose.
+Default behavior is to deploy application updates while preserving infra services.
 
 Usage:
   python3 _PROD.py                  # deploy (keep DB/Redis; rebuild + restart app)
@@ -42,11 +42,11 @@ def main(argv: list[str]) -> int:
             REPO_ROOT / ".env.production",
             REPO_ROOT / ".env.production.googlecloud",
         ],
-      # Production default project (existing stack with static ports).
-      # Override via COMPOSE_PROJECT_NAME if needed.
-      default_project_name="civil_prod",
-      # Preserve infra (postgres/redis/minio) and only rebuild/restart app.
-      default_command="deploy",
+        # Production default project (existing stack with static ports).
+        # Override via COMPOSE_PROJECT_NAME if needed.
+        default_project_name="civil_prod",
+        # Preserve infra (postgres/redis/minio) and only rebuild/restart app.
+        default_command="deploy",
     )
     return 0
 
