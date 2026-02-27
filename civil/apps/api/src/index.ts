@@ -78,7 +78,6 @@ const METRIC_TABLES = {
   posts: { table: '"Post"', column: '"createdAt"' },
   comments: { table: '"Comment"', column: '"createdAt"' },
   reactions: { table: '"PostReaction"', column: '"createdAt"' },
-  follows: { table: '"Follow"', column: '"createdAt"' },
 } as const
 
 type DateRange = { start: Date; end: Date }
@@ -1070,14 +1069,6 @@ async function loadAcceptedConnectionIds(userId: string): Promise<string[]> {
     if (isConnectionTableMissingError(error)) return []
     throw error
   }
-}
-
-async function loadFollowingTargetIds(userId: string): Promise<string[]> {
-  const rows: Pick<Prisma.FollowGetPayload<{ select: { targetId: true } }>, 'targetId'>[] = await prisma.follow.findMany({
-    where: { followerId: userId },
-    select: { targetId: true },
-  })
-  return rows.map((row) => row.targetId)
 }
 
 function formatFriendRequest(friendship: FriendshipWithUsers, viewerId: string) {
@@ -2835,11 +2826,21 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
 
   if (!user) return reply.code(404).send({ error: 'not_found' })
 
-  const [followers, following, communitiesFollowing, homeFollow] = await Promise.all([
-    prisma.follow.count({ where: { targetId: userId } }),
-    prisma.follow.count({ where: { followerId: userId } }),
+  const [communitiesFollowing, homeFollow, friends, connections] = await Promise.all([
     prisma.communityFollow.count({ where: { userId } }),
     prisma.communityFollow.findFirst({ where: { userId, home: true } }),
+    prisma.friendship.count({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ requesterId: userId }, { addresseeId: userId }],
+      },
+    }),
+    prisma.connection.count({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ requesterId: userId }, { addresseeId: userId }],
+      },
+    }),
   ])
 
   let experienceItems: Array<{
@@ -2909,8 +2910,8 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       experiences: experienceItems,
     },
     stats: {
-      followers,
-      following,
+      friends,
+      connections,
       communitiesFollowing,
     },
     homeCommunity,
@@ -5018,60 +5019,13 @@ app.post('/messages/threads/:id/read', async (req: FastifyRequest, reply: Fastif
 
 app.post('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
-    const params = HandleParam.safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-
-    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
-    const target = await prisma.user.findUnique({ where: { handle }, select: { id: true } })
-    if (!target) return reply.code(404).send({ error: 'user_not_found' })
-    if (target.id === userId) return reply.code(400).send({ error: 'cannot_follow_self' })
-
-    const existing = await prisma.follow.findUnique({
-      where: {
-        followerId_targetId: {
-          followerId: userId,
-          targetId: target.id,
-        },
-      },
-    })
-
-    if (existing) {
-      return reply.send({ ok: true })
-    }
-
-    await prisma.follow.create({ data: { followerId: userId, targetId: target.id } })
-    return reply.code(201).send({ ok: true })
+    return reply.code(410).send({ error: 'person_follow_disabled' })
   }),
 )
 
 app.delete('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
-
-    const params = HandleParam.safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-
-    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
-    const target = await prisma.user.findUnique({ where: { handle }, select: { id: true } })
-    if (!target) return reply.code(404).send({ error: 'user_not_found' })
-    if (target.id === userId) return reply.code(400).send({ error: 'cannot_follow_self' })
-
-    await prisma.follow
-      .delete({
-        where: {
-          followerId_targetId: {
-            followerId: userId,
-            targetId: target.id,
-          },
-        },
-      })
-      .catch(() => null)
-
-    return reply.send({ ok: true })
+    return reply.code(410).send({ error: 'person_follow_disabled' })
   }),
 )
 
@@ -8661,9 +8615,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     let organizationsCount = 0
     let connectionsCount = 0
     try {
-      const [followers, following, friends, communities, organizations, connections] = await Promise.all([
-        prisma.follow.count({ where: { targetId: userRecord.id } }),
-        prisma.follow.count({ where: { followerId: userRecord.id } }),
+      const [friends, communities, organizations, connections] = await Promise.all([
         prisma.friendship.count({
           where: {
             status: FriendshipStatus.ACCEPTED,
@@ -8687,8 +8639,6 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
           },
         }),
       ])
-      followersCount = followers
-      followingCount = following
       friendsCount = friends
       communitiesCount = communities
       organizationsCount = organizations
@@ -8696,6 +8646,9 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     } catch (error) {
       // Ignore
     }
+
+    followersCount = 0
+    followingCount = 0
 
     let experiences: Array<{
       id: string
@@ -8775,7 +8728,6 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       connectionStatus: 'self' | 'connected' | 'incoming' | 'outgoing' | 'none'
       connectionId: string | null
       connectionSince: Date | null
-      following: boolean
     } = {
       friendshipStatus: 'none',
       friendshipId: null,
@@ -8783,7 +8735,6 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       connectionStatus: 'none',
       connectionId: null,
       connectionSince: null,
-      following: false,
     }
 
     if (viewerId) {
@@ -8792,21 +8743,13 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         relationship.connectionStatus = 'self'
       } else {
         try {
-          const [friendship, followRecord, connection] = await Promise.all([
+          const [friendship, connection] = await Promise.all([
             prisma.friendship.findFirst({
               where: {
                 OR: [
                   { requesterId: viewerId, addresseeId: user.id },
                   { requesterId: user.id, addresseeId: viewerId },
                 ],
-              },
-            }),
-            prisma.follow.findUnique({
-              where: {
-                followerId_targetId: {
-                  followerId: viewerId,
-                  targetId: user.id,
-                },
               },
             }),
             findConnectionBetween(viewerId, user.id),
@@ -8854,7 +8797,6 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
             connectionStatus,
             connectionId,
             connectionSince,
-            following: Boolean(followRecord),
           }
         } catch (error) {
           // Ignore
@@ -10014,13 +9956,10 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     commentsToday,
     totalReactions,
     reactionsToday,
-    totalFollows,
-    followsToday,
     userSeries,
     postSeries,
     commentSeries,
     reactionSeries,
-    followSeries,
     pageViewSeries,
     routeTraffic,
     topPostViews,
@@ -10033,13 +9972,10 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     prisma.comment.count({ where: { createdAt: { gte: today } } }),
     prisma.postReaction.count(),
     prisma.postReaction.count({ where: { createdAt: { gte: today } } }),
-    prisma.follow.count(),
-    prisma.follow.count({ where: { createdAt: { gte: today } } }),
     queryDailyCounts('users', range),
     queryDailyCounts('posts', range),
     queryDailyCounts('comments', range),
     queryDailyCounts('reactions', range),
-    queryDailyCounts('follows', range),
     queryPageViewSeries(range),
     prisma.$queryRaw<Array<{ path: string; views: bigint }>>`
       select path, count(*)::bigint as views
@@ -10082,11 +10018,6 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
       today: reactionsToday,
       series: reactionSeries,
     },
-    follows: {
-      total: totalFollows,
-      today: followsToday,
-      series: followSeries,
-    },
     pageViews: {
       series: pageViewSeries,
     },
@@ -10097,7 +10028,7 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
   }
 
   if (format === 'csv') {
-    const dateMap = new Map<string, { users?: number; posts?: number; comments?: number; reactions?: number; views?: number; follows?: number }>()
+    const dateMap = new Map<string, { users?: number; posts?: number; comments?: number; reactions?: number; views?: number }>()
     const ingest = (series: DailyCount[], key: keyof NonNullable<ReturnType<typeof dateMap.get>>) => {
       series.forEach((point) => {
         const existing = dateMap.get(point.date) || {}
@@ -10110,7 +10041,6 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     ingest(commentSeries, 'comments')
     ingest(reactionSeries, 'reactions')
     ingest(pageViewSeries, 'views')
-    ingest(followSeries, 'follows')
 
     const sortedDates = Array.from(dateMap.keys()).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
     const rows = sortedDates.map((date) => {
@@ -10122,11 +10052,10 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
         entry.comments ?? 0,
         entry.reactions ?? 0,
         entry.views ?? 0,
-        entry.follows ?? 0,
       ].join(',')
     })
 
-    const csv = ['date,users,posts,comments,reactions,pageViews,follows', ...rows].join('\n')
+    const csv = ['date,users,posts,comments,reactions,pageViews', ...rows].join('\n')
     return reply.header('content-type', 'text/csv').send(csv)
   }
 
@@ -10501,89 +10430,13 @@ app.get('/users/:handle/friends', async (req: FastifyRequest, reply: FastifyRepl
 
 app.get('/users/:handle/followers', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const params = HandleParam.safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-
-    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
-    const user = await prisma.user.findUnique({
-      where: { handle },
-      select: { id: true, handle: true },
-    })
-
-    if (!user) return reply.code(404).send({ error: 'not_found' })
-
-    const followers = await prisma.follow.findMany({
-      where: { targetId: user.id },
-      include: {
-        follower: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            coverUrl: true,
-            bio: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    })
-
-    const items = followers.map((entry: any) => ({
-      id: entry.follower.id,
-      handle: entry.follower.handle,
-      name: entry.follower.name,
-      avatarUrl: normalizeMediaUrl(entry.follower.avatarUrl ?? null),
-      coverUrl: normalizeMediaUrl(entry.follower.coverUrl ?? null),
-      bio: entry.follower.bio,
-      since: entry.createdAt.toISOString(),
-    }))
-
-    return { userHandle: user.handle, items }
+    return reply.code(410).send({ error: 'person_follow_disabled' })
   }),
 )
 
 app.get('/users/:handle/following', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const params = HandleParam.safeParse(req.params)
-    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
-
-    const handle = params.data.handle.replace(/^@/, '').toLowerCase()
-    const user = await prisma.user.findUnique({
-      where: { handle },
-      select: { id: true, handle: true },
-    })
-
-    if (!user) return reply.code(404).send({ error: 'not_found' })
-
-    const following = await prisma.follow.findMany({
-      where: { followerId: user.id },
-      include: {
-        target: {
-          select: {
-            id: true,
-            handle: true,
-            name: true,
-            avatarUrl: true,
-            coverUrl: true,
-            bio: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    })
-
-    const items = following.map((entry: any) => ({
-      id: entry.target.id,
-      handle: entry.target.handle,
-      name: entry.target.name,
-      avatarUrl: normalizeMediaUrl(entry.target.avatarUrl ?? null),
-      coverUrl: normalizeMediaUrl(entry.target.coverUrl ?? null),
-      bio: entry.target.bio,
-      since: entry.createdAt.toISOString(),
-    }))
-
-    return { userHandle: user.handle, items }
+    return reply.code(410).send({ error: 'person_follow_disabled' })
   }),
 )
 

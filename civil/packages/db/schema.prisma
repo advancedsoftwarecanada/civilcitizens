@@ -53,8 +53,6 @@ model User {
   comments                  Comment[]
   commentVotes              CommentVote[]
   experiences               Experience[]
-  following                 Follow[]             @relation("following")
-  followers                 Follow[]             @relation("followers")
   mediaAssets               MediaAsset[]         @relation("UserMediaAssets")
   posts                     Post[]
   avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
@@ -184,17 +182,6 @@ model PostReaction {
   @@index([postId])
   @@index([type])
   @@index([postId, createdAt])
-}
-
-model Follow {
-  followerId String
-  targetId   String
-  createdAt  DateTime @default(now())
-  follower   User     @relation("following", fields: [followerId], references: [id])
-  target     User     @relation("followers", fields: [targetId], references: [id])
-
-  @@id([followerId, targetId])
-  @@index([targetId])
 }
 
 model Notification {

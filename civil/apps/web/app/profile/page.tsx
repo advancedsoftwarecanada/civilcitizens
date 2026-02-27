@@ -56,9 +56,9 @@ type ProfileResponse = {
     experiences?: ExperienceResponse[]
   }
   stats: {
-    followers: number
-    following: number
-    chambersFollowing: number
+    friends: number
+    connections: number
+    communitiesFollowing: number
   }
   homeChamber?: {
     provinceCode: string
@@ -1485,16 +1485,16 @@ export default function ProfileEditPage() {
         </div>
         <ul className="space-y-3 text-sm text-slate-600">
           <li className="flex items-center justify-between">
-            <span>Followers</span>
-            <span className="text-base font-semibold text-slate-900">{profile?.stats?.followers ?? 0}</span>
+            <span>Friends</span>
+            <span className="text-base font-semibold text-slate-900">{profile?.stats?.friends ?? 0}</span>
           </li>
           <li className="flex items-center justify-between">
-            <span>Following</span>
-            <span className="text-base font-semibold text-slate-900">{profile?.stats?.following ?? 0}</span>
+            <span>Connections</span>
+            <span className="text-base font-semibold text-slate-900">{profile?.stats?.connections ?? 0}</span>
           </li>
           <li className="flex items-center justify-between">
             <span>Cities</span>
-            <span className="text-base font-semibold text-slate-900">{profile?.stats?.chambersFollowing ?? 0}</span>
+            <span className="text-base font-semibold text-slate-900">{profile?.stats?.communitiesFollowing ?? 0}</span>
           </li>
         </ul>
       </section>
