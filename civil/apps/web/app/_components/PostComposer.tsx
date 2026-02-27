@@ -719,11 +719,11 @@ export default function PostComposer({
         {businessTarget?.businessId ? (
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Visibility</span>
-            <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+            <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               <button
                 type="button"
                 className={clsx(
-                  'rounded-full px-4 py-1 transition',
+                  'shrink-0 whitespace-nowrap rounded-full px-4 py-1 transition',
                   visibility === 'public' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
                 )}
                 onClick={() => setVisibility('public')}
@@ -734,7 +734,7 @@ export default function PostComposer({
               <button
                 type="button"
                 className={clsx(
-                  'rounded-full px-4 py-1 transition',
+                  'shrink-0 whitespace-nowrap rounded-full px-4 py-1 transition',
                   visibility === 'members' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
                 )}
                 onClick={() => setVisibility('members')}
@@ -747,7 +747,7 @@ export default function PostComposer({
         ) : null}
         <div className="flex flex-col gap-2">
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Type</span>
-          <div className="inline-flex rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500">
+          <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {POST_TYPE_CHOICES.map((choice) => {
             const isActive = !choice.comingSoon && postType === choice.type
             const isComingSoon = Boolean(choice.comingSoon)
@@ -756,7 +756,7 @@ export default function PostComposer({
                 key={choice.type}
                 type="button"
                 className={clsx(
-                  'flex items-center gap-2 rounded-full px-4 py-1 transition',
+                  'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-1 transition',
                   isActive ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
                   isComingSoon ? 'text-slate-400 hover:text-slate-500' : '',
                 )}

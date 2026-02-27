@@ -1045,6 +1045,77 @@ export default function OrganizationSettingsClient({
         onClose={closePhotoModal}
       />
 
+      <section className="surface-card space-y-6 p-6 shadow-subtle">
+        <header className="space-y-1">
+          <h3 className="text-lg font-semibold text-slate-900">Photos</h3>
+          <p className="text-sm text-slate-500">Upload a cover and profile photo to personalize this organization.</p>
+        </header>
+
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-gray-800">Cover photo</p>
+              <p className="text-xs text-gray-500">Shown at the top of your public organization page.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => launchPhotoFlow('business_cover', true)}
+              disabled={saving}
+              className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+            >
+              Upload new cover
+            </button>
+          </div>
+
+          {coverDisplayUrl ? (
+            <img src={coverDisplayUrl} alt={`${org.name} cover`} className="h-40 w-full rounded-2xl border border-slate-200 object-cover" />
+          ) : (
+            <div className="flex h-40 w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
+              No cover photo yet.
+            </div>
+          )}
+
+          <p className="mt-2 text-xs text-slate-500">Up to 20MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
+        </div>
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+          <VerifiedAvatar
+            src={logoDisplayUrl}
+            alt={org.name}
+            initials={org.name}
+            size={80}
+            isVerified={Boolean(org.isVerified)}
+            className="shrink-0"
+          />
+          <div className="space-y-1 text-sm text-gray-600">
+            <button
+              type="button"
+              onClick={() => launchPhotoFlow('business_logo', true)}
+              disabled={saving}
+              className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+            >
+              Upload new profile photo
+            </button>
+            <p className="text-xs text-slate-500">Up to 8MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
+          </div>
+        </div>
+
+        <input
+          ref={coverInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          className="hidden"
+          onChange={handleFileChange('business_cover')}
+        />
+        <input
+          ref={logoInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          className="hidden"
+          onChange={handleFileChange('business_logo')}
+        />
+      </section>
+
       {isOwner ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
           <h3 className="text-sm font-semibold text-slate-900">Organization name</h3>
@@ -1148,77 +1219,6 @@ export default function OrganizationSettingsClient({
             Manage shop
           </a>
         </div>
-      </section>
-
-      <section className="surface-card space-y-6 p-6 shadow-subtle">
-        <header className="space-y-1">
-          <h3 className="text-lg font-semibold text-slate-900">Photos</h3>
-          <p className="text-sm text-slate-500">Upload a cover and profile photo to personalize this organization.</p>
-        </header>
-
-        <div>
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-gray-800">Cover photo</p>
-              <p className="text-xs text-gray-500">Shown at the top of your public organization page.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => launchPhotoFlow('business_cover', true)}
-              disabled={saving}
-              className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
-            >
-              Upload new cover
-            </button>
-          </div>
-
-          {coverDisplayUrl ? (
-            <img src={coverDisplayUrl} alt={`${org.name} cover`} className="h-40 w-full rounded-2xl border border-slate-200 object-cover" />
-          ) : (
-            <div className="flex h-40 w-full items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500">
-              No cover photo yet.
-            </div>
-          )}
-
-          <p className="mt-2 text-xs text-slate-500">Up to 20MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
-        </div>
-
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          <VerifiedAvatar
-            src={logoDisplayUrl}
-            alt={org.name}
-            initials={org.name}
-            size={80}
-            isVerified={Boolean(org.isVerified)}
-            className="shrink-0"
-          />
-          <div className="space-y-1 text-sm text-gray-600">
-            <button
-              type="button"
-              onClick={() => launchPhotoFlow('business_logo', true)}
-              disabled={saving}
-              className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
-            >
-              Upload new profile photo
-            </button>
-            <p className="text-xs text-slate-500">Up to 8MB. Supported: JPG, PNG, WebP, AVIF, HEIC.</p>
-          </div>
-        </div>
-
-        <input
-          ref={coverInputRef}
-          type="file"
-          accept={ACCEPTED_IMAGE_TYPES}
-          className="hidden"
-          onChange={handleFileChange('business_cover')}
-        />
-        <input
-          ref={logoInputRef}
-          type="file"
-          accept={ACCEPTED_IMAGE_TYPES}
-          className="hidden"
-          onChange={handleFileChange('business_logo')}
-        />
       </section>
 
       <section className="surface-card space-y-4 p-6 shadow-subtle">
