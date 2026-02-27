@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { buildApiUrl } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 
@@ -86,6 +87,7 @@ const ORG_TYPES: Array<{
 ]
 
 export default function OrganizationCreateButton({ province, municipality, defaultOpen }: Props) {
+  const router = useRouter()
   const [open, setOpen] = useState(Boolean(defaultOpen))
   const [pending, setPending] = useState(false)
   const [name, setName] = useState('')
@@ -145,7 +147,7 @@ export default function OrganizationCreateButton({ province, municipality, defau
         const payload = (await res.json().catch(() => null)) as CreateOrgResponse | null
         if (payload?.error === 'premium_required') {
           pushToast('Premium is required to create an organization.', 'warning')
-          window.location.href = '/settings/billing'
+          router.push('/settings/billing')
           return
         }
         pushToast('Please sign in again.', 'error')
@@ -164,14 +166,14 @@ export default function OrganizationCreateButton({ province, municipality, defau
       pushToast('Organization created.', 'success')
       reset()
       setOpen(false)
-      window.location.href = `/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(orgSlug)}`
+      router.push(`/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(orgSlug)}`)
     } catch (err) {
       console.error('Unable to create organization', err)
       pushToast('Unable to create organization. Please try again.', 'error')
     } finally {
       setPending(false)
     }
-  }, [description, endpoint, municipality, name, orgType, province, token])
+  }, [description, endpoint, municipality, name, orgType, province, router, token])
 
   if (!open) {
     return (

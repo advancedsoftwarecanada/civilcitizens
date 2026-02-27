@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { redirectToAuthModal } from './authModal'
 import { buildApiUrl } from './api'
 import { hasHomeCommunity, type MeResponse } from './me'
@@ -18,6 +19,7 @@ export type UseAuthedMeOptions = {
 }
 
 export function useAuthedMe(options?: UseAuthedMeOptions) {
+  const router = useRouter()
   const [me, setMe] = useState<MeResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const cachedMe = useViewerStore((s) => s.me)
@@ -39,6 +41,17 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
 
     const requireHomeCommunity = options?.requireHomeCommunity ?? options?.requireHomeChamber ?? true
 
+    if (cachedMe) {
+      if (requireHomeCommunity && !hasHomeCommunity(cachedMe)) {
+        router.replace('/welcome')
+        setLoading(false)
+        return
+      }
+      setMe(cachedMe)
+      setLoading(false)
+      return
+    }
+
     fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       .then(async (res) => {
         if (res.status === 401) {
@@ -54,7 +67,7 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
       .then((data) => {
         if (!data) return
         if (requireHomeCommunity && !hasHomeCommunity(data)) {
-          window.location.replace('/welcome')
+          router.replace('/welcome')
           return
         }
         setMe(data)
@@ -64,7 +77,7 @@ export function useAuthedMe(options?: UseAuthedMeOptions) {
         // Network / transient failure: don't clear token or force re-login.
       })
       .finally(() => setLoading(false))
-  }, [options?.requireHomeChamber, options?.requireHomeCommunity, setCachedMe])
+  }, [cachedMe, options?.requireHomeChamber, options?.requireHomeCommunity, router, setCachedMe])
 
   return { me, loading }
 }

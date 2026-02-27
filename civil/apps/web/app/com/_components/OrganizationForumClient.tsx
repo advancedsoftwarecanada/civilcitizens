@@ -18,6 +18,12 @@ type ForumPost = {
   }
 }
 
+function buildCommunityPostHref(province: string, municipality: string, postId: string) {
+  const provinceCode = province.trim().toLowerCase()
+  const communitySlug = municipality.trim().toLowerCase()
+  return `/${provinceCode}/${communitySlug}/posts/${encodeURIComponent(postId)}`
+}
+
 export default function OrganizationForumClient({
   province,
   municipality,
@@ -109,7 +115,10 @@ export default function OrganizationForumClient({
               filtered.map((post) => (
                 <tr key={post.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                   <td className="px-4 py-3">
-                    <Link href={`/post/${post.id}`} className="font-semibold text-slate-900 hover:text-[var(--cc-primary)] hover:underline">
+                    <Link
+                      href={buildCommunityPostHref(province, municipality, post.id)}
+                      className="font-semibold text-slate-900 hover:text-[var(--cc-primary)] hover:underline"
+                    >
                       {(post.title && post.title.trim()) || (post.body?.slice(0, 90) ?? 'Untitled post')}
                     </Link>
                     <p className="mt-0.5 text-xs text-slate-500">{post.commentCount ?? 0} comments</p>

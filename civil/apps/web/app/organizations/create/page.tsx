@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { buildApiUrl } from '../../_lib/api'
 import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
+import { useViewerStore } from '../../_lib/viewerStore'
 import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
 import { RightRail } from '../../_components/RightRail'
 
@@ -50,9 +50,9 @@ function followToOption(follow: CommunityFollowRow): CommunityOption {
 
 export default function CreateOrganizationPage() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'unauthorized' | 'error'>('loading')
-  const [me, setMe] = useState<MeResponse | null>(null)
   const [options, setOptions] = useState<CommunityOption[]>([])
   const [selectedKey, setSelectedKey] = useState<string>('')
+  const cachedMe = useViewerStore((s) => s.me)
 
   const token = useMemo(() => {
     if (typeof window === 'undefined') return null
@@ -67,21 +67,26 @@ export default function CreateOrganizationPage() {
 
     setStatus('loading')
     try {
-      const [meRes, followsRes] = await Promise.all([
-        fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-        fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-      ])
+      const requests: Array<Promise<Response>> = []
+      if (!cachedMe) {
+        requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+      }
+      requests.push(fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
 
-      if (meRes.status === 401 || followsRes.status === 401) {
+      const responses = await Promise.all(requests)
+      const meRes = cachedMe ? null : responses[0]
+      const followsRes = cachedMe ? responses[0] : responses[1]
+
+      if ((meRes && meRes.status === 401) || followsRes.status === 401) {
         setStatus('unauthorized')
         return
       }
-      if (!meRes.ok || !followsRes.ok) {
+      if ((meRes && !meRes.ok) || !followsRes.ok) {
         setStatus('error')
         return
       }
 
-      const meData = (await meRes.json()) as MeResponse
+      const meData = cachedMe ?? ((await meRes!.json()) as MeResponse)
       const followsData = (await followsRes.json().catch(() => null)) as CommunityFollowsResponse | null
 
       const followItems = Array.isArray(followsData?.items) ? followsData.items : []
@@ -97,7 +102,6 @@ export default function CreateOrganizationPage() {
         return a.communityName.localeCompare(b.communityName)
       })
 
-      setMe(meData)
       setOptions(sorted)
 
       const initial = (() => {
@@ -113,7 +117,7 @@ export default function CreateOrganizationPage() {
       console.error('Unable to load create organization page', err)
       setStatus('error')
     }
-  }, [token])
+  }, [cachedMe, token])
 
   useEffect(() => {
     void load()
@@ -127,7 +131,6 @@ export default function CreateOrganizationPage() {
 
   return (
     <DashboardShell
-      sidebar={<Sidebar me={me ?? undefined} active="organizations" />}
       rightRail={<RightRail mode="organizations" />}
       className="bg-slate-50"
       mainClassName="space-y-6"

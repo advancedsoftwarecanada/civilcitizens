@@ -2,9 +2,7 @@
 
 import Link from 'next/link'
 import clsx from 'clsx'
-import Sidebar from './Sidebar'
 import DashboardShell from './DashboardShell'
-import { useAuthedMe } from '../_lib/useAuthedMe'
 
 export type FeatureHighlight = {
   title: string
@@ -28,17 +26,8 @@ export type FeatureScaffoldProps = {
   roadmap?: FeatureRoadmapItem[]
 }
 
-export default function FeatureScaffold({
-  activeNavKey,
-  title,
-  description,
-  heroBadge,
-  heroCta,
-  highlights,
-  roadmap,
-}: FeatureScaffoldProps) {
-  const { me } = useAuthedMe()
-
+export default function FeatureScaffold(props: FeatureScaffoldProps) {
+  const { title, description, heroBadge, heroCta, highlights, roadmap } = props
   const statusBadge = (status?: 'ready' | 'soon') => {
     if (!status) return null
     const label = status === 'ready' ? 'In progress' : 'Coming soon'
@@ -47,7 +36,7 @@ export default function FeatureScaffold({
   }
 
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active={activeNavKey} />} mainClassName="space-y-6">
+    <DashboardShell mainClassName="space-y-6">
       <section className="surface-card px-6 py-5 shadow-subtle">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>

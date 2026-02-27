@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { useAdminAccess } from '../_hooks/useAdminAccess'
@@ -22,7 +21,7 @@ type AdminGeodataResponse = {
 type Status = 'idle' | 'loading' | 'ready' | 'error'
 
 export default function AdminGeodataPage() {
-  const { token, me, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
+  const { token, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
   const [payload, setPayload] = useState<AdminGeodataResponse | null>(null)
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -133,7 +132,6 @@ export default function AdminGeodataPage() {
   return (
     <DashboardShell
       className="bg-slate-50"
-      sidebar={<Sidebar me={me ?? undefined} active="admin" />}
       mainClassName="space-y-6"
     >
       {renderMain()}

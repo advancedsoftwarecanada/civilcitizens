@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { useAdminAccess } from '../_hooks/useAdminAccess'
@@ -171,7 +170,7 @@ function TrafficTable({
 }
 
 export default function AdminReportsPage() {
-  const { token, me, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
+  const { token, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
   const [summary, setSummary] = useState<ReportSummary | null>(null)
   const [status, setStatus] = useState<Status>('idle')
   const [startDate, setStartDate] = useState(toDateInputValue(defaultStart))
@@ -368,7 +367,6 @@ export default function AdminReportsPage() {
 
   return (
     <DashboardShell
-      sidebar={<Sidebar me={me ?? undefined} active="admin" />}
       rightRail={rightRail}
       mainClassName="space-y-6"
       className="bg-slate-50"

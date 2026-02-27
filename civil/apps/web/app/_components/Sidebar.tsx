@@ -125,6 +125,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
   }
   const derivedActiveKey = useMemo(() => {
     if (pathname && /(^|\/)(orgs|organizations)(\/|$)/.test(pathname)) return 'organizations'
+    if (pathname && /^(\/c\/|\/com\/)/.test(pathname)) return 'communities'
     if (normalizedActive) return normalizedActive
     return PRIMARY_NAV.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
   }, [normalizedActive, pathname])

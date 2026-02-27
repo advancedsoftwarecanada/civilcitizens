@@ -11,6 +11,7 @@ import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../_lib/me'
+import { useViewerStore } from '../_lib/viewerStore'
 import DashboardShell from '../_components/DashboardShell'
 import PhotoUpdateModal from '../_components/PhotoUpdateModal'
 
@@ -944,7 +945,26 @@ export default function ProfileEditPage() {
       return null
     }
     try {
-  const res = await fetch(buildApiUrl('/auth/me'), {
+      const cached = useViewerStore.getState().me
+      if (cached) {
+        if (!hasHomeCommunity(cached)) {
+          router.replace('/welcome')
+          return null
+        }
+        setViewer({
+          id: cached.id,
+          handle: cached.handle,
+          name: cached.name,
+          avatarUrl: cached.avatarUrl,
+          isPremium: Boolean(cached.isPremium),
+          premiumSince: cached.premiumSince ?? null,
+          premiumRenewsAt: cached.premiumRenewsAt ?? null,
+        })
+        setToken(storedToken)
+        return storedToken
+      }
+
+      const res = await fetch(buildApiUrl('/auth/me'), {
         headers: {
           authorization: `Bearer ${storedToken}`,
         },
@@ -958,7 +978,7 @@ export default function ProfileEditPage() {
       }
       const data: MeResponse = await res.json()
       if (!hasHomeCommunity(data)) {
-        window.location.replace('/welcome')
+        router.replace('/welcome')
         return null
       }
       setViewer({
@@ -1389,10 +1409,10 @@ export default function ProfileEditPage() {
     } finally {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('token')
-        window.location.replace('/')
+        router.replace('/')
       }
     }
-  }, [token])
+  }, [router, token])
 
   const onSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -1503,7 +1523,6 @@ export default function ProfileEditPage() {
       </div>
 
       <DashboardShell
-        sidebar={<Sidebar me={viewer ?? undefined} active="account" />}
         rightRail={rightRail}
         mainClassName="space-y-6 pt-8"
       >

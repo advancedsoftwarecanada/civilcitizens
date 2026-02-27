@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useRouter } from 'next/navigation'
+import { useViewerStore } from '../../_lib/viewerStore'
 import { Area } from 'react-easy-crop'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
@@ -146,8 +148,10 @@ export default function OrganizationSettingsClient({
   municipality: string
   slug: string
 }) {
+  const router = useRouter()
   const [org, setOrg] = useState<CommunityOrganization | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
+  const cachedMe = useViewerStore((s) => s.me)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -233,17 +237,24 @@ export default function OrganizationSettingsClient({
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [meRes, orgRes] = await Promise.all([
-        token
-          ? fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' })
-          : Promise.resolve(null),
-        fetch(buildApiUrl(orgApiPath), { headers: token ? { authorization: `Bearer ${token}` } : undefined, cache: 'no-store' }),
-      ])
+      if (token && cachedMe?.id) {
+        setMe(cachedMe)
+      }
+
+      const requests: Array<Promise<Response | null>> = []
+      if (token && !cachedMe) {
+        requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+      }
+      requests.push(Promise.resolve(fetch(buildApiUrl(orgApiPath), { headers: token ? { authorization: `Bearer ${token}` } : undefined, cache: 'no-store' })))
+
+      const responses = await Promise.all(requests)
+      const meRes = token && !cachedMe ? (responses[0] as Response | null) : null
+      const orgRes = (token && !cachedMe ? (responses[1] as Response) : (responses[0] as Response))
 
       if (meRes && meRes.ok) {
         const payload = (await meRes.json().catch(() => null)) as MeResponse | null
         setMe(payload?.id ? payload : null)
-      } else {
+      } else if (!token) {
         setMe(null)
       }
 
@@ -256,7 +267,7 @@ export default function OrganizationSettingsClient({
     } finally {
       setLoading(false)
     }
-  }, [orgApiPath, token])
+  }, [cachedMe, orgApiPath, token])
 
   useEffect(() => {
     void load()
@@ -471,14 +482,14 @@ export default function OrganizationSettingsClient({
       setDeleteModalOpen(false)
       setDeleteConfirmName('')
       pushToast('Organization deleted.', 'success')
-      window.location.href = '/organizations/manager'
+      router.push('/organizations/manager')
     } catch (err) {
       console.error('Failed to delete organization', err)
       pushToast('Unable to delete this organization right now.', 'error')
     } finally {
       setDeleteSaving(false)
     }
-  }, [deleteConfirmationMatches, isOwner, org, orgApiPath, token])
+  }, [deleteConfirmationMatches, isOwner, org, orgApiPath, router, token])
 
   const toggleVisibility = useCallback(async () => {
     if (!token || !org || !canManage) return

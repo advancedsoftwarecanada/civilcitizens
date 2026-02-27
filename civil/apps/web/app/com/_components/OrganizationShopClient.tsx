@@ -7,6 +7,7 @@ import { HiOutlineCog6Tooth } from 'react-icons/hi2'
 import { buildApiUrl } from '../../_lib/api'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { useViewerStore } from '../../_lib/viewerStore'
 import { pushToast } from '../../_components/useToasts'
 
 type ShopWarehouse = {
@@ -177,6 +178,7 @@ export default function OrganizationShopClient({
   const [saving, setSaving] = useState(false)
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null)
   const [canManage, setCanManage] = useState(false)
+    const cachedMe = useViewerStore((s) => s.me)
   const [catalogs, setCatalogs] = useState<ShopCatalog[]>([])
   const [warehouses, setWarehouses] = useState<ShopWarehouse[]>([])
   const [products, setProducts] = useState<ShopProduct[]>([])
@@ -222,17 +224,28 @@ export default function OrganizationShopClient({
       let canManageFinal = Boolean(payload?.canManage)
       if (!canManageFinal && token) {
         try {
-          const [meRes, orgRes] = await Promise.all([
-            fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
+          const requests: Array<Promise<Response>> = []
+          if (!cachedMe) {
+            requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+          }
+          requests.push(
             fetch(
               buildApiUrl(
                 `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
               ),
               { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
             ),
-          ])
+          )
 
-          const mePayload = meRes.ok ? ((await meRes.json().catch(() => null)) as { id?: string } | null) : null
+          const responses = await Promise.all(requests)
+          const meRes = cachedMe ? null : responses[0]
+          const orgRes = (cachedMe ? responses[0] : responses[1])!
+
+          const mePayload = cachedMe?.id
+            ? ({ id: cachedMe.id } as { id?: string })
+            : meRes?.ok
+              ? ((await meRes.json().catch(() => null)) as { id?: string } | null)
+              : null
           const orgPayload = orgRes.ok
             ? ((await orgRes.json().catch(() => null)) as { org?: { ownerId?: string | null; viewerRole?: 'OWNER' | 'MANAGER' | null } } | null)
             : null
@@ -289,7 +302,7 @@ export default function OrganizationShopClient({
     } finally {
       setLoading(false)
     }
-  }, [municipality, province, shopPath, slug])
+  }, [cachedMe, municipality, province, shopPath, slug])
 
   useEffect(() => {
     void load()

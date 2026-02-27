@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   HiOutlineArrowRightOnRectangle,
   HiOutlineBuildingOffice2,
@@ -11,11 +12,11 @@ import {
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import DashboardShell from '../_components/DashboardShell'
-import Sidebar from '../_components/Sidebar'
 import type { MeResponse } from '../_lib/me'
 import { hasHomeCommunity, isPremiumMember } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { isSuperAdmin } from '../_lib/admin'
+import { useViewerStore } from '../_lib/viewerStore'
 
 const CARD_LINKS: Array<{
   key: 'profile' | 'communities' | 'billing'
@@ -48,6 +49,8 @@ const CARD_LINKS: Array<{
 ]
 
 export default function SettingsPage() {
+  const router = useRouter()
+  const cachedViewer = useViewerStore((s) => s.me)
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
@@ -57,6 +60,11 @@ export default function SettingsPage() {
     const storedToken = window.localStorage.getItem('token')
     if (!storedToken) return
     setToken(storedToken)
+
+    if (cachedViewer) {
+      setViewer(cachedViewer)
+      return
+    }
 
     let cancelled = false
     const loadViewer = async () => {
@@ -76,7 +84,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [cachedViewer])
 
   const handleLogout = useCallback(async () => {
     if (typeof window === 'undefined') return
@@ -93,9 +101,9 @@ export default function SettingsPage() {
       console.error('Failed to log out', error)
     } finally {
       window.localStorage.removeItem('token')
-      window.location.replace('/')
+      router.replace('/')
     }
-  }, [token])
+  }, [router, token])
 
   const requestLogout = () => setShowLogoutConfirm(true)
   const cancelLogout = () => setShowLogoutConfirm(false)
@@ -115,7 +123,6 @@ export default function SettingsPage() {
 
   return (
     <DashboardShell
-      sidebar={<Sidebar me={viewer ?? undefined} active="account" />}
       className="bg-slate-50"
       mainClassName="space-y-6"
     >

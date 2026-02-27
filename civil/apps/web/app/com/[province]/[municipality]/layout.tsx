@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { notFound } from 'next/navigation'
 import { fetchCommunitySummary } from '../../../_lib/community'
 import DashboardShell from '../../../_components/DashboardShell'
-import Sidebar from '../../../_components/Sidebar'
 import { CommunityContextProvider } from '../../_components/CommunityContext'
 import CommunityHeader from '../../_components/CommunityHeader'
 
@@ -25,7 +24,6 @@ export default async function CommunityLayout({ children, params }: LayoutProps)
   return (
     <CommunityContextProvider value={summary}>
       <DashboardShell
-        sidebar={<Sidebar active="communities" />}
         className="bg-slate-50"
         containerClassName="px-0 sm:px-0"
         mainClassName="pt-0"
