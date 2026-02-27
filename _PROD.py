@@ -1,38 +1,48 @@
 #!/usr/bin/env python3
-"""Civil production deploy helper (local).
+"""Civil production runner (run on the server).
 
-This script performs direct server deploys (no git runners):
-- uploads the repository to the production host via rsync/scp
-- optionally checks/prepares remote directories and services
+This script assumes you're already SSH'd into the production machine.
+It does NOT rsync/upload code.
+
+Default behavior is to rebuild and restart the production stack using docker compose.
 
 Usage:
-    python3 _PROD.py              # deploy (default: upload/sync only)
-    python3 _PROD.py check        # remote sanity checks
-    python3 _PROD.py prep         # create remote CIVIL/CIVIL_DATA dirs
-    python3 _PROD.py geodata      # upload vendored StatsCan zips + seed admin geodata on PROD
-    python3 _PROD.py ssh          # open interactive SSH shell
+  python3 _PROD.py                  # rebuild (down + build + up -d)
+  python3 _PROD.py status           # docker compose ps
+  python3 _PROD.py logs             # follow logs
+  python3 _PROD.py down             # docker compose down
+  python3 _PROD.py rebuild-all      # down -v + build --no-cache + up -d
+
+Env:
+  - Pass `--env-file .env.production` (or `.env.production.googlecloud`) to control settings.
+  - Or set `COMPOSE_PROJECT_NAME` to override the default project name.
 """
 
+from __future__ import annotations
+
 import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
 
 
 def main(argv: list[str]) -> int:
-    from _production_server.deploy import main as remote_main
+    if not (REPO_ROOT / "civil" / "docker-compose.yml").is_file():
+        print("Error: expected to run from the civilcitizens repo root (missing civil/docker-compose.yml)", file=sys.stderr)
+        return 2
 
-    sub = (argv[0] if argv else "deploy").strip().lower()
-    if sub in {"deploy", "sync", "upload", ""}:
-        return int(remote_main(["deploy"]))
-    if sub in {"check", "doctor"}:
-        return int(remote_main([sub]))
-    if sub in {"prep", "prepare"}:
-        return int(remote_main(["prep"]))
-    if sub in {"geodata", "seed-geodata", "seed_geodata"}:
-        return int(remote_main(["seed-geodata"]))
-    if sub in {"ssh", "shell"}:
-        return int(remote_main(["ssh"]))
+    from docker_helper import run_helper
 
-    print("Usage: python3 _PROD.py [check|prep|deploy|geodata|ssh]", file=sys.stderr)
-    return 2
+    run_helper(
+        default_env_candidates=[
+            REPO_ROOT / ".env.production",
+            REPO_ROOT / ".env.production.googlecloud",
+        ],
+        default_project_name="civil_prod",
+        default_command="rebuild",
+    )
+    return 0
 
 
 if __name__ == "__main__":
