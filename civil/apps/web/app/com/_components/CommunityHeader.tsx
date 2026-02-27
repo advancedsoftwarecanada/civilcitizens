@@ -7,7 +7,7 @@ export default function CommunityHeader({ summary }: { summary: CommunitySummary
   const pathname = usePathname()
 
   // Organization pages should feel like organization-first, not community-first.
-  if (pathname?.includes('/orgs/')) {
+  if (pathname && /(^|\/)(orgs|organizations)(\/|$)/.test(pathname)) {
     return null
   }
 
