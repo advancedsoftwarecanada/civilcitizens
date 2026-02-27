@@ -3,11 +3,11 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { CommunitiesView } from '../communities/CommunitiesView'
-import { buildApiUrl } from '../_lib/api'
-import { hasHomeCommunity, type MeResponse } from '../_lib/me'
+import { hasHomeCommunity } from '../_lib/me'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { readStoredPostalCode } from '../_lib/postalRequirement'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureViewerMe } from '../_lib/viewerMe'
 
 export default function WelcomePage() {
   const router = useRouter()
@@ -27,17 +27,22 @@ export default function WelcomePage() {
       return
     }
 
-    fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-      .then((response) => (response.ok ? response.json() : Promise.reject('unauthorized')))
-      .then((data: MeResponse) => {
-        if (hasHomeCommunity(data) && readStoredPostalCode(data.id)) {
-          router.replace('/home')
-        }
-      })
-      .catch(() => {
-        localStorage.removeItem('token')
+    let cancelled = false
+    void (async () => {
+      const data = await ensureViewerMe({ token })
+      if (cancelled) return
+      if (data && hasHomeCommunity(data) && readStoredPostalCode(data.id)) {
+        router.replace('/home')
+        return
+      }
+      if (!localStorage.getItem('token')) {
         redirectToAuthModal('login')
-      })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [cachedMe, router])
 
   return <CommunitiesView mode="welcome" />

@@ -5,7 +5,7 @@ import PostFeedItem from '../../_components/PostFeedItem'
 import PostComposer from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
-import { useViewerStore } from '../../_lib/viewerStore'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost } from '../../_components/PostComposer'
 import type { CommunityOrganization } from '../../_lib/organizations'
@@ -28,7 +28,6 @@ export default function OrganizationWallClient({
 }) {
   const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [viewerId, setViewerId] = useState<string | null>(null)
-  const cachedMe = useViewerStore((s) => s.me)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -148,35 +147,8 @@ export default function OrganizationWallClient({
     let cancelled = false
     const loadMe = async () => {
       try {
-        if (cachedMe?.id) {
-          if (!cancelled) setViewerId(cachedMe.id)
-          return
-        }
-
-        let cachedId: string | null = null
-        if (!cancelled && typeof window !== 'undefined') {
-          try {
-            const cachedRaw = window.localStorage.getItem('cc:viewer-cache:v1')
-            if (cachedRaw) {
-              const cached = JSON.parse(cachedRaw) as { id?: unknown } | null
-              if (typeof cached?.id === 'string') {
-                cachedId = cached.id
-                setViewerId(cached.id)
-              }
-            }
-          } catch {
-            // ignore cache parsing failures
-          }
-        }
-
-        if (cachedId) return
-
-        const res = await fetch(buildApiUrl('/auth/me'), {
-          headers: { authorization: `Bearer ${token}` },
-        })
-        if (!res.ok) return
-        const payload = (await res.json().catch(() => null)) as { id?: string } | null
-        if (!cancelled) setViewerId(payload?.id ?? null)
+        const me = await ensureViewerMe({ token })
+        if (!cancelled) setViewerId(me?.id ?? null)
       } catch {
         // ignore
       }
@@ -185,7 +157,7 @@ export default function OrganizationWallClient({
     return () => {
       cancelled = true
     }
-  }, [cachedMe, token])
+  }, [token])
 
   useEffect(() => {
     if (!token) return

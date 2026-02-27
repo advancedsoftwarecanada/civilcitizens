@@ -167,14 +167,23 @@ def _tar_excludes() -> list[str]:
         ".env.*",
         # Never upload local secret material to production.
         "secrets",
+        # Large local-only assets (geodata is uploaded separately via seed-geodata).
+        "civilcitizens_largefiles",
+        "civilcitizens_largefiles/**",
         "node_modules",
         "**/node_modules",
         ".pnpm-store",
         "**/.pnpm-store",
         "**/.next",
+        "**/.next*",
         "**/dist",
         "**/build",
         "buildlogs",
+        # Local tmp/caches (Next dev cache, misc temp output).
+        "tmp",
+        "tmp/**",
+        "**/tmp",
+        "**/tmp/**",
         "__pycache__",
         "**/__pycache__",
         ".vscode",

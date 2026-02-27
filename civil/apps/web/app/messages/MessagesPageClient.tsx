@@ -10,6 +10,7 @@ import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import type { MeResponse } from '../_lib/me'
+import { ensureViewerMe } from '../_lib/viewerMe'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
 import {
@@ -381,15 +382,18 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   const loadMe = useCallback(async () => {
     try {
-      const response = await authedFetch('/auth/me')
-      if (response.status === 401) {
-        redirectToAuthModal('login')
-        return
-      }
-      if (!response.ok) {
+      const token = tokenRef.current
+      const payload = await ensureViewerMe({ token })
+
+      if (!payload) {
+        const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : Boolean(token)
+        if (!tokenStillPresent) {
+          redirectToAuthModal('login')
+          return
+        }
         throw new Error('failed_me')
       }
-      const payload = (await response.json()) as MeResponse
+
       setMe(payload)
     } catch (err) {
       console.error('Failed to load viewer profile', err)

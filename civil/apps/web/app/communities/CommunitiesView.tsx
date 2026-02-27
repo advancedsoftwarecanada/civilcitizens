@@ -12,6 +12,7 @@ import { buildApiUrl } from '../_lib/api'
 import DashboardShell from '../_components/DashboardShell'
 import type { MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureViewerMe } from '../_lib/viewerMe'
 import {
   GEOLOCATION_POSTAL_SENTINEL,
   formatStoredPostalCode,
@@ -366,24 +367,29 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     async function bootstrap() {
       setSuggestionsLoading(true)
       try {
-        const requests: Array<Promise<Response>> = []
-        if (!cachedMe) {
-          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }))
+        let meData: MeResponse
+        if (cachedMe) {
+          meData = cachedMe
+        } else {
+          const nextMe = await ensureViewerMe({ token })
+          if (!nextMe) {
+            const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
+            if (!tokenStillPresent) {
+              redirectToAuthModal('login')
+              return
+            }
+            throw new Error('failed_me')
+          }
+          meData = nextMe
         }
-        requests.push(fetch(buildApiUrl('/communities/provinces')))
-        requests.push(fetch(buildApiUrl('/communities/home'), { headers: { authorization: `Bearer ${token}` } }))
-        requests.push(fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }))
-        requests.push(fetch(buildApiUrl('/communities/dashboard'), { headers: { authorization: `Bearer ${token}` } }))
 
-        const responses = await Promise.all(requests)
-        const offset = cachedMe ? 0 : 1
-        const meRes = cachedMe ? null : responses[0]
-        const provRes = responses[offset]
-        const homeRes = responses[offset + 1]
-        const followsRes = responses[offset + 2]
-        const dashboardRes = responses[offset + 3]
+        const [provRes, homeRes, followsRes, dashboardRes] = await Promise.all([
+          fetch(buildApiUrl('/communities/provinces')),
+          fetch(buildApiUrl('/communities/home'), { headers: { authorization: `Bearer ${token}` } }),
+          fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }),
+          fetch(buildApiUrl('/communities/dashboard'), { headers: { authorization: `Bearer ${token}` } }),
+        ])
 
-        const meData = cachedMe ?? (await jsonOrThrow<MeResponse>(meRes))
         setMe(meData)
         setPostalOwnerId(meData.id ?? null)
         const storedPostalRaw = readStoredPostalCode(meData.id)

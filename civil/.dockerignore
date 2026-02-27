@@ -1,6 +1,7 @@
 # Exclude dependency and build outputs from Docker context
 **/node_modules
 **/.next
+**/.next*
 **/dist
 **/build
 **/.turbo
@@ -19,5 +20,11 @@ pnpm-debug.log*
 # Local env and runtime files
 .env*
 *.local
-/tmp
+tmp
+tmp/**
+**/tmp
+**/tmp/**
 logs
+
+# Next.js dev caches (should never be shipped)
+apps/web/tmp/**

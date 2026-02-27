@@ -13,6 +13,7 @@ import CommentThread, { type ApiComment } from '../../../../../_components/Comme
 import { buildApiUrl } from '../../../../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
+import { ensureViewerMe } from '../../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
 import DashboardShell from '../../../../../_components/DashboardShell'
@@ -152,20 +153,17 @@ export default function ChamberPostPage({ params }: PageProps) {
         return
       }
 
-      const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-      if (!res.ok) {
-        localStorage.removeItem('token')
+      const data = await ensureViewerMe({ token })
+      if (!data) {
         redirectToAuthModal('login')
         return
       }
-      const data = (await res.json()) as MeResponse
       if (!hasHomeCommunity(data)) {
         router.replace('/welcome')
         return
       }
       setViewer(data)
     } catch {
-      localStorage.removeItem('token')
       redirectToAuthModal('login')
       /* noop */
     }
@@ -204,7 +202,16 @@ export default function ChamberPostPage({ params }: PageProps) {
       if (!provinceMatches || !communityMatches) {
         if (canonical?.community) {
           if (/^https?:\/\//i.test(canonical.community)) {
-            window.location.replace(canonical.community)
+            try {
+              const url = new URL(canonical.community)
+              if (url.origin === window.location.origin) {
+                router.replace(`${url.pathname}${url.search}${url.hash}`)
+              } else {
+                window.location.replace(canonical.community)
+              }
+            } catch {
+              window.location.replace(canonical.community)
+            }
           } else {
             router.replace(canonical.community)
           }
