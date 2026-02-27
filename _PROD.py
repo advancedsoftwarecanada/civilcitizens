@@ -8,8 +8,8 @@ Default behavior is to rebuild and restart the production stack using docker com
 
 Usage:
   python3 _PROD.py                  # rebuild (down + build + up -d)
-    python3 _PROD.py build            # build images only (no restart)
-    python3 _PROD.py prune-build-cache  # free Docker build cache (fixes ENOSPC)
+  python3 _PROD.py build            # build images only (no restart)
+  python3 _PROD.py prune-build-cache  # free Docker build cache (fixes ENOSPC)
   python3 _PROD.py status           # docker compose ps
   python3 _PROD.py logs             # follow logs
   python3 _PROD.py down             # docker compose down
@@ -41,7 +41,9 @@ def main(argv: list[str]) -> int:
             REPO_ROOT / ".env.production",
             REPO_ROOT / ".env.production.googlecloud",
         ],
-        default_project_name="civil_prod",
+      # Use the canonical project name to avoid accidentally starting a second
+      # stack alongside an existing `civil-*` deployment.
+      default_project_name="civil",
         default_command="rebuild",
     )
     return 0
