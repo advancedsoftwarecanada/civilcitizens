@@ -32,5 +32,6 @@ COPY --from=build /app/apps/api/package.json ./package.json
 EXPOSE 3000
 # Add a resilient entrypoint that tries dist/index.js then dist/src/index.js
 COPY apps/api/entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh
-CMD ["./entrypoint.sh"]
+RUN sed -i 's/\r$//' ./entrypoint.sh \
+	&& chmod +x ./entrypoint.sh
+CMD ["sh", "./entrypoint.sh"]
