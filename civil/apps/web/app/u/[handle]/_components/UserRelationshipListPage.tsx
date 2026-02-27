@@ -37,7 +37,7 @@ type OrganizationListItem = {
   coverUrl: string | null
 }
 
-type RelationshipKind = 'friends' | 'followers' | 'following' | 'connections' | 'communities' | 'organizations'
+type RelationshipKind = 'friends' | 'connections' | 'communities' | 'organizations'
 
 type Props = {
   handle: string

@@ -50,12 +50,28 @@ type OwnedOrganization = {
   coverUrl?: string | null
 }
 
+type MemberOrganization = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string | null
+  communitySlug: string | null
+  isVerified?: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
+  role?: string
+}
+
 type OrganizationsFollowsResponse = {
   items?: FollowedOrganization[]
 }
 
 type OrganizationsOwnedResponse = {
   items?: OwnedOrganization[]
+}
+
+type OrganizationsMembershipsResponse = {
+  items?: MemberOrganization[]
 }
 
 type ConnectionEntry = {
@@ -98,11 +114,13 @@ export function RightRail({
   const [data, setData] = useState<RightRailData | null>(null)
   const [organizations, setOrganizations] = useState<FollowedOrganization[]>([])
   const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
+  const [memberOrganizations, setMemberOrganizations] = useState<MemberOrganization[]>([])
   const [connections, setConnections] = useState<ConnectionEntry[]>([])
 
   const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network'
   const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || showOrganizations
-  const shouldLoadOwnedOrganizations = mode === 'organizationsDirectory'
+  const shouldLoadOwnedOrganizations = shouldLoadOrganizations
+  const shouldLoadMemberOrganizations = shouldLoadOrganizations
   const shouldLoadConnections = mode === 'network'
   const shouldLoadHomeRail = !hideSocialBlocks
 
@@ -111,10 +129,58 @@ export function RightRail({
     [organizations],
   )
 
-  const partOfOrganizations = useMemo(
-    () => ownedOrganizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
-    [ownedOrganizations],
-  )
+  const partOfOrganizations = useMemo(() => {
+    const owned = ownedOrganizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug))
+    const ownedIds = new Set(owned.map((org) => org.id))
+
+    const memberships = memberOrganizations
+      .filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug))
+      .filter((org) => !ownedIds.has(org.id))
+
+    return [...owned, ...memberships]
+  }, [ownedOrganizations, memberOrganizations])
+
+  const combinedOrganizations = useMemo(() => {
+    const owned = ownedOrganizations.flatMap((org) => {
+      if (!org.provinceCode || !org.communitySlug) return []
+      return [
+        {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          provinceCode: org.provinceCode,
+          communitySlug: org.communitySlug,
+          isVerified: org.isVerified,
+          logoUrl: org.logoUrl,
+          coverUrl: org.coverUrl,
+        },
+      ]
+    })
+
+    const memberships = memberOrganizations.flatMap((org) => {
+      if (!org.provinceCode || !org.communitySlug) return []
+      return [
+        {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          provinceCode: org.provinceCode,
+          communitySlug: org.communitySlug,
+          isVerified: org.isVerified,
+          logoUrl: org.logoUrl,
+          coverUrl: org.coverUrl,
+        },
+      ]
+    })
+
+    const ownedIds = new Set(owned.map((org) => org.id))
+    const membershipIds = new Set(memberships.map((org) => org.id))
+    const partOfIds = new Set([...ownedIds, ...membershipIds])
+    const dedupedMemberships = memberships.filter((org) => !ownedIds.has(org.id))
+
+    const followed = subscribedOrganizations.filter((org) => !partOfIds.has(org.id))
+    return [...owned, ...dedupedMemberships, ...followed]
+  }, [ownedOrganizations, memberOrganizations, subscribedOrganizations])
 
   const loadData = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -123,7 +189,7 @@ export function RightRail({
       return
     }
     try {
-      const requests: Array<{ key: 'home' | 'follows' | 'owned' | 'connections'; promise: Promise<Response> }> = []
+      const requests: Array<{ key: 'home' | 'follows' | 'owned' | 'memberships' | 'connections'; promise: Promise<Response> }> = []
 
       if (shouldLoadHomeRail) {
         requests.push({
@@ -152,6 +218,15 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadMemberOrganizations) {
+        requests.push({
+          key: 'memberships',
+          promise: fetch(buildApiUrl('/organizations/memberships'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        })
+      }
+
       if (shouldLoadConnections) {
         requests.push({
           key: 'connections',
@@ -167,9 +242,16 @@ export function RightRail({
       const homeRes = byKey.get('home')
       const followsRes = byKey.get('follows')
       const ownedRes = byKey.get('owned')
+      const membershipsRes = byKey.get('memberships')
       const connectionsRes = byKey.get('connections')
 
-      if (homeRes?.status === 401 || followsRes?.status === 401 || ownedRes?.status === 401 || connectionsRes?.status === 401) {
+      if (
+        homeRes?.status === 401 ||
+        followsRes?.status === 401 ||
+        ownedRes?.status === 401 ||
+        membershipsRes?.status === 401 ||
+        connectionsRes?.status === 401
+      ) {
         setStatus('unauthorized')
         return
       }
@@ -177,13 +259,15 @@ export function RightRail({
       const requiredHomeOk = shouldLoadHomeRail ? Boolean(homeRes?.ok) : true
       const requiredFollowsOk = shouldLoadOrganizations ? Boolean(followsRes?.ok) : true
       const requiredOwnedOk = shouldLoadOwnedOrganizations ? Boolean(ownedRes?.ok) : true
+      const requiredMembershipsOk = shouldLoadMemberOrganizations ? Boolean(membershipsRes?.ok) : true
       const requiredConnectionsOk = shouldLoadConnections ? Boolean(connectionsRes?.ok) : true
 
-      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredConnectionsOk) {
+      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredMembershipsOk || !requiredConnectionsOk) {
         setStatus('error')
         if (!shouldLoadHomeRail) setData(null)
         if (!shouldLoadOrganizations) setOrganizations([])
         if (!shouldLoadOwnedOrganizations) setOwnedOrganizations([])
+        if (!shouldLoadMemberOrganizations) setMemberOrganizations([])
         if (!shouldLoadConnections) setConnections([])
         return
       }
@@ -211,6 +295,14 @@ export function RightRail({
         setOwnedOrganizations([])
       }
 
+      if (membershipsRes?.ok) {
+        const payload = (await membershipsRes.json().catch(() => null)) as OrganizationsMembershipsResponse | null
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        setMemberOrganizations(items)
+      } else {
+        setMemberOrganizations([])
+      }
+
       if (connectionsRes?.ok) {
         const payload = (await connectionsRes.json().catch(() => null)) as ConnectionsResponse | null
         const items = Array.isArray(payload?.items) ? payload.items : []
@@ -224,7 +316,7 @@ export function RightRail({
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadConnections])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadConnections])
 
   useEffect(() => {
     void loadData()
@@ -309,9 +401,9 @@ export function RightRail({
           action={{ label: 'View all', href: '/organizations/directory' }}
           actionVariant="link"
         >
-          {organizations.length ? (
+          {combinedOrganizations.length ? (
             <ul className="space-y-3">
-              {organizations.slice(0, 10).map((org) => (
+              {combinedOrganizations.slice(0, 10).map((org) => (
                 <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
                   {org.coverUrl ? (
                     <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
@@ -330,7 +422,7 @@ export function RightRail({
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">No organizations followed.</p>
+            <p className="text-sm text-slate-500">No organizations yet.</p>
           )}
         </Block>
       ) : null}
@@ -338,9 +430,9 @@ export function RightRail({
       {mode === 'network' ? (
         <>
           <Block title="Organizations" action={{ label: 'See all', href: '/organizations/directory' }}>
-            {organizations.length ? (
+            {combinedOrganizations.length ? (
               <ul className="space-y-3">
-                {organizations.slice(0, 8).map((org) => (
+                {combinedOrganizations.slice(0, 8).map((org) => (
                   <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
                     {org.coverUrl ? (
                       <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
@@ -357,7 +449,7 @@ export function RightRail({
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-slate-500">No organizations followed.</p>
+              <p className="text-sm text-slate-500">No organizations yet.</p>
             )}
           </Block>
 
@@ -450,9 +542,9 @@ export function RightRail({
 
       {mode === 'default' && showOrganizations ? (
         <Block title="Your Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
-          {organizations.length ? (
+          {combinedOrganizations.length ? (
             <ul className="space-y-3">
-              {organizations.slice(0, 8).map((org) => (
+              {combinedOrganizations.slice(0, 8).map((org) => (
                 <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
                   {org.coverUrl ? (
                     <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
@@ -471,7 +563,7 @@ export function RightRail({
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">No organizations followed.</p>
+            <p className="text-sm text-slate-500">No organizations yet.</p>
           )}
         </Block>
       ) : null}

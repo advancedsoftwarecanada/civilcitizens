@@ -8026,6 +8026,69 @@ app.get('/organizations/owned', async (req: FastifyRequest, reply: FastifyReply)
   }),
 )
 
+app.get('/organizations/memberships', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const memberships: Array<{
+      role: string
+      business: {
+        id: string
+        name: string
+        slug: string
+        provinceCode: string | null
+        communitySlug: string | null
+        isVerified: boolean
+        status: BusinessStatus
+        logoUrl: string | null
+        coverUrl: string | null
+      } | null
+    }> = (await prisma.businessMembership.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 50,
+      select: {
+        role: true,
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+            isVerified: true,
+            status: true,
+            logoUrl: true,
+            coverUrl: true,
+          },
+        },
+      },
+    })) as any
+
+    const items = memberships.flatMap((row) =>
+      row.business
+        ? [
+            {
+              id: row.business.id,
+              name: row.business.name,
+              slug: row.business.slug,
+              provinceCode: row.business.provinceCode,
+              communitySlug: row.business.communitySlug,
+              isVerified: row.business.isVerified,
+              status: row.business.status,
+              role: row.role,
+              logoUrl: normalizeMediaUrl(row.business.logoUrl ?? null),
+              coverUrl: normalizeMediaUrl(row.business.coverUrl ?? null),
+            },
+          ]
+        : [],
+    )
+
+    return reply.send({ items })
+  }),
+)
+
 app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const params = CommunityOrgSlugParams.safeParse(req.params)
