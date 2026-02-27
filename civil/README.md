@@ -94,8 +94,6 @@ model User {
   posts        Post[]
   comments     Comment[]
   likes        Like[]
-  followers    Follow[] @relation("followers")
-  following    Follow[] @relation("following")
 }
 
 model Post {
@@ -133,20 +131,10 @@ model Like {
   @@index([postId])
 }
 
-model Follow {
-  followerId String
-  targetId   String
-  follower   User @relation("following", fields: [followerId], references: [id])
-  target     User @relation("followers", fields: [targetId], references: [id])
-  createdAt  DateTime @default(now())
-  @@id([followerId, targetId])
-  @@index([targetId])
-}
-
 model Notification {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // like, comment, follow, repost
+  type      String   // like, comment, follow (community/org), repost
   actorId   String
   postId    String?
   readAt    DateTime?
@@ -210,9 +198,9 @@ All JSON. Zod validated. Examples only.
 
 1. Validate input
 2. Insert Post and PostHashtag in a transaction
-3. Enqueue fan out job to create FeedEntry rows for recent followers
-4. Invalidate `timeline:{followerId}:*`
-5. Update counters in Redis and emit small SSE events to online followers
+3. Enqueue fan out job to create FeedEntry rows for relevant feeds (friends, connections, communities, organizations)
+4. Invalidate `timeline:{userId}:*` keys that cache affected feeds
+5. Update counters in Redis and emit small SSE events to online users
 
 ### Like post
 
@@ -224,7 +212,7 @@ All JSON. Zod validated. Examples only.
 ### Home feed
 
 1. Try `timeline:{userId}:{cursor}`
-2. On miss, SQL to fetch recent posts by followed users, hydrate Redis, return page
+2. On miss, SQL to fetch recent posts by feed membership (friends, connections, community/org follows), hydrate Redis, return page
 
 ### SSE usage
 

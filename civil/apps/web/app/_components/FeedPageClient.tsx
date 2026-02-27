@@ -423,6 +423,23 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     return postableOrganizations.find((org) => org.id === selectedOrganizationId) ?? null
   }, [postableOrganizations, scope, selectedOrganizationId])
 
+  const composerModalTitle = useMemo(() => {
+    switch (scope) {
+      case 'friends':
+        return 'Share personal updates with friends and family'
+      case 'network':
+        return 'Share professional news with your business contacts'
+      case 'communities':
+        return 'Share news with your local community'
+      case 'organizations':
+        return selectedOrganization?.name
+          ? `Share an update as ${selectedOrganization.name}`
+          : 'Share updates from your organization'
+      default:
+        return 'Share something new'
+    }
+  }, [scope, selectedOrganization?.name])
+
   const openComposer = (type: PostType = 'post') => {
     setComposerDefaultType(type)
     setComposerOpen(true)
@@ -558,7 +575,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       <Modal
         open={composerOpen}
         onClose={() => setComposerOpen(false)}
-        title="Share something new"
+        title={composerModalTitle}
         key={composerDefaultType}
         maxWidthClassName="max-w-3xl"
       >
