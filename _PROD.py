@@ -8,6 +8,8 @@ Default behavior is to rebuild and restart the production stack using docker com
 
 Usage:
   python3 _PROD.py                  # rebuild (down + build + up -d)
+    python3 _PROD.py build            # build images only (no restart)
+    python3 _PROD.py prune-build-cache  # free Docker build cache (fixes ENOSPC)
   python3 _PROD.py status           # docker compose ps
   python3 _PROD.py logs             # follow logs
   python3 _PROD.py down             # docker compose down

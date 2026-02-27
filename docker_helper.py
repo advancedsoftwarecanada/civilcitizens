@@ -129,6 +129,14 @@ def command_build(compose_cmd: list[str], overrides: Mapping[str, str], *, no_ca
     run_compose(compose_cmd, args, overrides)
 
 
+def command_prune_build_cache(_: list[str], __: Mapping[str, str]) -> None:
+    """Prune BuildKit build cache to free space.
+
+    This is intentionally conservative: it does not remove volumes.
+    """
+    subprocess.run(["docker", "builder", "prune", "-a", "-f"], check=True)
+
+
 def command_rebuild(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
     command_down(compose_cmd, overrides)
     command_build(compose_cmd, overrides, no_cache=False)
@@ -183,6 +191,7 @@ def parse_args(default_command: Optional[str]) -> argparse.Namespace:
         "command",
         nargs="?",
         choices=[
+            "build",
             "up",
             "infra-up",
             "down",
@@ -191,6 +200,7 @@ def parse_args(default_command: Optional[str]) -> argparse.Namespace:
             "logs",
             "rebuild",
             "rebuild-all",
+            "prune-build-cache",
         ],
         help="Command to execute",
     )
@@ -273,6 +283,7 @@ def run_helper(
     ensure_prisma_env(overrides)
 
     command_map = {
+        "build": lambda c, o: command_build(c, o, no_cache=False),
         "up": command_up,
         "infra-up": command_infra_up,
         "down": command_down,
@@ -281,6 +292,7 @@ def run_helper(
         "logs": command_logs,
         "rebuild": command_rebuild,
         "rebuild-all": command_rebuild_all,
+        "prune-build-cache": command_prune_build_cache,
     }
 
     handler = command_map[args.command]
