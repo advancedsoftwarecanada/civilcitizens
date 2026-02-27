@@ -195,15 +195,21 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
     const bootstrap = async () => {
       try {
-        const requests: Array<Promise<Response>> = []
-        if (!cachedMe) {
-          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }))
-        }
-        requests.push(fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }))
+        let meRes: Response | null = null
+        let followsRes: Response
 
-        const responses = await Promise.all(requests)
-        const meRes = cachedMe ? null : responses[0]
-        const followsRes = cachedMe ? responses[0] : responses[1]
+        if (cachedMe) {
+          followsRes = await fetch(buildApiUrl('/communities/follows'), {
+            headers: { authorization: `Bearer ${token}` },
+          })
+        } else {
+          const [meResponse, followsResponse] = await Promise.all([
+            fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
+            fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }),
+          ])
+          meRes = meResponse
+          followsRes = followsResponse
+        }
 
         if (meRes && !meRes.ok) {
           throw new Error('unauthorized')
