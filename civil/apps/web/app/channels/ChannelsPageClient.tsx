@@ -126,37 +126,61 @@ export default function ChannelsPageClient() {
                   <Link
                     key={item.id}
                     href={href}
-                    className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 transition hover:border-slate-300 hover:bg-slate-50"
+                    className="relative block overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm transition hover:brightness-105"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="truncate text-sm font-semibold text-slate-900">#{item.slug}</p>
-                          {item.unread ? <span className="h-2 w-2 rounded-full bg-[var(--cc-primary)]" aria-hidden="true" /> : null}
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                            {item.visibility}
-                          </span>
-                        </div>
-                        <p className="mt-1 truncate text-xs text-slate-500">{item.name}</p>
-                        <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-                          <VerifiedAvatar
-                            src={item.organization.logoUrl}
-                            alt={item.organization.name}
-                            initials={item.organization.name}
-                            size={20}
-                            className="shrink-0"
-                          />
-                          <span className="truncate">{item.organization.name}</span>
-                          <span aria-hidden="true">·</span>
-                          <span>{item.participantCount} members</span>
-                          {muted ? (
-                            <span className={clsx('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', 'border-slate-200 text-slate-500')}>
-                              Muted
+                    {item.organization.coverUrl ? (
+                      <img
+                        src={item.organization.coverUrl}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : null}
+                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+
+                    <div className="relative flex items-start justify-between gap-4">
+                      <div className="flex min-w-0 items-start gap-4">
+                        <VerifiedAvatar
+                          src={item.organization.logoUrl}
+                          alt={item.organization.name}
+                          initials={item.organization.name}
+                          size={64}
+                          className="shrink-0"
+                        />
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate text-2xl font-semibold text-white">#{item.slug}</p>
+                            {item.unread ? <span className="h-2.5 w-2.5 rounded-full bg-[var(--cc-primary)]" aria-hidden="true" /> : null}
+                          </div>
+                          <p className="mt-1 truncate text-sm text-white/80">{item.name}</p>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/80">
+                            <span className="truncate">{item.organization.name}</span>
+                            <span aria-hidden="true">·</span>
+                            <span>{item.participantCount} members</span>
+                            <span
+                              className={clsx(
+                                'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                                'border-white/30 text-white/85',
+                              )}
+                            >
+                              {item.visibility}
                             </span>
-                          ) : null}
+                            {muted ? (
+                              <span
+                                className={clsx(
+                                  'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                                  'border-white/30 text-white/85',
+                                )}
+                              >
+                                Muted
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
-                      <p className="shrink-0 text-xs text-slate-400">{formatTimestamp(item.lastMessageAt)}</p>
+                      <p className="shrink-0 text-xs text-white/70">{formatTimestamp(item.lastMessageAt)}</p>
                     </div>
                   </Link>
                 )
