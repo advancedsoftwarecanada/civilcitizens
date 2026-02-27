@@ -7,6 +7,7 @@ import PostFeedItem from '../../_components/PostFeedItem'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { useViewerStore } from '../../_lib/viewerStore'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useCommunity } from './CommunityContext'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
@@ -82,16 +83,17 @@ export default function CommunityPostsFeed() {
       return
     }
 
-    fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data) return
-        setViewerIsVerified(Boolean(data.isVerified || data.isPremium))
-        setViewerId(data.id ?? null)
-      })
-      .catch(() => {
-        /* ignore viewer state errors */
-      })
+    let cancelled = false
+    void (async () => {
+      const data = await ensureViewerMe({ token })
+      if (cancelled || !data) return
+      setViewerIsVerified(Boolean(data.isVerified || data.isPremium))
+      setViewerId(data.id ?? null)
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [cachedMe])
 
   const communityTarget = useMemo(() => {

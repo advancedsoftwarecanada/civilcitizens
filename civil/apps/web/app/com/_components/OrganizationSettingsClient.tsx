@@ -7,6 +7,7 @@ import { Area } from 'react-easy-crop'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import { formatUserDisplayName } from '../../_lib/text'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
@@ -241,21 +242,19 @@ export default function OrganizationSettingsClient({
         setMe(cachedMe)
       }
 
-      const requests: Array<Promise<Response | null>> = []
-      if (token && !cachedMe) {
-        requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
-      }
-      requests.push(Promise.resolve(fetch(buildApiUrl(orgApiPath), { headers: token ? { authorization: `Bearer ${token}` } : undefined, cache: 'no-store' })))
+      const [meData, orgRes] = await Promise.all([
+        token && !cachedMe ? ensureViewerMe({ token }) : Promise.resolve(cachedMe),
+        fetch(buildApiUrl(orgApiPath), { headers: token ? { authorization: `Bearer ${token}` } : undefined, cache: 'no-store' }),
+      ])
 
-      const responses = await Promise.all(requests)
-      const meRes = token && !cachedMe ? (responses[0] as Response | null) : null
-      const orgRes = (token && !cachedMe ? (responses[1] as Response) : (responses[0] as Response))
-
-      if (meRes && meRes.ok) {
-        const payload = (await meRes.json().catch(() => null)) as MeResponse | null
-        setMe(payload?.id ? payload : null)
-      } else if (!token) {
+      if (!token) {
         setMe(null)
+      } else if (token && !cachedMe) {
+        if (meData?.id) {
+          setMe(meData)
+        } else if (typeof window !== 'undefined' && !window.localStorage.getItem('token')) {
+          setMe(null)
+        }
       }
 
       if (orgRes.ok) {

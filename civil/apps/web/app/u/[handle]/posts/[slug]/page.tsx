@@ -14,6 +14,7 @@ import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostC
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
+import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../_lib/text'
@@ -260,9 +261,8 @@ export default function UserPostPage({ params }: PageProps) {
         setViewer(cached)
         return
       }
-      const res = await fetch('/api/auth/me', { headers: { authorization: `Bearer ${token}` } })
-      if (!res.ok) return
-      const data = await res.json()
+      const data = await ensureViewerMe({ token })
+      if (!data) return
       setViewer(data)
     } catch {
       /* noop */
@@ -301,7 +301,16 @@ export default function UserPostPage({ params }: PageProps) {
       if (retrievedPost.author.handle.toLowerCase() !== handleParam.toLowerCase()) {
         if (canonical?.user) {
           if (/^https?:\/\//i.test(canonical.user)) {
-            window.location.replace(canonical.user)
+            try {
+              const url = new URL(canonical.user)
+              if (url.origin === window.location.origin) {
+                router.replace(`${url.pathname}${url.search}${url.hash}`)
+              } else {
+                window.location.replace(canonical.user)
+              }
+            } catch {
+              window.location.replace(canonical.user)
+            }
           } else {
             router.replace(canonical.user)
           }

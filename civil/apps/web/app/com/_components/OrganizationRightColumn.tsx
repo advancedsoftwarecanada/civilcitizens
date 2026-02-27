@@ -10,6 +10,7 @@ import { buildApiUrl } from '../../_lib/api'
 import { buildCommunityPath } from '../../_lib/communityRoutes'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import { useViewerStore } from '../../_lib/viewerStore'
+import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useCommunity } from './CommunityContext'
 import { useOrganization } from './OrganizationContext'
 
@@ -55,29 +56,19 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
 
     const load = async () => {
       try {
-        const requests: Array<Promise<Response>> = []
-        if (!cachedMe) {
-          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }))
-        }
-        requests.push(
-          fetch(
-            buildApiUrl(
-              `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization.slug)}`,
-            ),
-            { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+        const orgPromise = fetch(
+          buildApiUrl(
+            `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization.slug)}`,
           ),
+          { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
         )
 
-        const responses = await Promise.all(requests)
-        const meRes = cachedMe ? null : responses[0]
-        const orgRes = cachedMe ? responses[0] : responses[1]
-
-        if (meRes?.ok) {
-          const payload = (await meRes.json().catch(() => null)) as MeResponse | null
-          if (payload?.id) setMe(payload)
+        if (!cachedMe) {
+          const payload = await ensureViewerMe({ token })
+          if (payload?.id) setMe({ id: payload.id })
         }
 
-        if (!orgRes) return
+        const orgRes = await orgPromise
         if (orgRes.ok) {
           const payload = (await orgRes.json().catch(() => null)) as { org?: CommunityOrganization } | null
           if (payload?.org) setOrg(payload.org)

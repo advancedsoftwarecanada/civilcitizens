@@ -17,6 +17,7 @@ import { hasHomeCommunity, isPremiumMember } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { isSuperAdmin } from '../_lib/admin'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureViewerMe } from '../_lib/viewerMe'
 
 const CARD_LINKS: Array<{
   key: 'profile' | 'communities' | 'billing'
@@ -67,20 +68,14 @@ export default function SettingsPage() {
     }
 
     let cancelled = false
-    const loadViewer = async () => {
+    void (async () => {
       try {
-        const meRes = await fetch(buildApiUrl('/auth/me'), {
-          headers: { authorization: `Bearer ${storedToken}` },
-        })
-        if (!meRes.ok) return
-        const payload = (await meRes.json()) as MeResponse
-        if (!cancelled) setViewer(payload)
+        const payload = await ensureViewerMe({ token: storedToken })
+        if (!cancelled && payload) setViewer(payload)
       } catch (error) {
         console.error('Unable to load viewer for settings', error)
       }
-    }
-
-    void loadViewer()
+    })()
     return () => {
       cancelled = true
     }
