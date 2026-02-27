@@ -48,6 +48,38 @@ type CommunityFollowsResponse = {
   items?: CommunityFollowRow[]
 }
 
+type OwnedOrganization = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string | null
+  communitySlug: string | null
+  isVerified?: boolean
+  status?: string
+  logoUrl?: string | null
+  coverUrl?: string | null
+}
+
+type MemberOrganization = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string | null
+  communitySlug: string | null
+  isVerified?: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
+  role?: string
+}
+
+type OrganizationsOwnedResponse = {
+  items?: OwnedOrganization[]
+}
+
+type OrganizationsMembershipsResponse = {
+  items?: MemberOrganization[]
+}
+
 const mapFollowToCommunityTarget = (follow: CommunityFollowRow): CommunityTarget => {
   const normalizedProvince = normalizeProvinceCode(follow.province)
   const provinceCode = normalizedProvince ?? follow.province
@@ -70,8 +102,17 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const cachedMe = useViewerStore((s) => s.me)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [communityOptions, setCommunityOptions] = useState<CommunityTarget[]>([])
+  const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
+  const [memberOrganizations, setMemberOrganizations] = useState<MemberOrganization[]>([])
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState('')
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
+
+  const postableOrganizations = useMemo(() => {
+    const ownedIds = new Set(ownedOrganizations.map((org) => org.id))
+    const memberships = memberOrganizations.filter((org) => !ownedIds.has(org.id))
+    return [...ownedOrganizations, ...memberships]
+  }, [memberOrganizations, ownedOrganizations])
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
@@ -196,9 +237,25 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
     const bootstrap = async () => {
       try {
+        const shouldLoadPostableOrganizations = scope === 'organizations' || scope === 'all'
+
         const followsPromise = fetch(buildApiUrl('/communities/follows'), {
           headers: { authorization: `Bearer ${token}` },
         })
+
+        const ownedPromise =
+          shouldLoadPostableOrganizations
+            ? fetch(buildApiUrl('/organizations/owned'), {
+                headers: { authorization: `Bearer ${token}` },
+              })
+            : null
+
+        const membershipsPromise =
+          shouldLoadPostableOrganizations
+            ? fetch(buildApiUrl('/organizations/memberships'), {
+                headers: { authorization: `Bearer ${token}` },
+              })
+            : null
 
         const resolvedMe = cachedMe ?? (await ensureViewerMe({ token }))
         if (!resolvedMe) {
@@ -217,7 +274,17 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
         setMe(resolvedMe)
 
-        const followsRes = await followsPromise
+        const [followsRes, ownedRes, membershipsRes] = await Promise.all([
+          followsPromise,
+          ownedPromise ?? Promise.resolve(null),
+          membershipsPromise ?? Promise.resolve(null),
+        ])
+
+        if (ownedRes?.status === 401 || membershipsRes?.status === 401) {
+          localStorage.removeItem('token')
+          redirectToAuthModal('login')
+          return
+        }
 
         if (followsRes.status === 401) {
           localStorage.removeItem('token')
@@ -238,6 +305,41 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         } else {
           setCommunityOptions([])
         }
+
+        if (shouldLoadPostableOrganizations) {
+          let ownedItems: OwnedOrganization[] = []
+          if (ownedRes?.ok) {
+            const payload = (await ownedRes.json().catch(() => null)) as OrganizationsOwnedResponse | null
+            ownedItems = Array.isArray(payload?.items) ? payload.items : []
+            setOwnedOrganizations(ownedItems)
+          } else {
+            setOwnedOrganizations([])
+            ownedItems = []
+          }
+
+          let membershipItems: MemberOrganization[] = []
+          if (membershipsRes?.ok) {
+            const payload = (await membershipsRes.json().catch(() => null)) as OrganizationsMembershipsResponse | null
+            membershipItems = Array.isArray(payload?.items) ? payload.items : []
+            setMemberOrganizations(membershipItems)
+          } else {
+            setMemberOrganizations([])
+            membershipItems = []
+          }
+
+          if (scope === 'organizations') {
+            const ownedIds = new Set(ownedItems.map((org) => org.id))
+            const combinedItems = [...ownedItems, ...membershipItems.filter((org) => !ownedIds.has(org.id))]
+            setSelectedOrganizationId((prev) => {
+              if (prev && combinedItems.some((org) => org.id === prev)) return prev
+              if (combinedItems.length === 1 && combinedItems[0]) return combinedItems[0].id
+              return ''
+            })
+          }
+        } else {
+          setOwnedOrganizations([])
+          setMemberOrganizations([])
+        }
       } catch {
         localStorage.removeItem('token')
         redirectToAuthModal('login')
@@ -245,7 +347,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
 
     void bootstrap()
-  }, [cachedMe, router])
+  }, [cachedMe, router, scope])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
@@ -316,6 +418,11 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     })
   }, [hideSelfPosts, posts, viewerHandleNormalized])
 
+  const selectedOrganization = useMemo(() => {
+    if (scope !== 'organizations' || !selectedOrganizationId) return null
+    return postableOrganizations.find((org) => org.id === selectedOrganizationId) ?? null
+  }, [postableOrganizations, scope, selectedOrganizationId])
+
   const openComposer = (type: PostType = 'post') => {
     setComposerDefaultType(type)
     setComposerOpen(true)
@@ -335,10 +442,12 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     <DashboardShell rightRail={resolvedRightRail} mainClassName="space-y-6">
       <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
-            {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
-          </div>
+          {scope !== 'organizations' ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
+              {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+            </div>
+          ) : null}
         </div>
         <div className="flex items-center gap-3">
           <VerifiedAvatar
@@ -453,17 +562,65 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         key={composerDefaultType}
         maxWidthClassName="max-w-3xl"
       >
-        <PostComposer
-          me={me}
-          defaultPostType={composerDefaultType}
-          onPostCreated={(post) => {
-            handlePostCreated(post)
-            setComposerOpen(false)
-          }}
-          variant="plain"
-          communityOptions={communityOptions}
-          defaultAudience={composerDefaultAudience}
-        />
+        {scope === 'organizations' ? (
+          <div className="space-y-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Organization</span>
+              <select
+                className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
+                value={selectedOrganizationId}
+                onChange={(e) => setSelectedOrganizationId(e.target.value)}
+              >
+                <option value="" disabled>
+                  Select an organization
+                </option>
+                {postableOrganizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+              {selectedOrganization ? (
+                <p className="text-xs text-slate-500">Posting as {selectedOrganization.name}</p>
+              ) : null}
+            </div>
+
+            {selectedOrganization ? (
+              <PostComposer
+                me={me}
+                defaultPostType={composerDefaultType}
+                onPostCreated={(post) => {
+                  handlePostCreated(post)
+                  setComposerOpen(false)
+                }}
+                variant="plain"
+                communityOptions={communityOptions}
+                businessTarget={{ businessId: selectedOrganization.id, businessName: selectedOrganization.name }}
+                hideAudience
+              />
+            ) : (
+              <p className="text-sm text-slate-600">Select an organization to start writing.</p>
+            )}
+          </div>
+        ) : (
+          <PostComposer
+            me={me}
+            defaultPostType={composerDefaultType}
+            onPostCreated={(post) => {
+              handlePostCreated(post)
+              setComposerOpen(false)
+            }}
+            variant="plain"
+            communityOptions={communityOptions}
+            defaultAudience={composerDefaultAudience}
+            hideAudience={scope === 'friends' || scope === 'network'}
+            organizationOptions={
+              scope === 'all'
+                ? postableOrganizations.map((org) => ({ id: org.id, name: org.name }))
+                : undefined
+            }
+          />
+        )}
       </Modal>
     </DashboardShell>
   )

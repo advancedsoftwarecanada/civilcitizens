@@ -97,6 +97,7 @@ type PostComposerProps = {
   defaultPostType?: PostType
   communityTarget?: CommunityTarget | null
   communityOptions?: CommunityTarget[]
+  organizationOptions?: Array<{ id: string; name: string }>
   businessTarget?: { businessId: string; businessName?: string | null } | null
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
@@ -116,9 +117,11 @@ const NETWORK_VALUE = 'network'
 const BUSINESS_VALUE = 'business'
 const COMMUNITY_PREFIX = 'community:'
 const COMMUNITY_PROMPT_VALUE = `${COMMUNITY_PREFIX}__prompt`
+const ORGANIZATION_PREFIX = 'organization:'
 
 const buildCommunityKey = (target: CommunityTarget) => `${target.provinceCode}:${target.communitySlug}`
 const buildCommunityValue = (target: CommunityTarget) => `${COMMUNITY_PREFIX}${buildCommunityKey(target)}`
+const buildOrganizationValue = (id: string) => `${ORGANIZATION_PREFIX}${id}`
 
 const formatCommunityLabel = (target: CommunityTarget) => {
   const name = target.communityName ?? target.communitySlug
@@ -212,6 +215,7 @@ export default function PostComposer({
   defaultPostType = 'post',
   communityTarget = null,
   communityOptions = [],
+  organizationOptions = [],
   businessTarget = null,
   onPostCreated,
   variant = 'card',
@@ -242,16 +246,31 @@ export default function PostComposer({
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
 
+  const selectedOrganizationOption = useMemo(() => {
+    if (businessTarget?.businessId) return null
+    if (!audienceSelection.startsWith(ORGANIZATION_PREFIX)) return null
+    const id = audienceSelection.slice(ORGANIZATION_PREFIX.length)
+    return organizationOptions.find((org) => org.id === id) ?? null
+  }, [audienceSelection, businessTarget, organizationOptions])
+
+  const activeBusinessTarget = useMemo(() => {
+    if (businessTarget?.businessId) return businessTarget
+    if (selectedOrganizationOption) {
+      return { businessId: selectedOrganizationOption.id, businessName: selectedOrganizationOption.name }
+    }
+    return null
+  }, [businessTarget, selectedOrganizationOption])
+
   const audienceLocked = Boolean((communityTarget && !businessTarget?.businessId) || businessTarget?.businessId)
   const isPromptSelected = audienceSelection === COMMUNITY_PROMPT_VALUE
   const audienceBlocked = !communityTarget && isPromptSelected
   const activeCommunity = useMemo(() => {
-    if (businessTarget?.businessId) return null
+    if (activeBusinessTarget?.businessId) return null
     if (communityTarget) return communityTarget
     if (!audienceSelection.startsWith(COMMUNITY_PREFIX) || isPromptSelected) return null
     const key = audienceSelection.slice(COMMUNITY_PREFIX.length)
     return normalizedCommunityOptions.find((option) => buildCommunityKey(option) === key) ?? null
-  }, [audienceSelection, businessTarget, communityTarget, isPromptSelected, normalizedCommunityOptions])
+  }, [activeBusinessTarget, audienceSelection, communityTarget, isPromptSelected, normalizedCommunityOptions])
 
   useEffect(() => {
     if (businessTarget?.businessId) {
@@ -498,17 +517,17 @@ export default function PostComposer({
         payload.communityProvince = targetCommunity.provinceCode
         payload.communitySlug = targetCommunity.communitySlug
       }
-      payload.audience = targetCommunity
-        ? 'community'
-        : businessTarget?.businessId
-          ? 'organization'
+      payload.audience = businessTarget?.businessId
+        ? 'organization'
+        : targetCommunity
+          ? 'community'
           : audienceSelection === NETWORK_VALUE
             ? 'network'
             : 'friends'
       payload.jurisdiction = targetCommunity ? 'municipal' : 'self'
 
-      if (businessTarget?.businessId) {
-        payload.businessId = businessTarget.businessId
+      if (activeBusinessTarget?.businessId) {
+        payload.businessId = activeBusinessTarget.businessId
         payload.visibility = visibility
       }
 
@@ -550,7 +569,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeCommunity, articleBody, articleTitle, audienceSelection, businessTarget, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting, visibility])
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -665,13 +684,29 @@ export default function PostComposer({
 
   return (
     <section ref={containerRef} className={containerClasses}>
-      <header className={clsx('flex flex-col gap-4', !hideAudience && 'lg:flex-row lg:items-start lg:justify-between')}>
+      <header
+        className={clsx(
+          'flex flex-col gap-4',
+          variant !== 'plain' && !hideAudience && 'lg:flex-row lg:items-start lg:justify-between',
+        )}
+      >
         {!hideAudience ? (
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
             <select
-              className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
-              value={businessTarget?.businessId ? BUSINESS_VALUE : audienceLocked && activeCommunity ? buildCommunityValue(activeCommunity) : audienceSelection}
+              className={clsx(
+                'w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none',
+                variant === 'plain' ? 'max-w-full' : 'max-w-sm',
+              )}
+              value={
+                businessTarget?.businessId
+                  ? BUSINESS_VALUE
+                  : audienceLocked && activeCommunity
+                    ? buildCommunityValue(activeCommunity)
+                    : selectedOrganizationOption
+                      ? buildOrganizationValue(selectedOrganizationOption.id)
+                      : audienceSelection
+              }
               onChange={(event) => setAudienceSelection(event.target.value)}
               disabled={audienceLocked}
             >
@@ -679,23 +714,47 @@ export default function PostComposer({
                 <option value={BUSINESS_VALUE}>{businessTarget.businessName ?? 'Organization'}</option>
               ) : (
                 <>
-                  <option value={NETWORK_VALUE}>Network</option>
-                  <option value={FRIENDS_VALUE}>Friends</option>
-                  {!communityTarget && isPromptSelected ? (
-                    <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
-                      Select a community
-                    </option>
+                  {defaultAudience !== 'community' ? (
+                    <optgroup label="Friends">
+                      <option value={FRIENDS_VALUE}>Friends</option>
+                    </optgroup>
                   ) : null}
-                  {communityTarget ? (
-                    <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
+
+                  {defaultAudience !== 'community' ? (
+                    <optgroup label="Network">
+                      <option value={NETWORK_VALUE}>Network</option>
+                    </optgroup>
                   ) : null}
-                  {!communityTarget
-                    ? normalizedCommunityOptions.map((option) => (
-                        <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
-                          {formatCommunityLabel(option)}
+
+                  {normalizedCommunityOptions.length || communityTarget || (!communityTarget && isPromptSelected) ? (
+                    <optgroup label="Communities">
+                      {!communityTarget && isPromptSelected ? (
+                        <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
+                          Select a community
                         </option>
-                      ))
-                    : null}
+                      ) : null}
+                      {communityTarget ? (
+                        <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
+                      ) : null}
+                      {!communityTarget
+                        ? normalizedCommunityOptions.map((option) => (
+                            <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
+                              {formatCommunityLabel(option)}
+                            </option>
+                          ))
+                        : null}
+                    </optgroup>
+                  ) : null}
+
+                  {organizationOptions.length ? (
+                    <optgroup label="Organizations">
+                      {organizationOptions.map((org) => (
+                        <option key={org.id} value={buildOrganizationValue(org.id)}>
+                          {org.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
                 </>
               )}
             </select>
@@ -705,8 +764,8 @@ export default function PostComposer({
             {!businessTarget?.businessId && isPromptSelected ? (
               <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
             ) : null}
-            {businessTarget?.businessId ? (
-              <p className="text-xs text-slate-500">Posting to {businessTarget.businessName ?? 'this organization'}</p>
+            {activeBusinessTarget?.businessId ? (
+              <p className="text-xs text-slate-500">Posting to {activeBusinessTarget.businessName ?? 'this organization'}</p>
             ) : null}
             {activeCommunity && !audienceLocked && !isPromptSelected ? (
               <p className="text-xs text-slate-500">
@@ -716,14 +775,22 @@ export default function PostComposer({
           </div>
         ) : null}
 
-        {businessTarget?.businessId ? (
+        {activeBusinessTarget?.businessId ? (
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Visibility</span>
-            <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+            <div
+              className={clsx(
+                'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500',
+                variant === 'plain'
+                  ? 'flex-wrap'
+                  : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+              )}
+            >
               <button
                 type="button"
                 className={clsx(
-                  'shrink-0 whitespace-nowrap rounded-full px-4 py-1 transition',
+                  'whitespace-nowrap rounded-full px-4 py-1 transition',
+                  variant !== 'plain' && 'shrink-0',
                   visibility === 'public' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
                 )}
                 onClick={() => setVisibility('public')}
@@ -734,7 +801,8 @@ export default function PostComposer({
               <button
                 type="button"
                 className={clsx(
-                  'shrink-0 whitespace-nowrap rounded-full px-4 py-1 transition',
+                  'whitespace-nowrap rounded-full px-4 py-1 transition',
+                  variant !== 'plain' && 'shrink-0',
                   visibility === 'members' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
                 )}
                 onClick={() => setVisibility('members')}
@@ -747,7 +815,14 @@ export default function PostComposer({
         ) : null}
         <div className="flex flex-col gap-2">
           <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Type</span>
-          <div className="flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+          <div
+            className={clsx(
+              'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500',
+              variant === 'plain'
+                ? 'flex-wrap'
+                : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
+            )}
+          >
             {POST_TYPE_CHOICES.map((choice) => {
             const isActive = !choice.comingSoon && postType === choice.type
             const isComingSoon = Boolean(choice.comingSoon)
@@ -756,7 +831,8 @@ export default function PostComposer({
                 key={choice.type}
                 type="button"
                 className={clsx(
-                  'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-4 py-1 transition',
+                  'flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-1 transition',
+                  variant !== 'plain' && 'shrink-0',
                   isActive ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
                   isComingSoon ? 'text-slate-400 hover:text-slate-500' : '',
                 )}
