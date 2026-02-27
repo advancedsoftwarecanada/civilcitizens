@@ -38,6 +38,7 @@
     "ioredis": "^5.4.1",
     "pino": "^9.3.2",
     "proj4": "^2.11.0",
+    "sanitize-html": "^2.17.1",
     "shapefile": "^0.6.6",
     "stripe": "^16.11.0",
     "unzipper": "^0.11.4",
@@ -45,6 +46,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/sanitize-html": "^2.16.0",
     "chokidar-cli": "^3.0.0",
     "concurrently": "^8.2.2",
     "tsx": "^4.16.2",

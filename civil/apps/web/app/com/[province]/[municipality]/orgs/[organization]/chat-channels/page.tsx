@@ -1,5 +1,4 @@
-import OrganizationSection from '../../../../../_components/OrganizationSection'
-import OrganizationChannelsClient from '../../../../../_components/OrganizationChannelsClient'
+import ChatChannelsPageClient from './ChatChannelsPageClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,13 +18,11 @@ export default function OrganizationChatChannelsPage({ params, searchParams }: P
   const initialChannelId = typeof rawChannel === 'string' ? rawChannel : undefined
 
   return (
-    <OrganizationSection title="Chat Channels">
-      <OrganizationChannelsClient
-        province={params.province}
-        municipality={params.municipality}
-        slug={params.organization}
-        initialChannelId={initialChannelId}
-      />
-    </OrganizationSection>
+    <ChatChannelsPageClient
+      province={params.province}
+      municipality={params.municipality}
+      slug={params.organization}
+      initialChannelId={initialChannelId}
+    />
   )
 }

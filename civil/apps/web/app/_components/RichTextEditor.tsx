@@ -29,7 +29,6 @@ const DEFAULT_TOOLBAR: ToolbarGroup[] = [
   ['style', ['bold', 'italic', 'underline', 'clear']],
   ['para', ['ul', 'ol', 'paragraph']],
   ['insert', ['link']],
-  ['view', ['codeview']],
 ]
 
 const CDN_STYLES = [
@@ -171,6 +170,10 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
       height: minHeight,
       dialogsInBody: true,
       disableDragAndDrop: true,
+      // Never allow raw HTML editing. (Rich text only.)
+      // Note: codeview is not present in the toolbar, but keep filters enabled as a safeguard.
+      codeviewFilter: true,
+      codeviewIframeFilter: true,
       toolbar,
     })
 
