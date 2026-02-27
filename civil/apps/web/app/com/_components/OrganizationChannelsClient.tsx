@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
+import Modal from '../../_components/Modal'
 import { buildApiUrl } from '../../_lib/api'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../_lib/authModal'
@@ -67,22 +69,33 @@ type OrgMember = {
   user: ThreadUser
 }
 
+type OrganizationChannelsMode = 'chat' | 'manage'
+
 export default function OrganizationChannelsClient({
   province,
   municipality,
   slug,
   initialChannelId,
+  mode = 'chat',
+  onTitleChange,
 }: {
   province: string
   municipality: string
   slug: string
   initialChannelId?: string
+  mode?: OrganizationChannelsMode
+  onTitleChange?: (title: string) => void
 }) {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [channels, setChannels] = useState<ChannelRow[]>([])
-  const [query, setQuery] = useState('')
+  const [channelQuery, setChannelQuery] = useState('')
+  const [chatQuery, setChatQuery] = useState('')
   const [selectedChannelId, setSelectedChannelId] = useState<string | null>(initialChannelId ?? null)
   const [messages, setMessages] = useState<MessagePayload[]>([])
   const [composer, setComposer] = useState('')
@@ -93,6 +106,7 @@ export default function OrganizationChannelsClient({
   const [newChannelVisibility, setNewChannelVisibility] = useState<'public' | 'private'>('public')
   const [memberOptions, setMemberOptions] = useState<OrgMember[]>([])
   const [inviteUserId, setInviteUserId] = useState('')
+  const [channelPickerOpen, setChannelPickerOpen] = useState(false)
 
   const token = typeof window !== 'undefined' ? getStoredToken() : null
 
@@ -111,6 +125,21 @@ export default function OrganizationChannelsClient({
 
   const channelsPath = `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/channels`
 
+  const applyChannelSelection = useCallback(
+    (nextId: string | null) => {
+      setSelectedChannelId(nextId)
+      if (mode !== 'chat') return
+      if (!pathname) return
+
+      const params = new URLSearchParams(searchParams?.toString())
+      if (nextId) params.set('channel', nextId)
+      else params.delete('channel')
+      const qs = params.toString()
+      router.replace(qs ? `${pathname}?${qs}` : pathname)
+    },
+    [mode, pathname, router, searchParams],
+  )
+
   const loadChannels = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -127,10 +156,6 @@ export default function OrganizationChannelsClient({
       setOrgRole(payload?.organization?.viewerRole ?? null)
       setServerMuted(Boolean(payload?.serverNotification?.muteServer))
       setServerMentionsOnly(Boolean(payload?.serverNotification?.mentionsOnly))
-      const firstChannel = items[0]
-      if (!selectedChannelId && firstChannel) {
-        setSelectedChannelId(firstChannel.id)
-      }
     } catch (err) {
       console.error('Failed to load channels', err)
       setError('Unable to load channels right now.')
@@ -138,7 +163,7 @@ export default function OrganizationChannelsClient({
     } finally {
       setLoading(false)
     }
-  }, [authedFetch, channelsPath, selectedChannelId])
+  }, [authedFetch, channelsPath])
 
   const loadMembers = useCallback(async () => {
     try {
@@ -166,16 +191,28 @@ export default function OrganizationChannelsClient({
 
   useEffect(() => {
     if (!initialChannelId) return
-    setSelectedChannelId(initialChannelId)
-  }, [initialChannelId])
+    applyChannelSelection(initialChannelId)
+  }, [applyChannelSelection, initialChannelId])
 
   const selectedChannel = useMemo(() => channels.find((c) => c.id === selectedChannelId) ?? null, [channels, selectedChannelId])
 
+  useEffect(() => {
+    if (mode !== 'chat') return
+    if (!onTitleChange) return
+    onTitleChange(selectedChannel ? `#${selectedChannel.slug}` : 'Select channel')
+  }, [mode, onTitleChange, selectedChannel?.slug])
+
   const filteredChannels = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = channelQuery.trim().toLowerCase()
     if (!q) return channels
     return channels.filter((channel) => channel.name.toLowerCase().includes(q) || channel.slug.toLowerCase().includes(q))
-  }, [channels, query])
+  }, [channelQuery, channels])
+
+  const filteredMessages = useMemo(() => {
+    const q = chatQuery.trim().toLowerCase()
+    if (!q) return messages
+    return messages.filter((message) => (message.body ?? '').toLowerCase().includes(q))
+  }, [chatQuery, messages])
 
   const loadThread = useCallback(async () => {
     if (!selectedChannelId || !selectedChannel?.joined) {
@@ -217,7 +254,7 @@ export default function OrganizationChannelsClient({
       setNewChannelName('')
       await loadChannels()
       if (payload?.channel?.id) {
-        setSelectedChannelId(payload.channel.id)
+        applyChannelSelection(payload.channel.id)
       }
     } catch (err) {
       console.error('Failed to create channel', err)
@@ -225,7 +262,7 @@ export default function OrganizationChannelsClient({
     } finally {
       setSaving(false)
     }
-  }, [authedFetch, channelsPath, loadChannels, newChannelName, newChannelVisibility])
+  }, [applyChannelSelection, authedFetch, channelsPath, loadChannels, newChannelName, newChannelVisibility])
 
   const joinChannel = useCallback(
     async (channelId: string) => {
@@ -238,12 +275,12 @@ export default function OrganizationChannelsClient({
           return
         }
         await loadChannels()
-        setSelectedChannelId(channelId)
+        applyChannelSelection(channelId)
       } finally {
         setSaving(false)
       }
     },
-    [authedFetch, channelsPath, loadChannels],
+    [applyChannelSelection, authedFetch, channelsPath, loadChannels],
   )
 
   const leaveChannel = useCallback(
@@ -263,6 +300,15 @@ export default function OrganizationChannelsClient({
       }
     },
     [authedFetch, channelsPath, loadChannels],
+  )
+
+  const openChannelFromManage = useCallback(
+    (channelId: string) => {
+      if (!pathname) return
+      const basePath = pathname.endsWith('/manage') ? pathname.slice(0, -'/manage'.length) : pathname
+      router.push(`${basePath}?channel=${encodeURIComponent(channelId)}`)
+    },
+    [pathname, router],
   )
 
   const inviteMember = useCallback(async () => {
@@ -345,31 +391,34 @@ export default function OrganizationChannelsClient({
   if (loading) return <p className="text-sm text-slate-500">Loading channels…</p>
   if (error) return <p className="text-sm text-red-600">{error}</p>
 
-  return (
-    <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="space-y-3 rounded-2xl border border-slate-200 bg-white p-3">
+  if (mode === 'manage') {
+    const canManage = orgRole === 'OWNER' || orgRole === 'MANAGER'
+
+    return (
+      <div className="space-y-4">
         <input
           type="text"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          value={channelQuery}
+          onChange={(event) => setChannelQuery(event.target.value)}
           placeholder="Search channels"
-          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none"
+          className="w-full max-w-md rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none"
         />
 
-        {(orgRole === 'OWNER' || orgRole === 'MANAGER') ? (
-          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-            <input
-              type="text"
-              value={newChannelName}
-              onChange={(event) => setNewChannelName(event.target.value)}
-              placeholder="New channel name"
-              className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
-            />
-            <div className="flex items-center gap-2">
+        {canManage ? (
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-sm font-semibold text-slate-900">Create channel</p>
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto] sm:items-center">
+              <input
+                type="text"
+                value={newChannelName}
+                onChange={(event) => setNewChannelName(event.target.value)}
+                placeholder="New channel name"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+              />
               <select
                 value={newChannelVisibility}
                 onChange={(event) => setNewChannelVisibility(event.target.value as 'public' | 'private')}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
               >
                 <option value="public">Public</option>
                 <option value="private">Private</option>
@@ -378,34 +427,67 @@ export default function OrganizationChannelsClient({
                 type="button"
                 onClick={createChannel}
                 disabled={saving || !newChannelName.trim()}
-                className="rounded-full bg-[var(--cc-primary)] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                className="w-full rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
               >
                 Create
               </button>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <p className="text-sm text-slate-500">You don’t have permission to manage channels.</p>
+        )}
 
-        <div className="space-y-1">
+        <div className="space-y-2">
           {filteredChannels.map((channel) => (
             <button
               key={channel.id}
               type="button"
-              onClick={() => setSelectedChannelId(channel.id)}
+              onClick={() => openChannelFromManage(channel.id)}
               className={clsx(
-                'w-full rounded-xl border px-3 py-2 text-left text-sm transition',
-                selectedChannelId === channel.id ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5' : 'border-slate-200 hover:border-slate-300',
+                'w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-slate-300 hover:bg-slate-50',
+                selectedChannelId === channel.id ? 'border-[var(--cc-primary)]' : null,
               )}
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="truncate font-semibold text-slate-900">#{channel.slug}</p>
-                {channel.unread ? <span className="h-2 w-2 rounded-full bg-[var(--cc-primary)]" /> : null}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-semibold text-slate-900">#{channel.slug}</p>
+                    {channel.unread ? <span className="h-2 w-2 rounded-full bg-[var(--cc-primary)]" aria-hidden="true" /> : null}
+                    <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      {channel.visibility}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-slate-500">{channel.name}</p>
+                </div>
+                <span className="shrink-0 text-xs text-slate-400">{channel.participantCount} members</span>
               </div>
-              <p className="mt-0.5 truncate text-xs text-slate-500">{channel.name} · {channel.visibility}</p>
             </button>
           ))}
         </div>
-      </aside>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={() => setChannelPickerOpen(true)}
+          className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 sm:w-auto"
+        >
+          Channels
+        </button>
+
+        <input
+          type="text"
+          value={chatQuery}
+          onChange={(event) => setChatQuery(event.target.value)}
+          placeholder={selectedChannel ? `Search #${selectedChannel.slug}` : 'Search chat'}
+          disabled={!selectedChannel}
+          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none disabled:opacity-60 sm:max-w-sm"
+        />
+      </div>
 
       <section className="flex min-h-[420px] flex-col rounded-2xl border border-slate-200 bg-white p-3">
         {!selectedChannel ? (
@@ -487,15 +569,56 @@ export default function OrganizationChannelsClient({
             <div className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
               {!selectedChannel.joined ? (
                 <p className="text-sm text-slate-500">Join this channel to read and send messages.</p>
-              ) : messages.length === 0 ? (
-                <p className="text-sm text-slate-500">No messages yet.</p>
+              ) : filteredMessages.length === 0 ? (
+                <p className="text-sm text-slate-500">No messages found.</p>
               ) : (
-                messages.map((message) => (
-                  <div key={message.id} className={clsx('flex flex-col', message.isMine ? 'items-end' : 'items-start')}>
-                    <p className="mb-1 text-xs font-semibold text-slate-500">{message.isMine ? 'You' : formatUserDisplayName(message.sender.name, message.sender.handle) || `@${message.sender.handle}`}</p>
-                    <div className={clsx('max-w-[80%] rounded-2xl px-3 py-2 text-sm', message.isMine ? 'bg-[var(--cc-primary)] text-white' : 'border border-slate-200 bg-slate-50 text-slate-800')}>
-                      {message.body}
+                filteredMessages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={clsx(
+                      'flex items-end gap-2',
+                      message.isMine ? 'justify-end' : 'justify-start',
+                    )}
+                  >
+                    {!message.isMine ? (
+                      <VerifiedAvatar
+                        src={message.sender.avatarUrl}
+                        alt={formatUserDisplayName(message.sender.name, message.sender.handle) || `@${message.sender.handle}`}
+                        initials={formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle}
+                        size={28}
+                        isVerified={Boolean(message.sender.isVerified)}
+                        className="shrink-0"
+                      />
+                    ) : null}
+
+                    <div className={clsx('flex max-w-[80%] flex-col', message.isMine ? 'items-end' : 'items-start')}>
+                      <p className="mb-1 text-xs font-semibold text-slate-500">
+                        {message.isMine
+                          ? 'You'
+                          : formatUserDisplayName(message.sender.name, message.sender.handle) || `@${message.sender.handle}`}
+                      </p>
+                      <div
+                        className={clsx(
+                          'rounded-2xl px-3 py-2 text-sm',
+                          message.isMine
+                            ? 'bg-[var(--cc-primary)] text-white'
+                            : 'border border-slate-200 bg-slate-50 text-slate-800',
+                        )}
+                      >
+                        {message.body}
+                      </div>
                     </div>
+
+                    {message.isMine ? (
+                      <VerifiedAvatar
+                        src={message.sender.avatarUrl}
+                        alt="You"
+                        initials={formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle}
+                        size={28}
+                        isVerified={Boolean(message.sender.isVerified)}
+                        className="shrink-0"
+                      />
+                    ) : null}
                   </div>
                 ))
               )}
@@ -522,6 +645,55 @@ export default function OrganizationChannelsClient({
           </>
         )}
       </section>
+
+      <Modal open={channelPickerOpen} onClose={() => setChannelPickerOpen(false)} title="Select channel" maxWidthClassName="max-w-lg">
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={channelQuery}
+            onChange={(event) => setChannelQuery(event.target.value)}
+            placeholder="Search channels"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none"
+          />
+
+          <div className="space-y-2">
+            {filteredChannels.length ? (
+              filteredChannels.map((channel) => (
+                <button
+                  key={channel.id}
+                  type="button"
+                  onClick={() => {
+                    applyChannelSelection(channel.id)
+                    setChannelPickerOpen(false)
+                  }}
+                  className={clsx(
+                    'w-full rounded-2xl border px-4 py-3 text-left transition',
+                    selectedChannelId === channel.id
+                      ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5'
+                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-slate-900">#{channel.slug}</p>
+                        {channel.unread ? <span className="h-2 w-2 rounded-full bg-[var(--cc-primary)]" aria-hidden="true" /> : null}
+                        <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          {channel.visibility}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-slate-500">{channel.name}</p>
+                    </div>
+                    <span className="shrink-0 text-xs text-slate-400">{channel.participantCount} members</span>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <p className="text-sm text-slate-500">No channels found.</p>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

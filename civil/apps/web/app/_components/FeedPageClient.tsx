@@ -442,6 +442,14 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
   const openComposer = (type: PostType = 'post') => {
     setComposerDefaultType(type)
+
+    if (scope === 'organizations') {
+      setSelectedOrganizationId(() => {
+        if (postableOrganizations.length === 1 && postableOrganizations[0]) return postableOrganizations[0].id
+        return ''
+      })
+    }
+
     setComposerOpen(true)
   }
 

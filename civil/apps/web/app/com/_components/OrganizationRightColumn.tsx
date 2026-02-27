@@ -45,6 +45,7 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
 
   const isOwner = Boolean(me?.id && org?.ownerId && me.id === org.ownerId)
   const canManageShop = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || isOwner)
+  const canManageChannels = canManageShop
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -162,6 +163,36 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
                     )}
                   >
                     <span>Manage Shop</span>
+                  </Link>
+                </Fragment>
+              )
+            }
+
+            if (link.key === 'chat-channels' && canManageChannels) {
+              const manageHref = `${basePath}/chat-channels/manage`
+              const manageActive = pathname === manageHref || pathname?.startsWith(`${manageHref}`)
+
+              return (
+                <Fragment key={link.key}>
+                  <Link
+                    href={href}
+                    className={clsx(
+                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
+                      'border-b border-slate-100',
+                      active ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
+                    )}
+                  >
+                    <span>{link.label}</span>
+                  </Link>
+                  <Link
+                    href={manageHref}
+                    className={clsx(
+                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
+                      'border-b border-slate-100',
+                      manageActive ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
+                    )}
+                  >
+                    <span>Manage channels</span>
                   </Link>
                 </Fragment>
               )

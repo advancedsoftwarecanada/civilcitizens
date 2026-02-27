@@ -8,6 +8,7 @@ import { Queue } from 'bullmq'
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { z } from 'zod'
+import sanitizeHtml from 'sanitize-html'
 import { prisma } from '@civil/db'
 import {
   Prisma,
@@ -1992,6 +1993,75 @@ function stripHtmlToPlainText(html: string) {
     .trim()
 }
 
+function stripHtmlToPlainTextWithNewlines(html: string) {
+  return html
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\s*\/\s*p\s*>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+const RICH_TEXT_ALLOWED_TAGS = [
+  'p',
+  'br',
+  'strong',
+  'b',
+  'em',
+  'i',
+  'u',
+  's',
+  'blockquote',
+  'ul',
+  'ol',
+  'li',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'pre',
+  'code',
+  'a',
+]
+
+const RICH_TEXT_ALLOWED_ATTRIBUTES: sanitizeHtml.IOptions['allowedAttributes'] = {
+  a: ['href', 'name', 'target', 'rel'],
+}
+
+function sanitizeRichTextHtml(input: string) {
+  const raw = typeof input === 'string' ? input : ''
+  const cleaned = sanitizeHtml(raw, {
+    allowedTags: RICH_TEXT_ALLOWED_TAGS,
+    allowedAttributes: RICH_TEXT_ALLOWED_ATTRIBUTES,
+    allowedSchemes: ['http', 'https', 'mailto'],
+    disallowedTagsMode: 'discard',
+    allowProtocolRelative: false,
+    transformTags: {
+      a: (tagName: string, attribs: sanitizeHtml.Attributes) => ({
+        tagName,
+        attribs: {
+          ...attribs,
+          rel: 'nofollow noopener noreferrer',
+          target: '_blank',
+        },
+      }),
+    },
+  })
+
+  // Keep output stable for empty/whitespace-only cases.
+  const trimmed = cleaned.trim()
+  return trimmed || '<p></p>'
+}
+
+function sanitizePlainText(input: string) {
+  return stripHtmlToPlainTextWithNewlines(typeof input === 'string' ? input : '')
+}
+
 function trimSlugLength(value: string, max: number) {
   let trimmed = value.slice(0, max)
   trimmed = trimmed.replace(/-+/g, '-').replace(/^-+|-+$/g, '')
@@ -2165,7 +2235,7 @@ function formatPost(post: PostWithAuthor, options: { viewerReaction?: ReactionTy
     seoSlug: post.seoSlug,
     type: post.type,
     title: post.title,
-    body: post.body,
+    body: post.type === 'article' ? sanitizeRichTextHtml(post.body) : sanitizePlainText(post.body),
     mediaUrl: normalizeMediaUrl(post.mediaUrl ?? null),
     images: (post.images as string[] | null)?.map(normalizeMediaUrl).filter((url): url is string => url !== null) ?? null,
     createdAt: post.createdAt,
@@ -2899,7 +2969,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       firstName,
       lastName,
       name: user.name,
-      bio: user.bio ?? '',
+      bio: user.bio ? sanitizePlainText(user.bio) : '',
       avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
       coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
       avatarMediaId: user.avatarMediaId ?? null,
@@ -2973,7 +3043,7 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
 
       const userUpdateData: Prisma.UserUncheckedUpdateInput = {
         name: fullName,
-        bio: bio?.trim() ? bio.trim() : null,
+        bio: bio?.trim() ? sanitizePlainText(bio).trim() : null,
         handle,
       }
 
@@ -3380,13 +3450,20 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
-    const { body, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience } = parse.data
+    const { body: rawBody, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience } = parse.data
 
-    if (sharedPostId && (!body || body.trim().length === 0)) {
+    const isArticle = type === 'article'
+    const normalizedBody = sharedPostId
+      ? sanitizePlainText(rawBody)
+      : isArticle
+        ? sanitizeRichTextHtml(rawBody)
+        : sanitizePlainText(rawBody)
+
+    if (sharedPostId && (!normalizedBody || normalizedBody.trim().length === 0)) {
       return reply.code(400).send({ error: 'Commentary is required when sharing a post.' })
     }
 
-    const slugBase = buildPostSlugBase({ handle: author.handle, title, body })
+    const slugBase = buildPostSlugBase({ handle: author.handle, title, body: normalizedBody })
     const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
     const normalizedAudience = business
       ? 'organization'
@@ -3405,7 +3482,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           ...(business ? { businessId: business.id } : {}),
           ...(visibility ? { visibility } : {}),
           ...(normalizedAudience ? ({ audience: normalizedAudience } as any) : {}),
-          body,
+          body: normalizedBody,
           mediaUrl,
           images: images ? (images as any) : undefined,
           type,
@@ -3598,7 +3675,8 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
     const parse = CreateCommentInput.safeParse(req.body ?? {})
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-    const { postId, body, parentId } = parse.data
+    const { postId, body: rawBody, parentId } = parse.data
+    const body = sanitizePlainText(rawBody)
 
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
     if (!user || !isPremium(user.premiumStatus)) {
@@ -3786,7 +3864,7 @@ app.delete('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
 
-    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true } })
+    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, type: true } })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
     if (post.authorId !== userId) {
@@ -3817,7 +3895,8 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       return reply.code(403).send({ error: 'forbidden' })
     }
 
-    const { title, body, mediaUrl, hashtags } = parse.data
+    const { title, body: rawBody, mediaUrl, hashtags } = parse.data
+    const body = post.type === 'article' ? sanitizeRichTextHtml(rawBody) : sanitizePlainText(rawBody)
 
     const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const updatedPost = await tx.post.update({
@@ -4898,11 +4977,12 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
     if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
 
     const messageRecord = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const normalizedBody = parse.data.body?.trim() ? sanitizePlainText(parse.data.body) : ''
       const created = await tx.message.create({
         data: {
           threadId: thread.id,
           senderId: userId,
-          body: parse.data.body ?? null,
+          body: normalizedBody ? normalizedBody : null,
           attachments: parse.data.attachments ?? undefined,
           messageType: MessageType.text,
         },
@@ -5625,7 +5705,7 @@ function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boole
     headline: readOrganizationHeadline(org.metadata),
     slug: org.slug,
     type: org.type,
-    description: org.description,
+    description: org.description ? sanitizePlainText(org.description) : null,
     phone: org.phone ?? null,
     websiteUrl: org.websiteUrl ?? null,
     address: org.address ?? null,
@@ -5948,7 +6028,7 @@ app.post('/communities/:province/:municipality/orgs', async (req: FastifyRequest
           name: body.data.name.trim(),
           slug,
           type,
-          description: body.data.description?.trim() || null,
+          description: body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null,
           // Community organizations should be visible immediately.
           status: 'ACTIVE',
         },
@@ -6125,7 +6205,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     }
     if ('description' in body.data) {
       const next = body.data.description
-      nextData.description = next ? next : null
+      nextData.description = next ? sanitizePlainText(next).trim() || null : null
     }
     if ('headline' in body.data) {
       const currentMetadata =
@@ -6762,6 +6842,8 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async 
 
     await ensureOrganizationShopTables()
 
+    const catalogDescription = body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null
+
     const catalogId = randomUUID()
     const sortOrderRows = await prisma.$queryRaw<Array<{ next_sort_order: number | null }>>`
       SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
@@ -6771,14 +6853,14 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async 
     const nextSortOrder = Number(sortOrderRows[0]?.next_sort_order ?? 0)
     await prisma.$executeRaw`
       INSERT INTO organization_shop_catalog (id, business_id, title, description, image_url, sort_order, enabled, updated_at)
-      VALUES (${catalogId}, ${org.id}, ${body.data.title.trim()}, ${body.data.description ?? null}, ${body.data.imageUrl ?? null}, ${nextSortOrder}, ${body.data.enabled}, NOW())
+      VALUES (${catalogId}, ${org.id}, ${body.data.title.trim()}, ${catalogDescription}, ${body.data.imageUrl ?? null}, ${nextSortOrder}, ${body.data.enabled}, NOW())
     `
 
     return reply.code(201).send({
       catalog: {
         id: catalogId,
         title: body.data.title.trim(),
-        description: body.data.description ?? null,
+        description: catalogDescription,
         imageUrl: body.data.imageUrl ?? null,
         enabled: body.data.enabled,
       },
@@ -6825,10 +6907,13 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/:catalogI
     `
     if (!catalogRows[0]) return reply.code(404).send({ error: 'catalog_not_found' })
 
+    const nextCatalogDescription =
+      'description' in body.data ? (body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null) : null
+
     await prisma.$executeRaw`
       UPDATE organization_shop_catalog
       SET title = COALESCE(${body.data.title?.trim() ?? null}, title),
-          description = CASE WHEN ${'description' in body.data} THEN ${body.data.description ?? null} ELSE description END,
+          description = CASE WHEN ${'description' in body.data} THEN ${nextCatalogDescription} ELSE description END,
           image_url = CASE WHEN ${'imageUrl' in body.data} THEN ${body.data.imageUrl ?? null} ELSE image_url END,
           enabled = COALESCE(${typeof body.data.enabled === 'boolean' ? body.data.enabled : null}, enabled),
           updated_at = NOW()
@@ -6990,6 +7075,9 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
     `
     if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
 
+    const nextProductDescription =
+      'description' in body.data ? (body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null) : null
+
     const catalogProvided = Object.prototype.hasOwnProperty.call(body.data, 'catalogId')
     let resolvedCatalogId: string | null | undefined = undefined
     if (catalogProvided) {
@@ -7011,7 +7099,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
       UPDATE organization_shop_product
       SET catalog_id = CASE WHEN ${catalogProvided} THEN ${resolvedCatalogId ?? null} ELSE catalog_id END,
           name = COALESCE(${body.data.name?.trim() ?? null}, name),
-          description = CASE WHEN ${'description' in body.data} THEN ${body.data.description ?? null} ELSE description END,
+          description = CASE WHEN ${'description' in body.data} THEN ${nextProductDescription} ELSE description END,
           price_cents = COALESCE(${body.data.priceCents ?? null}, price_cents),
           currency = COALESCE(${body.data.currency?.toUpperCase() ?? null}, currency),
           sku = CASE WHEN ${'sku' in body.data} THEN ${body.data.sku ?? null} ELSE sku END,
@@ -7062,6 +7150,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
     const productId = randomUUID()
     const priceCents = body.data.priceCents
     const currency = body.data.currency.toUpperCase()
+    const productDescription = body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null
     const galleryImageUrls = body.data.galleryImageUrls ?? []
     let resolvedCatalogId: string | null = null
 
@@ -7083,7 +7172,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
         allow_shipping_contracts, is_draft, is_active, track_inventory, created_by
       )
       VALUES (
-        ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${body.data.description ?? null}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
+        ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
         ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
         ${body.data.allowShippingContracts}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
       )

@@ -55,15 +55,27 @@ export default function Modal({ open, onClose, children, title, maxWidthClassNam
   const widthClass = maxWidthClassName ?? 'max-w-md'
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose} onClickCapture={onCaptureClick} data-cc-modal-root>
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto"
+      onClick={onClose}
+      onClickCapture={onCaptureClick}
+      data-cc-modal-root
+    >
       <div className="absolute inset-0 bg-black/50" />
-      <div className={`relative w-full ${widthClass} mx-4 rounded-lg bg-white shadow-xl`} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b">
-          <div className="text-lg font-semibold">{title}</div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close">✕</button>
-        </div>
-        <div className="p-5">
-          {children}
+      <div className="relative flex min-h-full items-start justify-center p-4 sm:p-6">
+        <div
+          className={`relative w-full ${widthClass} rounded-lg bg-white shadow-xl max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {title ? (
+            <div className="flex shrink-0 items-center justify-between border-b px-5 py-4">
+              <div className="text-lg font-semibold">{title}</div>
+              <button onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close">
+                ✕
+              </button>
+            </div>
+          ) : null}
+          <div className="flex-1 overflow-y-auto p-5">{children}</div>
         </div>
       </div>
     </div>,
