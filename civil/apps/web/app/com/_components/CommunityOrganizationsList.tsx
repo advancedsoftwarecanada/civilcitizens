@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { buildApiUrl } from '../../_lib/api'
 import type { MeResponse } from '../../_lib/me'
+import { useViewerStore } from '../../_lib/viewerStore'
 
 type CommunityOrganization = {
   id: string
@@ -29,6 +30,7 @@ export default function CommunityOrganizationsList({ province, municipality }: {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [orgs, setOrgs] = useState<CommunityOrganization[]>([])
   const [status, setStatus] = useState<'loading' | 'ready' | 'unauthorized' | 'error'>('loading')
+  const cachedMe = useViewerStore((s) => s.me)
 
   const token = useMemo(() => {
     if (typeof window === 'undefined') return null
@@ -48,22 +50,27 @@ export default function CommunityOrganizationsList({ province, municipality }: {
 
     setStatus('loading')
     try {
-      const [meRes, orgRes] = await Promise.all([
-        fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-        fetch(endpoint, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-      ])
+      const requests: Array<Promise<Response>> = []
+      if (!cachedMe) {
+        requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
+      }
+      requests.push(fetch(endpoint, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }))
 
-      if (meRes.status === 401 || orgRes.status === 401) {
+      const responses = await Promise.all(requests)
+      const meRes = cachedMe ? null : responses[0]
+      const orgRes = (cachedMe ? responses[0] : responses[1])!
+
+      if ((meRes && meRes.status === 401) || orgRes.status === 401) {
         setStatus('unauthorized')
         return
       }
 
-      if (!meRes.ok || !orgRes.ok) {
+      if ((meRes && !meRes.ok) || !orgRes.ok) {
         setStatus('error')
         return
       }
 
-      const meJson = (await meRes.json()) as MeResponse
+      const meJson = cachedMe ?? ((await meRes!.json()) as MeResponse)
       const orgJson = (await orgRes.json().catch(() => null)) as ListResponse | null
       const items = Array.isArray(orgJson?.items) ? orgJson.items : []
 
@@ -74,7 +81,7 @@ export default function CommunityOrganizationsList({ province, municipality }: {
       console.error('Unable to load community organizations', err)
       setStatus('error')
     }
-  }, [endpoint, token])
+  }, [cachedMe, endpoint, token])
 
   useEffect(() => {
     void load()

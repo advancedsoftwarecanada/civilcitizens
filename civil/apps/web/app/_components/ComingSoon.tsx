@@ -2,8 +2,6 @@
 
 import Link from 'next/link'
 import DashboardShell from './DashboardShell'
-import Sidebar from './Sidebar'
-import { useAuthedMe } from '../_lib/useAuthedMe'
 
 type ComingSoonProps = {
   title: string
@@ -18,18 +16,14 @@ type ComingSoonProps = {
 export default function ComingSoon({
   title,
   message = 'We are still building this area. Check back soon for updates.',
-  activeNavKey,
   ctaLabel = 'Back to home',
   ctaHref = '/home',
   secondaryLabel = 'Contact support',
   secondaryHref = undefined,
 }: ComingSoonProps) {
-  const { me } = useAuthedMe()
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
       <DashboardShell
-        sidebar={<Sidebar me={me ?? undefined} active={activeNavKey} />}
         mainClassName="flex items-center justify-center py-12"
       >
         <section className="relative isolate w-full max-w-3xl overflow-hidden rounded-[28px] border border-slate-200 bg-white/90 p-10 text-center shadow-[0_35px_120px_rgba(15,23,42,0.12)]">

@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useRouter } from 'next/navigation'
 import { getProvinceDisplayName, normalizeProvinceCode, type ReactionType } from '@civil/shared'
-import Sidebar from './Sidebar'
 import PostComposer, { ApiPost, CommunityTarget, type PostType } from './PostComposer'
 import { RightRail } from './RightRail'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../_lib/me'
+import { useViewerStore } from '../_lib/viewerStore'
 import PostFeedItem from './PostFeedItem'
 import DashboardShell from './DashboardShell'
 import Modal from './Modal'
@@ -62,7 +63,10 @@ const mapFollowToCommunityTarget = (follow: CommunityFollowRow): CommunityTarget
   }
 }
 
-export default function FeedPageClient({ scope, sidebarActive, title, description, emptyState, emptyStateCta, rightRail, province, community }: FeedPageClientProps) {
+export default function FeedPageClient(props: FeedPageClientProps) {
+  const { scope, title, description, emptyState, emptyStateCta, rightRail, province, community } = props
+  const router = useRouter()
+  const cachedMe = useViewerStore((s) => s.me)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [communityOptions, setCommunityOptions] = useState<CommunityTarget[]>([])
   const [posts, setPosts] = useState<ApiPost[]>([])
@@ -171,7 +175,7 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
     const provinceParam = params?.get('province')
     const chamberParam = params?.get('chamber')
     if (provinceParam && chamberParam) {
-      window.location.replace(`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`)
+      router.replace(`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`)
       return
     }
 
@@ -181,23 +185,38 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
       return
     }
 
+    if (cachedMe) {
+      if (!hasHomeCommunity(cachedMe)) {
+        router.replace('/welcome')
+        return
+      }
+      setMe(cachedMe)
+    }
+
     const bootstrap = async () => {
       try {
-        const [meRes, followsRes] = await Promise.all([
-          fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }),
-          fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }),
-        ])
+        const requests: Array<Promise<Response>> = []
+        if (!cachedMe) {
+          requests.push(fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } }))
+        }
+        requests.push(fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` } }))
 
-        if (!meRes.ok) {
+        const responses = await Promise.all(requests)
+        const meRes = cachedMe ? null : responses[0]
+        const followsRes = cachedMe ? responses[0] : responses[1]
+
+        if (meRes && !meRes.ok) {
           throw new Error('unauthorized')
         }
 
-        const meData = (await meRes.json()) as MeResponse
-        if (!hasHomeCommunity(meData)) {
-          window.location.replace('/welcome')
-          return
+        if (meRes) {
+          const meData = (await meRes.json()) as MeResponse
+          if (!hasHomeCommunity(meData)) {
+            router.replace('/welcome')
+            return
+          }
+          setMe(meData)
         }
-        setMe(meData)
 
         if (followsRes.status === 401) {
           localStorage.removeItem('token')
@@ -225,7 +244,7 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
     }
 
     void bootstrap()
-  }, [])
+  }, [cachedMe, router])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
@@ -312,7 +331,7 @@ export default function FeedPageClient({ scope, sidebarActive, title, descriptio
   const resolvedRightRail = rightRail ?? <RightRail />
 
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} active={sidebarActive} />} rightRail={resolvedRightRail} mainClassName="space-y-6">
+    <DashboardShell rightRail={resolvedRightRail} mainClassName="space-y-6">
       <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>

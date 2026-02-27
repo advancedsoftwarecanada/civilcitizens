@@ -1,12 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import Sidebar from '../_components/Sidebar'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
-import type { MeResponse } from '../_lib/me'
 import { NotificationCard } from '../_components/notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from '../_components/notifications/notificationUtils'
 import { getFriendshipId } from '../_components/notifications/notificationUtils'
@@ -28,7 +26,6 @@ function getStoredToken() {
 }
 
 export default function NotificationsClient() {
-  const [me, setMe] = useState<MeResponse | null>(null)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -155,30 +152,10 @@ export default function NotificationsClient() {
       redirectToAuthModal('login')
       return
     }
-    let cancelled = false
-    const loadMe = async () => {
-      try {
-        const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
-        if (!res.ok) {
-          redirectToAuthModal('login')
-          return
-        }
-        const data = (await res.json()) as MeResponse
-        if (!cancelled) {
-          setMe(data)
-        }
-      } catch (err) {
-        console.error('Failed to load viewer for notifications', err)
-      }
-    }
-    void loadMe()
     void (async () => {
       await loadNotifications()
       await acknowledgeNotifications()
     })()
-    return () => {
-      cancelled = true
-    }
   }, [loadNotifications, acknowledgeNotifications])
 
   useEffect(() => {
@@ -293,7 +270,7 @@ export default function NotificationsClient() {
   const hasNotifications = notifications.length > 0
 
   return (
-    <DashboardShell sidebar={<Sidebar me={me ?? undefined} />} rightRail={<RightRail />} mainClassName="space-y-6">
+    <DashboardShell rightRail={<RightRail />} mainClassName="space-y-6">
       <section className="rounded-[32px] border border-white/60 bg-white/80 p-6 shadow-[0_35px_120px_rgba(15,23,42,0.12)] sm:p-8">
         <div className="flex items-center justify-between gap-3">
           <div>

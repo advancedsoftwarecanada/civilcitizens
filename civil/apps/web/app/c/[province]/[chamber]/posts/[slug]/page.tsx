@@ -6,13 +6,14 @@ import Image from 'next/image'
 import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
 import type { IconBaseProps, IconType } from 'react-icons'
 import { type ReactionType } from '@civil/shared'
-import Sidebar from '../../../../../_components/Sidebar'
+import { useRouter } from 'next/navigation'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import { buildApiUrl } from '../../../../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
+import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
 import DashboardShell from '../../../../../_components/DashboardShell'
 import { useRegisterPageView } from '../../../../../_components/AnalyticsTracker'
@@ -111,13 +112,13 @@ function formatDateTime(iso: string) {
 }
 
 export default function ChamberPostPage({ params }: PageProps) {
+  const router = useRouter()
   const provinceParam = decodeURIComponent(params.province)
   const chamberParam = decodeURIComponent(params.chamber)
   const slugParam = decodeURIComponent(params.slug)
 
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const [post, setPost] = useState<ApiPost | null>(null)
-  const [paths, setPaths] = useState<CanonicalPaths | null>(null)
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error' | 'not-found'>('loading')
   const [comments, setComments] = useState<ApiComment[]>([])
   const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
@@ -130,9 +131,9 @@ export default function ChamberPostPage({ params }: PageProps) {
     if (typeof window === 'undefined') return
     if (window.location.pathname.startsWith('/c/')) {
       const target = `/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}/posts/${slugParam}`
-      window.location.replace(target)
+      router.replace(target)
     }
-  }, [chamberParam, provinceParam, slugParam])
+  }, [chamberParam, provinceParam, router, slugParam])
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
@@ -141,6 +142,16 @@ export default function ChamberPostPage({ params }: PageProps) {
       return
     }
     try {
+      const cached = useViewerStore.getState().me
+      if (cached) {
+        if (!hasHomeCommunity(cached)) {
+          router.replace('/welcome')
+          return
+        }
+        setViewer(cached)
+        return
+      }
+
       const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${token}` } })
       if (!res.ok) {
         localStorage.removeItem('token')
@@ -149,7 +160,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       }
       const data = (await res.json()) as MeResponse
       if (!hasHomeCommunity(data)) {
-        window.location.replace('/welcome')
+        router.replace('/welcome')
         return
       }
       setViewer(data)
@@ -187,14 +198,16 @@ export default function ChamberPostPage({ params }: PageProps) {
       const canonical = data.paths as CanonicalPaths
       const commentTree = normalizeCommentTree((data as { comments?: ApiComment[] }).comments ?? [])
 
-      setPaths(canonical)
-
       const provinceMatches = retrievedPost.provinceCode?.toLowerCase() === provinceParam.toLowerCase()
       const communityMatches = retrievedPost.communitySlug?.toLowerCase() === chamberParam.toLowerCase()
 
       if (!provinceMatches || !communityMatches) {
         if (canonical?.community) {
-          window.location.replace(canonical.community)
+          if (/^https?:\/\//i.test(canonical.community)) {
+            window.location.replace(canonical.community)
+          } else {
+            router.replace(canonical.community)
+          }
           return
         }
       }
@@ -208,7 +221,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       setComments([])
       setStatus('error')
     }
-  }, [chamberParam, provinceParam, slugParam])
+  }, [chamberParam, provinceParam, router, slugParam])
 
   const postId = post?.id
   useRegisterPageView(postId)
@@ -392,7 +405,6 @@ export default function ChamberPostPage({ params }: PageProps) {
 
   return (
     <DashboardShell
-      sidebar={<Sidebar me={viewer ?? undefined} active="community" />}
       rightRail={rightRail}
       mainClassName="space-y-5 lg:min-h-[calc(100vh-48px)]"
     >

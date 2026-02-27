@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { buildApiUrl } from '../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
 import { isSuperAdmin as isSuperAdminUser } from '../../_lib/admin'
+import { useViewerStore } from '../../_lib/viewerStore'
 
 export type AdminAccessState = {
   token: string | null
@@ -24,6 +26,8 @@ const INITIAL_STATE: AdminAccessState = {
 
 export function useAdminAccess(): AdminAccessState {
   const [state, setState] = useState<AdminAccessState>(INITIAL_STATE)
+  const router = useRouter()
+  const cachedMe = useViewerStore((s) => s.me)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -40,6 +44,24 @@ export function useAdminAccess(): AdminAccessState {
     const bootstrap = async () => {
       setState((prev) => ({ ...prev, token: storedToken, loading: true, error: null }))
       try {
+        if (cachedMe) {
+          if (!hasHomeCommunity(cachedMe)) {
+            router.replace('/welcome')
+            return
+          }
+          const superAdmin = isSuperAdminUser(cachedMe)
+          if (!cancelled) {
+            setState({
+              token: storedToken,
+              me: cachedMe,
+              loading: false,
+              error: superAdmin ? null : 'Admin access is limited to root operators.',
+              isSuperAdmin: superAdmin,
+            })
+          }
+          return
+        }
+
         const res = await fetch(buildApiUrl('/auth/me'), {
           headers: { authorization: `Bearer ${storedToken}` },
         })
@@ -53,7 +75,7 @@ export function useAdminAccess(): AdminAccessState {
         }
         const data = (await res.json()) as MeResponse
         if (!hasHomeCommunity(data)) {
-          window.location.replace('/welcome')
+          router.replace('/welcome')
           return
         }
         const superAdmin = isSuperAdminUser(data)
@@ -78,7 +100,7 @@ export function useAdminAccess(): AdminAccessState {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [cachedMe, router])
 
   return state
 }

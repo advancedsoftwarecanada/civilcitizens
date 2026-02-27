@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import type { ReactNode } from 'react'
@@ -39,7 +38,7 @@ type AdminEnvResponse = {
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export default function AdminSettingsPage() {
-  const { token, me, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
+  const { token, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
   const [diagnostics, setDiagnostics] = useState<AdminEnvResponse | null>(null)
   const [status, setStatus] = useState<LoadStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -229,7 +228,6 @@ export default function AdminSettingsPage() {
   return (
     <DashboardShell
       className="bg-slate-50"
-      sidebar={<Sidebar me={me ?? undefined} active="admin" />}
       rightRail={rightRail}
       mainClassName="space-y-6"
     >

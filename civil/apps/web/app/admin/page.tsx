@@ -5,7 +5,6 @@ import { useMemo } from 'react'
 import { HiOutlineCog8Tooth, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import DashboardShell from '../_components/DashboardShell'
-import Sidebar from '../_components/Sidebar'
 import { useAdminAccess } from './_hooks/useAdminAccess'
 
 type AdminAction = {
@@ -41,7 +40,7 @@ const ACTIONS: AdminAction[] = [
 ]
 
 export default function AdminPage() {
-  const { token, me, loading, error, isSuperAdmin } = useAdminAccess()
+  const { token, loading, error, isSuperAdmin } = useAdminAccess()
 
   const rightRailContent = useMemo(() => {
     if (!token) return null
@@ -114,7 +113,6 @@ export default function AdminPage() {
   return (
     <DashboardShell
       className="bg-slate-50"
-      sidebar={<Sidebar me={me ?? undefined} active="admin" />}
       rightRail={rightRailContent}
       mainClassName="space-y-6"
     >

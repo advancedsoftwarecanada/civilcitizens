@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import DashboardShell from '../../_components/DashboardShell'
-import Sidebar from '../../_components/Sidebar'
 import { buildApiUrl } from '../../_lib/api'
 import { RightRail } from '../../_components/RightRail'
 
@@ -105,7 +104,6 @@ export default function OrganizationDirectoryPageClient() {
 
   return (
     <DashboardShell
-      sidebar={<Sidebar active="organizations" />}
       rightRail={<RightRail mode="organizationsDirectory" />}
       mainClassName="space-y-6"
     >

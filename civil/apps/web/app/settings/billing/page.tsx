@@ -2,17 +2,17 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import Sidebar from '../../_components/Sidebar'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { buildApiUrl } from '../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
+import { useViewerStore } from '../../_lib/viewerStore'
 import DashboardShell from '../../_components/DashboardShell'
 import { CheckoutModal, type CheckoutSessionConfig } from './CheckoutModal'
 import { ManageSubscriptionModal } from './ManageSubscriptionModal'
-
-const DEFAULT_RETURN_URL = 'https://app.civilcitizens.dev/settings/billing'
 
 type BillingProfile = {
   firstName: string
@@ -85,6 +85,8 @@ function formatMonthYear(iso?: string | null) {
 }
 
 export default function BillingSettingsPage() {
+  const router = useRouter()
+  const cachedMe = useViewerStore((s) => s.me)
   const [token, setToken] = useState<string | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [summary, setSummary] = useState<BillingSummary | null>(null)
@@ -138,22 +140,32 @@ export default function BillingSettingsPage() {
 
         // Best-effort viewer fetch: don't block billing data on transient /auth/me issues.
         try {
-          const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${storedToken}` } })
-          if (res.status === 401 || res.status === 403) {
-            handleUnauthorized()
-            return
-          }
-          if (res.ok) {
-            const data: MeResponse = await res.json()
-            if (!hasHomeCommunity(data)) {
-              window.location.replace('/welcome')
+          if (cachedMe) {
+            if (!hasHomeCommunity(cachedMe)) {
+              router.replace('/welcome')
               return
             }
             if (!cancelled) {
-              setMe(data)
+              setMe(cachedMe)
             }
           } else {
-            console.warn('Billing bootstrap: /auth/me failed', { status: res.status })
+            const res = await fetch(buildApiUrl('/auth/me'), { headers: { authorization: `Bearer ${storedToken}` } })
+            if (res.status === 401 || res.status === 403) {
+              handleUnauthorized()
+              return
+            }
+            if (res.ok) {
+              const data: MeResponse = await res.json()
+              if (!hasHomeCommunity(data)) {
+                  router.replace('/welcome')
+                return
+              }
+              if (!cancelled) {
+                setMe(data)
+              }
+            } else {
+              console.warn('Billing bootstrap: /auth/me failed', { status: res.status })
+            }
           }
         } catch (err) {
           console.warn('Billing bootstrap: /auth/me request failed', err)
@@ -175,7 +187,7 @@ export default function BillingSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [handleUnauthorized, loadSummary])
+  }, [cachedMe, handleUnauthorized, loadSummary, router])
 
   useEffect(() => {
     if (!summary?.billingProfile || profileDirty) {
@@ -411,7 +423,6 @@ export default function BillingSettingsPage() {
 
       <DashboardShell
         className="bg-slate-50"
-        sidebar={<Sidebar me={me ?? undefined} active="billing" />}
         rightRail={
           <section className="surface-card space-y-2 px-5 py-4 shadow-subtle">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Need help?</h2>

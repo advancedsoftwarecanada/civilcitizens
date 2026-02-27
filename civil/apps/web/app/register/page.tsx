@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -29,6 +30,7 @@ type RegisterErrorResponse = {
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
 export default function RegisterPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -67,7 +69,7 @@ export default function RegisterPage() {
     const signInAndRedirect = async (registerToken?: string) => {
       if (typeof registerToken === 'string' && registerToken.length > 0) {
         localStorage.setItem('token', registerToken)
-        window.location.href = '/welcome'
+        router.replace('/welcome')
         return true
       }
 
@@ -81,7 +83,7 @@ export default function RegisterPage() {
 
       if (loginData && typeof loginData.token === 'string' && loginData.token.length > 0) {
         localStorage.setItem('token', loginData.token)
-        window.location.href = '/welcome'
+        router.replace('/welcome')
         return true
       }
 
