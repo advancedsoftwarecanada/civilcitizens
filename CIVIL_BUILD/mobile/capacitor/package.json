@@ -1,0 +1,25 @@
+{
+  "name": "civil-mobile-shell",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "cap": "cap",
+    "cap:add:ios": "cap add ios",
+    "cap:add:android": "cap add android",
+    "assets:generate": "capacitor-assets generate --assetPath assets --ios --android",
+    "cap:sync": "cap sync",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.0",
+    "@capacitor/core": "^6.1.0",
+    "@capacitor/ios": "^6.1.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.0",
+    "@capacitor/cli": "^6.1.0"
+  },
+  "packageManager": "pnpm@9.0.0+sha512.b4106707c7225b1748b61595953ccbebff97b54ad05d002aa3635f633b9c53cd666f7ce9b8bc44704f1fa048b9a49b55371ab2d9e9d667d1efe2ef1514bcd513"
+}

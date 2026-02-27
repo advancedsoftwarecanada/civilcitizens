@@ -1,0 +1,9 @@
+{
+  "appId": "ca.civilcitizens",
+  "appName": "Civil",
+  "webDir": "www",
+  "server": {
+    "url": "https://civilcitizens.ca",
+    "cleartext": false
+  }
+}
