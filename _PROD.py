@@ -7,7 +7,8 @@ It does NOT rsync/upload code.
 Default behavior is to rebuild and restart the production stack using docker compose.
 
 Usage:
-  python3 _PROD.py                  # rebuild (down + build + up -d)
+  python3 _PROD.py                  # deploy (keep DB/Redis; rebuild + restart app)
+  python3 _PROD.py deploy           # same as default
   python3 _PROD.py build            # build images only (no restart)
   python3 _PROD.py prune-build-cache  # free Docker build cache (fixes ENOSPC)
   python3 _PROD.py status           # docker compose ps
@@ -41,10 +42,11 @@ def main(argv: list[str]) -> int:
             REPO_ROOT / ".env.production",
             REPO_ROOT / ".env.production.googlecloud",
         ],
-      # Use the canonical project name to avoid accidentally starting a second
-      # stack alongside an existing `civil-*` deployment.
-      default_project_name="civil",
-        default_command="rebuild",
+      # Production default project (existing stack with static ports).
+      # Override via COMPOSE_PROJECT_NAME if needed.
+      default_project_name="civil_prod",
+      # Preserve infra (postgres/redis/minio) and only rebuild/restart app.
+      default_command="deploy",
     )
     return 0
 
