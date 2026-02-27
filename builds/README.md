@@ -1,4 +1,4 @@
-# CIVIL_BUILD
+# builds
 
 Build and publishing workspace for native mobile shells.
 

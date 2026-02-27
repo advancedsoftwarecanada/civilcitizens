@@ -15,7 +15,7 @@ This directory contains the native mobile shell(s) used for app publishing.
 
 ## Updating after SCP
 
-From `CIVIL_BUILD/`:
+From `builds/`:
 
 - Run `python3 _FETCH.py`
 
