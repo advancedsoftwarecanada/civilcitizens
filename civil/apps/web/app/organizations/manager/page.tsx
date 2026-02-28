@@ -36,7 +36,7 @@ export default function OrganizationsManagerPage() {
     return window.localStorage.getItem('token')
   }, [])
   const homeCommunity = me?.homeCommunity ?? me?.homeChamber ?? null
-  const canCreateOrganization = Boolean(me?.isPremium && homeCommunity?.provinceCode && homeCommunity?.communitySlug)
+  const canCreateOrganization = Boolean(homeCommunity?.provinceCode && homeCommunity?.communitySlug)
 
   useEffect(() => {
     let cancelled = false
@@ -124,14 +124,7 @@ export default function OrganizationsManagerPage() {
               />
             ) : (
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
-                {me?.isPremium
-                  ? 'Set your home community to create organizations.'
-                  : 'Premium is required to create an organization.'}
-                {!me?.isPremium ? (
-                  <Link href="/settings/billing" className="ml-2 font-semibold text-[var(--cc-primary)] hover:underline">
-                    Upgrade
-                  </Link>
-                ) : null}
+                Set your home community to create organizations.
               </div>
             )}
           </div>

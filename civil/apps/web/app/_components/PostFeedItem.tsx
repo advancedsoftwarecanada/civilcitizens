@@ -39,7 +39,6 @@ type PostFeedItemProps = {
   onReact: (postId: string, reaction: ReactionType | null) => Promise<void>
   onDelete?: (postId: string) => void
   onUpdate?: (post: ApiPost) => void
-  viewerIsVerified?: boolean
   viewerId?: string | null
   communityOptions?: CommunityTarget[]
 }
@@ -174,9 +173,8 @@ function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null
   )
 }
 
-export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerIsVerified, viewerId, communityOptions }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerId, communityOptions }: PostFeedItemProps) {
   const [pending, setPending] = useState(false)
-  const [showVoteTooltip, setShowVoteTooltip] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
@@ -184,7 +182,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const [editTitle, setEditTitle] = useState(post.title ?? '')
   const [isDeleting, setIsDeleting] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const tooltipTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reactionCounts = post.reactions ?? {
     maple: 0,
     heart: 0,
@@ -204,7 +201,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const organization = post.organization ?? null
   const isVerifiedAuthor = organization ? Boolean(organization.isVerified) : Boolean(post.author.isVerified)
   const isBusinessAuthor = organization ? true : Boolean(post.author.isPremium)
-  const canReact = Boolean(viewerIsVerified)
   const profileHref = organization?.provinceCode && organization.communitySlug
     ? `/com/${organization.provinceCode.toLowerCase()}/${organization.communitySlug.toLowerCase()}/orgs/${organization.slug}`
     : `/u/${post.author.handle}`
@@ -280,17 +276,12 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   }
 
   const handleShare = () => {
-    if (!canReact) {
-      triggerVoteTooltip()
-      return
-    }
     setShareModalOpen(true)
   }
 
   const handleReact = useCallback(
     async (nextReaction: ReactionType | null) => {
       if (pending) return
-      if (!canReact) return
       setPending(true)
       try {
         await onReact(post.id, nextReaction)
@@ -298,24 +289,8 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         setPending(false)
       }
     },
-    [canReact, onReact, pending, post.id],
+    [onReact, pending, post.id],
   )
-
-  const triggerVoteTooltip = useCallback(() => {
-    setShowVoteTooltip(true)
-    if (tooltipTimeoutRef.current) {
-      clearTimeout(tooltipTimeoutRef.current)
-    }
-    tooltipTimeoutRef.current = setTimeout(() => setShowVoteTooltip(false), 2500)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (tooltipTimeoutRef.current) {
-        clearTimeout(tooltipTimeoutRef.current)
-      }
-    }
-  }, [])
 
   const formattedDate = createdAt.toLocaleString(undefined, {
     month: 'short',
@@ -495,19 +470,13 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 key={option.type}
                 option={option}
                 count={(reactionCounts as Record<ReactionType, number>)[option.type] ?? 0}
-                active={currentReaction === option.type && canReact}
-                blocked={!canReact}
+                active={currentReaction === option.type}
+                blocked={false}
                 disabled={pending}
-                onBlockedClick={triggerVoteTooltip}
                 onClick={() => handleReact(currentReaction === option.type ? null : option.type)}
               />
             ))}
           </div>
-          {!canReact && showVoteTooltip ? (
-            <div className="absolute left-0 top-full mt-2 w-max max-w-xs rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg">
-              Only verified members can react.
-            </div>
-          ) : null}
         </div>
         <div className="flex items-center gap-4">
           <div className="font-semibold text-slate-600">

@@ -4005,9 +4005,9 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
     const { postId, body: rawBody, parentId } = parse.data
     const body = sanitizePlainText(rawBody)
 
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
-    if (!user || !isPremium(user.premiumStatus)) {
-      return reply.code(403).send({ error: 'verified_required' })
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })
+    if (!user) {
+      return reply.code(404).send({ error: 'user_not_found' })
     }
 
     const post = await prisma.post.findUnique({
@@ -4085,9 +4085,9 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     const parse = VoteCommentInput.safeParse(req.body ?? {})
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
-    if (!user || !isPremium(user.premiumStatus)) {
-      return reply.code(403).send({ error: 'verified_required' })
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })
+    if (!user) {
+      return reply.code(404).send({ error: 'user_not_found' })
     }
 
     const { commentId, value } = parse.data
@@ -6461,9 +6461,8 @@ app.post('/communities/:province/:municipality/orgs', async (req: FastifyRequest
     const community = findCommunity(province, communitySlug)
     if (!community) return reply.code(404).send({ error: 'community_not_found' })
 
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { premiumStatus: true } })
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })
     if (!user) return reply.code(404).send({ error: 'user_not_found' })
-    if (!isPremium(user.premiumStatus)) return reply.code(403).send({ error: 'premium_required' })
 
     const ownedCount = await prisma.business.count({ where: { ownerId: userId } })
     if (ownedCount >= MAX_BUSINESSES_PER_USER) {

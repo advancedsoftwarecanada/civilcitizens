@@ -34,7 +34,7 @@ export const metadata: Metadata = {
     template: '%s | Civil Citizens',
   },
   description:
-    'Civil Citizens helps Canadians organize their cities, publish civic updates, and launch trusted organizations backed by verified memberships.',
+    'Civil Citizens is completely free for Canadians to organize their cities, publish civic updates, and launch trusted organizations.',
   applicationName: 'Civil Citizens',
   keywords: ['civic', 'canada', 'organizing', 'cities', 'civil citizens'],
   icons: {
@@ -45,7 +45,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Civil Citizens',
     description:
-      'Organize your city, publish updates, and unlock verified non-profit and event pages with Civil Citizens Premium.',
+      'Civil Citizens is completely free for everyone to organize cities, publish updates, and build trusted organizations.',
     url: baseUrl,
     siteName: 'Civil Citizens',
     images: [
@@ -62,7 +62,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'Civil Citizens',
-    description: 'Organize your city, stay verified, and unlock non-profit tools with Civil Citizens.',
+    description: 'Civil Citizens is completely free for everyone to organize cities, share updates, and build trusted organizations.',
     images: ['/logo-lg.png'],
   },
 }

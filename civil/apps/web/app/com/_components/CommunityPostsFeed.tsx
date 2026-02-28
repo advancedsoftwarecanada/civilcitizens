@@ -27,7 +27,6 @@ export default function CommunityPostsFeed() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
-  const [viewerIsVerified, setViewerIsVerified] = useState(false)
   const [viewerId, setViewerId] = useState<string | null>(null)
 
   const loadPosts = useCallback(async () => {
@@ -78,7 +77,6 @@ export default function CommunityPostsFeed() {
     if (!token) return
 
     if (cachedMe) {
-      setViewerIsVerified(Boolean(cachedMe.isVerified || cachedMe.isPremium))
       setViewerId(cachedMe.id ?? null)
       return
     }
@@ -87,7 +85,6 @@ export default function CommunityPostsFeed() {
     void (async () => {
       const data = await ensureViewerMe({ token })
       if (cancelled || !data) return
-      setViewerIsVerified(Boolean(data.isVerified || data.isPremium))
       setViewerId(data.id ?? null)
     })()
 
@@ -195,7 +192,7 @@ export default function CommunityPostsFeed() {
               key={post.id}
               post={post}
               onReact={handleReact}
-              viewerIsVerified={viewerIsVerified}
+              viewerId={viewerId}
             />
           ))
         )}
