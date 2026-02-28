@@ -182,7 +182,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
   const isNested = depth > 0
   const hasReplies = comment.replies.length > 0
   const showCollapseButton = hasReplies || isNested
-  const canVote = Boolean(currentUser?.isVerified || currentUser?.isPremium)
+  const canVote = Boolean(currentUser)
   const authorDisplayName = formatUserDisplayName(comment.author.name, comment.author.handle) || comment.author.handle
 
   const handleVote = useCallback(
@@ -308,7 +308,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
                     />
                     {!canVote && showVoteTooltip ? (
                       <div className="absolute left-0 top-full mt-2 w-max max-w-xs rounded-md bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white shadow-lg">
-                        Only verified members can vote.
+                        Sign in to vote.
                       </div>
                     ) : null}
                   </div>

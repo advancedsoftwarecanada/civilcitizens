@@ -97,7 +97,7 @@ export default function Home() {
                 <Link href="/register" className="btn-primary-cc">Join Civil</Link>
                 <Link href="/login" className="btn-transparent-cc">Login</Link>
               </div>
-              <p className="mt-4 text-sm text-white/85">Join for free. Pro plans start at just $2.99/month.</p>
+              <p className="mt-4 text-sm text-white/85">Civil is completely free for everyone.</p>
             </div>
           </div>
         </div>

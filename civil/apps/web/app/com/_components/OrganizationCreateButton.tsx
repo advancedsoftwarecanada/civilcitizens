@@ -144,12 +144,6 @@ export default function OrganizationCreateButton({ province, municipality, defau
       })
 
       if (res.status === 401 || res.status === 403) {
-        const payload = (await res.json().catch(() => null)) as CreateOrgResponse | null
-        if (payload?.error === 'premium_required') {
-          pushToast('Premium is required to create an organization.', 'warning')
-          router.push('/settings/billing')
-          return
-        }
         pushToast('Please sign in again.', 'error')
         return
       }
@@ -261,7 +255,7 @@ export default function OrganizationCreateButton({ province, municipality, defau
           >
             {pending ? 'Creating…' : 'Create'}
           </button>
-          <span className="text-xs text-slate-500">Premium required.</span>
+          <span className="text-xs text-slate-500">Available to all members.</span>
         </div>
       </div>
     </div>
