@@ -45,6 +45,68 @@ def ensure_docker() -> None:
         sys.exit(1)
 
 
+def try_get_docker_root_dir() -> Optional[Path]:
+    """Best-effort lookup of Docker's data-root (Linux hosts).
+
+    On Docker Desktop (macOS/Windows), this may not be meaningful, but on
+    production Linux servers it helps us warn about low disk space early.
+    """
+
+    try:
+        raw = subprocess.check_output(
+            ["docker", "info", "--format", "{{.DockerRootDir}}"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return None
+
+    if not raw:
+        return None
+    try:
+        return Path(raw)
+    except Exception:
+        return None
+
+
+def warn_if_low_disk_space(command: str) -> None:
+    """Print a warning if disk space is likely too low for Docker builds."""
+
+    if command not in {"deploy", "build", "rebuild", "rebuild-all"}:
+        return
+
+    # Warn at ~6GB free. This is a heuristic; Node/Next builds can spike.
+    min_free_bytes = 6 * 1024 * 1024 * 1024
+
+    docker_root = try_get_docker_root_dir()
+    paths_to_check: list[Path] = []
+    if docker_root:
+        paths_to_check.append(docker_root)
+    # Fallback: check the filesystem containing the repo root.
+    paths_to_check.append(ROOT_DIR)
+
+    checked: set[Path] = set()
+    for path in paths_to_check:
+        if path in checked:
+            continue
+        checked.add(path)
+        try:
+            usage = shutil.disk_usage(path)
+        except Exception:
+            continue
+
+        if usage.free < min_free_bytes:
+            free_gb = usage.free / (1024**3)
+            location = str(path)
+            print(
+                f"→ Warning: low disk space (~{free_gb:.1f} GB free) at {location}. "
+                "If builds fail with 'no space left on device', run: python3 _PROD.py prune-build-cache",
+                file=sys.stderr,
+            )
+            # One warning is enough.
+            return
+
+
 def detect_env_file(explicit: Optional[str], candidates: Sequence[Path | str]) -> Optional[Path]:
     if explicit:
         candidate = Path(explicit)
@@ -175,7 +237,7 @@ def command_deploy(compose_cmd: list[str], overrides: Mapping[str, str]) -> None
     # but only build the app images.
     run_compose(
         compose_cmd,
-        ["--profile", "infra", "--profile", "app", "build", "api", "web", "worker"],
+        ["--profile", "infra", "--profile", "app", "build", "api", "web", "worker", "push"],
         overrides,
     )
 
@@ -195,6 +257,7 @@ def command_deploy(compose_cmd: list[str], overrides: Mapping[str, str]) -> None
             "api",
             "web",
             "worker",
+            "push",
             "nginx",
         ],
         overrides,
@@ -352,6 +415,7 @@ def run_helper(
     }
 
     handler = command_map[args.command]
+    warn_if_low_disk_space(args.command)
     try:
         handler(compose_cmd, overrides)
         if post_command:
@@ -359,6 +423,16 @@ def run_helper(
         print("✔ Done")
     except subprocess.CalledProcessError as exc:
         print(f"✖ Command failed (exit code {exc.returncode})", file=sys.stderr)
+
+        # We don't capture the full docker output (we stream it), but the most
+        # common production build failure is running out of disk during image
+        # assembly. Provide a strong hint.
+        if args.command in {"deploy", "build", "rebuild", "rebuild-all"}:
+            print(
+                "→ Tip: if the output mentions 'no space left on device' / 'ResourceExhausted', "
+                "run: python3 _PROD.py prune-build-cache",
+                file=sys.stderr,
+            )
         sys.exit(exc.returncode)
     except KeyboardInterrupt:
         print("\nAborted", file=sys.stderr)

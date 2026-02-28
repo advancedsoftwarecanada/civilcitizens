@@ -1,14 +1,14 @@
 # Push notifications (builds-only)
 
-This setup enables APNs push notifications **without changing any code under `civil/`**.
+This setup enables APNs push notifications with device registration flowing into the Civil API.
 
 ## Architecture (current)
 
 - iOS Capacitor shell registers with APNs.
-- The shell POSTs the device token to a tiny standalone service in `builds/push/apns-service/`.
-- That service can send a test push to a specific device token using your Apple `.p8` key.
+- The shell POSTs the device token to the API endpoint `/mobile/push/register`.
+- The standalone service in `builds/push/apns-service/` can still be used to send direct APNs test pushes with your Apple `.p8` key.
 
-This is intentionally “build-only”: it does not yet integrate Civil’s server-side events.
+This remains build-oriented for iOS shell + APNs verification.
 
 ## 1) Create/download the APNs `.p8`
 
@@ -23,7 +23,17 @@ Also record:
 - Key ID
 - Team ID
 
-## 2) Run the standalone APNs service
+## 2) Configure API registration secret
+
+Set in the API environment:
+
+- `PUSH_REGISTER_SECRET="<choose-a-secret>"`
+- `PUSH_DELIVERY_URL="http://<push-service-host>:8787"`
+- `PUSH_ADMIN_SECRET="<same-admin-secret-used-by-apns-service>"`
+
+This must match the iOS plist value (`CIVILPushRegisterSecret`).
+
+## 3) Run the standalone APNs service (optional, for direct test sends)
 
 From `builds/push/apns-service/`:
 
@@ -41,19 +51,19 @@ From `builds/push/apns-service/`:
 
 The service listens on `http://localhost:8787` by default.
 
-## 3) Point the iOS app at the service
+## 4) Point the iOS app at API registration
 
 Edit this file (build-only):
 - `builds/mobile/capacitor/ios/App/App/Info.plist`
 
 Set:
-- `CIVILPushServiceURL` → `http://<your-mac-lan-ip>:8787` (device must reach it)
+- `CIVILPushServiceURL` → `https://civilcitizens.ca/api/mobile/push`
 - `CIVILPushRegisterSecret` → same value as `PUSH_REGISTER_SECRET`
 
 Notes:
-- `localhost` from the phone is not your Mac; use your Mac’s LAN IP.
+- If testing against a local API server, use your Mac LAN IP (not `localhost`).
 
-## 4) Build + run on a real device
+## 5) Build + run on a real device
 
 In Xcode:
 - Ensure Signing is correct for your device.
@@ -63,10 +73,9 @@ In Xcode:
 In Xcode logs you should see:
 - `push_device_token <hex>`
 
-The service should receive `/register` and save it in:
-- `builds/push/apns-service/data/devices.json`
+The API should receive `POST /mobile/push/register` and return `{ "ok": true }`.
 
-## 5) Send a test push
+## 6) Send a test push (standalone APNs sender)
 
 - Copy the token hex string.
 - Run:

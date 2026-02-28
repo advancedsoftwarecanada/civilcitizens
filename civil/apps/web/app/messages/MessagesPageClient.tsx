@@ -24,7 +24,7 @@ import {
 } from 'react-icons/hi2'
 
 const THREAD_PAGE_LIMIT = 20
-const MESSAGE_PAGE_LIMIT = 40
+const MESSAGE_PAGE_LIMIT = 20
 
 type ThreadUser = {
   id: string
@@ -179,10 +179,22 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const eventSourceRef = useRef<EventSource | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
   const smoothScrollPendingRef = useRef(false)
+  const preserveScrollRef = useRef<{
+    threadId: string
+    scrollTop: number
+    scrollHeight: number
+  } | null>(null)
   const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
   const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
+
+  useEffect(() => {
+    if (!initialThreadId) return
+    initialThreadIdRef.current = initialThreadId
+    if (selectedThreadRef.current === initialThreadId) return
+    setSelectedThreadId(initialThreadId)
+  }, [initialThreadId])
 
   useEffect(() => {
     if (lightboxUrl) {
@@ -231,6 +243,11 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   useEffect(() => {
     if (!isMobileMessagesViewport()) return
+
+    // Mobile layout normally starts with the thread list.
+    // But if we were deep-linked into a specific thread (push tap), keep it selected.
+    if (initialThreadIdRef.current) return
+
     setSelectedThreadId(null)
     selectedThreadRef.current = null
     initialThreadIdRef.current = null
@@ -495,6 +512,16 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
           throw new Error('failed_messages_page')
         }
         const payload = (await response.json()) as MessageListResponse
+
+        const container = messagesViewportRef.current
+        if (container) {
+          preserveScrollRef.current = {
+            threadId,
+            scrollTop: container.scrollTop,
+            scrollHeight: container.scrollHeight,
+          }
+        }
+
         setMessagesByThread((prev) => ({
           ...prev,
           [threadId]: payload.items.concat(prev[threadId] ?? []),
@@ -717,10 +744,20 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     if (messageCount === 0) return
     const container = messagesViewportRef.current
     if (!container) return
+
+    const preserve = preserveScrollRef.current
+    if (preserve?.threadId === selectedThreadId) {
+      const delta = container.scrollHeight - preserve.scrollHeight
+      container.scrollTop = preserve.scrollTop + delta
+      preserveScrollRef.current = null
+      smoothScrollPendingRef.current = false
+      return
+    }
+
     const behavior: ScrollBehavior = smoothScrollPendingRef.current ? 'smooth' : 'auto'
     container.scrollTo({ top: container.scrollHeight, behavior })
     smoothScrollPendingRef.current = false
-  }, [messagesByThread, selectedThreadId, activeThread])
+  }, [messagesByThread, selectedThreadId])
   const activeMessages = selectedThreadId ? messagesByThread[selectedThreadId] ?? [] : []
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
 

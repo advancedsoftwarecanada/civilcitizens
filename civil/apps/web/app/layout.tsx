@@ -10,6 +10,7 @@ import ScrollManager from './_components/ScrollManager'
 import AnalyticsTracker from './_components/AnalyticsTracker'
 import GoogleAnalytics from './_components/GoogleAnalytics'
 import AppFrame from './_components/AppFrame'
+import NotificationTapRouter from './_components/NotificationTapRouter'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -82,6 +83,9 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
         <GoogleAnalytics />
         <TopNavVisibility />
         <ViewerBootstrap />
+        <Suspense fallback={null}>
+          <NotificationTapRouter />
+        </Suspense>
         <Suspense fallback={null}>
           <AnalyticsTracker />
         </Suspense>
