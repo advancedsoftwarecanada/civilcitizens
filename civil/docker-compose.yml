@@ -49,6 +49,10 @@ services:
       STRIPE_PRICE_BUSINESS_MONTHLY: ${STRIPE_PRICE_BUSINESS_MONTHLY:-}
       STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY:-${NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:-}}
       BILLING_RETURN_URL: ${BILLING_RETURN_URL:-}
+      # Mobile push (APNs delivery via standalone service)
+      PUSH_REGISTER_SECRET: ${PUSH_REGISTER_SECRET:-}
+      PUSH_ADMIN_SECRET: ${PUSH_ADMIN_SECRET:-}
+      PUSH_DELIVERY_URL: ${PUSH_DELIVERY_URL:-http://push:8787}
       CIVIL_ENV_LABEL: ${CIVIL_ENV_LABEL:-}
       CIVIL_ENV_PRIMARY: ${CIVIL_ENV_PRIMARY:-}
       CIVIL_ENV_FILES: ${CIVIL_ENV_FILES:-}
@@ -61,6 +65,36 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  push:
+    profiles: [app]
+    build:
+      context: ../builds/push/apns-service
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8787
+      # Where to find the APNs AuthKey .p8 inside the container.
+      APNS_KEY_PATH: /run/apns/${APNS_KEY_FILENAME:-AuthKey.p8}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-}
+      APNS_USE_SANDBOX: ${APNS_USE_SANDBOX:-false}
+      # Optional auth on the push service endpoints
+      PUSH_REGISTER_SECRET: ${PUSH_REGISTER_SECRET:-}
+      PUSH_ADMIN_SECRET: ${PUSH_ADMIN_SECRET:-}
+      # Optional: if you want to persist device tokens for /register inside the container
+      DEVICE_STORE_PATH: /data/devices.json
+    volumes:
+      # Mount a host directory containing the AuthKey .p8.
+      # Example: APNS_KEY_DIR=/opt/civil/secrets/apns and APNS_KEY_FILENAME=AuthKey_XXXX.p8
+      - ${APNS_KEY_DIR:-./secrets/apns}:/run/apns:ro
+      - pushdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   worker:
     profiles: [app]
@@ -160,6 +194,7 @@ volumes:
   pgdata:
   redisdata:
   miniostorage:
+  pushdata:
 
 networks:
   public_proxy:

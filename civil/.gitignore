@@ -17,3 +17,6 @@ prisma/generated
 
 # OS
 .DS_Store
+
+# Secrets
+civil/secrets/

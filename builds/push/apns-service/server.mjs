@@ -58,6 +58,15 @@ function requireSecret(req, res, expected, headerName) {
   return true
 }
 
+function normalizeSound(value) {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  if (trimmed === 'default') return 'default'
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) return undefined
+  return trimmed
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
@@ -105,8 +114,19 @@ const server = http.createServer(async (req, res) => {
       const title = typeof body.title === 'string' ? body.title : 'Civil'
       const message = typeof body.message === 'string' ? body.message : 'Test notification'
 
+      const sound = normalizeSound(body.sound)
+
+      const data = body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : undefined
+
+      let badge
+      if (typeof body.badge === 'number' && Number.isFinite(body.badge)) {
+        badge = Math.max(0, Math.floor(body.badge))
+      } else if (typeof body.badge === 'string' && body.badge.trim() !== '' && Number.isFinite(Number(body.badge))) {
+        badge = Math.max(0, Math.floor(Number(body.badge)))
+      }
+
       const apns = await createApnsClientFromEnv()
-      const result = await apns.send({ deviceToken, title, body: message })
+      const result = await apns.send({ deviceToken, title, body: message, badge, data, sound })
       return sendJson(res, 200, { ok: true, result })
     }
 

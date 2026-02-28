@@ -18,6 +18,14 @@ import { buildApiUrl } from '../_lib/api'
 import { isSuperAdmin } from '../_lib/admin'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
+import {
+  enableNativePushOptIn,
+  disableNativePushNotifications,
+  ensureNativePushRegistration,
+  isAppleNativeApp,
+  isNativePushOptedOut,
+  type PushPermissionState,
+} from '../_lib/nativePush'
 
 const CARD_LINKS: Array<{
   key: 'profile' | 'communities' | 'billing'
@@ -55,6 +63,10 @@ export default function SettingsPage() {
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [showPushControl, setShowPushControl] = useState(false)
+  const [pushState, setPushState] = useState<PushPermissionState>('unknown')
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushOptedOut, setPushOptedOut] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -80,6 +92,24 @@ export default function SettingsPage() {
       cancelled = true
     }
   }, [cachedViewer])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!isAppleNativeApp()) return
+
+    setShowPushControl(true)
+    setPushOptedOut(isNativePushOptedOut())
+
+    let cancelled = false
+    void (async () => {
+      const state = await ensureNativePushRegistration({ requestIfPrompt: false })
+      if (!cancelled) setPushState(state)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleLogout = useCallback(async () => {
     if (typeof window === 'undefined') return
@@ -107,6 +137,49 @@ export default function SettingsPage() {
     setShowLogoutConfirm(false)
   }
 
+  const handleEnablePush = useCallback(async () => {
+    if (!showPushControl) return
+    setPushBusy(true)
+    try {
+      enableNativePushOptIn()
+      setPushOptedOut(false)
+      const state = await ensureNativePushRegistration({ requestIfPrompt: true, ignoreOptOut: true })
+      setPushState(state)
+      setPushOptedOut(isNativePushOptedOut())
+    } finally {
+      setPushBusy(false)
+    }
+  }, [showPushControl])
+
+  const handleTogglePush = useCallback(
+    async (nextEnabled: boolean) => {
+      if (!showPushControl) return
+      if (pushBusy) return
+
+      setPushBusy(true)
+      try {
+        if (nextEnabled) {
+          enableNativePushOptIn()
+          setPushOptedOut(false)
+          const state = await ensureNativePushRegistration({ requestIfPrompt: true, ignoreOptOut: true })
+          setPushState(state)
+          setPushOptedOut(isNativePushOptedOut())
+          return
+        }
+
+        await disableNativePushNotifications()
+        setPushOptedOut(true)
+      } finally {
+        setPushBusy(false)
+      }
+    },
+    [pushBusy, showPushControl],
+  )
+
+  const isPushToggleOn = useMemo(() => {
+    return !pushOptedOut
+  }, [pushOptedOut, pushState])
+
   const greeting = useMemo(() => {
     if (!viewer?.name) return 'Settings'
     return `Settings for ${viewer.name}`
@@ -131,6 +204,50 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
+
+        {showPushControl ? (
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">iOS Notifications</p>
+                <p className="text-xs text-slate-600">
+                  {isPushToggleOn
+                    ? 'We will attempt to send you push notifications.'
+                    : 'Turn this on to allow the server to send push notifications.'}
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-3 select-none">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {pushBusy ? 'Working…' : isPushToggleOn ? 'On' : 'Off'}
+                </span>
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 accent-[var(--cc-primary)] disabled:cursor-not-allowed"
+                  checked={isPushToggleOn}
+                  disabled={pushBusy}
+                  onChange={(e) => void handleTogglePush(e.target.checked)}
+                />
+              </label>
+            </div>
+            {isPushToggleOn && pushState !== 'granted' ? (
+              <div className="mt-3 text-xs text-slate-500">
+                Please ensure your notifications are allowed, in config -&gt; notifications -&gt; civil -&gt; on.
+              </div>
+            ) : null}
+            {pushState !== 'denied' && pushState !== 'unknown' && pushState !== 'prompt' && pushOptedOut ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={handleEnablePush}
+                  disabled={pushBusy}
+                  className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {pushBusy ? 'Checking…' : 'Re-enable Notifications'}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {CARD_LINKS.map((card) => {

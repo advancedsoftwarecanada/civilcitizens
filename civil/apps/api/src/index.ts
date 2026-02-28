@@ -213,6 +213,77 @@ const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
 const COMMUNITY_FOLLOW_TARGET = 3
 const COMMUNITY_SUGGESTION_CACHE_LIMIT = 10
 const NOTIFICATION_CHANNEL_PREFIX = 'chan:notify:'
+const PUSH_REGISTER_SECRET = (process.env.PUSH_REGISTER_SECRET || '').trim()
+const PUSH_ADMIN_SECRET = (process.env.PUSH_ADMIN_SECRET || '').trim()
+const PUSH_DELIVERY_URL = (process.env.PUSH_DELIVERY_URL || '').trim().replace(/\/$/, '')
+
+const PushDeviceRegisterInput = z.object({
+  token: z.string().min(1),
+  platform: z.string().trim().min(1).max(32).optional().default('ios'),
+  bundleId: z.string().trim().min(1).max(255).optional(),
+  deviceId: z.string().trim().min(1).max(255).optional(),
+})
+
+const PushDeviceUnregisterInput = z.object({
+  token: z.string().min(1),
+  platform: z.string().trim().min(1).max(32).optional().default('ios'),
+})
+
+let pushDeviceRegistryReady: Promise<void> | null = null
+
+function normalizePushToken(rawToken: string): string | null {
+  const normalized = rawToken.trim().toLowerCase()
+  if (!/^[0-9a-f]{32,512}$/.test(normalized)) return null
+  return normalized
+}
+
+function getHeaderValue(req: FastifyRequest, key: string): string | null {
+  const raw = req.headers[key.toLowerCase()]
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    return trimmed.length ? trimmed : null
+  }
+  if (Array.isArray(raw)) {
+    const first = raw[0]
+    if (typeof first === 'string') {
+      const trimmed = first.trim()
+      return trimmed.length ? trimmed : null
+    }
+  }
+  return null
+}
+
+function ensurePushDeviceRegistryTable(): Promise<void> {
+  if (pushDeviceRegistryReady) return pushDeviceRegistryReady
+
+  pushDeviceRegistryReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "PushDeviceRegistration" (
+        "id" TEXT PRIMARY KEY,
+        "token" TEXT NOT NULL,
+        "platform" TEXT NOT NULL,
+        "bundle_id" TEXT,
+        "device_id" TEXT,
+        "user_id" TEXT,
+        "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "last_seen_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        "revoked_at" TIMESTAMPTZ
+      );
+    `)
+    await prisma.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "PushDeviceRegistration_token_platform_key" ON "PushDeviceRegistration" ("token", "platform");',
+    )
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "PushDeviceRegistration_user_platform_revoked_idx" ON "PushDeviceRegistration" ("user_id", "platform", "revoked_at");',
+    )
+  })().catch((err) => {
+    pushDeviceRegistryReady = null
+    throw err
+  })
+
+  return pushDeviceRegistryReady
+}
 
 type CitySummaryType = z.infer<typeof CitySummarySchema>
 
@@ -902,6 +973,261 @@ async function dispatchRealtimeEvent(userId: string, payload: { type: string; da
   }
 }
 
+async function loadActivePushTokens(userId: string, platform = 'ios'): Promise<string[]> {
+  try {
+    await ensurePushDeviceRegistryTable()
+    const rows = await prisma.$queryRaw<Array<{ token: string }>>`
+      SELECT "token"
+      FROM "PushDeviceRegistration"
+      WHERE "user_id" = ${userId}
+        AND "platform" = ${platform}
+        AND "revoked_at" IS NULL
+      ORDER BY "last_seen_at" DESC
+      LIMIT 25
+    `
+    const unique = new Set<string>()
+    for (const row of rows) {
+      const token = normalizePushToken(row.token)
+      if (token) unique.add(token)
+    }
+    return [...unique]
+  } catch (err) {
+    console.error('failed to load push tokens', err)
+    return []
+  }
+}
+
+async function revokePushToken(token: string, platform: string): Promise<void> {
+  try {
+    await ensurePushDeviceRegistryTable()
+    await prisma.$executeRaw`
+      UPDATE "PushDeviceRegistration"
+      SET
+        "revoked_at" = NOW(),
+        "updated_at" = NOW()
+      WHERE "token" = ${token}
+        AND "platform" = ${platform}
+        AND "revoked_at" IS NULL
+    `
+  } catch {
+    // ignore
+  }
+}
+
+function parseApnsReason(payloadText: string): string {
+  try {
+    const parsed = JSON.parse(payloadText || '{}')
+    return typeof parsed?.reason === 'string' ? parsed.reason : ''
+  } catch {
+    return ''
+  }
+}
+
+async function loadUnreadMessageCount(userId: string): Promise<number> {
+  try {
+    const result = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*)::int as count
+      FROM "Message" m
+      JOIN "MessageParticipant" mp ON m."threadId" = mp."threadId"
+      WHERE mp."userId" = ${userId}
+      AND m."senderId" != ${userId}
+      AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+    `
+    const count = Number(result[0]?.count || 0)
+    return Number.isFinite(count) && count > 0 ? count : 0
+  } catch {
+    return 0
+  }
+}
+
+function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof formatFriendUser> | null): { title: string; message: string } | null {
+  const actorLabel = actor?.name || actor?.handle || 'Someone'
+  if (record.type === FRIEND_NOTIFICATION_TYPES.REQUEST) {
+    return {
+      title: 'New friend request',
+      message: `${actorLabel} sent you a friend request.`,
+    }
+  }
+  if (record.type === FRIEND_NOTIFICATION_TYPES.ACCEPT) {
+    return {
+      title: 'Friend request accepted',
+      message: `${actorLabel} accepted your friend request.`,
+    }
+  }
+  return null
+}
+
+async function sendMobilePushNotification(record: NotificationRecord, actor: ReturnType<typeof formatFriendUser> | null) {
+  if (!PUSH_DELIVERY_URL) return
+
+  const alert = buildPushAlert(record, actor)
+  if (!alert) return
+
+  const tokens = await loadActivePushTokens(record.userId, 'ios')
+  if (!tokens.length) return
+
+  await Promise.allSettled(
+    tokens.map(async (deviceToken) => {
+      const response = await fetch(`${PUSH_DELIVERY_URL}/send-test`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(PUSH_ADMIN_SECRET ? { 'x-admin-secret': PUSH_ADMIN_SECRET } : {}),
+        },
+        body: JSON.stringify({
+          deviceToken,
+          title: alert.title,
+          message: alert.message,
+          sound: 'civil-general.caf',
+        }),
+      })
+
+      const raw = await response.text().catch(() => '')
+      if (!response.ok) {
+        console.error('push_delivery_failed', {
+          status: response.status,
+          deviceTokenSuffix: deviceToken.slice(-8),
+          payload: raw,
+        })
+        return
+      }
+
+      try {
+        const parsed = JSON.parse(raw || '{}')
+        const apnsStatus = Number(parsed?.result?.status || 0)
+        const apnsText = typeof parsed?.result?.text === 'string' ? parsed.result.text : ''
+        if (apnsStatus >= 200 && apnsStatus < 300) return
+
+        const reason = parseApnsReason(apnsText)
+        console.error('push_delivery_failed', {
+          status: response.status,
+          apnsStatus,
+          reason,
+          deviceTokenSuffix: deviceToken.slice(-8),
+        })
+
+        if (reason === 'BadDeviceToken' || reason === 'Unregistered') {
+          void revokePushToken(deviceToken, 'ios')
+        }
+      } catch {
+        // ignore
+      }
+    }),
+  )
+}
+
+function truncatePushBody(value: string, maxLen = 140): string {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= maxLen) return trimmed
+  return `${trimmed.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`
+}
+
+function formatDisplayNameForPush(input: string | null | undefined): string {
+  if (!input) return ''
+  return input
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+    .join(' ')
+}
+
+function isThreadMuted(mutedUntil: Date | null | undefined): boolean {
+  if (!mutedUntil) return false
+  return new Date(mutedUntil).getTime() > Date.now()
+}
+
+async function sendMobilePushForMessageCreated(args: {
+  threadId: string
+  message: MessageRecord
+  participants: Array<{ userId: string; mutedUntil?: Date | null }>
+}) {
+  if (!PUSH_DELIVERY_URL) return
+
+  const rawSenderLabel = args.message.sender?.name || args.message.sender?.handle || 'Someone'
+  const senderLabel = formatDisplayNameForPush(rawSenderLabel) || rawSenderLabel
+  const attachmentCount = normalizeAttachmentList(args.message.attachments).length
+  const rawPreview = (args.message.body || '').trim()
+  const preview = rawPreview
+    ? rawPreview
+    : attachmentCount > 0
+      ? 'Sent an attachment.'
+      : 'Sent you a message.'
+
+  const title = senderLabel
+  const body = truncatePushBody(preview)
+  if (!body) return
+
+  const targets = args.participants
+    .filter((p) => p.userId !== args.message.senderId)
+    .filter((p) => !isThreadMuted(p.mutedUntil ?? null))
+
+  await Promise.allSettled(
+    targets.map(async (participant) => {
+      const tokens = await loadActivePushTokens(participant.userId, 'ios')
+      if (!tokens.length) return
+
+      const badge = await loadUnreadMessageCount(participant.userId)
+
+      await Promise.allSettled(
+        tokens.map(async (deviceToken) => {
+          const response = await fetch(`${PUSH_DELIVERY_URL}/send-test`, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              ...(PUSH_ADMIN_SECRET ? { 'x-admin-secret': PUSH_ADMIN_SECRET } : {}),
+            },
+            body: JSON.stringify({
+              deviceToken,
+              title,
+              message: body,
+              badge,
+              sound: 'civil-message.caf',
+              data: {
+                kind: 'message',
+                threadId: args.threadId,
+                url: `/messages?thread=${encodeURIComponent(args.threadId)}`,
+              },
+            }),
+          })
+
+          const raw = await response.text().catch(() => '')
+          if (!response.ok) {
+            console.error('push_delivery_failed', {
+              status: response.status,
+              deviceTokenSuffix: deviceToken.slice(-8),
+              payload: raw,
+            })
+            return
+          }
+
+          try {
+            const parsed = JSON.parse(raw || '{}')
+            const apnsStatus = Number(parsed?.result?.status || 0)
+            const apnsText = typeof parsed?.result?.text === 'string' ? parsed.result.text : ''
+            if (apnsStatus >= 200 && apnsStatus < 300) return
+
+            const reason = parseApnsReason(apnsText)
+            console.error('push_delivery_failed', {
+              status: response.status,
+              apnsStatus,
+              reason,
+              deviceTokenSuffix: deviceToken.slice(-8),
+            })
+
+            if (reason === 'BadDeviceToken' || reason === 'Unregistered') {
+              void revokePushToken(deviceToken, 'ios')
+            }
+          } catch {
+            // ignore
+          }
+        }),
+      )
+    }),
+  )
+}
+
 async function dispatchNotification(record: NotificationRecord) {
   let actor: ReturnType<typeof formatFriendUser> | null = null
   if (record.actorId) {
@@ -917,6 +1243,7 @@ async function dispatchNotification(record: NotificationRecord) {
       actor,
     },
   })
+  void sendMobilePushNotification(record, actor)
 }
 
 async function createNotificationRecord(data: {
@@ -4018,6 +4345,132 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
   }
 })
 
+app.post('/mobile/push/register', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = PushDeviceRegisterInput.safeParse(req.body ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const token = normalizePushToken(parse.data.token)
+  if (!token) return reply.code(400).send({ error: 'invalid_token' })
+
+  const tokenLen = token.length
+  const tokenSuffix = token.slice(-8)
+
+  const userId = await resolveUserId(req)
+  const registerSecret = getHeaderValue(req, 'x-register-secret')
+  const secretAuthorized = !!PUSH_REGISTER_SECRET && registerSecret === PUSH_REGISTER_SECRET
+  if (!userId && !secretAuthorized) {
+    req.log.info({ route: '/mobile/push/register', platform: parse.data.platform, hasUserId: false }, 'push_register_unauthorized')
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  await ensurePushDeviceRegistryTable()
+
+  const platform = parse.data.platform.trim().toLowerCase()
+  const bundleId = parse.data.bundleId?.trim() || null
+  const deviceId = parse.data.deviceId?.trim() || null
+
+  req.log.info(
+    {
+      route: '/mobile/push/register',
+      platform,
+      tokenLen,
+      tokenSuffix,
+      hasUserId: !!userId,
+      secretAuthorized,
+      hasBundleId: !!bundleId,
+      hasDeviceId: !!deviceId,
+    },
+    'push_register_attempt',
+  )
+
+  await prisma.$executeRaw`
+    INSERT INTO "PushDeviceRegistration" (
+      "id",
+      "token",
+      "platform",
+      "bundle_id",
+      "device_id",
+      "user_id",
+      "created_at",
+      "updated_at",
+      "last_seen_at",
+      "revoked_at"
+    )
+    VALUES (
+      ${randomUUID()},
+      ${token},
+      ${platform},
+      ${bundleId},
+      ${deviceId},
+      ${userId},
+      NOW(),
+      NOW(),
+      NOW(),
+      NULL
+    )
+    ON CONFLICT ("token", "platform")
+    DO UPDATE SET
+      "bundle_id" = EXCLUDED."bundle_id",
+      "device_id" = EXCLUDED."device_id",
+      "user_id" = COALESCE(EXCLUDED."user_id", "PushDeviceRegistration"."user_id"),
+      "updated_at" = NOW(),
+      "last_seen_at" = NOW(),
+      "revoked_at" = NULL
+  `
+
+  return reply.send({ ok: true })
+})
+
+app.delete('/mobile/push/register', async (req: FastifyRequest, reply: FastifyReply) => {
+  const parse = PushDeviceUnregisterInput.safeParse(req.body ?? req.query ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const token = normalizePushToken(parse.data.token)
+  if (!token) return reply.code(400).send({ error: 'invalid_token' })
+
+  const tokenLen = token.length
+  const tokenSuffix = token.slice(-8)
+
+  const userId = await resolveUserId(req)
+  const registerSecret = getHeaderValue(req, 'x-register-secret')
+  const secretAuthorized = !!PUSH_REGISTER_SECRET && registerSecret === PUSH_REGISTER_SECRET
+  if (!userId && !secretAuthorized) return reply.code(401).send({ error: 'unauthorized' })
+
+  await ensurePushDeviceRegistryTable()
+
+  const platform = parse.data.platform.trim().toLowerCase()
+
+  req.log.info(
+    {
+      route: '/mobile/push/register',
+      method: 'DELETE',
+      platform,
+      tokenLen,
+      tokenSuffix,
+      hasUserId: !!userId,
+      secretAuthorized,
+    },
+    'push_unregister_attempt',
+  )
+  const userScopeSql = secretAuthorized
+    ? Prisma.sql``
+    : Prisma.sql` AND ("user_id" = ${userId} OR "user_id" IS NULL)`
+
+  const updatedCount = await prisma.$executeRaw(
+    Prisma.sql`
+      UPDATE "PushDeviceRegistration"
+      SET
+        "revoked_at" = NOW(),
+        "updated_at" = NOW()
+      WHERE "token" = ${token}
+        AND "platform" = ${platform}
+        ${userScopeSql}
+    `,
+  )
+
+  return reply.send({ ok: true, count: Number(updatedCount) || 0 })
+})
+
 app.get('/friends', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const userId = (req as any).user?.id
@@ -4971,7 +5424,7 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
       },
       select: {
         id: true,
-        participants: { select: { userId: true } },
+        participants: { select: { userId: true, mutedUntil: true } },
       },
     })
     if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
@@ -5026,6 +5479,12 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
         }),
       ),
     )
+
+    void sendMobilePushForMessageCreated({
+      threadId: thread.id,
+      message: messageRecord,
+      participants: thread.participants,
+    })
 
     return reply.code(201).send({ message: formatMessage(messageRecord, userId) })
   }),
@@ -10010,7 +10469,7 @@ app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) =>
   const { path, postId, referrer } = parse.data
   const userId = (req as any).user?.id ?? null
   try {
-   
+
     await prisma.pageView.create({ data: { path, postId: postId ?? null, referrer: referrer ?? null, userId } })
   } catch (err) {
     req.log.error({ err }, 'track_view_failed')
@@ -10332,7 +10791,7 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
 
   // 1. Friends
   const friendIds = await loadAcceptedFriendIds(userId)
-  
+
   // Determine the threshold for "new" friend posts
   const friendsThreshold = [user?.lastViewedFriendsAt, user?.lastViewedHomeAt]
     .filter((d): d is Date => !!d)
@@ -10361,13 +10820,13 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   const activeIds = sortedActive.map((row: any) => row.authorId)
   const activeIdSet = new Set(activeIds)
   const otherIds = friendIds.filter((id) => !activeIdSet.has(id))
-  
+
   // Combine and limit to 10
   // We want active ones first, then random others? Or just others.
   // Let's shuffle others to keep it fresh if they have many friends
   const shuffledOthers = otherIds.sort(() => 0.5 - Math.random())
   const selectedIds = [...activeIds, ...shuffledOthers].slice(0, 10)
-  
+
   const friends = selectedIds.length
     ? await prisma.user.findMany({
         where: { id: { in: selectedIds } },

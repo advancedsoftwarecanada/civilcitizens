@@ -7,42 +7,95 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
     var window: UIWindow?
 
+    private let tokenKey = "cc:apnsDeviceToken"
+    private let tokenAtKey = "cc:apnsDeviceTokenAt"
+    private let tokenErrorKey = "cc:apnsDeviceTokenError"
+    private let tokenErrorAtKey = "cc:apnsDeviceTokenErrorAt"
+    private let backendErrorKey = "cc:apnsBackendRegisterError"
+    private let backendErrorAtKey = "cc:apnsBackendRegisterErrorAt"
+    private let lastNotificationUrlKey = "cc:lastNotificationUrl"
+    private let lastNotificationUrlAtKey = "cc:lastNotificationUrlAt"
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, error in
-            if let error = error {
-                print("push_permission_error", error)
-            }
-            DispatchQueue.main.async {
-                UIApplication.shared.registerForRemoteNotifications()
+        return true
+    }
+
+    // Display alerts while app is foregrounded (useful during development/testing).
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if #available(iOS 14.0, *) {
+            completionHandler([.banner, .sound, .badge])
+        } else {
+            completionHandler([.alert, .sound, .badge])
+        }
+    }
+
+    // Handle tap on a push notification.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        defer { completionHandler() }
+
+        let userInfo = response.notification.request.content.userInfo
+        // We store custom keys under the "civil" object in the APNs payload.
+        if let civil = userInfo["civil"] as? [AnyHashable: Any] {
+            if let url = civil["url"] as? String {
+                let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    UserDefaults.standard.set(trimmed, forKey: lastNotificationUrlKey)
+                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastNotificationUrlAtKey)
+                }
             }
         }
-        return true
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         let token = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-        print("push_device_token", token)
+        print("push_device_token_len", token.count)
+        UserDefaults.standard.set(token, forKey: tokenKey)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: tokenAtKey)
+        UserDefaults.standard.removeObject(forKey: tokenErrorKey)
+        UserDefaults.standard.removeObject(forKey: tokenErrorAtKey)
+        UserDefaults.standard.removeObject(forKey: backendErrorKey)
+        UserDefaults.standard.removeObject(forKey: backendErrorAtKey)
         Task {
-            await self.registerDeviceToken(token)
+            await self.registerDeviceTokenWithApiIfConfigured(token)
         }
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        print("push_register_failed", error)
-    }
-
-    private func pushServiceUrl() -> URL? {
-        guard let raw = Bundle.main.object(forInfoDictionaryKey: "CIVILPushServiceURL") as? String else { return nil }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return nil }
-        return URL(string: trimmed)
+        let message = String(describing: error)
+        print("push_register_failed", message)
+        UserDefaults.standard.set(message, forKey: tokenErrorKey)
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: tokenErrorAtKey)
     }
 
     private func pushRegisterSecret() -> String? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: "CIVILPushRegisterSecret") as? String else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func apiBaseUrl() -> URL? {
+        // Optional override (kept for backwards compatibility with existing builds / local setups).
+        if let raw = Bundle.main.object(forInfoDictionaryKey: "CIVILPushServiceURL") as? String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, let url = URL(string: trimmed) {
+                return url
+            }
+        }
+
+        // Default: read the bundled capacitor.config.json server.url.
+        guard let url = Bundle.main.url(forResource: "capacitor.config", withExtension: "json") else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data, options: []),
+            let dict = json as? [String: Any],
+            let server = dict["server"] as? [String: Any],
+            let rawUrl = server["url"] as? String
+        else { return nil }
+
+        let trimmed = rawUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return nil }
+        return URL(string: trimmed)
     }
 
     private func lastSentToken() -> String? {
@@ -53,17 +106,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
         UserDefaults.standard.set(token, forKey: "cc:lastPushDeviceToken")
     }
 
-    private func registerDeviceToken(_ token: String) async {
-        guard let baseUrl = pushServiceUrl() else { return }
+    private func setBackendRegisterError(_ message: String?) {
+        if let message, !message.isEmpty {
+            UserDefaults.standard.set(message, forKey: backendErrorKey)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: backendErrorAtKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: backendErrorKey)
+            UserDefaults.standard.removeObject(forKey: backendErrorAtKey)
+        }
+    }
+
+    private func registerDeviceTokenWithApiIfConfigured(_ token: String) async {
+        // Only attempt native registration when a register-secret is configured.
+        // Otherwise, the web layer registers with the user's Bearer token.
+        guard let secret = pushRegisterSecret() else { return }
+        guard let baseUrl = apiBaseUrl() else { return }
         if lastSentToken() == token { return }
 
-        let registerUrl = baseUrl.appendingPathComponent("register")
+        let registerUrl = baseUrl.appendingPathComponent("api/mobile/push/register")
         var req = URLRequest(url: registerUrl)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "content-type")
-        if let secret = pushRegisterSecret() {
-            req.setValue(secret, forHTTPHeaderField: "x-register-secret")
-        }
+        req.setValue(secret, forHTTPHeaderField: "x-register-secret")
 
         let payload: [String: Any?] = [
             "token": token,
@@ -74,16 +138,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
         do {
             req.httpBody = try JSONSerialization.data(withJSONObject: payload.compactMapValues { $0 }, options: [])
-            let (_, res) = try await URLSession.shared.data(for: req)
-            if let http = res as? HTTPURLResponse, http.statusCode >= 200 && http.statusCode < 300 {
+            let (data, res) = try await URLSession.shared.data(for: req)
+            guard let http = res as? HTTPURLResponse else {
+                setBackendRegisterError("no_http_response")
+                return
+            }
+
+            if http.statusCode >= 200 && http.statusCode < 300 {
+                setBackendRegisterError(nil)
                 setLastSentToken(token)
                 return
             }
-            if let http = res as? HTTPURLResponse {
-                print("push_register_http_status", http.statusCode)
-            }
+
+            let bodyText = String(data: data, encoding: .utf8) ?? ""
+            setBackendRegisterError("http_\(http.statusCode):\(bodyText.prefix(200))")
         } catch {
-            print("push_register_network_error", error)
+            setBackendRegisterError("network_error:\(String(describing: error))")
         }
     }
 
