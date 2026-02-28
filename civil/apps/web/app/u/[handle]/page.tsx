@@ -1284,7 +1284,6 @@ export default function UserPostsPage({ params }: PageProps) {
                 post={post}
                 onReact={handleReact}
                 viewerId={viewer?.id ?? null}
-                viewerIsVerified={isViewerVerified || isViewerBusiness}
               />
             ))
           )}

@@ -284,7 +284,6 @@ export default function OrganizationWallClient({
               post={post}
               onReact={handleReact}
               viewerId={viewerId}
-              viewerIsVerified
             />
           ))
         )}
