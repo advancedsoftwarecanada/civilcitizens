@@ -214,6 +214,11 @@ export default function OrganizationEventsClient({
     [municipality, province, slug],
   )
 
+  const eventPrimaryHref = useCallback(
+    (eventId: string) => (mode === 'manage' ? manageEditHref(eventId) : eventDetailHref(eventId)),
+    [eventDetailHref, manageEditHref, mode],
+  )
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -252,9 +257,8 @@ export default function OrganizationEventsClient({
   }, [load])
 
   useEffect(() => {
-    const { start, end } = buildPresetRange('this_week')
-    setStartDate(start)
-    setEndDate(end)
+    setStartDate('')
+    setEndDate('')
   }, [])
 
   const publishedEvents = useMemo(() => events.filter((event) => (event.status ?? 'PUBLISHED') !== 'DRAFT'), [events])
@@ -627,7 +631,7 @@ export default function OrganizationEventsClient({
                 <ul className="mt-3 space-y-3">
                   {selectedDayEvents.map((event) => (
                     <li key={event.id} className="rounded-2xl bg-white p-3">
-                      <Link href={eventDetailHref(event.id)} className="group block">
+                      <Link href={eventPrimaryHref(event.id)} className="group block">
                         <article className="flex flex-col gap-4 sm:flex-row sm:items-start">
                           <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32 sm:w-60 sm:flex-none">
                             {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
@@ -656,30 +660,41 @@ export default function OrganizationEventsClient({
                       </Link>
 
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void submitRsvp(event.id, 'GOING', event.paid ? 'PAID' : 'FREE')}
-                          disabled={rsvpBusyId === event.id}
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          {rsvpBusyId === event.id ? 'Saving…' : 'RSVP Going'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void submitRsvp(event.id, 'INTERESTED', event.paid ? 'PAID' : 'FREE')}
-                          disabled={rsvpBusyId === event.id}
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          Interested
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void submitRsvp(event.id, 'DECLINED', event.paid ? 'PAID' : 'FREE')}
-                          disabled={rsvpBusyId === event.id}
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          Decline
-                        </button>
+                        {mode === 'manage' ? (
+                          <Link
+                            href={manageEditHref(event.id)}
+                            className="rounded-full bg-[var(--cc-primary)] px-3 py-1 text-xs font-semibold text-white transition hover:brightness-110"
+                          >
+                            Manage event
+                          </Link>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void submitRsvp(event.id, 'GOING', event.paid ? 'PAID' : 'FREE')}
+                              disabled={rsvpBusyId === event.id}
+                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              {rsvpBusyId === event.id ? 'Saving…' : 'RSVP Going'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void submitRsvp(event.id, 'INTERESTED', event.paid ? 'PAID' : 'FREE')}
+                              disabled={rsvpBusyId === event.id}
+                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              Interested
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void submitRsvp(event.id, 'DECLINED', event.paid ? 'PAID' : 'FREE')}
+                              disabled={rsvpBusyId === event.id}
+                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              Decline
+                            </button>
+                          </>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -733,7 +748,7 @@ export default function OrganizationEventsClient({
                 <ul className="space-y-3">
                   {filteredPublishedEvents.map((event) => (
                     <li key={event.id} className="rounded-2xl bg-white p-3">
-                      <Link href={eventDetailHref(event.id)} className="group block">
+                      <Link href={eventPrimaryHref(event.id)} className="group block">
                         <article className="flex flex-col gap-4 sm:flex-row sm:items-start">
                           <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32 sm:w-60 sm:flex-none">
                             {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
@@ -762,30 +777,42 @@ export default function OrganizationEventsClient({
                       </Link>
 
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void submitRsvp(event.id, 'GOING', event.paid ? 'PAID' : 'FREE')}
-                          disabled={rsvpBusyId === event.id}
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          {rsvpBusyId === event.id ? 'Saving…' : 'RSVP Going'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void submitRsvp(event.id, 'INTERESTED', event.paid ? 'PAID' : 'FREE')}
-                          disabled={rsvpBusyId === event.id}
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          Interested
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void submitRsvp(event.id, 'DECLINED', event.paid ? 'PAID' : 'FREE')}
-                          disabled={rsvpBusyId === event.id}
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          Decline
-                        </button>
+                        {mode === 'manage' ? (
+                          <Link
+                            href={manageEditHref(event.id)}
+                            className="rounded-full bg-[var(--cc-primary)] px-3 py-1 text-xs font-semibold text-white transition hover:brightness-110"
+                          >
+                            Manage event
+                          </Link>
+                        ) : null}
+                        {mode !== 'manage' ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void submitRsvp(event.id, 'GOING', event.paid ? 'PAID' : 'FREE')}
+                              disabled={rsvpBusyId === event.id}
+                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              {rsvpBusyId === event.id ? 'Saving…' : 'RSVP Going'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void submitRsvp(event.id, 'INTERESTED', event.paid ? 'PAID' : 'FREE')}
+                              disabled={rsvpBusyId === event.id}
+                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              Interested
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void submitRsvp(event.id, 'DECLINED', event.paid ? 'PAID' : 'FREE')}
+                              disabled={rsvpBusyId === event.id}
+                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              Decline
+                            </button>
+                          </>
+                        ) : null}
                       </div>
                     </li>
                   ))}
