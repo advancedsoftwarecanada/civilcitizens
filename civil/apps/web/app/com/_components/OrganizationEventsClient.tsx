@@ -20,11 +20,21 @@ type GovernanceEvent = {
   priceCents: number | null
   currency: string
   guestSpeakers: string[]
+  sponsors?: EventSponsorTag[]
   primaryPhotoUrl?: string | null
   galleryPhotoUrls?: string[]
   status?: 'DRAFT' | 'PUBLISHED'
   createdAt: string
   updatedAt?: string
+}
+
+type EventSponsorTag = {
+  organizationId: string
+  name: string
+  slug: string
+  provinceCode: string
+  communitySlug: string
+  logoUrl: string | null
 }
 
 type GovernanceViewer = {
@@ -39,8 +49,8 @@ type GovernanceStateResponse = {
   viewer?: GovernanceViewer
 }
 
-function formatMoney(cents: number, currency: string) {
-  return `${(cents / 100).toFixed(2)} ${currency}`
+function formatMoney(cents: number) {
+  return `${(cents / 100).toFixed(2)} CAD`
 }
 
 function formatStartsLabel(isoString: string) {
@@ -630,10 +640,16 @@ export default function OrganizationEventsClient({
                             <p className="pt-1 text-lg font-semibold text-slate-800">
                               {event.paid
                                 ? event.priceCents && event.priceCents > 0
-                                  ? `From ${formatMoney(event.priceCents, event.currency)}`
+                                  ? `From ${formatMoney(event.priceCents)}`
                                   : 'Check ticket price on event'
                                 : 'Free'}
                             </p>
+                            {event.guestSpeakers.length ? (
+                              <p className="text-xs text-slate-500">Speakers: {event.guestSpeakers.join(', ')}</p>
+                            ) : null}
+                            {event.sponsors?.length ? (
+                              <p className="text-xs text-slate-500">Sponsors: {event.sponsors.map((sponsor) => sponsor.name).join(', ')}</p>
+                            ) : null}
                             <p className="text-xs text-slate-500">{event.category ?? DEFAULT_EVENT_CATEGORY}</p>
                           </div>
                         </article>
@@ -730,10 +746,16 @@ export default function OrganizationEventsClient({
                             <p className="pt-1 text-lg font-semibold text-slate-800">
                               {event.paid
                                 ? event.priceCents && event.priceCents > 0
-                                  ? `From ${formatMoney(event.priceCents, event.currency)}`
+                                  ? `From ${formatMoney(event.priceCents)}`
                                   : 'Check ticket price on event'
                                 : 'Free'}
                             </p>
+                            {event.guestSpeakers.length ? (
+                              <p className="text-xs text-slate-500">Speakers: {event.guestSpeakers.join(', ')}</p>
+                            ) : null}
+                            {event.sponsors?.length ? (
+                              <p className="text-xs text-slate-500">Sponsors: {event.sponsors.map((sponsor) => sponsor.name).join(', ')}</p>
+                            ) : null}
                             <p className="text-xs text-slate-500">{event.category ?? DEFAULT_EVENT_CATEGORY}</p>
                           </div>
                         </article>

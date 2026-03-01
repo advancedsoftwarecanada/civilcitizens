@@ -11,8 +11,13 @@ function normalizeDeepLinkUrl(raw: string): string | null {
   // Prefer relative in-app URLs.
   if (trimmed.startsWith('/')) return trimmed
 
-  // If we ever accidentally send an absolute URL, strip it to a safe relative path.
-  if (/^https?:\/\//i.test(trimmed)) {
+  // Accept path-style links that omitted the leading slash (e.g. `messages?thread=...`).
+  if (/^[a-zA-Z0-9_-]+(\/|\?|#|$)/.test(trimmed)) {
+    return `/${trimmed}`
+  }
+
+  // If we receive an absolute URL (http(s) or custom scheme), strip it to a safe relative path.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
     try {
       const u = new URL(trimmed)
       const relative = `${u.pathname}${u.search}${u.hash}`

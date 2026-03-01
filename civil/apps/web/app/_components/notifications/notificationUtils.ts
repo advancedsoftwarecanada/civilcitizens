@@ -128,6 +128,14 @@ export function getFriendRequestStatus(notification: NotificationItem): FriendRe
   return 'pending'
 }
 
+export function getNotificationRequestStatus(notification: NotificationItem): FriendRequestStatus {
+  return getFriendRequestStatus(notification)
+}
+
+export function isActionableNotification(notification: NotificationItem): boolean {
+  return notification.type === 'friend_request' || notification.type === 'event_guest_speaker_invite' || notification.type === 'event_sponsor_invite'
+}
+
 export function getActorDisplayName(notification: NotificationItem) {
   if (notification.actor?.name?.trim()) return formatDisplayName(notification.actor.name)
   if (notification.actor?.handle) return notification.actor.handle
@@ -161,12 +169,37 @@ export function getNotificationMessage(notification: NotificationItem) {
       const snippet = formatReplySnippet(notification)
       return snippet ? `commented: "${snippet}"` : 'commented on your post'
     }
+    case 'message':
+    case 'message_created':
+    case 'message.created': {
+      const snippet = formatReplySnippet(notification, 65)
+      return snippet ? `sent a message: "${snippet}"` : 'sent you a message'
+    }
+    case 'event_guest_speaker_invite':
+      return 'has invited you to be a guest speaker at an event'
+    case 'event_sponsor_invite':
+      return 'invited your organization to sponsor an event'
+    case 'event_guest_speaker_response': {
+      const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+      return status === 'accepted' ? 'accepted your guest speaker invite' : status === 'declined' ? 'declined your guest speaker invite' : 'responded to your guest speaker invite'
+    }
+    case 'event_sponsor_response': {
+      const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+      return status === 'accepted' ? 'accepted your sponsor invite' : status === 'declined' ? 'declined your sponsor invite' : 'responded to your sponsor invite'
+    }
     default:
       return 'shared an update'
   }
 }
 
 export function getNotificationTargetUrl(notification: NotificationItem): string | null {
+  const threadIdCandidates = [
+    notification.payload?.threadId,
+    notification.payload?.threadID,
+    notification.payload?.channelId,
+    notification.payload?.conversationId,
+  ]
+
   const candidates = notification.type === 'comment_reply'
     ? [
         notification.payload?.replyUrl,
@@ -183,6 +216,14 @@ export function getNotificationTargetUrl(notification: NotificationItem): string
       const normalized = raw.trim()
       if (normalized.startsWith('/')) {
         return normalized
+      }
+    }
+  }
+  for (const raw of threadIdCandidates) {
+    if (typeof raw === 'string') {
+      const normalized = raw.trim()
+      if (normalized) {
+        return `/messages?thread=${encodeURIComponent(normalized)}`
       }
     }
   }
