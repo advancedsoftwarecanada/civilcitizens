@@ -309,6 +309,7 @@ export default function OrganizationEventCreateClient({
   const [selectedSponsors, setSelectedSponsors] = useState<SelectedSponsor[]>([])
   const [feeRows, setFeeRows] = useState<EventFeeDraftRow[]>([])
   const [eventRsvps, setEventRsvps] = useState<EventRsvpRow[]>([])
+  const [showPublishModal, setShowPublishModal] = useState(false)
   const [showUnpublishModal, setShowUnpublishModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [unpublishing, setUnpublishing] = useState(false)
@@ -953,7 +954,7 @@ export default function OrganizationEventCreateClient({
       }
 
       setDraft(json.event)
-      pushToast('Draft saved.', 'success')
+      pushToast('Saved', 'success')
     } catch {
       pushToast('Unable to save draft.', 'error')
     } finally {
@@ -964,30 +965,30 @@ export default function OrganizationEventCreateClient({
   const publishDraft = useCallback(async () => {
     if (!token) {
       redirectToAuthModal('login')
-      return
+      return false
     }
-    if (!draft?.id) return
+    if (!draft?.id) return false
 
     if (uploading) {
       pushToast('Please wait for uploads to finish.', 'error')
-      return
+      return false
     }
 
     const startsAt = toIso(form.startsAtLocal)
     if (!form.title.trim() || !startsAt) {
       pushToast('Title and valid start date/time are required.', 'error')
-      return
+      return false
     }
 
     const endsAt = toIso(form.endsAtLocal)
     const parsedCapacity = form.capacity.trim() ? Number(form.capacity) : null
     if (parsedCapacity !== null && (!Number.isFinite(parsedCapacity) || parsedCapacity <= 0)) {
       pushToast('Capacity must be a positive integer.', 'error')
-      return
+      return false
     }
 
     const feesPayload = buildFeesPayload()
-    if (!feesPayload) return
+    if (!feesPayload) return false
     const minPaidFee = feesPayload
       .map((fee) => fee.amountCents)
       .filter((amount) => Number.isFinite(amount) && amount > 0)
@@ -1029,17 +1030,36 @@ export default function OrganizationEventCreateClient({
       if (!res.ok || !json?.event) {
         const rawError = typeof (json as any)?.error === 'string' ? (json as any).error : null
         pushToast(rawError ?? 'Unable to publish event.', 'error')
-        return
+        return false
       }
 
       setDraft(json.event)
       pushToast('Event published.', 'success')
+      return true
     } catch {
       pushToast('Unable to publish event.', 'error')
+      return false
     } finally {
       setSaving(false)
     }
   }, [buildFeesPayload, buildGuestSpeakersPayload, buildSponsorsPayload, draft?.id, form, galleryPhotoUrls, orgApiPath, primaryPhotoUrl, selectedGuestSpeakers, selectedSponsors, token, uploading])
+
+  const requestStatusChange = useCallback(
+    (currentStatus: 'DRAFT' | 'PUBLISHED', nextStatus: 'DRAFT' | 'PUBLISHED') => {
+      if (nextStatus === currentStatus) return
+      if (nextStatus === 'PUBLISHED') {
+        setShowPublishModal(true)
+        return
+      }
+      setShowUnpublishModal(true)
+    },
+    [],
+  )
+
+  const confirmPublish = useCallback(async () => {
+    const ok = await publishDraft()
+    if (ok) setShowPublishModal(false)
+  }, [publishDraft])
 
   const unpublishEvent = useCallback(async () => {
     if (!token) {
@@ -1158,10 +1178,47 @@ export default function OrganizationEventCreateClient({
 
   return (
     <div className="space-y-6">
+      <section className="surface-card p-4 shadow-subtle">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-slate-600">Status:</span>
+            <select
+              value={draft.status}
+              onChange={(event) => requestStatusChange(draft.status, event.target.value as 'DRAFT' | 'PUBLISHED')}
+              disabled={saving || unpublishing || deleting}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            >
+              <option value="DRAFT">Unpublished</option>
+              <option value="PUBLISHED">Published</option>
+            </select>
+            <span className="text-xs text-slate-500">Draft id: {draft.id}</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void saveDraft()}
+              disabled={saving || uploading || deleting || unpublishing}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowDeleteModal(true)}
+              disabled={saving || uploading || deleting || unpublishing}
+              className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-5 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+        {uploading ? <p className="mt-2 text-xs text-slate-500">Finishing image uploads…</p> : null}
+      </section>
+
       <section className="surface-card space-y-3 p-4 shadow-subtle">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Draft details</h3>
-          <p className="text-xs text-slate-500">Draft id: {draft.id}</p>
+          <h3 className="text-sm font-semibold text-slate-900">Event details</h3>
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1804,44 +1861,31 @@ export default function OrganizationEventCreateClient({
         </div>
       </section>
 
-      <section className="surface-card flex flex-wrap items-center gap-3 p-4 shadow-subtle">
-        <button
-          type="button"
-          onClick={() => void saveDraft()}
-          disabled={saving || uploading || deleting || unpublishing}
-          className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-        >
-          {saving ? 'Saving…' : draft.status === 'PUBLISHED' ? 'Save' : 'Save draft'}
-        </button>
-        {draft.status === 'PUBLISHED' ? (
-          <button
-            type="button"
-            onClick={() => setShowUnpublishModal(true)}
-            disabled={saving || uploading || deleting || unpublishing}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            Unpublish
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void publishDraft()}
-            disabled={saving || uploading || deleting || unpublishing}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {uploading ? 'Uploading…' : saving ? 'Publishing…' : 'Publish'}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setShowDeleteModal(true)}
-          disabled={saving || uploading || deleting || unpublishing}
-          className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-white px-5 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60"
-        >
-          Delete
-        </button>
-        {uploading ? <p className="text-xs text-slate-500">Finishing image uploads…</p> : null}
-      </section>
+      {showPublishModal ? (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4" onClick={() => setShowPublishModal(false)}>
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h4 className="text-base font-semibold text-slate-900">Publish event?</h4>
+            <p className="mt-2 text-sm text-slate-600">Are you sure you wish to publish this event?</p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPublishModal(false)}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmPublish()}
+                disabled={saving}
+                className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+              >
+                {saving ? 'Publishing…' : 'Yes, publish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showUnpublishModal ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4" onClick={() => setShowUnpublishModal(false)}>

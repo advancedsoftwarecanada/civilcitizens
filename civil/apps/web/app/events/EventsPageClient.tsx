@@ -191,7 +191,7 @@ export default function EventsPageClient() {
     setError(null)
 
     try {
-      const params = new URLSearchParams({ limit: '200' })
+      const params = new URLSearchParams({ limit: '200', includePast: '1' })
       if (mineFilter === 'going') params.set('mine', 'going')
 
       const res = await fetch(buildApiUrl(`/events?${params.toString()}`), {
@@ -220,9 +220,8 @@ export default function EventsPageClient() {
   }, [load])
 
   useEffect(() => {
-    const { start, end } = buildPresetRange('this_week')
-    setStartDate(start)
-    setEndDate(end)
+    setStartDate('')
+    setEndDate('')
   }, [])
 
   const filteredItems = useMemo(() => {
