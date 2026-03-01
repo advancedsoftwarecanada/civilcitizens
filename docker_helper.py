@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from collections import deque
 from typing import Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -171,9 +172,53 @@ def build_compose_base(project_name: str, env_file: Optional[Path], extra_compos
 
 
 def run_compose(base_cmd: list[str], extra_args: list[str], overrides: Mapping[str, str]) -> None:
+    """Run docker compose while streaming output, but keep a tail for error detection.
+
+    We purposefully stream logs to the console (important during builds), but also
+    retain the last ~200 lines so we can detect common failures like ENOSPC and
+    provide actionable remediation.
+    """
+
     env = os.environ.copy()
     env.update(overrides)
-    subprocess.run(base_cmd + extra_args, check=True, env=env)
+    cmd = base_cmd + extra_args
+
+    # Use a single combined output stream to preserve ordering.
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        universal_newlines=True,
+    )
+
+    tail: deque[str] = deque(maxlen=200)
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        tail.append(line)
+    proc.stdout.close()
+    returncode = proc.wait()
+    if returncode != 0:
+        raise ComposeCommandError(returncode, "".join(tail))
+
+
+class ComposeCommandError(RuntimeError):
+    def __init__(self, returncode: int, tail: str):
+        super().__init__(f"compose failed with exit code {returncode}")
+        self.returncode = returncode
+        self.tail = tail
+
+
+def is_no_space_error(output: str) -> bool:
+    lowered = output.lower()
+    return (
+        "no space left on device" in lowered
+        or "resourceexhausted" in lowered
+        or "enospc" in lowered
+    )
 
 
 def command_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
@@ -197,6 +242,21 @@ def command_prune_build_cache(_: list[str], __: Mapping[str, str]) -> None:
     This is intentionally conservative: it does not remove volumes.
     """
     subprocess.run(["docker", "builder", "prune", "-a", "-f"], check=True)
+
+
+def command_prune_docker(_: list[str], __: Mapping[str, str]) -> None:
+    """Prune common Docker space hogs (safe: does not remove volumes).
+
+    - Removes BuildKit build cache
+    - Removes stopped containers
+    - Removes unused images
+    - Removes unused networks
+    """
+
+    subprocess.run(["docker", "builder", "prune", "-a", "-f"], check=True)
+    subprocess.run(["docker", "container", "prune", "-f"], check=True)
+    subprocess.run(["docker", "image", "prune", "-a", "-f"], check=True)
+    subprocess.run(["docker", "network", "prune", "-f"], check=True)
 
 
 def command_rebuild(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
@@ -317,6 +377,7 @@ def parse_args(default_command: Optional[str]) -> argparse.Namespace:
             "rebuild",
             "rebuild-all",
             "prune-build-cache",
+            "prune-docker",
         ],
         help="Command to execute",
     )
@@ -412,28 +473,57 @@ def run_helper(
         "rebuild": command_rebuild,
         "rebuild-all": command_rebuild_all,
         "prune-build-cache": command_prune_build_cache,
+        "prune-docker": command_prune_docker,
     }
 
     handler = command_map[args.command]
     warn_if_low_disk_space(args.command)
+    did_prune_cache = False
+    did_prune_full = False
     try:
-        handler(compose_cmd, overrides)
-        if post_command:
-            post_command(args.command, dict(overrides))
-        print("✔ Done")
-    except subprocess.CalledProcessError as exc:
-        print(f"✖ Command failed (exit code {exc.returncode})", file=sys.stderr)
+        while True:
+            try:
+                handler(compose_cmd, overrides)
+                if post_command:
+                    post_command(args.command, dict(overrides))
+                print("✔ Done")
+                break
+            except ComposeCommandError as exc:
+                print(f"✖ Command failed (exit code {exc.returncode})", file=sys.stderr)
 
-        # We don't capture the full docker output (we stream it), but the most
-        # common production build failure is running out of disk during image
-        # assembly. Provide a strong hint.
-        if args.command in {"deploy", "build", "rebuild", "rebuild-all"}:
-            print(
-                "→ Tip: if the output mentions 'no space left on device' / 'ResourceExhausted', "
-                "run: python3 _PROD.py prune-build-cache",
-                file=sys.stderr,
-            )
-        sys.exit(exc.returncode)
+                if args.command in {"deploy", "build", "rebuild", "rebuild-all"} and is_no_space_error(exc.tail):
+                    if not did_prune_cache:
+                        did_prune_cache = True
+                        print(
+                            "→ Detected 'no space left on device'. Pruning Docker build cache and retrying...",
+                            file=sys.stderr,
+                        )
+                        command_prune_build_cache([], {})
+                        continue
+
+                    if not did_prune_full:
+                        did_prune_full = True
+                        print(
+                            "→ Still out of space. Pruning unused images/containers (no volumes) and retrying...",
+                            file=sys.stderr,
+                        )
+                        command_prune_docker([], {})
+                        continue
+
+                    print(
+                        "→ Still out of space after pruning. Next steps:\n"
+                        "  - On Docker Desktop (macOS/Windows), increase the Disk image size in Settings → Resources\n"
+                        "  - Or move Docker's Disk image to a larger drive in Docker Desktop settings",
+                        file=sys.stderr,
+                    )
+
+                if args.command in {"deploy", "build", "rebuild", "rebuild-all"}:
+                    print(
+                        "→ Tip: if the output mentions 'no space left on device' / 'ResourceExhausted', "
+                        "run: python3 _PROD.py prune-build-cache (or prune-docker)",
+                        file=sys.stderr,
+                    )
+                sys.exit(exc.returncode)
     except KeyboardInterrupt:
         print("\nAborted", file=sys.stderr)
         sys.exit(1)
