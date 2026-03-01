@@ -8615,7 +8615,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/governance/events/:even
       attachments: body.data.attachments ?? previous.attachments,
       primaryPhotoUrl: body.data.primaryPhotoUrl === undefined ? previous.primaryPhotoUrl : body.data.primaryPhotoUrl ?? null,
       galleryPhotoUrls: body.data.galleryPhotoUrls ?? previous.galleryPhotoUrls,
-      status: 'DRAFT',
+      status: previous.status ?? 'PUBLISHED',
       updatedAt: nowIso,
     }
 
@@ -8630,7 +8630,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/governance/events/:even
     })
     await appendOrganizationAuditLogEntry(prisma, org.id, {
       actorUserId,
-      action: 'event.draft.updated',
+      action: (previous.status ?? 'PUBLISHED') === 'DRAFT' ? 'event.draft.updated' : 'event.updated',
       reason: null,
       previousValue: previous,
       nextValue: next,
