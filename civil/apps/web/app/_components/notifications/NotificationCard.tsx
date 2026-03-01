@@ -1,5 +1,6 @@
 import clsx from 'clsx'
 import Link from 'next/link'
+import type { KeyboardEvent } from 'react'
 import VerifiedAvatar from '../VerifiedAvatar'
 import type { FriendActionState, NotificationItem } from './notificationUtils'
 import {
@@ -8,15 +9,17 @@ import {
   getFriendshipId,
   getFriendRequestStatus,
   getNotificationMessage,
+  getNotificationTargetUrl,
 } from './notificationUtils'
 
 export type NotificationCardProps = {
   notification: NotificationItem
   onFriendAction?: (notification: NotificationItem, action: 'accept' | 'reject') => void
   friendActionState?: FriendActionState | null
+  onOpen?: (notification: NotificationItem, targetUrl: string) => void
 }
 
-export function NotificationCard({ notification, onFriendAction, friendActionState }: NotificationCardProps) {
+export function NotificationCard({ notification, onFriendAction, friendActionState, onOpen }: NotificationCardProps) {
   const friendshipId = getFriendshipId(notification)
   const requestStatus = notification.type === 'friend_request' ? getFriendRequestStatus(notification) : null
   const allowResponse = requestStatus === 'pending'
@@ -27,74 +30,117 @@ export function NotificationCard({ notification, onFriendAction, friendActionSta
   const actorName = notification.actor ? getActorDisplayName(notification) : null
   const initials = actorName ?? 'C'
   const message = getNotificationMessage(notification)
+  const targetUrl = getNotificationTargetUrl(notification)
+  const actorCoverUrl = notification.actor?.coverUrl ?? null
+  const hasActorCover = Boolean(actorCoverUrl)
+
+  const handleCardClick = () => {
+    if (!targetUrl) return
+    if (onOpen) {
+      onOpen(notification, targetUrl)
+      return
+    }
+    window.location.assign(targetUrl)
+  }
+
+  const handleCardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!targetUrl) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      window.location.assign(targetUrl)
+    }
+  }
 
   return (
     <div
       className={clsx(
         'rounded-2xl border px-4 py-3 text-sm text-slate-800 shadow-sm',
+        targetUrl && 'cursor-pointer transition hover:border-slate-300 hover:bg-slate-50/70',
         notification.unread ? 'border-[var(--cc-primary)]/40 bg-[var(--cc-primary)]/5' : 'border-slate-100 bg-white',
       )}
+      onClick={handleCardClick}
+      onKeyDown={handleCardKeyDown}
+      role={targetUrl ? 'button' : undefined}
+      tabIndex={targetUrl ? 0 : undefined}
     >
-      <div className="flex items-start gap-3">
-        {notification.actor ? (
-          <VerifiedAvatar
-            src={notification.actor.avatarUrl ?? null}
-            alt={notification.actor.name ?? notification.actor.handle ?? 'Civil citizen'}
-            initials={initials}
-            size={44}
-            isVerified={Boolean(notification.actor.isVerified)}
-            isBusiness={Boolean(notification.actor.isPremium)}
-            className="shrink-0"
-            href={profileHref ?? undefined}
-          />
-        ) : (
-          <div className="mt-1 h-10 w-10 shrink-0 rounded-full bg-slate-100" aria-hidden="true" />
-        )}
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className={clsx('h-2 w-2 rounded-full', notification.unread ? 'bg-[var(--cc-primary)]' : 'bg-slate-300')} aria-hidden="true" />
-            {actorName ? (
-              <div className="flex flex-wrap items-baseline gap-1 text-sm">
-                {profileHref ? (
-                  <Link href={profileHref} className="font-semibold text-slate-900 hover:underline">
-                    {actorName}
-                  </Link>
-                ) : (
-                  <span className="font-semibold text-slate-900">{actorName}</span>
-                )}
-                <span className="text-slate-600">{message}</span>
-              </div>
+      <div className="space-y-2.5">
+        <div className={clsx('relative overflow-hidden rounded-xl border px-3 py-2', hasActorCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
+          {actorCoverUrl ? <img src={actorCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+          <div className={clsx('absolute inset-0', hasActorCover ? 'bg-slate-900/50' : 'bg-transparent')} />
+          <div className="relative z-[1] flex items-start gap-3">
+            {notification.actor ? (
+              <VerifiedAvatar
+                src={notification.actor.avatarUrl ?? null}
+                alt={notification.actor.name ?? notification.actor.handle ?? 'Civil citizen'}
+                initials={initials}
+                size={44}
+                isVerified={Boolean(notification.actor.isVerified)}
+                isBusiness={Boolean(notification.actor.isPremium)}
+                className="shrink-0"
+                href={profileHref ?? undefined}
+              />
             ) : (
-              <p className="font-semibold text-slate-900">{message}</p>
+              <div className="mt-1 h-10 w-10 shrink-0 rounded-full bg-slate-100" aria-hidden="true" />
             )}
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className={clsx('h-2 w-2 rounded-full', notification.unread ? 'bg-[var(--cc-primary)]' : hasActorCover ? 'bg-white/60' : 'bg-slate-300')} aria-hidden="true" />
+                {actorName ? (
+                  <div className="flex flex-wrap items-baseline gap-1 text-sm">
+                    {profileHref ? (
+                      <Link
+                        href={profileHref}
+                        className={clsx('font-semibold hover:underline', hasActorCover ? 'text-white' : 'text-slate-900')}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {actorName}
+                      </Link>
+                    ) : (
+                      <span className={clsx('font-semibold', hasActorCover ? 'text-white' : 'text-slate-900')}>{actorName}</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className={clsx('font-semibold', hasActorCover ? 'text-white' : 'text-slate-900')}>Notification</p>
+                )}
+              </div>
+            </div>
           </div>
-          <p className="mt-1 text-xs text-slate-500">{formatRelativeTime(notification.createdAt)}</p>
-          {notification.type === 'friend_request' && onFriendAction && allowResponse ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="inline-flex flex-1 items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => onFriendAction(notification, 'accept')}
-                disabled={!friendshipId || isResponding}
-              >
-                {isAccepting ? 'Accepting…' : 'Accept'}
-              </button>
-              <button
-                type="button"
-                className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => onFriendAction(notification, 'reject')}
-                disabled={!friendshipId || isResponding}
-              >
-                {isRejecting ? 'Declining…' : 'Decline'}
-              </button>
-            </div>
-          ) : null}
-          {notification.type === 'friend_request' && requestStatus && !allowResponse ? (
-            <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
-              {requestStatus === 'accepted' ? 'Friend request accepted' : 'Friend request dismissed'}
-            </div>
-          ) : null}
         </div>
+        <div className="px-0.5">
+          <p className="text-[15px] leading-5 text-slate-700">{message}</p>
+          <p className="mt-1 text-xs text-slate-500">{formatRelativeTime(notification.createdAt)}</p>
+        </div>
+        {notification.type === 'friend_request' && onFriendAction && allowResponse ? (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="inline-flex flex-1 items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={(event) => {
+                event.stopPropagation()
+                onFriendAction(notification, 'accept')
+              }}
+              disabled={!friendshipId || isResponding}
+            >
+              {isAccepting ? 'Accepting…' : 'Accept'}
+            </button>
+            <button
+              type="button"
+              className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={(event) => {
+                event.stopPropagation()
+                onFriendAction(notification, 'reject')
+              }}
+              disabled={!friendshipId || isResponding}
+            >
+              {isRejecting ? 'Declining…' : 'Decline'}
+            </button>
+          </div>
+        ) : null}
+        {notification.type === 'friend_request' && requestStatus && !allowResponse ? (
+          <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
+            {requestStatus === 'accepted' ? 'Friend request accepted' : 'Friend request dismissed'}
+          </div>
+        ) : null}
       </div>
     </div>
   )

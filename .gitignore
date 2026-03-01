@@ -25,6 +25,9 @@ __pycache__/
 **/.next/cache/
 **/out/
 
+# Next.js (local build variants)
+**/.next*
+
 # Build outputs
 **/dist/
 **/build/

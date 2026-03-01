@@ -5,6 +5,7 @@ import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { clearAuthSession } from '../_lib/authSession'
 import { NotificationCard } from '../_components/notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from '../_components/notifications/notificationUtils'
 import { getFriendshipId } from '../_components/notifications/notificationUtils'
@@ -52,7 +53,7 @@ export default function NotificationsClient() {
         body: JSON.stringify({ before: new Date().toISOString() }),
       })
       if (res.status === 401) {
-        window.localStorage.removeItem('token')
+        clearAuthSession()
         redirectToAuthModal('login')
         return
       }
@@ -119,7 +120,7 @@ export default function NotificationsClient() {
           headers: { authorization: `Bearer ${token}` },
         })
         if (res.status === 401) {
-          window.localStorage.removeItem('token')
+          clearAuthSession()
           redirectToAuthModal('login')
           return
         }

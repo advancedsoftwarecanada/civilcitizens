@@ -18,7 +18,6 @@ import { pushToast } from '../../_components/useToasts'
 import { formatUserDisplayName } from '../../_lib/text'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { ensureViewerMe } from '../../_lib/viewerMe'
-import { type ReactionType } from '@civil/shared'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
@@ -279,8 +278,8 @@ export default function UserPostsPage({ params }: PageProps) {
     [],
   )
 
-  const handleReact = useCallback(
-    async (postId: string, reaction: ReactionType | null) => {
+  const handleVote = useCallback(
+    async (postId: string, value: -1 | 0 | 1) => {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       if (!token) {
         redirectToAuthModal('login')
@@ -288,16 +287,16 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       try {
-        const res = await fetch(buildApiUrl('/posts/react'), {
+        const res = await fetch(buildApiUrl('/posts/vote'), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ postId, reaction }),
+          body: JSON.stringify({ postId, value }),
         })
         if (!res.ok) {
-          console.error('Reaction request failed', await res.text())
+          console.error('Vote request failed', await res.text())
           return
         }
         const data = await res.json().catch(() => null)
@@ -306,7 +305,7 @@ export default function UserPostsPage({ params }: PageProps) {
           setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
         }
       } catch (err) {
-        console.error('Unable to react to post', err)
+        console.error('Unable to vote on post', err)
       }
     },
     [],
@@ -1282,7 +1281,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <PostFeedItem
                 key={post.id}
                 post={post}
-                onReact={handleReact}
+                onVote={handleVote}
                 viewerId={viewer?.id ?? null}
               />
             ))

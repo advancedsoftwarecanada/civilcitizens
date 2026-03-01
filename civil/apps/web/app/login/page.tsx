@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
+import { setAuthToken } from '../_lib/authSession'
 
 type LoginSuccess = {
   token: string
@@ -93,7 +94,7 @@ function LoginPageInner() {
       }
 
       if (typeof data.token === 'string') {
-        localStorage.setItem('token', data.token)
+        setAuthToken(data.token)
       }
       const destination = safeNext ?? '/home'
       router.replace(destination)

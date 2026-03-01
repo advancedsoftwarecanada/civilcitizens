@@ -13,9 +13,10 @@ import {
 import type { IconType } from 'react-icons'
 import DashboardShell from '../_components/DashboardShell'
 import type { MeResponse } from '../_lib/me'
-import { hasHomeCommunity, isPremiumMember } from '../_lib/me'
+import { hasHomeCommunity } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { isSuperAdmin } from '../_lib/admin'
+import { clearAuthSession } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import {
@@ -125,7 +126,7 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Failed to log out', error)
     } finally {
-      window.localStorage.removeItem('token')
+      clearAuthSession()
       router.replace('/')
     }
   }, [router, token])
@@ -178,7 +179,7 @@ export default function SettingsPage() {
 
   const isPushToggleOn = useMemo(() => {
     return !pushOptedOut
-  }, [pushOptedOut, pushState])
+  }, [pushOptedOut])
 
   const greeting = useMemo(() => {
     if (!viewer?.name) return 'Settings'
@@ -186,7 +187,7 @@ export default function SettingsPage() {
   }, [viewer?.name])
 
   const isAdminViewer = useMemo(() => isSuperAdmin(viewer), [viewer])
-  const showManageOrganizations = useMemo(() => isPremiumMember(viewer) && hasHomeCommunity(viewer), [viewer])
+  const showManageOrganizations = useMemo(() => hasHomeCommunity(viewer), [viewer])
   const manageOrganizationsHref = showManageOrganizations ? '/organizations/manager' : null
 
   return (

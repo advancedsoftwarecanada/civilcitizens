@@ -1,11 +1,13 @@
 "use client"
 import { create } from 'zustand'
+import type { NotificationItem } from './notifications/notificationUtils'
 
 export type Toast = {
   id: string
   message: string
   type?: 'info' | 'success' | 'error' | 'warning'
   ttlMs?: number
+  notification?: NotificationItem
 }
 
 type ToastState = {
@@ -35,6 +37,15 @@ export const useToasts = create<ToastState>((set, get) => ({
 
 export function pushToast(message: string, type: Toast['type'] = 'info', ttlMs?: number) {
   return useToasts.getState().push({ message, type, ttlMs })
+}
+
+export function pushNotificationToast(notification: NotificationItem, ttlMs = 7000) {
+  return useToasts.getState().push({
+    message: 'New notification',
+    type: 'info',
+    ttlMs,
+    notification,
+  })
 }
 
 export function removeToast(id: string) {

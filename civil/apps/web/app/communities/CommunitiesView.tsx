@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import Sidebar from '../_components/Sidebar'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
 import DashboardShell from '../_components/DashboardShell'
 import type { MeResponse } from '../_lib/me'
@@ -180,6 +181,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const latestPostalSelectionRef = useRef<string | null>(null)
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
+  const setViewerStoreMe = useViewerStore((s) => s.setMe)
   const activePostalOwnerId = postalOwnerId ?? me?.id ?? null
 
   async function loadCitiesForProvince(province: string, preselectCommunity?: string, preselectCitySlug?: string | null) {
@@ -448,7 +450,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         }
       } catch (err) {
         console.error('Failed bootstrapping communities screen', err)
-        localStorage.removeItem('token')
+        clearAuthSession()
         redirectToAuthModal('login')
       } finally {
         setLoadingFollows(false)
@@ -711,15 +713,35 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       setHomeCommunityState(nextHome)
       setSelectedProvince(provinceCode)
       setSelectedCommunitySlug(communitySlug)
+
+      const viewerForUpdate = useViewerStore.getState().me ?? me
+      if (viewerForUpdate) {
+        const provinceName =
+          provinces.find((province) => province.code === provinceCode)?.name ??
+          nextHome.province ??
+          provinceCode.toUpperCase()
+        const communityName =
+          communityOptions.find((community) => community.province === provinceCode && community.slug === communitySlug)?.name ??
+          nextHome.name ??
+          communitySlug
+        const updatedViewer: MeResponse = {
+          ...viewerForUpdate,
+          homeCommunity: {
+            provinceCode,
+            provinceName,
+            communitySlug,
+            communityName,
+          },
+        }
+        setMe(updatedViewer)
+        setViewerStoreMe(updatedViewer)
+      }
+
       if (!options?.skipCityLoad) {
         await loadCitiesForProvince(provinceCode, communitySlug, selectedCitySlug)
       }
       if (isWelcomeMode) {
-        // Keep the user locked in a setup state and redirect immediately.
-        // Avoid rendering intermediate screens (e.g., community follow list) while the redirect happens.
-        window.setTimeout(() => {
-          router.replace('/home')
-        }, 50)
+        router.replace('/home')
         return
       }
 

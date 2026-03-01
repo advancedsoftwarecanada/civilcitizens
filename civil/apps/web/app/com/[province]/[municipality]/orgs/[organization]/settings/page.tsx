@@ -1,5 +1,5 @@
 import OrganizationSection from '../../../../../_components/OrganizationSection'
-import OrganizationSettingsClient from '../../../../../_components/OrganizationSettingsClient'
+import OrganizationControlPanelClient from '../../../../../_components/OrganizationControlPanelClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,8 +13,8 @@ type PageProps = {
 
 export default function OrganizationSettingsPage({ params }: PageProps) {
   return (
-    <OrganizationSection title="Settings" description="Manage your organization profile, members, and account controls.">
-      <OrganizationSettingsClient province={params.province} municipality={params.municipality} slug={params.organization} />
+    <OrganizationSection title="Control Panel" description="Manage every part of your organization from one place.">
+      <OrganizationControlPanelClient province={params.province} municipality={params.municipality} organization={params.organization} />
     </OrganizationSection>
   )
 }

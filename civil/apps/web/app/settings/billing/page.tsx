@@ -7,6 +7,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } fro
 import Sidebar from '../../_components/Sidebar'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { clearAuthSession } from '../../_lib/authSession'
 import { buildApiUrl } from '../../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
 import { ensureViewerMe } from '../../_lib/viewerMe'
@@ -103,7 +104,7 @@ export default function BillingSettingsPage() {
 
   const handleUnauthorized = useCallback(() => {
     if (typeof window !== 'undefined') {
-      window.localStorage.removeItem('token')
+      clearAuthSession()
       redirectToAuthModal('login')
     }
   }, [])

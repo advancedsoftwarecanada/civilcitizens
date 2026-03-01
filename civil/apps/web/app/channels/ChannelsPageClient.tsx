@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
+import { clearAuthSession } from '../_lib/authSession'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { redirectToAuthModal } from '../_lib/authModal'
 
@@ -65,7 +66,7 @@ export default function ChannelsPageClient() {
         cache: 'no-store',
       })
       if (res.status === 401) {
-        window.localStorage.removeItem('token')
+        clearAuthSession()
         redirectToAuthModal('login')
         setItems([])
         return

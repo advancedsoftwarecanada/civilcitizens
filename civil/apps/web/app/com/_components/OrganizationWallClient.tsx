@@ -5,8 +5,8 @@ import PostFeedItem from '../../_components/PostFeedItem'
 import PostComposer from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { clearAuthSession } from '../../_lib/authSession'
 import { ensureViewerMe } from '../../_lib/viewerMe'
-import type { ReactionType } from '@civil/shared'
 import type { ApiPost } from '../../_components/PostComposer'
 import type { CommunityOrganization } from '../../_lib/organizations'
 
@@ -58,9 +58,7 @@ export default function OrganizationWallClient({
       )
 
       if (res.status === 401) {
-        if (typeof window !== 'undefined') {
-          window.localStorage.removeItem('token')
-        }
+        clearAuthSession()
         redirectToAuthModal('login')
         return
       }
@@ -112,9 +110,7 @@ export default function OrganizationWallClient({
       )
 
       if (res.status === 401) {
-        if (typeof window !== 'undefined') {
-          window.localStorage.removeItem('token')
-        }
+        clearAuthSession()
         redirectToAuthModal('login')
         return
       }
@@ -132,7 +128,7 @@ export default function OrganizationWallClient({
     } finally {
       setLoading(false)
     }
-  }, [municipality, province, slug, sortMode, token])
+  }, [municipality, org, province, slug, sortMode, token])
 
   useEffect(() => {
     void loadOrg()
@@ -191,29 +187,32 @@ export default function OrganizationWallClient({
     setPosts((prev) => [post, ...prev])
   }, [])
 
-  const handleReact = useCallback(async (postId: string, reaction: ReactionType | null) => {
+  const handleVote = useCallback(async (postId: string, value: -1 | 0 | 1) => {
     if (!token) {
       redirectToAuthModal('login')
       return
     }
 
     try {
-      const res = await fetch(buildApiUrl('/posts/react'), {
+      const res = await fetch(buildApiUrl('/posts/vote'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ postId, reaction }),
+        body: JSON.stringify({ postId, value }),
       })
-      if (!res.ok) return
+      if (!res.ok) {
+        console.error('Vote request failed', await res.text())
+        return
+      }
       const data = (await res.json().catch(() => null)) as { post?: ApiPost } | null
       const updated = data?.post
       if (updated) {
         setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
       }
     } catch (err) {
-      console.error('Unable to react to post', err)
+      console.error('Unable to vote on post', err)
     }
   }, [token])
 
@@ -282,7 +281,7 @@ export default function OrganizationWallClient({
             <PostFeedItem
               key={post.id}
               post={post}
-              onReact={handleReact}
+              onVote={handleVote}
               viewerId={viewerId}
             />
           ))

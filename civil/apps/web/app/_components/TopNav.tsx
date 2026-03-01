@@ -8,6 +8,7 @@ import { usePathname } from 'next/navigation'
 import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineHashtag } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { clearAuthSession } from '../_lib/authSession'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
@@ -16,11 +17,34 @@ import {
   getNotificationMessage,
   getActorDisplayName,
 } from './notifications/notificationUtils'
-import { emitNotificationsMarkedReadEvent, NOTIFICATIONS_MARKED_READ_EVENT, type NotificationsMarkedReadDetail } from './notifications/notificationEvents'
+import {
+  emitNotificationsMarkedReadEvent,
+  NOTIFICATION_READ_EVENT,
+  NOTIFICATIONS_MARKED_READ_EVENT,
+  type NotificationReadDetail,
+  type NotificationsMarkedReadDetail,
+} from './notifications/notificationEvents'
 import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from './notifications/notificationStream'
-import { pushToast } from './useToasts'
+import { pushNotificationToast, pushToast } from './useToasts'
 import { SearchResults } from './search/SearchResults'
 const MAX_VISIBLE_NOTIFICATIONS = 7
+
+const NOTIFICATION_TOAST_DEDUPE_WINDOW_MS = 5000
+
+function shouldShowNotificationToast(notificationId: string): boolean {
+  if (typeof window === 'undefined') return true
+  const globalKey = '__ccNotificationToastHistory'
+  const now = Date.now()
+  const history = ((window as any)[globalKey] ?? {}) as Record<string, number>
+  const lastShownAt = history[notificationId] ?? 0
+  if (now - lastShownAt < NOTIFICATION_TOAST_DEDUPE_WINDOW_MS) {
+    ;(window as any)[globalKey] = history
+    return false
+  }
+  history[notificationId] = now
+  ;(window as any)[globalKey] = history
+  return true
+}
 
 
 export default function TopNav() {
@@ -62,7 +86,7 @@ export default function TopNav() {
         headers: { authorization: `Bearer ${token}` },
       })
       if (res.status === 401) {
-        window.localStorage.removeItem('token')
+        clearAuthSession()
         setNotifications([])
         setUnreadCount(0)
         setDropdownOpen(false)
@@ -138,7 +162,7 @@ export default function TopNav() {
         body: JSON.stringify({ before: new Date().toISOString() }),
       })
       if (res.status === 401) {
-        window.localStorage.removeItem('token')
+        clearAuthSession()
         setNotifications([])
         setUnreadCount(0)
         setDropdownOpen(false)
@@ -202,9 +226,9 @@ export default function TopNav() {
         }
         if (merged.unread && (!existing || !existing.unread)) {
           unreadDelta = 1
-          const message = getNotificationMessage(merged)
-          const actorName = merged.actor ? getActorDisplayName(merged) : 'Someone'
-          pushToast(`${actorName} ${message}`, 'info')
+          if (shouldShowNotificationToast(merged.id)) {
+            pushNotificationToast(merged)
+          }
         }
         const next = [merged, ...prev.filter((item) => item.id !== incoming.id)]
         return next.slice(0, MAX_VISIBLE_NOTIFICATIONS)
@@ -284,6 +308,33 @@ export default function TopNav() {
       window.removeEventListener(NOTIFICATIONS_MARKED_READ_EVENT, handleMarkedRead as EventListener)
     }
   }, [applyLocalReadState])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+    const handleNotificationRead = (event: Event) => {
+      const detail = (event as CustomEvent<NotificationReadDetail>).detail
+      const notificationId = detail?.id
+      if (!notificationId) return
+
+      const readAt = new Date().toISOString()
+      setNotifications((prev) =>
+        prev.map((notification) => {
+          if (notification.id !== notificationId || !notification.unread) return notification
+          return {
+            ...notification,
+            unread: false,
+            readAt: notification.readAt ?? readAt,
+          }
+        }),
+      )
+      setUnreadCount((prev) => Math.max(0, prev - 1))
+    }
+
+    window.addEventListener(NOTIFICATION_READ_EVENT, handleNotificationRead as EventListener)
+    return () => {
+      window.removeEventListener(NOTIFICATION_READ_EVENT, handleNotificationRead as EventListener)
+    }
+  }, [])
 
   useEffect(() => {
     const unsubscribe = subscribeToNotificationsStream(handleRealtimeNotification)
