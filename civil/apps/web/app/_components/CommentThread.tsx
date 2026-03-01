@@ -27,6 +27,7 @@ export type ApiComment = {
     handle: string
     name: string | null
     avatarUrl: string | null
+    coverUrl?: string | null
     isPremium?: boolean
     isVerified?: boolean
   }
@@ -50,6 +51,7 @@ type CommentThreadProps = {
 type CommentContextProps = {
   onReply: (parentId: string | null, body: string) => Promise<void>
   onVote: (commentId: string, value: -1 | 0 | 1) => Promise<void>
+  highlightedCommentId?: string | null
   currentUser?: {
     id: string
     handle: string
@@ -93,8 +95,8 @@ function VoteButton({ direction, active, blocked, disabled, onClick, onBlockedCl
   const Icon = direction === 'up' ? LuArrowBigUp : LuArrowBigDown
   const intentClasses =
     direction === 'up'
-      ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm'
-      : 'border-red-400 bg-red-50 text-red-500 shadow-sm'
+      ? 'bg-emerald-50 text-emerald-700'
+      : 'bg-rose-50 text-rose-700'
 
   const handleClick = () => {
     if (disabled) return
@@ -109,12 +111,12 @@ function VoteButton({ direction, active, blocked, disabled, onClick, onBlockedCl
     <button
       type="button"
       className={clsx(
-        'flex h-9 w-9 items-center justify-center rounded-full border transition focus:outline-none focus:ring-2 focus:ring-offset-1',
+        'inline-flex items-center rounded-full p-1.5 transition focus:outline-none focus:ring-2 focus:ring-offset-1',
         blocked
-          ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200 hover:text-slate-400 focus:ring-slate-200'
+          ? 'text-slate-400 focus:ring-slate-200'
           : active
               ? intentClasses
-              : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700 focus:ring-[var(--cc-primary)]',
+              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800 focus:ring-[var(--cc-primary)]',
         disabled && 'pointer-events-none opacity-60',
       )}
       onClick={handleClick}
@@ -170,7 +172,7 @@ function formatRelativeTime(iso: string) {
   return rtf.format(-rounded, unit)
 }
 
-function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentContextProps & { comment: ApiComment; depth: number }) {
+function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, currentUser }: CommentContextProps & { comment: ApiComment; depth: number }) {
   const [replying, setReplying] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [pendingVote, setPendingVote] = useState(false)
@@ -183,7 +185,10 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
   const hasReplies = comment.replies.length > 0
   const showCollapseButton = hasReplies || isNested
   const canVote = Boolean(currentUser)
+  const isHighlighted = highlightedCommentId === comment.id
   const authorDisplayName = formatUserDisplayName(comment.author.name, comment.author.handle) || comment.author.handle
+  const authorCoverUrl = comment.author.coverUrl ?? null
+  const hasAuthorCover = Boolean(authorCoverUrl)
 
   const handleVote = useCallback(
     async (nextValue: -1 | 0 | 1) => {
@@ -255,38 +260,49 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
           {collapsed ? '+' : '-'}
         </button>
       ) : null}
-      <article id={`comment-${comment.id}`} className="border-b border-slate-100 pb-4 pt-4">
-        <div className="flex items-start gap-3">
-          <VerifiedAvatar
-            src={comment.author.avatarUrl}
-            alt={authorDisplayName}
-            initials={authorDisplayName}
-            size={44}
-            isVerified={Boolean(comment.author.isVerified)}
-            isBusiness={Boolean(comment.author.isPremium)}
-            className="shrink-0"
-            href={`/u/${comment.author.handle}`}
-          />
-          <div className="min-w-0 flex-1 space-y-3">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-              <Link href={`/u/${comment.author.handle}`} className="font-semibold text-slate-900 hover:underline">
-                {authorDisplayName}
-              </Link>
-              <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
-                <LuDot className="h-3 w-3" />@{comment.author.handle}
-              </span>
-              <span className="text-slate-400">• {createdLabel}</span>
-              {collapsed ? (
-                <span className="text-slate-400">
-                  Thread collapsed{hasReplies ? ` • ${comment.replies.length} repl${comment.replies.length === 1 ? 'y' : 'ies'}` : ''}
-                </span>
-              ) : null}
+      <article
+        id={`comment-${comment.id}`}
+        className={clsx(
+          'border-b border-slate-100 pb-4 pt-4 transition',
+          isHighlighted && 'rounded-xl bg-amber-50/80 px-2 ring-2 ring-amber-300/80',
+        )}
+      >
+        <div className="min-w-0 space-y-3">
+            <div className={clsx('relative inline-flex max-w-full items-center gap-2 overflow-hidden rounded-lg border px-2 py-1.5', hasAuthorCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
+              {authorCoverUrl ? <img src={authorCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+              <div className={clsx('absolute inset-0', hasAuthorCover ? 'bg-slate-900/50' : 'bg-transparent')} />
+              <div className="relative z-[1] flex items-center gap-2 min-w-0">
+                <VerifiedAvatar
+                  src={comment.author.avatarUrl}
+                  alt={authorDisplayName}
+                  initials={authorDisplayName}
+                  size={30}
+                  isVerified={Boolean(comment.author.isVerified)}
+                  isBusiness={Boolean(comment.author.isPremium)}
+                  className="shrink-0"
+                  href={`/u/${comment.author.handle}`}
+                />
+                <div className={clsx('min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs', hasAuthorCover ? 'text-white/80' : 'text-slate-500')}>
+                  <Link href={`/u/${comment.author.handle}`} className={clsx('truncate max-w-[10rem] font-semibold hover:underline', hasAuthorCover ? 'text-white' : 'text-slate-900')}>
+                    {authorDisplayName}
+                  </Link>
+                  <span className={clsx('inline-flex items-center gap-1 text-[11px]', hasAuthorCover ? 'text-white/80' : 'text-slate-400')}>
+                    <LuDot className="h-3 w-3" />@{comment.author.handle}
+                  </span>
+                  <span className={hasAuthorCover ? 'text-white/80' : 'text-slate-400'}>• {createdLabel}</span>
+                </div>
+              </div>
             </div>
+            {collapsed ? (
+              <div className="text-xs text-slate-400">
+                Thread collapsed{hasReplies ? ` • ${comment.replies.length} repl${comment.replies.length === 1 ? 'y' : 'ies'}` : ''}
+              </div>
+            ) : null}
             {collapsed ? null : (
               <>
                 <div className="whitespace-pre-wrap text-sm leading-6 text-slate-900">{comment.body}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                  <div className="relative flex items-center gap-2 text-sm font-semibold text-slate-600">
+                  <div className="relative inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 py-1 text-sm font-semibold text-slate-600">
                     <VoteButton
                       direction="up"
                       active={currentVote === 1 && canVote}
@@ -295,7 +311,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
                       onBlockedClick={triggerVoteTooltip}
                       onClick={() => handleVote(currentVote === 1 ? 0 : 1)}
                     />
-                    <span className={clsx('min-w-[2rem] text-center text-sm', comment.score > 0 ? 'text-[var(--cc-primary)]' : comment.score < 0 ? 'text-red-500' : 'text-slate-500')}>
+                    <span className="min-w-[2ch] text-center text-sm font-semibold text-slate-700">
                       {formatScore(comment.score)}
                     </span>
                     <VoteButton
@@ -315,20 +331,18 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
                   <InlineAction icon={LuMessageSquare} label={replying ? 'Cancel reply' : 'Reply'} onClick={toggleReply} subtle={!canReply} />
                 </div>
                 {replying ? (
-                  <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4">
-                    <CommentComposer
-                      placeholder={`Reply to @${comment.author.handle}`}
-                      submitLabel="Reply"
-                      onSubmit={(body) => onReply(comment.id, body)}
-                      onSuccess={() => setReplying(false)}
-                      onCancel={() => setReplying(false)}
-                      autoFocus
-                    />
-                  </div>
+                  <CommentComposer
+                    className="mt-3"
+                    placeholder={`Reply to @${comment.author.handle}`}
+                    submitLabel="Reply"
+                    onSubmit={(body) => onReply(comment.id, body)}
+                    onSuccess={() => setReplying(false)}
+                    onCancel={() => setReplying(false)}
+                    autoFocus
+                  />
                 ) : null}
               </>
             )}
-          </div>
         </div>
       </article>
 
@@ -341,6 +355,7 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
               depth={depth + 1}
               onReply={onReply}
               onVote={onVote}
+              highlightedCommentId={highlightedCommentId}
               currentUser={currentUser}
             />
           ))}
@@ -351,6 +366,43 @@ function CommentItem({ comment, depth, onReply, onVote, currentUser }: CommentCo
 }
 
 export default function CommentThread({ comments, onReply, onVote, currentUser }: CommentThreadProps) {
+  const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !comments.length) return
+    const hashMatch = window.location.hash.match(/^#comment-([A-Za-z0-9]+)$/)
+    const queryCommentId = new URLSearchParams(window.location.search).get('comment')
+    const targetCommentId = queryCommentId || hashMatch?.[1] || null
+    if (!targetCommentId) return
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    let attempts = 0
+    const maxAttempts = 10
+    const tryHighlight = () => {
+      const el = document.getElementById(`comment-${targetCommentId}`)
+      if (!el) {
+        attempts += 1
+        if (attempts < maxAttempts) {
+          timeoutId = setTimeout(tryHighlight, 120)
+        }
+        return
+      }
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setHighlightedCommentId(targetCommentId)
+      timeoutId = setTimeout(() => {
+        setHighlightedCommentId((current) => (current === targetCommentId ? null : current))
+      }, 2600)
+    }
+
+    tryHighlight()
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }, [comments])
+
   if (!comments.length) {
     return <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-4 text-sm text-slate-500">No comments yet. Start the conversation!</div>
   }
@@ -364,6 +416,7 @@ export default function CommentThread({ comments, onReply, onVote, currentUser }
           depth={0}
           onReply={onReply}
           onVote={onVote}
+          highlightedCommentId={highlightedCommentId}
           currentUser={currentUser}
         />
       ))}

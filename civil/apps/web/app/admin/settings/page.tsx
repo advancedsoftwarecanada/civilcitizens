@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { clearAuthSession } from '../../_lib/authSession'
 import type { ReactNode } from 'react'
 import { useAdminAccess } from '../_hooks/useAdminAccess'
 
@@ -55,7 +56,7 @@ export default function AdminSettingsPage() {
           headers: { authorization: `Bearer ${token}` },
         })
         if (res.status === 401) {
-          window.localStorage.removeItem('token')
+          clearAuthSession()
           redirectToAuthModal('login')
           return
         }

@@ -3,11 +3,8 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
 import clsx from 'clsx'
-import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
-import type { IconBaseProps, IconType } from 'react-icons'
-import { type ReactionType } from '@civil/shared'
+import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuShare } from 'react-icons/lu'
 import Sidebar from '../../../../_components/Sidebar'
 import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
@@ -78,7 +75,6 @@ function PostDetailImages({ images, mediaUrl }: { images?: string[] | null; medi
               onClick={() => setSelectedIndex(index)}
               className={className}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={src}
                 alt={`Post image ${index + 1}`}
@@ -131,7 +127,6 @@ function PostDetailImages({ images, mediaUrl }: { images?: string[] | null; medi
             </>
           ) : null}
 
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={allImages[selectedIndex]}
             alt="Full size"
@@ -171,59 +166,6 @@ const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'new', label: 'New' },
 ]
 
-type ReactionOption = {
-  type: ReactionType
-  label: string
-  icon: IconType
-  activeIcon?: IconType
-  accentClass: string
-}
-
-const MapleIconNeutral: IconType = ({ className, size = 16 }: IconBaseProps) => (
-  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
-)
-
-const MapleIconActive: IconType = ({ className, size = 16 }: IconBaseProps) => (
-  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
-)
-
-const REACTION_OPTIONS: ReactionOption[] = [
-  { type: 'maple', label: 'Like', icon: MapleIconNeutral, activeIcon: MapleIconActive, accentClass: 'border-red-200 bg-red-50 text-red-700' },
-  { type: 'heart', label: 'Heart', icon: LuHeart, accentClass: 'border-rose-200 bg-rose-50 text-rose-700' },
-  { type: 'haha', label: 'Haha', icon: LuLaugh, accentClass: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
-  { type: 'wow', label: 'Wow', icon: LuSparkles, accentClass: 'border-sky-200 bg-sky-50 text-sky-700' },
-  { type: 'sad', label: 'Support', icon: LuFrown, accentClass: 'border-slate-200 bg-slate-50 text-slate-700' },
-  { type: 'fire', label: 'Fire', icon: LuFlame, accentClass: 'border-orange-200 bg-orange-50 text-orange-700' },
-]
-
-type ReactionButtonProps = {
-  option: ReactionOption
-  count: number
-  active: boolean
-  blocked: boolean
-  disabled: boolean
-  onClick: () => void
-}
-
-function ReactionButton({ option, count, active, blocked, disabled, onClick }: ReactionButtonProps) {
-  const Icon = active && option.activeIcon ? option.activeIcon : option.icon
-  return (
-    <button
-      type="button"
-      className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2 ${active ? option.accentClass : blocked ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-800 focus:ring-[var(--cc-primary)]'} ${disabled ? 'pointer-events-none opacity-60' : ''}`}
-      onClick={() => {
-        if (disabled || blocked) return
-        onClick()
-      }}
-      aria-label={`${option.label} reaction`}
-      disabled={disabled || blocked}
-    >
-      <Icon className="h-4 w-4" aria-hidden="true" />
-      {count > 0 ? <span>{count}</span> : <span className="text-[11px] font-normal text-slate-500">{option.label}</span>}
-    </button>
-  )
-}
-
 function formatDateTime(iso: string) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
@@ -248,9 +190,7 @@ export default function UserPostPage({ params }: PageProps) {
   const [comments, setComments] = useState<ApiComment[]>([])
   const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
   const [appliedCommentSort, setAppliedCommentSort] = useState<'hot' | 'new'>('hot')
-  const [pendingReaction, setPendingReaction] = useState(false)
-
-  const viewerIsVerified = Boolean(viewer?.isVerified || viewer?.isPremium)
+  const [pendingVote, setPendingVote] = useState(false)
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
@@ -331,10 +271,44 @@ export default function UserPostPage({ params }: PageProps) {
 
   const postId = post?.id
   useRegisterPageView(postId)
-  const reactionCounts =
-    post?.reactions ?? { maple: 0, heart: 0, haha: 0, wow: 0, sad: 0, fire: 0, total: 0, positive: 0 }
-  const currentReaction = (post?.viewer?.reaction ?? null) as ReactionType | null
-  const totalReactions = reactionCounts.total ?? 0
+  const voteScore = post?.votes?.score ?? post?.counts?.score ?? 0
+  const viewerVote = post?.viewer?.vote ?? null
+
+  const handleVote = useCallback(
+    async (value: -1 | 0 | 1) => {
+      if (!post?.id || pendingVote) return
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      setPendingVote(true)
+      try {
+        const res = await fetch('/api/posts/vote', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ postId: post.id, value }),
+        })
+        if (!res.ok) {
+          console.error('Vote request failed', await res.text())
+          return
+        }
+        const data = await res.json().catch(() => null)
+        const updated = (data as { post?: ApiPost })?.post
+        if (updated) {
+          setPost(updated)
+        }
+      } catch (err) {
+        console.error('Unable to vote on post', err)
+      } finally {
+        setPendingVote(false)
+      }
+    },
+    [pendingVote, post?.id],
+  )
 
   const loadComments = useCallback(
     async (sortMode: 'hot' | 'new') => {
@@ -354,47 +328,6 @@ export default function UserPostPage({ params }: PageProps) {
       }
     },
     [postId],
-  )
-
-  const handleReact = useCallback(
-    async (nextReaction: ReactionType | null) => {
-      if (!post?.id) return
-      if (pendingReaction) return
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-      if (!token) {
-        redirectToAuthModal('login')
-        return
-      }
-      if (!viewerIsVerified) {
-        redirectToAuthModal('login')
-        return
-      }
-      setPendingReaction(true)
-      try {
-        const res = await fetch('/api/posts/react', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ postId: post.id, reaction: nextReaction }),
-        })
-        if (!res.ok) {
-          console.error('Reaction request failed', await res.text())
-          return
-        }
-        const data = await res.json().catch(() => null)
-        const updated = (data as { post?: ApiPost })?.post
-        if (updated) {
-          setPost(updated)
-        }
-      } catch (err) {
-        console.error('Unable to react to post', err)
-      } finally {
-        setPendingReaction(false)
-      }
-    },
-    [pendingReaction, post?.id, viewerIsVerified],
   )
 
   useEffect(() => {
@@ -489,7 +422,32 @@ export default function UserPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
+  const handleShare = useCallback(async () => {
+    if (typeof window === 'undefined') return
+    const shareUrl = window.location.href
+    const shareText = post?.title || post?.body || 'Post'
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: shareText, text: shareText, url: shareUrl })
+        return
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl)
+      }
+    } catch (err) {
+      console.error('Unable to share post', err)
+    }
+  }, [post?.body, post?.title])
+
   const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
+  const postOrganization = post?.organization ?? null
+  const authorProfileHref = postOrganization?.provinceCode && postOrganization.communitySlug
+    ? `/com/${postOrganization.provinceCode.toLowerCase()}/${postOrganization.communitySlug.toLowerCase()}/orgs/${postOrganization.slug}`
+    : post
+      ? `/u/${post.author.handle}`
+      : '/home'
+  const headerCoverUrl = postOrganization?.coverUrl ?? post?.author.coverUrl ?? null
+  const hasHeaderCover = Boolean(headerCoverUrl)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
@@ -529,110 +487,137 @@ export default function UserPostPage({ params }: PageProps) {
                 ) : null}
               </nav>
 
-                <header className="flex flex-col gap-4 md:flex-row md:items-start">
-                  <VerifiedAvatar
-                    src={post.author.avatarUrl}
-                    alt={postAuthorDisplayName}
-                    initials={postAuthorDisplayName}
-                    size={56}
-                    isVerified={Boolean(post.author.isVerified)}
-                    isBusiness={Boolean(post.author.isPremium)}
-                    className="shrink-0"
-                    href={`/u/${post.author.handle}`}
-                  />
-                  <div className="min-w-0 flex-1 space-y-4">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500">
-                      <Link href={`/u/${post.author.handle}`} className="font-semibold text-slate-900 hover:underline">
-                        {postAuthorDisplayName}
-                      </Link>
-                      <span>@{post.author.handle}</span>
-                      <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                        {JURISDICTION_LABELS[post.jurisdiction]}
-                      </span>
-                      {post.provinceCode && post.communitySlug ? (
-                        <Link
-                          href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
-                          className="rounded-full border border-slate-200 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-500 hover:bg-slate-50"
-                        >
-                          {post.communityName ?? post.communitySlug}
-                        </Link>
-                      ) : null}
-                    </div>
-                    <div className="text-[16px] leading-7 text-slate-900">
-                      <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} />
-                      {post.type === 'article' && post.title ? (
-                        <h1 className="text-3xl font-semibold text-slate-900">{post.title}</h1>
-                      ) : null}
-                      <div className="mt-4 space-y-4">
-                        {post.type === 'article' ? (
-                          <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
-                        ) : (
-                          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{post.body}</div>
-                        )}
+                <header className="space-y-4">
+                  <div className={clsx('relative overflow-hidden rounded-xl border px-3 py-2', hasHeaderCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
+                    {headerCoverUrl ? <img src={headerCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                    <div className={clsx('absolute inset-0', hasHeaderCover ? 'bg-slate-900/50' : 'bg-transparent')} />
+                    <div className="relative z-[1] flex items-start gap-3">
+                      <VerifiedAvatar
+                        src={postOrganization ? (postOrganization.logoUrl ?? null) : post.author.avatarUrl}
+                        alt={postAuthorDisplayName}
+                        initials={postAuthorDisplayName}
+                        size={56}
+                        isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
+                        isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
+                        className="shrink-0"
+                        href={authorProfileHref}
+                      />
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className={clsx('flex flex-wrap items-center gap-x-2 gap-y-1 text-sm', hasHeaderCover ? 'text-white/80' : 'text-slate-500')}>
+                          <Link href={authorProfileHref} className={clsx('font-semibold hover:underline', hasHeaderCover ? 'text-white' : 'text-slate-900')}>
+                            {postOrganization?.name ?? postAuthorDisplayName}
+                          </Link>
+                          <span>@{post.author.handle}</span>
+                          <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
+                        </div>
+                        <div className={clsx('flex flex-wrap items-center gap-2 text-xs font-semibold', hasHeaderCover ? 'text-white/85' : 'text-slate-500')}>
+                          <span className={clsx('rounded-full px-2 py-0.5', hasHeaderCover ? 'border border-white/35 text-white/85' : 'bg-slate-100 text-slate-600')}>
+                            {JURISDICTION_LABELS[post.jurisdiction]}
+                          </span>
+                          {post.provinceCode && post.communitySlug ? (
+                            <Link
+                              href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
+                              className={clsx('rounded-full px-2 py-0.5 uppercase tracking-wide', hasHeaderCover ? 'border border-white/35 text-white/85 hover:border-white/60' : 'border border-slate-200 text-slate-500 hover:border-slate-300')}
+                            >
+                              {post.communityName ?? post.communitySlug}
+                            </Link>
+                          ) : null}
+                        </div>
                       </div>
+                    </div>
+                  </div>
+                  <div className="text-[16px] leading-7 text-slate-900">
+                    <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} />
+                    {post.type === 'article' && post.title ? (
+                      <h1 className="text-3xl font-semibold text-slate-900">{post.title}</h1>
+                    ) : null}
+                    <div className="mt-4 space-y-4">
+                      {post.type === 'article' ? (
+                        <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
+                      ) : (
+                        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{post.body}</div>
+                      )}
                     </div>
                   </div>
                 </header>
 
                 <footer className="mt-6 space-y-3 text-xs text-slate-500">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {REACTION_OPTIONS.map((option) => (
-                      <ReactionButton
-                        key={option.type}
-                        option={option}
-                        count={(reactionCounts as Record<ReactionType, number>)[option.type] ?? 0}
-                        active={currentReaction === option.type && viewerIsVerified}
-                        blocked={!viewerIsVerified}
-                        disabled={pendingReaction}
-                        onClick={() => handleReact(currentReaction === option.type ? null : option.type)}
-                      />
-                    ))}
-                    {!viewerIsVerified ? <span className="text-[11px] text-slate-500">Only verified members can react.</span> : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-semibold text-slate-700">
-                      {totalReactions === 1 ? '1 reaction' : `${totalReactions} reactions`}
-                    </span>
+                  <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 py-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleVote(viewerVote === 1 ? 0 : 1)}
+                        className={clsx(
+                          'inline-flex items-center rounded-full p-1.5 transition',
+                          viewerVote === 1
+                            ? 'bg-emerald-50 text-emerald-700'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
+                          pendingVote && 'pointer-events-none opacity-60',
+                        )}
+                        aria-label="Upvote post"
+                      >
+                        <LuArrowBigUp className="h-4 w-4" />
+                      </button>
+                      <span className="min-w-[2ch] text-center text-sm font-semibold text-slate-700">{voteScore}</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleVote(viewerVote === -1 ? 0 : -1)}
+                        className={clsx(
+                          'inline-flex items-center rounded-full p-1.5 transition',
+                          viewerVote === -1
+                            ? 'bg-rose-50 text-rose-700'
+                            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
+                          pendingVote && 'pointer-events-none opacity-60',
+                        )}
+                        aria-label="Downvote post"
+                      >
+                        <LuArrowBigDown className="h-4 w-4" />
+                      </button>
+                    </div>
                     {post.counts ? (
-                      <span>{post.counts.commentCount === 1 ? '1 comment' : `${post.counts.commentCount} comments`}</span>
+                      <a
+                        href="#comments"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        aria-label="Open comments"
+                      >
+                        <LuMessageCircle className="h-4 w-4" />
+                        <span>{post.counts.commentCount}</span>
+                      </a>
                     ) : null}
-                    <span>Canonical: {paths?.user ?? buildLegacyPath(post)}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleShare()}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      <LuShare className="h-4 w-4" />
+                      <span>Share</span>
+                    </button>
                   </div>
+                  <div className="text-xs text-slate-400">Canonical: {paths?.user ?? buildLegacyPath(post)}</div>
                 </footer>
 
-                <section className="mt-8 rounded-[28px] border border-white/70 bg-white/95 p-5 shadow-subtle">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Comments</p>
-                      {post.counts ? (
-                        <h2 className="text-lg font-semibold text-slate-900">{post.counts.commentCount} total</h2>
-                      ) : (
-                        <h2 className="text-lg font-semibold text-slate-900">Join the conversation</h2>
-                      )}
-                    </div>
-                    <div className="inline-flex rounded-full bg-slate-100 p-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      {COMMENT_SORT_OPTIONS.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          className={`rounded-full px-4 py-1 transition ${
-                            commentSort === option.value
-                              ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
-                              : 'text-slate-500'
-                          }`}
-                          onClick={() => setCommentSort(option.value)}
-                          disabled={commentSort === option.value}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                <section id="comments" className="mt-6">
+                  <div className="inline-flex rounded-full bg-slate-100 p-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    {COMMENT_SORT_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`rounded-full px-4 py-1 transition ${
+                          commentSort === option.value
+                            ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
+                            : 'text-slate-500'
+                        }`}
+                        onClick={() => setCommentSort(option.value)}
+                        disabled={commentSort === option.value}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                   {viewer ? (
                     <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
                   ) : (
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                       <span>Sign in to join the conversation.</span>
                       <button
                         type="button"

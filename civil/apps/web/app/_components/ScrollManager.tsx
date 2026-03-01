@@ -19,7 +19,20 @@ export default function ScrollManager() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    const scrollToTop = () => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+      if (document.documentElement) document.documentElement.scrollTop = 0
+      if (document.body) document.body.scrollTop = 0
+    }
+
+    scrollToTop()
+    const frame = window.requestAnimationFrame(scrollToTop)
+    const timeout = window.setTimeout(scrollToTop, 0)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
   }, [pathname, searchKey])
 
   return null

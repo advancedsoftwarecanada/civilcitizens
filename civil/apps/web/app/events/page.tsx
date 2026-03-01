@@ -1,11 +1,10 @@
-import ComingSoon from '../_components/ComingSoon'
+import type { Metadata } from 'next'
+import EventsPageClient from './EventsPageClient'
+
+export const metadata: Metadata = {
+  title: 'Events',
+}
 
 export default function EventsPage() {
-  return (
-    <ComingSoon
-      activeNavKey="events"
-      title="Events are coming soon"
-      message="Civic event planning and ticketing are still in development."
-    />
-  )
+  return <EventsPageClient />
 }

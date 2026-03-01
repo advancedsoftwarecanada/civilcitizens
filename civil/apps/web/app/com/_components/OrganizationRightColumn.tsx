@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
@@ -16,16 +16,22 @@ import { useOrganization } from './OrganizationContext'
 
 const ORG_LINKS = [
   { key: 'posts', label: 'Posts', segment: '' },
+  { key: 'chat-channels', label: 'Chat', segment: 'chat-channels' },
   { key: 'events', label: 'Events', segment: 'events' },
   { key: 'jobs', label: 'Jobs', segment: 'jobs' },
   { key: 'shop', label: 'Shop', segment: 'shop' },
   { key: 'members', label: 'Members', segment: 'members' },
-  { key: 'chat-channels', label: 'Chat Channels', segment: 'chat-channels' },
   { key: 'settings', label: 'Settings', segment: 'settings' },
 ] as const
 
 type MeResponse = {
   id: string
+}
+
+type GovernanceStateResponse = {
+  viewer?: {
+    permissions?: string[]
+  }
 }
 
 type Props = {
@@ -42,10 +48,13 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
 
   const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [me, setMe] = useState<MeResponse | null>(null)
+  const [viewerPermissions, setViewerPermissions] = useState<string[]>([])
 
   const isOwner = Boolean(me?.id && org?.ownerId && me.id === org.ownerId)
-  const canManageShop = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || isOwner)
-  const canManageChannels = canManageShop
+  const canManageSettings = useMemo(() => {
+    if (org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || isOwner) return true
+    return viewerPermissions.length > 0
+  }, [isOwner, org?.viewerRole, viewerPermissions])
 
   useEffect(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -64,6 +73,13 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
           { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
         )
 
+        const governancePromise = fetch(
+          buildApiUrl(
+            `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization.slug)}/governance/state`,
+          ),
+          { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+        )
+
         if (!cachedMe) {
           const payload = await ensureViewerMe({ token })
           if (payload?.id) setMe({ id: payload.id })
@@ -73,6 +89,13 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
         if (orgRes.ok) {
           const payload = (await orgRes.json().catch(() => null)) as { org?: CommunityOrganization } | null
           if (payload?.org) setOrg(payload.org)
+        }
+
+        const governanceRes = await governancePromise
+        if (governanceRes.ok) {
+          const payload = (await governanceRes.json().catch(() => null)) as GovernanceStateResponse | null
+          const perms = Array.isArray(payload?.viewer?.permissions) ? payload?.viewer?.permissions : []
+          setViewerPermissions(perms.filter((item): item is string => typeof item === 'string'))
         }
       } catch {
         // ignore
@@ -131,72 +154,12 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
 
         <div className="mt-5 overflow-hidden rounded-2xl border border-slate-100 bg-slate-50/70">
           {ORG_LINKS.map((link) => {
-            if (link.key === 'settings' && !isOwner) return null
+            if (link.key === 'settings' && !canManageSettings) return null
             const href = link.segment ? `${basePath}/${link.segment}` : basePath
             const active =
               link.key === 'posts'
                 ? pathname === basePath || pathname === `${basePath}/posts` || pathname?.startsWith(`${basePath}/posts/`)
                 : pathname === href || (link.segment && pathname?.startsWith(`${href}`))
-
-            if (link.key === 'shop' && canManageShop) {
-              const manageHref = `${basePath}/shop/manage`
-              const manageActive = pathname === manageHref || pathname?.startsWith(`${manageHref}`) || pathname?.startsWith(`${basePath}/shop/new`)
-
-              return (
-                <Fragment key={link.key}>
-                  <Link
-                    href={href}
-                    className={clsx(
-                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
-                      'border-b border-slate-100',
-                      active ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
-                    )}
-                  >
-                    <span>{link.label}</span>
-                  </Link>
-                  <Link
-                    href={manageHref}
-                    className={clsx(
-                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
-                      'border-b border-slate-100',
-                      manageActive ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
-                    )}
-                  >
-                    <span>Manage Shop</span>
-                  </Link>
-                </Fragment>
-              )
-            }
-
-            if (link.key === 'chat-channels' && canManageChannels) {
-              const manageHref = `${basePath}/chat-channels/manage`
-              const manageActive = pathname === manageHref || pathname?.startsWith(`${manageHref}`)
-
-              return (
-                <Fragment key={link.key}>
-                  <Link
-                    href={href}
-                    className={clsx(
-                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
-                      'border-b border-slate-100',
-                      active ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
-                    )}
-                  >
-                    <span>{link.label}</span>
-                  </Link>
-                  <Link
-                    href={manageHref}
-                    className={clsx(
-                      'flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors',
-                      'border-b border-slate-100',
-                      manageActive ? 'bg-white text-[var(--cc-primary)]' : 'text-slate-700 hover:bg-white hover:text-slate-900',
-                    )}
-                  >
-                    <span>Manage channels</span>
-                  </Link>
-                </Fragment>
-              )
-            }
 
             return (
               <Link

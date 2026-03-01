@@ -68,6 +68,54 @@ type OrgMembersResponse = {
   followers?: OrgFollowerItem[]
 }
 
+type OrgAuditItem = {
+  id: string
+  actorUserId: string
+  action: string
+  createdAt: string
+  reason: string | null
+  previousValue: unknown
+  nextValue: unknown
+}
+
+type OrgAuditResponse = {
+  items?: OrgAuditItem[]
+  nextCursor?: string | null
+}
+
+type OrgGovernanceStateResponse = {
+  state?: {
+    joinMode?: string
+    ranks?: unknown[]
+    plans?: unknown[]
+    sponsors?: unknown[]
+    events?: unknown[]
+    achievements?: unknown[]
+    achievementAwards?: unknown[]
+    referrals?: unknown[]
+    reputationLedger?: unknown[]
+    eventRsvps?: unknown[]
+    economics?: unknown[]
+  }
+}
+
+type OrgGovernanceAnalyticsResponse = {
+  summary?: {
+    activeMembers?: number
+    pendingMembers?: number
+    totalMembersTracked?: number
+    plans?: number
+    referrals?: number
+    achievements?: number
+    awards?: number
+    paidEvents?: number
+    events?: number
+    totalRsvps?: number
+    goingRsvps?: number
+    totalRevenueCents?: number
+  }
+}
+
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
@@ -108,6 +156,69 @@ const LOGO_EXPORT_SIZE = 1024
 const MAX_CROP_ZOOM = 3
 const HEADLINE_MAX_CHARS = 60
 
+const ORG_JOIN_MODE_OPTIONS = ['PUBLIC', 'INVITE_ONLY', 'APPLICATION_REQUIRED'] as const
+const ORG_MEMBERSHIP_STATUS_OPTIONS = ['PENDING', 'ACTIVE', 'GRACE', 'EXPIRED', 'SUSPENDED', 'BANNED'] as const
+const ORG_PERMISSION_OPTIONS = [
+  'approve_members',
+  'remove_members',
+  'promote_members',
+  'demote_members',
+  'create_ranks',
+  'view_audit_logs',
+  'manage_membership_plans',
+  'view_revenue',
+  'issue_refunds',
+  'create_paid_events',
+  'manage_events',
+  'manage_sponsors',
+  'manage_referrals',
+  'award_achievements',
+  'create_announcements',
+  'pin_posts',
+  'moderate_content',
+] as const
+
+const ORG_PERMISSION_HELP: Record<(typeof ORG_PERMISSION_OPTIONS)[number], { label: string; description: string }> = {
+  approve_members: { label: 'Approve members', description: 'Approve/activate pending members.' },
+  remove_members: { label: 'Remove members', description: 'Kick/ban/suspend members.' },
+  promote_members: { label: 'Promote members', description: 'Promote members into elevated roles/ranks (when allowed).' },
+  demote_members: { label: 'Demote members', description: 'Remove elevated roles/ranks (when allowed).' },
+  create_ranks: { label: 'Create roles', description: 'Create new roles (ranks) and assign permissions.' },
+  view_audit_logs: { label: 'View audit log', description: 'View governance actions for transparency.' },
+  manage_membership_plans: { label: 'Manage plans', description: 'Create/edit membership plans and join mode.' },
+  view_revenue: { label: 'View revenue', description: 'View org revenue summaries and totals.' },
+  issue_refunds: { label: 'Issue refunds', description: 'Record/issue refunds for membership or events.' },
+  create_paid_events: { label: 'Create paid events', description: 'Publish events that require payment.' },
+  manage_events: { label: 'Manage events', description: 'Create and manage org events.' },
+  manage_sponsors: { label: 'Manage sponsors', description: 'Add and manage sponsor listings.' },
+  manage_referrals: { label: 'Manage referrals', description: 'Record and manage referral tracking.' },
+  award_achievements: { label: 'Award achievements', description: 'Grant achievements to members.' },
+  create_announcements: { label: 'Create announcements', description: 'Publish announcements (and free events where supported).' },
+  pin_posts: { label: 'Pin posts', description: 'Pin important posts in org views.' },
+  moderate_content: { label: 'Moderate content', description: 'Remove or moderate posts/comments where applicable.' },
+}
+
+type OrgJoinMode = (typeof ORG_JOIN_MODE_OPTIONS)[number]
+type OrgMembershipStatus = (typeof ORG_MEMBERSHIP_STATUS_OPTIONS)[number]
+type OrgRankVisibility = 'PUBLIC' | 'PRIVATE'
+type OrgPlanType = 'FREE' | 'ONE_TIME' | 'SUBSCRIPTION'
+type OrgPlanInterval = 'monthly' | 'yearly'
+
+type GovernanceRankSummary = {
+  id: string
+  name: string
+  description?: string | null
+  permissions?: string[]
+  visibility?: string
+  system?: boolean
+}
+
+function toggleListValue(list: string[], value: string, nextOn: boolean) {
+  const has = list.includes(value)
+  if (nextOn) return has ? list : [...list, value]
+  return has ? list.filter((item) => item !== value) : list
+}
+
 function normalizeRichText(value: string | null | undefined): string {
   const source = (value ?? '').trim()
   if (!source) return ''
@@ -140,14 +251,18 @@ async function waitForAssetReady(token: string, assetId: string, label: string) 
   throw new Error(`Your ${label} is taking longer than expected to process. Please refresh in a moment.`)
 }
 
+export type OrganizationSettingsSection = 'all' | 'details' | 'governance' | 'roles'
+
 export default function OrganizationSettingsClient({
   province,
   municipality,
   slug,
+  section = 'all',
 }: {
   province: string
   municipality: string
   slug: string
+  section?: OrganizationSettingsSection
 }) {
   const router = useRouter()
   const [org, setOrg] = useState<CommunityOrganization | null>(null)
@@ -155,6 +270,11 @@ export default function OrganizationSettingsClient({
   const cachedMe = useViewerStore((s) => s.me)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+
+  const showDetails = section === 'all' || section === 'details'
+  const showGovernance = section === 'all' || section === 'governance'
+  const showRoles = section === 'all' || section === 'roles'
+  const showPeople = section === 'all'
 
   const [details, setDetails] = useState({
     phone: '',
@@ -176,6 +296,72 @@ export default function OrganizationSettingsClient({
   const [membersLoading, setMembersLoading] = useState(false)
   const [memberActionUserId, setMemberActionUserId] = useState<string | null>(null)
   const [visibilitySaving, setVisibilitySaving] = useState(false)
+  const [privateVisibilityModalOpen, setPrivateVisibilityModalOpen] = useState(false)
+  const [auditItems, setAuditItems] = useState<OrgAuditItem[]>([])
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [governanceState, setGovernanceState] = useState<OrgGovernanceStateResponse['state'] | null>(null)
+  const [governanceAnalytics, setGovernanceAnalytics] = useState<OrgGovernanceAnalyticsResponse['summary'] | null>(null)
+  const [governanceLoading, setGovernanceLoading] = useState(false)
+  const [governanceActionBusy, setGovernanceActionBusy] = useState<string | null>(null)
+  const [referrerUserId, setReferrerUserId] = useState('')
+  const [referredUserId, setReferredUserId] = useState('')
+  const [referralPlanId, setReferralPlanId] = useState('')
+  const [reputationUserId, setReputationUserId] = useState('')
+  const [reputationDelta, setReputationDelta] = useState('10')
+  const [reputationSource, setReputationSource] = useState('manual_adjustment')
+  const [reputationNote, setReputationNote] = useState('')
+  const [rsvpEventId, setRsvpEventId] = useState('')
+  const [rsvpStatus, setRsvpStatus] = useState<'GOING' | 'INTERESTED' | 'DECLINED'>('GOING')
+  const [rsvpTicketType, setRsvpTicketType] = useState<'FREE' | 'PAID'>('FREE')
+  const [economicsKind, setEconomicsKind] = useState<'membership' | 'event' | 'refund' | 'manual'>('manual')
+  const [economicsAmountCents, setEconomicsAmountCents] = useState('0')
+  const [economicsCurrency, setEconomicsCurrency] = useState('CAD')
+  const [economicsEventId, setEconomicsEventId] = useState('')
+  const [economicsMemberUserId, setEconomicsMemberUserId] = useState('')
+  const [economicsNote, setEconomicsNote] = useState('')
+
+  const [joinMode, setJoinMode] = useState<OrgJoinMode>('PUBLIC')
+  const [joinModeReason, setJoinModeReason] = useState('')
+
+  const [rankName, setRankName] = useState('')
+  const [rankDescription, setRankDescription] = useState('')
+  const [rankVisibility, setRankVisibility] = useState<OrgRankVisibility>('PUBLIC')
+  const [rankPermissions, setRankPermissions] = useState<string[]>([])
+  const [rankPromotionAuthority, setRankPromotionAuthority] = useState('')
+
+  const [existingRankId, setExistingRankId] = useState<string>('')
+
+  const [planName, setPlanName] = useState('')
+  const [planDescription, setPlanDescription] = useState('')
+  const [planType, setPlanType] = useState<OrgPlanType>('FREE')
+  const [planAmountCents, setPlanAmountCents] = useState('0')
+  const [planCurrency, setPlanCurrency] = useState('CAD')
+  const [planInterval, setPlanInterval] = useState<OrgPlanInterval>('monthly')
+  const [planRankId, setPlanRankId] = useState('')
+  const [planGovernanceRights, setPlanGovernanceRights] = useState(false)
+
+  const [sponsorName, setSponsorName] = useState('')
+  const [sponsorTier, setSponsorTier] = useState('Bronze')
+  const [sponsorLogoUrl, setSponsorLogoUrl] = useState('')
+  const [sponsorRelationshipDescription, setSponsorRelationshipDescription] = useState('')
+  const [sponsorCivilHandle, setSponsorCivilHandle] = useState('')
+  const [sponsorLinkUrl, setSponsorLinkUrl] = useState('')
+  const [sponsorLinkLabel, setSponsorLinkLabel] = useState('')
+
+  const [achievementTitle, setAchievementTitle] = useState('')
+  const [achievementDescription, setAchievementDescription] = useState('')
+  const [achievementReputationPoints, setAchievementReputationPoints] = useState('0')
+  const [achievementVisibility, setAchievementVisibility] = useState<OrgRankVisibility>('PUBLIC')
+
+  const [awardAchievementId, setAwardAchievementId] = useState('')
+  const [awardUserId, setAwardUserId] = useState('')
+  const [awardNote, setAwardNote] = useState('')
+
+  const [memberStatusUserId, setMemberStatusUserId] = useState('')
+  const [memberStatusStatus, setMemberStatusStatus] = useState<OrgMembershipStatus>('ACTIVE')
+  const [memberStatusRankId, setMemberStatusRankId] = useState('')
+  const [memberStatusPlanId, setMemberStatusPlanId] = useState('')
+  const [memberStatusReason, setMemberStatusReason] = useState('')
 
   const [photoModalCategory, setPhotoModalCategory] = useState<BusinessMediaCategory | null>(null)
   const [photoCaption, setPhotoCaption] = useState('')
@@ -235,6 +421,72 @@ export default function OrganizationSettingsClient({
     }
   }, [orgApiPath, token])
 
+  const loadAudit = useCallback(async () => {
+    if (!token) {
+      setAuditItems([])
+      return
+    }
+
+    setAuditLoading(true)
+    try {
+      const res = await fetch(buildApiUrl(`${orgApiPath}/governance/audit?limit=25`), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        setAuditItems([])
+        return
+      }
+      const { json } = await parseApiResponse<OrgAuditResponse>(res)
+      setAuditItems(Array.isArray(json?.items) ? json.items : [])
+    } catch {
+      setAuditItems([])
+    } finally {
+      setAuditLoading(false)
+    }
+  }, [orgApiPath, token])
+
+  const loadGovernanceOverview = useCallback(async () => {
+    if (!token) {
+      setGovernanceState(null)
+      setGovernanceAnalytics(null)
+      return
+    }
+
+    setGovernanceLoading(true)
+    try {
+      const [stateRes, analyticsRes] = await Promise.all([
+        fetch(buildApiUrl(`${orgApiPath}/governance/state`), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        }),
+        fetch(buildApiUrl(`${orgApiPath}/governance/analytics`), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        }),
+      ])
+
+      if (stateRes.ok) {
+        const { json } = await parseApiResponse<OrgGovernanceStateResponse>(stateRes)
+        setGovernanceState(json?.state ?? null)
+      } else {
+        setGovernanceState(null)
+      }
+
+      if (analyticsRes.ok) {
+        const { json } = await parseApiResponse<OrgGovernanceAnalyticsResponse>(analyticsRes)
+        setGovernanceAnalytics(json?.summary ?? null)
+      } else {
+        setGovernanceAnalytics(null)
+      }
+    } catch {
+      setGovernanceState(null)
+      setGovernanceAnalytics(null)
+    } finally {
+      setGovernanceLoading(false)
+    }
+  }, [orgApiPath, token])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -275,6 +527,47 @@ export default function OrganizationSettingsClient({
   useEffect(() => {
     void loadMembers()
   }, [loadMembers])
+
+  useEffect(() => {
+    void loadAudit()
+  }, [loadAudit])
+
+  useEffect(() => {
+    void loadGovernanceOverview()
+  }, [loadGovernanceOverview])
+
+  useEffect(() => {
+    const next = typeof governanceState?.joinMode === 'string' ? governanceState.joinMode : null
+    if (next && ORG_JOIN_MODE_OPTIONS.includes(next as OrgJoinMode)) {
+      setJoinMode(next as OrgJoinMode)
+    }
+  }, [governanceState?.joinMode])
+
+  const existingRanks = useMemo<GovernanceRankSummary[]>(() => {
+    const ranks = Array.isArray(governanceState?.ranks) ? (governanceState?.ranks as GovernanceRankSummary[]) : []
+    return [...ranks].sort((a, b) => {
+      const aSystem = Boolean(a.system)
+      const bSystem = Boolean(b.system)
+      if (aSystem !== bSystem) return aSystem ? -1 : 1
+      const aAdmins = String(a.name || '').toLowerCase() === 'admins'
+      const bAdmins = String(b.name || '').toLowerCase() === 'admins'
+      if (aAdmins !== bAdmins) return aAdmins ? -1 : 1
+      return String(a.name || '').localeCompare(String(b.name || ''))
+    })
+  }, [governanceState?.ranks])
+
+  const selectedExistingRank = useMemo<GovernanceRankSummary | null>(() => {
+    if (!existingRankId) return existingRanks[0] ?? null
+    return existingRanks.find((rank) => rank?.id === existingRankId) ?? existingRanks[0] ?? null
+  }, [existingRankId, existingRanks])
+
+  useEffect(() => {
+    if (existingRankId) return
+    if (existingRanks.length) {
+      const firstRank = existingRanks[0]
+      if (firstRank) setExistingRankId(String(firstRank.id))
+    }
+  }, [existingRankId, existingRanks])
 
   useEffect(() => {
     if (!org) return
@@ -490,9 +783,8 @@ export default function OrganizationSettingsClient({
     }
   }, [deleteConfirmationMatches, isOwner, org, orgApiPath, router, token])
 
-  const toggleVisibility = useCallback(async () => {
+  const updateVisibility = useCallback(async (nextPublic: boolean) => {
     if (!token || !org || !canManage) return
-    const currentlyPublic = org.status === 'ACTIVE'
     setVisibilitySaving(true)
     try {
       const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
@@ -501,7 +793,7 @@ export default function OrganizationSettingsClient({
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ isPublic: !currentlyPublic }),
+        body: JSON.stringify({ isPublic: nextPublic }),
       })
       const { json } = await parseApiResponse<{ org?: CommunityOrganization; error?: unknown }>(res)
       if (!res.ok) {
@@ -515,7 +807,10 @@ export default function OrganizationSettingsClient({
         return
       }
       if (json?.org) setOrg(json.org)
-      pushToast(!currentlyPublic ? 'Organization is now public.' : 'Organization is now private.', 'success')
+      if (!nextPublic) {
+        setPrivateVisibilityModalOpen(false)
+      }
+      pushToast(nextPublic ? 'Organization is now public.' : 'Organization is now private.', 'success')
     } catch {
       pushToast('Unable to update visibility right now.', 'error')
     } finally {
@@ -584,6 +879,361 @@ export default function OrganizationSettingsClient({
     },
     [isOwner, loadMembers, orgApiPath, token],
   )
+
+  const refreshGovernanceData = useCallback(async () => {
+    await Promise.all([loadGovernanceOverview(), loadAudit()])
+  }, [loadAudit, loadGovernanceOverview])
+
+  const postGovernanceAction = useCallback(
+    async ({
+      key,
+      endpoint,
+      payload,
+      successMessage,
+    }: {
+      key: string
+      endpoint: string
+      payload: Record<string, unknown>
+      successMessage: string
+    }) => {
+      if (!token) {
+        redirectToAuthModal('login')
+        return false
+      }
+
+      setGovernanceActionBusy(key)
+      try {
+        const res = await fetch(buildApiUrl(`${orgApiPath}${endpoint}`), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        })
+
+        const { json } = await parseApiResponse<{ error?: unknown }>(res)
+        if (!res.ok) {
+          const rawError =
+            typeof (json as any)?.error === 'string'
+              ? (json as any).error
+              : typeof (json as any)?.error?.message === 'string'
+                ? (json as any).error.message
+                : null
+          pushToast(rawError ?? 'Governance action failed.', 'error')
+          return false
+        }
+
+        pushToast(successMessage, 'success')
+        await refreshGovernanceData()
+        return true
+      } catch {
+        pushToast('Governance action failed.', 'error')
+        return false
+      } finally {
+        setGovernanceActionBusy(null)
+      }
+    },
+    [orgApiPath, refreshGovernanceData, token],
+  )
+
+  const submitReferral = useCallback(async () => {
+    if (!referrerUserId.trim() || !referredUserId.trim()) {
+      pushToast('Referrer and referred user IDs are required.', 'error')
+      return
+    }
+
+    const ok = await postGovernanceAction({
+      key: 'referral',
+      endpoint: '/governance/referrals',
+      payload: {
+        referrerUserId: referrerUserId.trim(),
+        referredUserId: referredUserId.trim(),
+        planId: referralPlanId.trim() || null,
+      },
+      successMessage: 'Referral recorded.',
+    })
+
+    if (ok) {
+      setReferredUserId('')
+    }
+  }, [postGovernanceAction, referredUserId, referrerUserId, referralPlanId])
+
+  const submitReputation = useCallback(async () => {
+    if (!reputationUserId.trim()) {
+      pushToast('User ID is required for reputation updates.', 'error')
+      return
+    }
+
+    const deltaNumber = Number(reputationDelta)
+    if (!Number.isFinite(deltaNumber) || !Number.isInteger(deltaNumber)) {
+      pushToast('Reputation delta must be an integer.', 'error')
+      return
+    }
+
+    await postGovernanceAction({
+      key: 'reputation',
+      endpoint: '/governance/reputation',
+      payload: {
+        userId: reputationUserId.trim(),
+        delta: deltaNumber,
+        source: reputationSource.trim() || 'manual_adjustment',
+        note: reputationNote.trim() || null,
+      },
+      successMessage: 'Reputation updated.',
+    })
+  }, [postGovernanceAction, reputationDelta, reputationNote, reputationSource, reputationUserId])
+
+  const submitRsvp = useCallback(async () => {
+    if (!rsvpEventId.trim()) {
+      pushToast('Event ID is required for RSVP.', 'error')
+      return
+    }
+
+    await postGovernanceAction({
+      key: 'rsvp',
+      endpoint: `/governance/events/${encodeURIComponent(rsvpEventId.trim())}/rsvp`,
+      payload: {
+        status: rsvpStatus,
+        ticketType: rsvpTicketType,
+      },
+      successMessage: 'RSVP updated.',
+    })
+  }, [postGovernanceAction, rsvpEventId, rsvpStatus, rsvpTicketType])
+
+  const submitEconomicsRecord = useCallback(async () => {
+    const amountNumber = Number(economicsAmountCents)
+    if (!Number.isFinite(amountNumber) || !Number.isInteger(amountNumber)) {
+      pushToast('Amount must be an integer in cents.', 'error')
+      return
+    }
+    if (economicsKind === 'event' && !economicsEventId.trim()) {
+      pushToast('Event ID is required for event economics records.', 'error')
+      return
+    }
+
+    await postGovernanceAction({
+      key: 'economics',
+      endpoint: '/governance/economics',
+      payload: {
+        kind: economicsKind,
+        amountCents: amountNumber,
+        currency: economicsCurrency.trim().toUpperCase() || 'CAD',
+        memberUserId: economicsMemberUserId.trim() || null,
+        eventId: economicsEventId.trim() || null,
+        note: economicsNote.trim() || null,
+      },
+      successMessage: 'Economics record added.',
+    })
+  }, [economicsAmountCents, economicsCurrency, economicsEventId, economicsKind, economicsMemberUserId, economicsNote, postGovernanceAction])
+
+  const submitJoinMode = useCallback(async () => {
+    await postGovernanceAction({
+      key: 'join-mode',
+      endpoint: '/governance/join-mode',
+      payload: {
+        joinMode,
+        reason: joinModeReason.trim() || null,
+      },
+      successMessage: 'Join mode updated.',
+    })
+  }, [joinMode, joinModeReason, postGovernanceAction])
+
+  const submitRank = useCallback(async () => {
+    if (!rankName.trim()) {
+      pushToast('Rank name is required.', 'error')
+      return
+    }
+    if (!rankPermissions.length) {
+      pushToast('Select at least one permission.', 'error')
+      return
+    }
+
+    const promotionAuthority = rankPromotionAuthority
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    const ok = await postGovernanceAction({
+      key: 'rank',
+      endpoint: '/governance/ranks',
+      payload: {
+        name: rankName.trim(),
+        description: rankDescription.trim() || null,
+        permissions: rankPermissions,
+        visibility: rankVisibility,
+        promotionAuthority: promotionAuthority.length ? promotionAuthority : undefined,
+      },
+      successMessage: 'Rank created.',
+    })
+
+    if (ok) {
+      setRankName('')
+      setRankDescription('')
+      setRankPromotionAuthority('')
+    }
+  }, [postGovernanceAction, rankDescription, rankName, rankPermissions, rankPromotionAuthority, rankVisibility])
+
+  const submitPlan = useCallback(async () => {
+    if (!planName.trim()) {
+      pushToast('Plan name is required.', 'error')
+      return
+    }
+
+    const amountNumber = Number(planAmountCents)
+    if (planType !== 'FREE') {
+      if (!Number.isFinite(amountNumber) || !Number.isInteger(amountNumber) || amountNumber <= 0) {
+        pushToast('Amount cents must be a positive integer for paid plans.', 'error')
+        return
+      }
+    }
+
+    const ok = await postGovernanceAction({
+      key: 'plan',
+      endpoint: '/governance/plans',
+      payload: {
+        name: planName.trim(),
+        description: planDescription.trim() || null,
+        type: planType,
+        amountCents: planType === 'FREE' ? undefined : amountNumber,
+        currency: planCurrency.trim().toUpperCase() || 'CAD',
+        interval: planType === 'SUBSCRIPTION' ? planInterval : null,
+        rankId: planRankId.trim() || null,
+        governanceRights: Boolean(planGovernanceRights),
+      },
+      successMessage: 'Plan created.',
+    })
+
+    if (ok) {
+      setPlanName('')
+      setPlanDescription('')
+      setPlanType('FREE')
+      setPlanAmountCents('0')
+      setPlanCurrency('CAD')
+      setPlanRankId('')
+      setPlanGovernanceRights(false)
+    }
+  }, [planAmountCents, planCurrency, planDescription, planGovernanceRights, planInterval, planName, planRankId, planType, postGovernanceAction])
+
+  const submitSponsor = useCallback(async () => {
+    if (!sponsorName.trim() || !sponsorTier.trim()) {
+      pushToast('Sponsor name and tier are required.', 'error')
+      return
+    }
+
+    const handle = sponsorCivilHandle.trim().replace(/^@/, '')
+    const linkUrlCandidate = handle ? `/u/${encodeURIComponent(handle)}` : sponsorLinkUrl.trim()
+    const linkLabelCandidate = sponsorLinkLabel.trim() || (handle ? `@${handle}` : '')
+
+    if (linkUrlCandidate) {
+      const isInternalPath = linkUrlCandidate.startsWith('/')
+      const isHttpUrl = /^https?:\/\//i.test(linkUrlCandidate)
+      if (!isInternalPath && !isHttpUrl) {
+        pushToast('Link URL must start with / (internal) or http(s):// (external).', 'error')
+        return
+      }
+    }
+
+    const ok = await postGovernanceAction({
+      key: 'sponsor',
+      endpoint: '/governance/sponsors',
+      payload: {
+        name: sponsorName.trim(),
+        tier: sponsorTier.trim(),
+        logoUrl: sponsorLogoUrl.trim() || null,
+        relationshipDescription: sponsorRelationshipDescription.trim() || null,
+        linkUrl: linkUrlCandidate || null,
+        linkLabel: linkLabelCandidate || null,
+      },
+      successMessage: 'Sponsor added.',
+    })
+
+    if (ok) {
+      setSponsorName('')
+      setSponsorTier('Bronze')
+      setSponsorLogoUrl('')
+      setSponsorRelationshipDescription('')
+      setSponsorCivilHandle('')
+      setSponsorLinkUrl('')
+      setSponsorLinkLabel('')
+    }
+  }, [postGovernanceAction, sponsorCivilHandle, sponsorLinkLabel, sponsorLinkUrl, sponsorLogoUrl, sponsorName, sponsorRelationshipDescription, sponsorTier])
+
+  const submitAchievement = useCallback(async () => {
+    if (!achievementTitle.trim()) {
+      pushToast('Achievement title is required.', 'error')
+      return
+    }
+    const pointsNumber = Number(achievementReputationPoints)
+    if (!Number.isFinite(pointsNumber) || !Number.isInteger(pointsNumber) || pointsNumber < 0) {
+      pushToast('Reputation points must be a non-negative integer.', 'error')
+      return
+    }
+
+    const ok = await postGovernanceAction({
+      key: 'achievement',
+      endpoint: '/governance/achievements',
+      payload: {
+        title: achievementTitle.trim(),
+        description: achievementDescription.trim() || null,
+        reputationPoints: pointsNumber,
+        visibility: achievementVisibility,
+      },
+      successMessage: 'Achievement created.',
+    })
+
+    if (ok) {
+      setAchievementTitle('')
+      setAchievementDescription('')
+      setAchievementReputationPoints('0')
+      setAchievementVisibility('PUBLIC')
+    }
+  }, [achievementDescription, achievementReputationPoints, achievementTitle, achievementVisibility, postGovernanceAction])
+
+  const submitAchievementAward = useCallback(async () => {
+    if (!awardAchievementId.trim() || !awardUserId.trim()) {
+      pushToast('Achievement ID and user ID are required.', 'error')
+      return
+    }
+
+    const ok = await postGovernanceAction({
+      key: 'award',
+      endpoint: `/governance/achievements/${encodeURIComponent(awardAchievementId.trim())}/award`,
+      payload: {
+        userId: awardUserId.trim(),
+        note: awardNote.trim() || null,
+      },
+      successMessage: 'Achievement awarded.',
+    })
+
+    if (ok) {
+      setAwardUserId('')
+      setAwardNote('')
+    }
+  }, [awardAchievementId, awardNote, awardUserId, postGovernanceAction])
+
+  const submitMemberStatus = useCallback(async () => {
+    if (!memberStatusUserId.trim()) {
+      pushToast('User ID is required.', 'error')
+      return
+    }
+
+    const ok = await postGovernanceAction({
+      key: 'member-status',
+      endpoint: `/governance/members/${encodeURIComponent(memberStatusUserId.trim())}/status`,
+      payload: {
+        status: memberStatusStatus,
+        rankId: memberStatusRankId.trim() || null,
+        planId: memberStatusPlanId.trim() || null,
+        reason: memberStatusReason.trim() || null,
+      },
+      successMessage: 'Member status updated.',
+    })
+
+    if (ok) {
+      setMemberStatusReason('')
+    }
+  }, [memberStatusPlanId, memberStatusRankId, memberStatusReason, memberStatusStatus, memberStatusUserId, postGovernanceAction])
 
   const updateDraft = useCallback((category: BusinessMediaCategory, updater: (prev: PhotoDraftState) => PhotoDraftState) => {
     setDrafts((prev) => ({ ...prev, [category]: updater(prev[category]) }))
@@ -1027,6 +1677,37 @@ export default function OrganizationSettingsClient({
         </div>
       </Modal>
 
+      <Modal open={privateVisibilityModalOpen} onClose={() => setPrivateVisibilityModalOpen(false)} title="Make organization private?">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            Making your organization private hides it from public discovery, but you can switch it back to public at any time.
+          </p>
+          <ul className="list-disc space-y-1 pl-5 text-xs text-slate-600">
+            <li>Your organization will not be searchable.</li>
+            <li>Organization posts will not be visible in communities.</li>
+            <li>Only organization admins can see and manage it.</li>
+          </ul>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPrivateVisibilityModalOpen(false)}
+              disabled={visibilitySaving}
+              className="rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void updateVisibility(false)}
+              disabled={visibilitySaving}
+              className="rounded-full border border-amber-300 bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+            >
+              {visibilitySaving ? 'Saving…' : 'Make private'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       <PhotoUpdateModal
         open={Boolean(photoModalCategory)}
         title={modalTitle}
@@ -1055,6 +1736,7 @@ export default function OrganizationSettingsClient({
         onClose={closePhotoModal}
       />
 
+      {showDetails ? (
       <section className="surface-card space-y-6 p-6 shadow-subtle">
         <header className="space-y-1">
           <h3 className="text-lg font-semibold text-slate-900">Photos</h3>
@@ -1126,7 +1808,9 @@ export default function OrganizationSettingsClient({
         />
       </section>
 
-      {isOwner ? (
+      ) : null}
+
+      {showDetails && isOwner ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
           <h3 className="text-sm font-semibold text-slate-900">Organization name</h3>
           <p className="text-xs text-slate-500">Renaming the organization publishes a rename post for followers.</p>
@@ -1142,7 +1826,7 @@ export default function OrganizationSettingsClient({
               type="button"
               onClick={saveOrganizationName}
               disabled={!canSaveOrganizationName || organizationNameSaving}
-              className="inline-flex shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              className="inline-flex shrink-0 items-center justify-center rounded-full border border-emerald-600 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
             >
               {organizationNameSaving ? 'Renaming…' : 'Save name'}
             </button>
@@ -1150,6 +1834,7 @@ export default function OrganizationSettingsClient({
         </section>
       ) : null}
 
+      {showDetails ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
         <h3 className="text-sm font-semibold text-slate-900">Directory details</h3>
         <p className="text-xs text-slate-500">These appear on the organizations directory page.</p>
@@ -1218,7 +1903,7 @@ export default function OrganizationSettingsClient({
             type="button"
             onClick={saveDetails}
             disabled={saving || !detailsDirty}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className="inline-flex items-center justify-center rounded-full border border-emerald-600 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
           >
             Save details
           </button>
@@ -1231,6 +1916,9 @@ export default function OrganizationSettingsClient({
         </div>
       </section>
 
+      ) : null}
+
+      {showDetails ? (
       <section className="surface-card space-y-4 p-6 shadow-subtle">
         <header className="space-y-1">
           <h3 className="text-lg font-semibold text-slate-900">Organization profile</h3>
@@ -1267,13 +1955,16 @@ export default function OrganizationSettingsClient({
             type="button"
             onClick={saveProfileDetails}
             disabled={profileSaving || !canSaveProfile}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            className="inline-flex items-center justify-center rounded-full border border-emerald-600 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
           >
             {profileSaving ? 'Saving…' : 'Save profile'}
           </button>
         </div>
       </section>
 
+      ) : null}
+
+      {showDetails ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
         <h3 className="text-sm font-semibold text-slate-900">Visibility</h3>
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -1289,15 +1980,24 @@ export default function OrganizationSettingsClient({
           <p className="text-xs text-slate-600">Public organizations are discoverable. Private organizations are only visible to admins.</p>
           <button
             type="button"
-            onClick={toggleVisibility}
+            onClick={() => {
+              if (org.status === 'ACTIVE') {
+                setPrivateVisibilityModalOpen(true)
+                return
+              }
+              void updateVisibility(true)
+            }}
             disabled={visibilitySaving || !canManage}
             className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
           >
-            {visibilitySaving ? 'Saving…' : org.status === 'ACTIVE' ? 'Make private' : 'Make public'}
+            {visibilitySaving ? 'Saving…' : `Visibility: ${org.status === 'ACTIVE' ? 'Public' : 'Private'}`}
           </button>
         </div>
       </section>
 
+      ) : null}
+
+      {showPeople ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
         <h3 className="text-sm font-semibold text-slate-900">Members</h3>
         {membersLoading ? <p className="text-xs text-slate-500">Loading members…</p> : null}
@@ -1333,6 +2033,9 @@ export default function OrganizationSettingsClient({
         ) : null}
       </section>
 
+      ) : null}
+
+      {showPeople ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
         <h3 className="text-sm font-semibold text-slate-900">Followers</h3>
         <p className="text-xs text-slate-500">Promote a follower to manager so they can help run this organization.</p>
@@ -1367,7 +2070,769 @@ export default function OrganizationSettingsClient({
         ) : null}
       </section>
 
-      {isOwner ? (
+      ) : null}
+
+      {showGovernance ? (
+      <section className="surface-card space-y-4 p-6 shadow-subtle">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Governance testing actions</h3>
+            <p className="text-xs text-slate-500">Trigger referral, reputation, RSVP, and economics actions directly.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refreshGovernanceData()}
+            disabled={governanceLoading || Boolean(governanceActionBusy)}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            Refresh governance
+          </button>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Referral</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              value={referrerUserId}
+              onChange={(event) => setReferrerUserId(event.target.value)}
+              placeholder="Referrer userId"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={referredUserId}
+              onChange={(event) => setReferredUserId(event.target.value)}
+              placeholder="Referred userId"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={referralPlanId}
+              onChange={(event) => setReferralPlanId(event.target.value)}
+              placeholder="Plan id (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitReferral()}
+              disabled={governanceActionBusy === 'referral'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'referral' ? 'Submitting…' : 'Record referral'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Reputation adjustment</p>
+          <div className="grid gap-2 sm:grid-cols-4">
+            <input
+              value={reputationUserId}
+              onChange={(event) => setReputationUserId(event.target.value)}
+              placeholder="User id"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={reputationDelta}
+              onChange={(event) => setReputationDelta(event.target.value)}
+              placeholder="Delta (int)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={reputationSource}
+              onChange={(event) => setReputationSource(event.target.value)}
+              placeholder="Source"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={reputationNote}
+              onChange={(event) => setReputationNote(event.target.value)}
+              placeholder="Note (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitReputation()}
+              disabled={governanceActionBusy === 'reputation'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'reputation' ? 'Submitting…' : 'Adjust reputation'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Event RSVP</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              value={rsvpEventId}
+              onChange={(event) => setRsvpEventId(event.target.value)}
+              placeholder="Event id"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <select
+              value={rsvpStatus}
+              onChange={(event) => setRsvpStatus(event.target.value as 'GOING' | 'INTERESTED' | 'DECLINED')}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              <option value="GOING">GOING</option>
+              <option value="INTERESTED">INTERESTED</option>
+              <option value="DECLINED">DECLINED</option>
+            </select>
+            <select
+              value={rsvpTicketType}
+              onChange={(event) => setRsvpTicketType(event.target.value as 'FREE' | 'PAID')}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              <option value="FREE">FREE</option>
+              <option value="PAID">PAID</option>
+            </select>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitRsvp()}
+              disabled={governanceActionBusy === 'rsvp'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'rsvp' ? 'Submitting…' : 'Submit RSVP'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Economics record</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <select
+              value={economicsKind}
+              onChange={(event) => setEconomicsKind(event.target.value as 'membership' | 'event' | 'refund' | 'manual')}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              <option value="manual">manual</option>
+              <option value="membership">membership</option>
+              <option value="event">event</option>
+              <option value="refund">refund</option>
+            </select>
+            <input
+              value={economicsAmountCents}
+              onChange={(event) => setEconomicsAmountCents(event.target.value)}
+              placeholder="Amount cents"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={economicsCurrency}
+              onChange={(event) => setEconomicsCurrency(event.target.value)}
+              placeholder="Currency"
+              maxLength={3}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              value={economicsMemberUserId}
+              onChange={(event) => setEconomicsMemberUserId(event.target.value)}
+              placeholder="Member userId (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={economicsEventId}
+              onChange={(event) => setEconomicsEventId(event.target.value)}
+              placeholder="Event id (required for kind=event)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={economicsNote}
+              onChange={(event) => setEconomicsNote(event.target.value)}
+              placeholder="Note (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitEconomicsRecord()}
+              disabled={governanceActionBusy === 'economics'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'economics' ? 'Submitting…' : 'Record economics'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      ) : null}
+
+      {showRoles ? (
+      <section className="surface-card space-y-4 p-6 shadow-subtle">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Role admin tools</h3>
+          <p className="text-xs text-slate-500">Create ranks (roles) and assign permissions.</p>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Existing roles</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <select
+              value={selectedExistingRank ? String(selectedExistingRank.id) : ''}
+              onChange={(event) => setExistingRankId(event.target.value)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              {existingRanks.map((rank) => (
+                <option key={String(rank.id)} value={String(rank.id)}>
+                  {String(rank.name)}{rank.system ? ' (system)' : ''}
+                </option>
+              ))}
+            </select>
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+              <span className="font-semibold text-slate-800">Rank id:</span> {selectedExistingRank ? String(selectedExistingRank.id) : '—'}
+            </div>
+          </div>
+          {selectedExistingRank ? (
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Permissions</p>
+                {selectedExistingRank.system ? (
+                  <p className="text-[11px] font-semibold text-slate-500">Admins cannot be removed.</p>
+                ) : null}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {Array.isArray(selectedExistingRank.permissions) && selectedExistingRank.permissions.length ? (
+                  selectedExistingRank.permissions.map((perm) => (
+                    <span key={String(perm)} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                      {String(perm)}
+                    </span>
+                  ))
+                ) : (
+                  <p className="text-xs text-slate-500">No permissions assigned.</p>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Create rank</p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setRankName('Manager')
+                setRankDescription('General-purpose manager role.')
+                setRankVisibility('PUBLIC')
+                setRankPermissions([
+                  'approve_members',
+                  'remove_members',
+                  'promote_members',
+                  'demote_members',
+                  'view_audit_logs',
+                  'manage_events',
+                  'manage_sponsors',
+                  'manage_referrals',
+                  'award_achievements',
+                  'create_announcements',
+                  'pin_posts',
+                  'moderate_content',
+                ])
+              }}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Template: Manager
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRankName('Events Manager')
+                setRankDescription('Manage events and announcements.')
+                setRankVisibility('PUBLIC')
+                setRankPermissions(['manage_events', 'create_paid_events', 'create_announcements', 'pin_posts'])
+              }}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Template: Events Manager
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRankName('Membership Manager')
+                setRankDescription('Manage memberships and member actions.')
+                setRankVisibility('PUBLIC')
+                setRankPermissions([
+                  'approve_members',
+                  'remove_members',
+                  'promote_members',
+                  'demote_members',
+                  'manage_membership_plans',
+                  'view_revenue',
+                  'issue_refunds',
+                  'view_audit_logs',
+                ])
+              }}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Template: Membership Manager
+            </button>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={rankName}
+              onChange={(event) => setRankName(event.target.value)}
+              placeholder="Rank name"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <select
+              value={rankVisibility}
+              onChange={(event) => setRankVisibility(event.target.value as OrgRankVisibility)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              <option value="PUBLIC">PUBLIC</option>
+              <option value="PRIVATE">PRIVATE</option>
+            </select>
+          </div>
+          <div className="grid gap-2">
+            <input
+              value={rankDescription}
+              onChange={(event) => setRankDescription(event.target.value)}
+              placeholder="Description (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <div className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Permissions</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRankPermissions([...ORG_PERMISSION_OPTIONS])}
+                    className="text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+                  >
+                    Select all
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRankPermissions([])}
+                    className="text-[11px] font-semibold text-slate-600 hover:text-slate-900"
+                  >
+                    Unselect all
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {ORG_PERMISSION_OPTIONS.map((perm) => (
+                  <label key={perm} className="flex items-start gap-2 rounded-lg border border-slate-100 bg-slate-50/50 px-2 py-2">
+                    <input
+                      type="checkbox"
+                      checked={rankPermissions.includes(perm)}
+                      onChange={(event) => setRankPermissions((prev) => toggleListValue(prev, perm, event.target.checked))}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300"
+                    />
+                    <span className="grid gap-0.5">
+                      <span className={perm === 'manage_events' ? 'text-xs font-semibold text-slate-900' : 'text-xs font-semibold text-slate-800'}>
+                        {ORG_PERMISSION_HELP[perm].label}
+                      </span>
+                      <span className="text-[11px] text-slate-500">{ORG_PERMISSION_HELP[perm].description}</span>
+                      <span className="text-[11px] text-slate-500">{perm}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              {!rankPermissions.length ? <p className="mt-2 text-[11px] text-rose-700">Select at least one permission.</p> : null}
+            </div>
+            <input
+              value={rankPromotionAuthority}
+              onChange={(event) => setRankPromotionAuthority(event.target.value)}
+              placeholder="Promotion authority (comma-separated rankIds, optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <div>
+              <button
+                type="button"
+                onClick={() => void submitRank()}
+                disabled={governanceActionBusy === 'rank'}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                {governanceActionBusy === 'rank' ? 'Creating…' : 'Create rank'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      ) : null}
+
+      {showGovernance ? (
+      <section className="surface-card space-y-4 p-6 shadow-subtle">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Governance admin tools</h3>
+          <p className="text-xs text-slate-500">Create plans, sponsors, achievements, and manage join mode/pending members.</p>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Join mode</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <select
+              value={joinMode}
+              onChange={(event) => setJoinMode(event.target.value as OrgJoinMode)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              {ORG_JOIN_MODE_OPTIONS.map((mode) => (
+                <option key={mode} value={mode}>{mode}</option>
+              ))}
+            </select>
+            <input
+              value={joinModeReason}
+              onChange={(event) => setJoinModeReason(event.target.value)}
+              placeholder="Reason (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void submitJoinMode()}
+              disabled={governanceActionBusy === 'join-mode'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'join-mode' ? 'Saving…' : 'Update join mode'}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500">Current join mode: <span className="font-semibold text-slate-700">{governanceState?.joinMode ?? 'PUBLIC'}</span></p>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Create membership plan</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={planName}
+              onChange={(event) => setPlanName(event.target.value)}
+              placeholder="Plan name"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <select
+              value={planType}
+              onChange={(event) => setPlanType(event.target.value as OrgPlanType)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              <option value="FREE">FREE</option>
+              <option value="ONE_TIME">ONE_TIME</option>
+              <option value="SUBSCRIPTION">SUBSCRIPTION</option>
+            </select>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              value={planAmountCents}
+              onChange={(event) => setPlanAmountCents(event.target.value)}
+              placeholder="Amount cents"
+              disabled={planType === 'FREE'}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            />
+            <input
+              value={planCurrency}
+              onChange={(event) => setPlanCurrency(event.target.value)}
+              placeholder="Currency"
+              maxLength={3}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <select
+              value={planInterval}
+              onChange={(event) => setPlanInterval(event.target.value as OrgPlanInterval)}
+              disabled={planType !== 'SUBSCRIPTION'}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            >
+              <option value="monthly">monthly</option>
+              <option value="yearly">yearly</option>
+            </select>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={planDescription}
+              onChange={(event) => setPlanDescription(event.target.value)}
+              placeholder="Description (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={planRankId}
+              onChange={(event) => setPlanRankId(event.target.value)}
+              placeholder="Rank id (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={planGovernanceRights}
+              onChange={(event) => setPlanGovernanceRights(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Grants governance rights
+          </label>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitPlan()}
+              disabled={governanceActionBusy === 'plan'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'plan' ? 'Creating…' : 'Create plan'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Add sponsor</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={sponsorName}
+              onChange={(event) => setSponsorName(event.target.value)}
+              placeholder="Sponsor name"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={sponsorTier}
+              onChange={(event) => setSponsorTier(event.target.value)}
+              placeholder="Tier"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={sponsorLogoUrl}
+              onChange={(event) => setSponsorLogoUrl(event.target.value)}
+              placeholder="Logo URL (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={sponsorRelationshipDescription}
+              onChange={(event) => setSponsorRelationshipDescription(event.target.value)}
+              placeholder="Relationship description (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={sponsorCivilHandle}
+              onChange={(event) => setSponsorCivilHandle(event.target.value)}
+              placeholder="Civil handle (optional, ex: @janedoe)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={sponsorLinkUrl}
+              onChange={(event) => setSponsorLinkUrl(event.target.value)}
+              placeholder="Link URL (optional: https://… or /com/… )"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <input
+              value={sponsorLinkLabel}
+              onChange={(event) => setSponsorLinkLabel(event.target.value)}
+              placeholder="Link label (optional, ex: Visit website)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <div className="text-[11px] text-slate-500">
+              Tip: if you set a handle, we’ll link to their Civil profile.
+            </div>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitSponsor()}
+              disabled={governanceActionBusy === 'sponsor'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'sponsor' ? 'Saving…' : 'Add sponsor'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Create achievement</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              value={achievementTitle}
+              onChange={(event) => setAchievementTitle(event.target.value)}
+              placeholder="Title"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={achievementReputationPoints}
+              onChange={(event) => setAchievementReputationPoints(event.target.value)}
+              placeholder="Reputation points"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <select
+              value={achievementVisibility}
+              onChange={(event) => setAchievementVisibility(event.target.value as OrgRankVisibility)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              <option value="PUBLIC">PUBLIC</option>
+              <option value="PRIVATE">PRIVATE</option>
+            </select>
+          </div>
+          <input
+            value={achievementDescription}
+            onChange={(event) => setAchievementDescription(event.target.value)}
+            placeholder="Description (optional)"
+            className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+          />
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitAchievement()}
+              disabled={governanceActionBusy === 'achievement'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'achievement' ? 'Creating…' : 'Create achievement'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Award achievement</p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <input
+              value={awardAchievementId}
+              onChange={(event) => setAwardAchievementId(event.target.value)}
+              placeholder="Achievement id"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={awardUserId}
+              onChange={(event) => setAwardUserId(event.target.value)}
+              placeholder="User id"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={awardNote}
+              onChange={(event) => setAwardNote(event.target.value)}
+              placeholder="Note (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitAchievementAward()}
+              disabled={governanceActionBusy === 'award'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'award' ? 'Submitting…' : 'Award'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-800">Member status / approval</p>
+          <div className="grid gap-2 sm:grid-cols-5">
+            <input
+              value={memberStatusUserId}
+              onChange={(event) => setMemberStatusUserId(event.target.value)}
+              placeholder="User id"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <select
+              value={memberStatusStatus}
+              onChange={(event) => setMemberStatusStatus(event.target.value as OrgMembershipStatus)}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            >
+              {ORG_MEMBERSHIP_STATUS_OPTIONS.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+            <input
+              value={memberStatusRankId}
+              onChange={(event) => setMemberStatusRankId(event.target.value)}
+              placeholder="Rank id (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={memberStatusPlanId}
+              onChange={(event) => setMemberStatusPlanId(event.target.value)}
+              placeholder="Plan id (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+            <input
+              value={memberStatusReason}
+              onChange={(event) => setMemberStatusReason(event.target.value)}
+              placeholder="Reason (optional)"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void submitMemberStatus()}
+              disabled={governanceActionBusy === 'member-status'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {governanceActionBusy === 'member-status' ? 'Saving…' : 'Update member'}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500">Tip: For APPLICATION_REQUIRED joins, set status to ACTIVE to approve.</p>
+        </div>
+      </section>
+
+      ) : null}
+
+      {showGovernance ? (
+      <section className="surface-card space-y-3 p-6 shadow-subtle">
+        <h3 className="text-sm font-semibold text-slate-900">Governance audit log</h3>
+        <p className="text-xs text-slate-500">Recent governance actions for transparency and accountability.</p>
+        {auditLoading ? <p className="text-xs text-slate-500">Loading audit log…</p> : null}
+        {!auditLoading && !auditItems.length ? <p className="text-xs text-slate-500">No governance actions logged yet.</p> : null}
+        {auditItems.length ? (
+          <ul className="space-y-2">
+            {auditItems.map((entry) => (
+              <li key={entry.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">{entry.action.replace(/\./g, ' ')}</p>
+                  <p className="text-[11px] text-slate-500">{new Date(entry.createdAt).toLocaleString()}</p>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Actor: {entry.actorUserId}</p>
+                {entry.reason ? <p className="mt-1 text-xs text-slate-500">Reason: {entry.reason}</p> : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
+      ) : null}
+
+      {showGovernance ? (
+      <section className="surface-card space-y-3 p-6 shadow-subtle">
+        <h3 className="text-sm font-semibold text-slate-900">Governance system overview</h3>
+        <p className="text-xs text-slate-500">Live counts for plans, referrals, events, achievements, reputation, and economics.</p>
+        {governanceLoading ? <p className="text-xs text-slate-500">Loading governance overview…</p> : null}
+        {!governanceLoading && !governanceState ? <p className="text-xs text-slate-500">Governance overview unavailable.</p> : null}
+        {governanceState ? (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Join mode: <span className="font-semibold text-slate-800">{governanceState.joinMode ?? 'PUBLIC'}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Plans: <span className="font-semibold text-slate-800">{governanceState.plans?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Sponsors: <span className="font-semibold text-slate-800">{governanceState.sponsors?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Events: <span className="font-semibold text-slate-800">{governanceState.events?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">RSVPs: <span className="font-semibold text-slate-800">{governanceState.eventRsvps?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Achievements: <span className="font-semibold text-slate-800">{governanceState.achievements?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Awards: <span className="font-semibold text-slate-800">{governanceState.achievementAwards?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Referrals: <span className="font-semibold text-slate-800">{governanceState.referrals?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Ledger entries: <span className="font-semibold text-slate-800">{governanceState.reputationLedger?.length ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">Economics records: <span className="font-semibold text-slate-800">{governanceState.economics?.length ?? 0}</span></div>
+          </div>
+        ) : null}
+        {governanceAnalytics ? (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Active members: <span className="font-semibold text-slate-800">{governanceAnalytics.activeMembers ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Pending members: <span className="font-semibold text-slate-800">{governanceAnalytics.pendingMembers ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Total tracked members: <span className="font-semibold text-slate-800">{governanceAnalytics.totalMembersTracked ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Paid events: <span className="font-semibold text-slate-800">{governanceAnalytics.paidEvents ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Going RSVPs: <span className="font-semibold text-slate-800">{governanceAnalytics.goingRsvps ?? 0}</span></div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Total revenue (cents): <span className="font-semibold text-slate-800">{governanceAnalytics.totalRevenueCents ?? 0}</span></div>
+          </div>
+        ) : null}
+      </section>
+
+      ) : null}
+
+      {showDetails && isOwner ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
           <h3 className="text-sm font-semibold text-rose-700">Danger zone</h3>
           <p className="text-xs text-slate-600">

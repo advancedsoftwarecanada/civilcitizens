@@ -2,20 +2,20 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
-import Image from 'next/image'
-import { LuFlame, LuFrown, LuHeart, LuLaugh, LuSparkles } from 'react-icons/lu'
-import type { IconBaseProps, IconType } from 'react-icons'
-import { type ReactionType } from '@civil/shared'
 import { useRouter } from 'next/navigation'
+import clsx from 'clsx'
+import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuShare } from 'react-icons/lu'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
-import { buildApiUrl } from '../../../../../_lib/api'
-import { hasHomeCommunity, type MeResponse } from '../../../../../_lib/me'
+import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
+import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { ensureViewerMe } from '../../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
+import { formatUserDisplayName } from '../../../../../_lib/text'
+import { buildApiUrl } from '../../../../../_lib/api'
 import DashboardShell from '../../../../../_components/DashboardShell'
 import { useRegisterPageView } from '../../../../../_components/AnalyticsTracker'
 
@@ -42,63 +42,21 @@ type PageProps = {
   }
 }
 
+type CommunityOrgItem = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string | null
+  communitySlug: string | null
+  isVerified: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
+}
+
 const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
   { value: 'new', label: 'New' },
 ]
-
-type ReactionOption = {
-  type: ReactionType
-  label: string
-  icon: IconType
-  activeIcon?: IconType
-  accentClass: string
-}
-
-const MapleIconNeutral: IconType = ({ className, size = 16 }: IconBaseProps) => (
-  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
-)
-
-const MapleIconActive: IconType = ({ className, size = 16 }: IconBaseProps) => (
-  <Image src="/maple-leaf-red.svg" alt="" width={Number(size)} height={Number(size)} className={className} />
-)
-
-const REACTION_OPTIONS: ReactionOption[] = [
-  { type: 'maple', label: 'Like', icon: MapleIconNeutral, activeIcon: MapleIconActive, accentClass: 'border-red-200 bg-red-50 text-red-700' },
-  { type: 'heart', label: 'Heart', icon: LuHeart, accentClass: 'border-rose-200 bg-rose-50 text-rose-700' },
-  { type: 'haha', label: 'Haha', icon: LuLaugh, accentClass: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
-  { type: 'wow', label: 'Wow', icon: LuSparkles, accentClass: 'border-sky-200 bg-sky-50 text-sky-700' },
-  { type: 'sad', label: 'Support', icon: LuFrown, accentClass: 'border-slate-200 bg-slate-50 text-slate-700' },
-  { type: 'fire', label: 'Fire', icon: LuFlame, accentClass: 'border-orange-200 bg-orange-50 text-orange-700' },
-]
-
-type ReactionButtonProps = {
-  option: ReactionOption
-  count: number
-  active: boolean
-  blocked: boolean
-  disabled: boolean
-  onClick: () => void
-}
-
-function ReactionButton({ option, count, active, blocked, disabled, onClick }: ReactionButtonProps) {
-  const Icon = active && option.activeIcon ? option.activeIcon : option.icon
-  return (
-    <button
-      type="button"
-      className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2 ${active ? option.accentClass : blocked ? 'border-slate-200 bg-slate-50 text-slate-400 hover:border-slate-200' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-800 focus:ring-[var(--cc-primary)]'} ${disabled ? 'pointer-events-none opacity-60' : ''}`}
-      onClick={() => {
-        if (disabled || blocked) return
-        onClick()
-      }}
-      aria-label={`${option.label} reaction`}
-      disabled={disabled || blocked}
-    >
-      <Icon className="h-4 w-4" aria-hidden="true" />
-      {count > 0 ? <span>{count}</span> : <span className="text-[11px] font-normal text-slate-500">{option.label}</span>}
-    </button>
-  )
-}
 
 function formatDateTime(iso: string) {
   const date = new Date(iso)
@@ -124,9 +82,9 @@ export default function ChamberPostPage({ params }: PageProps) {
   const [comments, setComments] = useState<ApiComment[]>([])
   const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
   const [appliedCommentSort, setAppliedCommentSort] = useState<'hot' | 'new'>('hot')
-  const [pendingReaction, setPendingReaction] = useState(false)
-
-  const viewerIsVerified = Boolean(viewer?.isVerified || viewer?.isPremium)
+  const [pendingVote, setPendingVote] = useState(false)
+  const [railPosts, setRailPosts] = useState<ApiPost[]>([])
+  const [railOrganizations, setRailOrganizations] = useState<CommunityOrgItem[]>([])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -167,7 +125,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       redirectToAuthModal('login')
       /* noop */
     }
-  }, [])
+  }, [router])
 
   const loadPost = useCallback(async (sortMode: 'hot' | 'new') => {
     setStatus('loading')
@@ -232,10 +190,44 @@ export default function ChamberPostPage({ params }: PageProps) {
 
   const postId = post?.id
   useRegisterPageView(postId)
-  const reactionCounts =
-    post?.reactions ?? { maple: 0, heart: 0, haha: 0, wow: 0, sad: 0, fire: 0, total: 0, positive: 0 }
-  const currentReaction = (post?.viewer?.reaction ?? null) as ReactionType | null
-  const totalReactions = reactionCounts.total ?? 0
+  const voteScore = post?.votes?.score ?? post?.counts?.score ?? 0
+  const viewerVote = post?.viewer?.vote ?? null
+
+  const handleVote = useCallback(
+    async (value: -1 | 0 | 1) => {
+      if (!post?.id || pendingVote) return
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      setPendingVote(true)
+      try {
+        const response = await fetch('/api/posts/vote', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ postId: post.id, value }),
+        })
+        if (!response.ok) {
+          console.error('Vote request failed', await response.text())
+          return
+        }
+        const data = await response.json().catch(() => null)
+        const updated = (data as { post?: ApiPost })?.post
+        if (updated) {
+          setPost(updated)
+        }
+      } catch (err) {
+        console.error('Unable to vote on post', err)
+      } finally {
+        setPendingVote(false)
+      }
+    },
+    [pendingVote, post?.id],
+  )
 
   const loadComments = useCallback(
     async (sortMode: 'hot' | 'new') => {
@@ -257,47 +249,6 @@ export default function ChamberPostPage({ params }: PageProps) {
     [postId],
   )
 
-  const handleReact = useCallback(
-    async (nextReaction: ReactionType | null) => {
-      if (!post?.id) return
-      if (pendingReaction) return
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-      if (!token) {
-        redirectToAuthModal('login')
-        return
-      }
-      if (!viewerIsVerified) {
-        redirectToAuthModal('login')
-        return
-      }
-      setPendingReaction(true)
-      try {
-        const res = await fetch('/api/posts/react', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ postId: post.id, reaction: nextReaction }),
-        })
-        if (!res.ok) {
-          console.error('Reaction request failed', await res.text())
-          return
-        }
-        const data = await res.json().catch(() => null)
-        const updated = (data as { post?: ApiPost })?.post
-        if (updated) {
-          setPost(updated)
-        }
-      } catch (err) {
-        console.error('Unable to react to post', err)
-      } finally {
-        setPendingReaction(false)
-      }
-    },
-    [pendingReaction, post?.id, viewerIsVerified],
-  )
-
   useEffect(() => {
     loadViewer().catch(() => {
       /* noop */
@@ -317,6 +268,50 @@ export default function ChamberPostPage({ params }: PageProps) {
       /* noop */
     })
   }, [appliedCommentSort, commentSort, loadComments, postId])
+
+  const loadRightRail = useCallback(async () => {
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      const headers = token ? { authorization: `Bearer ${token}` } : undefined
+
+      const [postsRes, orgsRes] = await Promise.all([
+        fetch(buildApiUrl(`/posts?scope=communities&province=${encodeURIComponent(provinceParam)}&community=${encodeURIComponent(chamberParam)}&limit=12`), {
+          headers,
+        }),
+        fetch(buildApiUrl(`/communities/${encodeURIComponent(provinceParam)}/${encodeURIComponent(chamberParam)}/orgs?limit=5`), {
+          headers,
+        }),
+      ])
+
+      if (postsRes.ok) {
+        const postsPayload = (await postsRes.json().catch(() => null)) as { items?: ApiPost[] } | null
+        const items = Array.isArray(postsPayload?.items) ? postsPayload.items : []
+        const filtered = post
+          ? items.filter((item) => item.id !== post.id)
+          : items
+        setRailPosts(filtered.slice(0, 5))
+      } else {
+        setRailPosts([])
+      }
+
+      if (orgsRes.ok) {
+        const orgPayload = (await orgsRes.json().catch(() => null)) as { items?: CommunityOrgItem[] } | null
+        setRailOrganizations(Array.isArray(orgPayload?.items) ? orgPayload.items.slice(0, 5) : [])
+      } else {
+        setRailOrganizations([])
+      }
+    } catch (err) {
+      console.error('Unable to load community right rail', err)
+      setRailPosts([])
+      setRailOrganizations([])
+    }
+  }, [chamberParam, post, provinceParam])
+
+  useEffect(() => {
+    loadRightRail().catch(() => {
+      /* noop */
+    })
+  }, [loadRightRail])
 
   const handleReply = useCallback(
     async (parentId: string | null, body: string) => {
@@ -390,25 +385,138 @@ export default function ChamberPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
+  const handleShare = useCallback(async () => {
+    if (typeof window === 'undefined') return
+    const shareUrl = window.location.href
+    const shareText = post?.title || post?.body || 'Post'
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: shareText, text: shareText, url: shareUrl })
+        return
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl)
+      }
+    } catch (err) {
+      console.error('Unable to share post', err)
+    }
+  }, [post?.body, post?.title])
+
+  const communityDisplayName = (post?.communityName ?? chamberParam)
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+
   const rightRail = (
     <div className="space-y-4">
       <div className="rounded border bg-white p-4 shadow-sm">
-        <div className="text-sm font-semibold text-gray-900">Keep exploring</div>
-        <p className="mt-2 text-sm text-gray-600">
-          Jump back to the community feed or browse neighbouring ridings to see how other citizens are weighing in.
-        </p>
-        <Link
-          href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`}
-          className="mt-3 inline-flex items-center justify-center rounded bg-[var(--cc-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--cc-primary-700)]"
-        >
-          Return to community
-        </Link>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-gray-900">More in {communityDisplayName}</div>
+          <Link href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
+            View all
+          </Link>
+        </div>
+        {railPosts.length ? (
+          <ul className="mt-3 space-y-3">
+            {railPosts.map((item) => {
+              const itemCommunityHref = item.provinceCode && item.communitySlug
+                ? `/${item.provinceCode.toLowerCase()}/${item.communitySlug.toLowerCase()}/posts/${item.seoSlug ?? item.id}`
+                : `/u/${item.author.handle}/posts/${item.seoSlug ?? item.id}`
+              const itemCover = item.organization?.coverUrl ?? item.author.coverUrl ?? null
+              const itemAvatar = item.organization?.logoUrl ?? item.author.avatarUrl
+              const itemName = item.organization?.name ?? (formatUserDisplayName(item.author.name, item.author.handle) || item.author.handle)
+              const imageThumb = item.mediaUrl ?? (Array.isArray(item.images) ? item.images[0] ?? null : null)
+
+              return (
+                <li key={item.id}>
+                  <Link href={itemCommunityHref} className="block rounded-lg border border-slate-200 p-2 hover:bg-slate-50">
+                    <div className={clsx('relative overflow-hidden rounded-md border px-2 py-1.5', itemCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
+                      {itemCover ? <img src={itemCover} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                      <span className={clsx('absolute inset-0', itemCover ? 'bg-slate-900/55' : 'bg-transparent')} aria-hidden="true" />
+                      <div className="relative z-[1] flex items-center gap-2">
+                        <VerifiedAvatar
+                          src={itemAvatar}
+                          alt={itemName}
+                          initials={itemName}
+                          size={26}
+                          isVerified={Boolean(item.organization?.isVerified ?? item.author.isVerified)}
+                          isBusiness={Boolean(item.organization) || Boolean(item.author.isPremium)}
+                        />
+                        <span className={clsx('truncate text-xs font-semibold', itemCover ? 'text-white' : 'text-slate-800')}>
+                          {itemName}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 flex items-start gap-2">
+                      <p className="line-clamp-2 min-w-0 flex-1 text-sm text-slate-700">
+                        {item.title?.trim() || item.body}
+                      </p>
+                      {imageThumb ? (
+                        <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                          <img src={imageThumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        </div>
+                      ) : null}
+                    </div>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-gray-600">No additional posts available yet.</p>
+        )}
       </div>
-      <div className="rounded border bg-white p-4 shadow-sm text-sm text-gray-600">
-        Share thoughtful updates and tag your community to reach neighbours faster. Articles support full formatting for deeper dives.
+
+      <div className="rounded border bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-gray-900">Organizations in {communityDisplayName}</div>
+          <Link href={`/com/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}/orgs`} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
+            View all
+          </Link>
+        </div>
+        {railOrganizations.length ? (
+          <ul className="mt-3 space-y-3">
+            {railOrganizations.map((org) => {
+              const href = org.provinceCode && org.communitySlug
+                ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`
+                : '/organizations/directory'
+              return (
+                <li key={org.id} className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-700">
+                  {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                  <Link href={href} className="relative flex items-center gap-2.5 px-3 py-2">
+                    <VerifiedAvatar
+                      src={org.logoUrl ?? null}
+                      alt={org.name}
+                      initials={org.name}
+                      size={30}
+                      isVerified={Boolean(org.isVerified)}
+                      isBusiness
+                    />
+                    <span className="truncate text-sm font-semibold text-white">{org.name}</span>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-gray-600">No organizations found yet.</p>
+        )}
       </div>
     </div>
   )
+
+  const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
+  const postOrganization = post?.organization ?? null
+  const authorProfileHref = postOrganization?.provinceCode && postOrganization.communitySlug
+    ? `/com/${postOrganization.provinceCode.toLowerCase()}/${postOrganization.communitySlug.toLowerCase()}/orgs/${postOrganization.slug}`
+    : post
+      ? `/u/${post.author.handle}`
+      : '/home'
+  const headerCoverUrl = postOrganization?.coverUrl ?? post?.author.coverUrl ?? null
+  const hasHeaderCover = Boolean(headerCoverUrl)
+  const breadcrumbCommunityName = communityDisplayName
 
   return (
     <DashboardShell
@@ -432,33 +540,55 @@ export default function ChamberPostPage({ params }: PageProps) {
               href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`}
               className="hover:underline"
             >
-              Community feed
+              {breadcrumbCommunityName}
             </Link>
             <span className="mx-1">/</span>
             <span className="text-gray-700">Post</span>
           </nav>
 
-          <header className="border-b border-gray-100 pb-4">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-700">
-              <span className="font-semibold text-gray-900">@{post.author.handle}</span>
-              <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
-                {JURISDICTION_LABELS[post.jurisdiction]}
-              </span>
-              {post.provinceCode && post.communitySlug ? (
-                <Link
-                  href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
-                  className="rounded-full border border-gray-200 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-500 hover:bg-gray-50"
-                >
-                  {post.communityName ?? post.communitySlug}
-                </Link>
-              ) : null}
+          <header className="space-y-4 border-b border-gray-100 pb-4">
+            <div className={clsx('relative overflow-hidden rounded-xl border px-3 py-2', hasHeaderCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
+              {headerCoverUrl ? <img src={headerCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+              <div className={clsx('absolute inset-0', hasHeaderCover ? 'bg-slate-900/50' : 'bg-transparent')} />
+              <div className="relative z-[1] flex items-start gap-3">
+                <VerifiedAvatar
+                  src={postOrganization ? (postOrganization.logoUrl ?? null) : post.author.avatarUrl}
+                  alt={postAuthorDisplayName}
+                  initials={postAuthorDisplayName}
+                  size={56}
+                  isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
+                  isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
+                  className="shrink-0"
+                  href={authorProfileHref}
+                />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className={clsx('flex flex-wrap items-center gap-x-2 gap-y-1 text-sm', hasHeaderCover ? 'text-white/80' : 'text-slate-500')}>
+                    <Link href={authorProfileHref} className={clsx('font-semibold hover:underline', hasHeaderCover ? 'text-white' : 'text-slate-900')}>
+                      {postOrganization?.name ?? postAuthorDisplayName}
+                    </Link>
+                    <span>@{post.author.handle}</span>
+                    <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
+                  </div>
+                  <div className={clsx('flex flex-wrap items-center gap-2 text-xs font-semibold', hasHeaderCover ? 'text-white/85' : 'text-slate-500')}>
+                    <span className={clsx('rounded-full px-2 py-0.5', hasHeaderCover ? 'border border-white/35 text-white/85' : 'bg-slate-100 text-slate-600')}>
+                      {JURISDICTION_LABELS[post.jurisdiction]}
+                    </span>
+                    {post.provinceCode && post.communitySlug ? (
+                      <Link
+                        href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
+                        className={clsx('rounded-full px-2 py-0.5 uppercase tracking-wide', hasHeaderCover ? 'border border-white/35 text-white/85 hover:border-white/60' : 'border border-slate-200 text-slate-500 hover:border-slate-300')}
+                      >
+                        {post.communityName ?? post.communitySlug}
+                      </Link>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-4 space-y-4 text-[16px] leading-7 text-gray-900">
+            <div className="space-y-4 text-[16px] leading-7 text-gray-900">
               {post.mediaUrl ? (
                 <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={post.mediaUrl}
                     alt={post.title || post.body || 'Post image'}
@@ -479,39 +609,61 @@ export default function ChamberPostPage({ params }: PageProps) {
           </header>
 
           <footer className="mt-6 space-y-3 text-xs text-gray-500">
-            <div className="flex flex-wrap items-center gap-2">
-              {REACTION_OPTIONS.map((option) => (
-                <ReactionButton
-                  key={option.type}
-                  option={option}
-                  count={(reactionCounts as Record<ReactionType, number>)[option.type] ?? 0}
-                  active={currentReaction === option.type && viewerIsVerified}
-                  blocked={!viewerIsVerified}
-                  disabled={pendingReaction}
-                  onClick={() => handleReact(currentReaction === option.type ? null : option.type)}
-                />
-              ))}
-              {!viewerIsVerified ? <span className="text-[11px] text-gray-500">Only verified members can react.</span> : null}
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="font-semibold text-gray-700">
-                {totalReactions === 1 ? '1 reaction' : `${totalReactions} reactions`}
-              </span>
+            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 py-1">
+                <button
+                  type="button"
+                  onClick={() => void handleVote(viewerVote === 1 ? 0 : 1)}
+                  className={clsx(
+                    'inline-flex items-center rounded-full p-1.5 transition',
+                    viewerVote === 1
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
+                    pendingVote && 'pointer-events-none opacity-60',
+                  )}
+                  aria-label="Upvote post"
+                >
+                  <LuArrowBigUp className="h-4 w-4" />
+                </button>
+                <span className="min-w-[2ch] text-center text-sm font-semibold text-gray-700">{voteScore}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleVote(viewerVote === -1 ? 0 : -1)}
+                  className={clsx(
+                    'inline-flex items-center rounded-full p-1.5 transition',
+                    viewerVote === -1
+                      ? 'bg-rose-50 text-rose-700'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
+                    pendingVote && 'pointer-events-none opacity-60',
+                  )}
+                  aria-label="Downvote post"
+                >
+                  <LuArrowBigDown className="h-4 w-4" />
+                </button>
+              </div>
               {post.counts ? (
-                <span>
-                  {post.counts.commentCount === 1 ? '1 comment' : `${post.counts.commentCount} comments`}
-                </span>
+                <a
+                  href="#comments"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  aria-label="Open comments"
+                >
+                  <LuMessageCircle className="h-4 w-4" />
+                  <span>{post.counts.commentCount}</span>
+                </a>
               ) : null}
+              <button
+                type="button"
+                onClick={() => void handleShare()}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              >
+                <LuShare className="h-4 w-4" />
+                <span>Share</span>
+              </button>
             </div>
           </footer>
 
-          <section className="mt-8 border-t border-gray-200 pt-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-gray-900">Comments</h2>
-              {post.counts ? <span className="text-sm text-gray-500">{post.counts.commentCount} total</span> : null}
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
+          <section id="comments" className="mt-6">
+            <div className="flex flex-wrap items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
               <div className="flex gap-3 font-semibold">
                 {COMMENT_SORT_OPTIONS.map((option) => (
                   <button

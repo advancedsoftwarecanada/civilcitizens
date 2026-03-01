@@ -7,6 +7,7 @@ import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
+import { setAuthToken } from '../_lib/authSession'
 
 type FieldErrors = Record<string, string[]>
 
@@ -68,7 +69,7 @@ export default function RegisterPage() {
 
     const signInAndRedirect = async (registerToken?: string) => {
       if (typeof registerToken === 'string' && registerToken.length > 0) {
-        localStorage.setItem('token', registerToken)
+        setAuthToken(registerToken)
         router.replace('/welcome')
         return true
       }
@@ -82,7 +83,7 @@ export default function RegisterPage() {
       if (!loginResponse.ok) return false
 
       if (loginData && typeof loginData.token === 'string' && loginData.token.length > 0) {
-        localStorage.setItem('token', loginData.token)
+        setAuthToken(loginData.token)
         router.replace('/welcome')
         return true
       }
