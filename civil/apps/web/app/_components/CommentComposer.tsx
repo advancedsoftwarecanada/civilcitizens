@@ -56,7 +56,7 @@ export default function CommentComposer({
   )
 
   return (
-    <form className={clsx('space-y-3', className)} onSubmit={handleSubmit}>
+    <form className={clsx('space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4', className)} onSubmit={handleSubmit}>
       <div>
         <textarea
           value={value}
@@ -74,9 +74,9 @@ export default function CommentComposer({
           rows={4}
           maxLength={MAX_COMMENT_LENGTH}
           autoFocus={autoFocus}
-          className="w-full border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
+          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
         />
-        <div className="mt-1 text-right text-xs text-gray-400">
+        <div className="mt-1 text-right text-xs text-slate-400">
           {value.trim().length}/{MAX_COMMENT_LENGTH}
         </div>
       </div>
@@ -88,7 +88,7 @@ export default function CommentComposer({
           type="submit"
           disabled={!canSubmit || submitting}
           className={clsx(
-            'inline-flex items-center bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition',
+            'inline-flex items-center rounded-md bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition',
             !canSubmit || submitting ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
           )}
         >
@@ -99,7 +99,7 @@ export default function CommentComposer({
             type="button"
             onClick={onCancel}
             disabled={submitting}
-            className="text-sm font-semibold text-gray-500 hover:text-gray-700"
+            className="text-sm font-semibold text-slate-500 hover:text-slate-700"
           >
             Cancel
           </button>

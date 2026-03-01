@@ -10,11 +10,11 @@ import { useOrganization } from './OrganizationContext'
 const ORG_LINKS = [
   { key: 'overview', label: 'Overview', segment: '' },
   { key: 'posts', label: 'Posts', segment: 'posts' },
+  { key: 'chat-channels', label: 'Chat', segment: 'chat-channels' },
   { key: 'forum', label: 'Forum', segment: 'forum' },
   { key: 'events', label: 'Events', segment: 'events' },
   { key: 'members', label: 'Members', segment: 'members' },
   { key: 'jobs', label: 'Jobs', segment: 'jobs' },
-  { key: 'chat-channels', label: 'Chat Channels', segment: 'chat-channels' },
   { key: 'settings', label: 'Settings', segment: 'settings' },
 ]
 

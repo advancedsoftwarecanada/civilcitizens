@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { getProvinceDisplayName, normalizeProvinceCode, type ReactionType } from '@civil/shared'
+import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 import PostComposer, { ApiPost, CommunityTarget, type PostType } from './PostComposer'
 import { RightRail } from './RightRail'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
 import { hasHomeCommunity, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
@@ -156,7 +157,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         setNextCursor(undefined)
         setHasMore(false)
         setLastViewedAt(null)
-        localStorage.removeItem('token')
+        clearAuthSession()
         redirectToAuthModal('login')
         return
       }
@@ -281,13 +282,13 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         ])
 
         if (ownedRes?.status === 401 || membershipsRes?.status === 401) {
-          localStorage.removeItem('token')
+          clearAuthSession()
           redirectToAuthModal('login')
           return
         }
 
         if (followsRes.status === 401) {
-          localStorage.removeItem('token')
+          clearAuthSession()
           redirectToAuthModal('login')
           return
         }
@@ -341,7 +342,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           setMemberOrganizations([])
         }
       } catch {
-        localStorage.removeItem('token')
+        clearAuthSession()
         redirectToAuthModal('login')
       }
     }
@@ -370,37 +371,34 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     [],
   )
 
-  const handleReact = useCallback(
-    async (postId: string, reaction: ReactionType | null) => {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-      if (!token) {
-        redirectToAuthModal('login')
+  const handleVote = useCallback(async (postId: string, value: -1 | 0 | 1) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    try {
+      const res = await fetch(buildApiUrl('/posts/vote'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ postId, value }),
+      })
+      if (!res.ok) {
+        console.error('Vote request failed', await res.text())
         return
       }
-      try {
-        const res = await fetch(buildApiUrl('/posts/react'), {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ postId, reaction }),
-        })
-        if (!res.ok) {
-          console.error('Reaction request failed', await res.text())
-          return
-        }
-        const data = await res.json().catch(() => null)
-        const updated = (data as { post?: ApiPost })?.post
-        if (updated) {
-          setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
-        }
-      } catch (err) {
-        console.error('Unable to react to post', err)
+      const data = await res.json().catch(() => null)
+      const updated = (data as { post?: ApiPost })?.post
+      if (updated) {
+        setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
       }
-    },
-    [],
-  )
+    } catch (err) {
+      console.error('Unable to vote on post', err)
+    }
+  }, [])
 
   const firstName = me?.name?.split(' ')[0] ?? 'Citizen'
   const friendlyFirstName = formatDisplayName(firstName) || firstName
@@ -555,7 +553,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
                   ) : null}
                   <PostFeedItem
                     post={p}
-                    onReact={handleReact}
+                    onVote={handleVote}
                     onDelete={handlePostDelete}
                     onUpdate={handlePostUpdate}
                     viewerId={me?.id ?? null}

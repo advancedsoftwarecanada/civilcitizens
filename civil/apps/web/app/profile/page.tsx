@@ -9,8 +9,9 @@ import Sidebar from '../_components/Sidebar'
 import RichTextEditor from '../_components/RichTextEditor'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeCommunity, type MeResponse } from '../_lib/me'
+import { hasHomeCommunity } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import DashboardShell from '../_components/DashboardShell'
@@ -993,12 +994,12 @@ export default function ProfileEditPage() {
       console.error('Failed fetching viewer', err)
       pushToast('Unable to verify your session. Please sign in again.', 'error', 6000)
       if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('token')
+        clearAuthSession()
         redirectToAuthModal('login')
       }
       return null
     }
-  }, [])
+  }, [router])
 
   const mapExperiencesFromResponse = useCallback((items?: ExperienceResponse[] | null) => {
     if (!items || items.length === 0) {
@@ -1029,7 +1030,7 @@ export default function ProfileEditPage() {
         if (!res.ok) {
           if (res.status === 401) {
             if (typeof window !== 'undefined') {
-              window.localStorage.removeItem('token')
+              clearAuthSession()
               redirectToAuthModal('login')
             }
             return
@@ -1405,7 +1406,7 @@ export default function ProfileEditPage() {
       console.error('Failed logging out', err)
     } finally {
       if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('token')
+        clearAuthSession()
         router.replace('/')
       }
     }

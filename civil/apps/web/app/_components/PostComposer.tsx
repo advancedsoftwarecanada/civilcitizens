@@ -54,10 +54,36 @@ export type ApiPost = {
     isPremium?: boolean
     isVerified?: boolean
   }
+  recentComments?: Array<{
+    id: string
+    postId: string
+    parentId?: string | null
+    body: string
+    createdAt: string
+    updatedAt: string
+    score?: number
+    author: {
+      id: string
+      handle: string
+      name?: string | null
+      avatarUrl?: string | null
+      coverUrl?: string | null
+      isPremium?: boolean
+      isVerified?: boolean
+    }
+  }>
   counts?: {
     commentCount: number
     reactions?: number
     recentPositive?: number
+    upvotes?: number
+    downvotes?: number
+    score?: number
+  }
+  votes?: {
+    upvotes: number
+    downvotes: number
+    score: number
   }
   reactions?: {
     maple: number
@@ -73,7 +99,8 @@ export type ApiPost = {
     hotScore: number
   }
   viewer?: {
-    reaction: ReactionType | null
+    reaction?: ReactionType | null
+    vote?: number | null
   }
   sharedPost?: ApiPost | null
 }

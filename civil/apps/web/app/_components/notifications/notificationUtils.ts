@@ -4,6 +4,7 @@ export type NotificationActor = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  coverUrl?: string | null
   isPremium?: boolean
   isVerified?: boolean
 }
@@ -133,13 +134,60 @@ export function getActorDisplayName(notification: NotificationItem) {
   return 'Civil citizen'
 }
 
+function formatReplySnippet(notification: NotificationItem, maxLength = 50): string | null {
+  const raw = notification.payload?.bodyPreview
+  if (typeof raw !== 'string') return null
+  const normalized = raw.replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`
+}
+
 export function getNotificationMessage(notification: NotificationItem) {
   switch (notification.type) {
     case 'friend_request':
       return 'sent you a friend request'
     case 'friend_accept':
       return 'accepted your friend request'
+    case 'connection_request':
+      return 'sent you a connection request'
+    case 'connection_accept':
+      return 'accepted your connection request'
+    case 'comment_reply': {
+      const snippet = formatReplySnippet(notification)
+      return snippet ? `replied: "${snippet}"` : 'replied to your comment'
+    }
+    case 'comment_post': {
+      const snippet = formatReplySnippet(notification)
+      return snippet ? `commented: "${snippet}"` : 'commented on your post'
+    }
     default:
       return 'shared an update'
   }
+}
+
+export function getNotificationTargetUrl(notification: NotificationItem): string | null {
+  const candidates = notification.type === 'comment_reply'
+    ? [
+        notification.payload?.replyUrl,
+        notification.payload?.url,
+        notification.payload?.sourceUrl,
+      ]
+    : [
+        notification.payload?.sourceUrl,
+        notification.payload?.url,
+        notification.payload?.replyUrl,
+      ]
+  for (const raw of candidates) {
+    if (typeof raw === 'string') {
+      const normalized = raw.trim()
+      if (normalized.startsWith('/')) {
+        return normalized
+      }
+    }
+  }
+  if (notification.postId) {
+    return `/post/${notification.postId}`
+  }
+  return null
 }

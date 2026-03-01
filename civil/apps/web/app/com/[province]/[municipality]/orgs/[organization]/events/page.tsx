@@ -1,12 +1,20 @@
 import OrganizationSection from '../../../../../_components/OrganizationSection'
+import OrganizationEventsClient from '../../../../../_components/OrganizationEventsClient'
 
-export default function OrganizationEventsPage() {
+export const dynamic = 'force-dynamic'
+
+type PageProps = {
+  params: {
+    province: string
+    municipality: string
+    organization: string
+  }
+}
+
+export default function OrganizationEventsPage({ params }: PageProps) {
   return (
-    <OrganizationSection title="Events" description="Fundraisers, meetings, and training nights hosted by this org.">
-      <p>
-        Event publishing will inherit the organization context so admins can schedule members-only or public sessions
-        and automatically surface them in the parent community calendar.
-      </p>
+    <OrganizationSection title="Events">
+      <OrganizationEventsClient mode="view" province={params.province} municipality={params.municipality} slug={params.organization} />
     </OrganizationSection>
   )
 }
