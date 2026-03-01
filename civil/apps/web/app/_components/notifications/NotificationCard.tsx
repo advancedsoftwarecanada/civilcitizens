@@ -7,25 +7,28 @@ import {
   formatRelativeTime,
   getActorDisplayName,
   getFriendshipId,
-  getFriendRequestStatus,
+  getNotificationRequestStatus,
   getNotificationMessage,
   getNotificationTargetUrl,
+  isActionableNotification,
 } from './notificationUtils'
 
 export type NotificationCardProps = {
   notification: NotificationItem
-  onFriendAction?: (notification: NotificationItem, action: 'accept' | 'reject') => void
+  onRequestAction?: (notification: NotificationItem, action: 'accept' | 'reject') => void
   friendActionState?: FriendActionState | null
   onOpen?: (notification: NotificationItem, targetUrl: string) => void
 }
 
-export function NotificationCard({ notification, onFriendAction, friendActionState, onOpen }: NotificationCardProps) {
+export function NotificationCard({ notification, onRequestAction, friendActionState, onOpen }: NotificationCardProps) {
   const friendshipId = getFriendshipId(notification)
-  const requestStatus = notification.type === 'friend_request' ? getFriendRequestStatus(notification) : null
+  const actionable = isActionableNotification(notification)
+  const requestStatus = actionable ? getNotificationRequestStatus(notification) : null
   const allowResponse = requestStatus === 'pending'
   const isResponding = friendActionState?.notificationId === notification.id
   const isAccepting = isResponding && friendActionState?.action === 'accept'
   const isRejecting = isResponding && friendActionState?.action === 'reject'
+  const actionableRequestId = notification.type === 'friend_request' ? friendshipId : notification.id
   const profileHref = notification.actor?.handle ? `/u/${notification.actor.handle}` : null
   const actorName = notification.actor ? getActorDisplayName(notification) : null
   const initials = actorName ?? 'C'
@@ -110,16 +113,16 @@ export function NotificationCard({ notification, onFriendAction, friendActionSta
           <p className="text-[15px] leading-5 text-slate-700">{message}</p>
           <p className="mt-1 text-xs text-slate-500">{formatRelativeTime(notification.createdAt)}</p>
         </div>
-        {notification.type === 'friend_request' && onFriendAction && allowResponse ? (
+        {actionable && onRequestAction && allowResponse ? (
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               className="inline-flex flex-1 items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={(event) => {
                 event.stopPropagation()
-                onFriendAction(notification, 'accept')
+                onRequestAction(notification, 'accept')
               }}
-              disabled={!friendshipId || isResponding}
+              disabled={!actionableRequestId || isResponding}
             >
               {isAccepting ? 'Accepting…' : 'Accept'}
             </button>
@@ -128,17 +131,17 @@ export function NotificationCard({ notification, onFriendAction, friendActionSta
               className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={(event) => {
                 event.stopPropagation()
-                onFriendAction(notification, 'reject')
+                onRequestAction(notification, 'reject')
               }}
-              disabled={!friendshipId || isResponding}
+              disabled={!actionableRequestId || isResponding}
             >
               {isRejecting ? 'Declining…' : 'Decline'}
             </button>
           </div>
         ) : null}
-        {notification.type === 'friend_request' && requestStatus && !allowResponse ? (
+        {actionable && requestStatus && !allowResponse ? (
           <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
-            {requestStatus === 'accepted' ? 'Friend request accepted' : 'Friend request dismissed'}
+            {requestStatus === 'accepted' ? 'Accepted' : 'Declined'}
           </div>
         ) : null}
       </div>
