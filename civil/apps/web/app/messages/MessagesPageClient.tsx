@@ -186,13 +186,24 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   } | null>(null)
   const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
   const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
+  const forceBottomScrollThreadRef = useRef<string | null>(initialThreadId ?? null)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
+
+  const scrollMessagesToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const container = messagesViewportRef.current
+    if (!container) return
+    requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior })
+    })
+  }, [])
 
   useEffect(() => {
     if (!initialThreadId) return
     initialThreadIdRef.current = initialThreadId
     if (selectedThreadRef.current === initialThreadId) return
+    forceBottomScrollThreadRef.current = initialThreadId
+    smoothScrollPendingRef.current = false
     setSelectedThreadId(initialThreadId)
   }, [initialThreadId])
 
@@ -239,7 +250,11 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId
-  }, [selectedThreadId])
+    if (!selectedThreadId) return
+    forceBottomScrollThreadRef.current = selectedThreadId
+    smoothScrollPendingRef.current = false
+    scrollMessagesToBottom('auto')
+  }, [selectedThreadId, scrollMessagesToBottom])
 
   useEffect(() => {
     if (!isMobileMessagesViewport()) return
@@ -740,16 +755,24 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   useEffect(() => {
     if (!selectedThreadId) return
-    const messageCount = messagesByThread[selectedThreadId]?.length ?? 0
-    if (messageCount === 0) return
     const container = messagesViewportRef.current
     if (!container) return
+    const messageCount = messagesByThread[selectedThreadId]?.length ?? 0
+    const shouldForceToBottom = forceBottomScrollThreadRef.current === selectedThreadId
+    if (messageCount === 0 && !shouldForceToBottom) return
 
     const preserve = preserveScrollRef.current
     if (preserve?.threadId === selectedThreadId) {
       const delta = container.scrollHeight - preserve.scrollHeight
       container.scrollTop = preserve.scrollTop + delta
       preserveScrollRef.current = null
+      smoothScrollPendingRef.current = false
+      return
+    }
+
+    if (shouldForceToBottom) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+      forceBottomScrollThreadRef.current = null
       smoothScrollPendingRef.current = false
       return
     }
@@ -763,6 +786,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   const handleThreadSelect = useCallback(
     (threadId: string) => {
+      forceBottomScrollThreadRef.current = threadId
+      smoothScrollPendingRef.current = false
       setSelectedThreadId(threadId)
       const threadMessages = messagesByThread[threadId]
       if (!threadMessages) {

@@ -1083,6 +1083,50 @@ function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof for
       message: `${actorLabel} accepted your connection request.`,
     }
   }
+  if (record.type === EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const eventTitle = typeof payload?.eventTitle === 'string' ? payload.eventTitle.trim() : ''
+    return {
+      title: 'Guest speaker invite',
+      message: eventTitle ? `${actorLabel} invited you to speak at "${eventTitle}".` : `${actorLabel} invited you to be a guest speaker.`,
+    }
+  }
+  if (record.type === EVENT_NOTIFICATION_TYPES.SPONSOR_INVITE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const eventTitle = typeof payload?.eventTitle === 'string' ? payload.eventTitle.trim() : ''
+    return {
+      title: 'Sponsor invite',
+      message: eventTitle ? `${actorLabel} invited your organization to sponsor "${eventTitle}".` : `${actorLabel} invited your organization to sponsor an event.`,
+    }
+  }
+  if (record.type === EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_RESPONSE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const eventTitle = typeof payload?.eventTitle === 'string' ? payload.eventTitle.trim() : ''
+    const status = typeof payload?.status === 'string' ? payload.status.trim().toLowerCase() : ''
+    const verb = status === 'accepted' ? 'accepted' : status === 'declined' ? 'declined' : 'responded to'
+    return {
+      title: 'Guest speaker response',
+      message: eventTitle ? `${actorLabel} ${verb} your invite for "${eventTitle}".` : `${actorLabel} ${verb} your guest speaker invite.`,
+    }
+  }
+  if (record.type === EVENT_NOTIFICATION_TYPES.SPONSOR_RESPONSE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const eventTitle = typeof payload?.eventTitle === 'string' ? payload.eventTitle.trim() : ''
+    const status = typeof payload?.status === 'string' ? payload.status.trim().toLowerCase() : ''
+    const verb = status === 'accepted' ? 'accepted' : status === 'declined' ? 'declined' : 'responded to'
+    return {
+      title: 'Sponsor response',
+      message: eventTitle ? `${actorLabel} ${verb} your sponsor invite for "${eventTitle}".` : `${actorLabel} ${verb} your sponsor invite.`,
+    }
+  }
   return null
 }
 
@@ -1279,7 +1323,12 @@ async function sendMobilePushForMessageCreated(args: {
   )
 }
 
-async function dispatchNotification(record: NotificationRecord) {
+async function dispatchNotification(
+  record: NotificationRecord,
+  options?: {
+    suppressMobilePush?: boolean
+  },
+) {
   let actor: ReturnType<typeof formatFriendUser> | null = null
   if (record.actorId) {
     const actorRecord = await prisma.user.findUnique({ where: { id: record.actorId }, select: FRIEND_USER_SELECT })
@@ -1294,7 +1343,9 @@ async function dispatchNotification(record: NotificationRecord) {
       actor,
     },
   })
-  void sendMobilePushNotification(record, actor)
+  if (!options?.suppressMobilePush) {
+    void sendMobilePushNotification(record, actor)
+  }
 }
 
 async function createNotificationRecord(data: {
@@ -1303,6 +1354,7 @@ async function createNotificationRecord(data: {
   type: string
   postId?: string | null
   payload?: Prisma.InputJsonValue
+  suppressMobilePush?: boolean
 }) {
   const notification = await prisma.notification.create({
     data: {
@@ -1314,7 +1366,7 @@ async function createNotificationRecord(data: {
     },
     select: NOTIFICATION_SELECT,
   })
-  await dispatchNotification(notification)
+  await dispatchNotification(notification, { suppressMobilePush: Boolean(data.suppressMobilePush) })
   return notification
 }
 
@@ -1357,6 +1409,45 @@ const COMMENT_NOTIFICATION_TYPES = {
   POST_COMMENT: 'comment_post',
 } as const
 
+const MESSAGE_NOTIFICATION_TYPES = {
+  CREATED: 'message_created',
+} as const
+
+const EVENT_NOTIFICATION_TYPES = {
+  GUEST_SPEAKER_INVITE: 'event_guest_speaker_invite',
+  SPONSOR_INVITE: 'event_sponsor_invite',
+  GUEST_SPEAKER_RESPONSE: 'event_guest_speaker_response',
+  SPONSOR_RESPONSE: 'event_sponsor_response',
+} as const
+
+const MESSAGE_NOTIFICATION_DEDUPE_WINDOW_MS = 45_000
+
+async function hasRecentUnreadMessageNotification(args: {
+  userId: string
+  actorId: string
+  threadId: string
+  since: Date
+}): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "Notification"
+      WHERE "userId" = ${args.userId}
+        AND "actorId" = ${args.actorId}
+        AND "type" = ${MESSAGE_NOTIFICATION_TYPES.CREATED}
+        AND "readAt" IS NULL
+        AND "createdAt" >= ${args.since}
+        AND COALESCE("payload"->>'threadId', '') = ${args.threadId}
+      ORDER BY "createdAt" DESC
+      LIMIT 1
+    `
+    return rows.length > 0
+  } catch (err) {
+    console.error('message_notification_dedupe_failed', err)
+    return false
+  }
+}
+
 async function notifyFriendRequest(friendshipId: string, requesterId: string, addresseeId: string) {
   await createNotificationRecord({
     userId: addresseeId,
@@ -1397,6 +1488,60 @@ async function notifyConnectionAcceptance(connectionId: string, requesterId: str
       connectionId,
       status: 'accepted',
       url: '/network/professionals',
+    },
+  })
+}
+
+async function notifyEventGuestSpeakerInvite(args: {
+  inviteeUserId: string
+  actorUserId: string
+  hostOrganizationId: string
+  hostProvinceCode: string
+  hostCommunitySlug: string
+  hostOrganizationSlug: string
+  eventId: string
+  eventTitle: string
+}) {
+  const eventUrl = `/com/${encodeURIComponent(args.hostProvinceCode)}/${encodeURIComponent(args.hostCommunitySlug)}/orgs/${encodeURIComponent(args.hostOrganizationSlug)}/events/${encodeURIComponent(args.eventId)}`
+  await createNotificationRecord({
+    userId: args.inviteeUserId,
+    actorId: args.actorUserId,
+    type: EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE,
+    payload: {
+      status: 'pending',
+      invitationKind: 'guest_speaker',
+      hostOrganizationId: args.hostOrganizationId,
+      eventId: args.eventId,
+      eventTitle: args.eventTitle,
+      url: eventUrl,
+    },
+  })
+}
+
+async function notifyEventSponsorInvite(args: {
+  inviteeUserId: string
+  actorUserId: string
+  hostOrganizationId: string
+  hostProvinceCode: string
+  hostCommunitySlug: string
+  hostOrganizationSlug: string
+  targetOrganizationId: string
+  eventId: string
+  eventTitle: string
+}) {
+  const eventUrl = `/com/${encodeURIComponent(args.hostProvinceCode)}/${encodeURIComponent(args.hostCommunitySlug)}/orgs/${encodeURIComponent(args.hostOrganizationSlug)}/events/${encodeURIComponent(args.eventId)}`
+  await createNotificationRecord({
+    userId: args.inviteeUserId,
+    actorId: args.actorUserId,
+    type: EVENT_NOTIFICATION_TYPES.SPONSOR_INVITE,
+    payload: {
+      status: 'pending',
+      invitationKind: 'sponsor',
+      hostOrganizationId: args.hostOrganizationId,
+      targetOrganizationId: args.targetOrganizationId,
+      eventId: args.eventId,
+      eventTitle: args.eventTitle,
+      url: eventUrl,
     },
   })
 }
@@ -1714,6 +1859,14 @@ const NotificationListQuery = z.object({
   cursor: z.string().cuid().optional(),
 })
 
+const NotificationRespondParams = z.object({
+  id: z.string().cuid(),
+})
+
+const NotificationRespondBody = z.object({
+  action: z.enum(['accept', 'reject']),
+})
+
 const UserSearchQuery = z.object({
   q: z.string().trim().min(1).max(120),
   limit: z.coerce.number().int().min(1).max(50).default(30),
@@ -1738,6 +1891,7 @@ type UserSearchRecord = {
   name: string | null
   handle: string
   avatarUrl: string | null
+  coverUrl: string | null
   premiumStatus: PremiumStatus | null
 }
 
@@ -1746,6 +1900,7 @@ type UserSearchResultPayload = {
   name: string | null
   handle: string
   avatarUrl: string | null
+  coverUrl: string | null
   isPremium: boolean
   isVerified: boolean
   homeCommunity: {
@@ -1792,6 +1947,7 @@ async function searchUsersForQuery({
       name: true,
       handle: true,
       avatarUrl: true,
+      coverUrl: true,
       premiumStatus: true,
     },
   })) as UserSearchRecord[]
@@ -1828,6 +1984,7 @@ async function searchUsersForQuery({
     name: user.name,
     handle: user.handle,
     avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+    coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
     isPremium: isPremium(user.premiumStatus),
     isVerified: isPremium(user.premiumStatus),
     homeCommunity: homeMap.get(user.id) ?? null,
@@ -2495,6 +2652,63 @@ async function generateUniquePostSlug(base: string, client: PrismaClientOrTx) {
     if (!existing) return candidate
   }
   return buildCandidate(randomUUID().replace(/-/g, '').slice(0, 12))
+}
+
+async function createOrganizationEventAnnouncementPost(args: {
+  client: PrismaClientOrTx
+  authorUserId: string
+  businessId: string
+  provinceCode: string
+  communitySlug: string
+  organizationSlug: string
+  event: Pick<OrgEventDefinition, 'id' | 'title' | 'description' | 'startsAt' | 'primaryPhotoUrl'>
+}) {
+  const author = await args.client.user.findUnique({
+    where: { id: args.authorUserId },
+    select: { id: true, handle: true },
+  })
+  if (!author) return null
+
+  const eventPath = `/com/${encodeURIComponent(args.provinceCode)}/${encodeURIComponent(args.communitySlug)}/orgs/${encodeURIComponent(args.organizationSlug)}/events/${encodeURIComponent(args.event.id)}`
+  const eventUrl = `https://${CIVIL_PUBLIC_HOST}${eventPath}`
+  const descriptionSnippet = sanitizePlainText(args.event.description ?? '').slice(0, 320).trim()
+
+  const postBody = sanitizePlainText(
+    [
+      `New event published: ${args.event.title}`,
+      descriptionSnippet,
+      `View event: ${eventUrl}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n'),
+  )
+
+  const seoSlug = await generateUniquePostSlug(
+    buildPostSlugBase({
+      handle: author.handle,
+      title: `Event: ${args.event.title}`,
+      body: postBody,
+    }),
+    args.client,
+  )
+
+  return args.client.post.create({
+    data: {
+      authorId: args.authorUserId,
+      businessId: args.businessId,
+      audience: 'organization',
+      visibility: 'public',
+      body: postBody,
+      title: `Event: ${args.event.title}`,
+      type: 'post',
+      mediaUrl: args.event.primaryPhotoUrl ?? undefined,
+      provinceCode: args.provinceCode,
+      communitySlug: args.communitySlug,
+      jurisdiction: 'municipal',
+      seoSlug,
+    },
+    select: { id: true },
+  })
 }
 
 const POST_INCLUDE = {
@@ -5685,6 +5899,34 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
       participants: thread.participants,
     })
 
+    const bodyPreview = truncatePushBody((messageRecord.body || '').trim(), 90)
+    const dedupeSince = new Date(Date.now() - MESSAGE_NOTIFICATION_DEDUPE_WINDOW_MS)
+    await Promise.all(
+      thread.participants
+        .filter((participant: { userId: string }) => participant.userId !== userId)
+        .map(async (participant: { userId: string }) => {
+          const alreadyNotified = await hasRecentUnreadMessageNotification({
+            userId: participant.userId,
+            actorId: userId,
+            threadId: thread.id,
+            since: dedupeSince,
+          })
+          if (alreadyNotified) return null
+
+          return createNotificationRecord({
+            userId: participant.userId,
+            actorId: userId,
+            type: MESSAGE_NOTIFICATION_TYPES.CREATED,
+            payload: {
+              threadId: thread.id,
+              url: `/messages?thread=${encodeURIComponent(thread.id)}`,
+              bodyPreview,
+            },
+            suppressMobilePush: true,
+          })
+        }),
+    )
+
     return reply.code(201).send({ message: formatMessage(messageRecord, userId) })
   }),
 )
@@ -6081,6 +6323,34 @@ const CommunityOrgSponsorBody = z
     }
   })
 
+const EventInviteStatusSchema = z.enum(['PENDING', 'ACCEPTED', 'DECLINED'])
+
+const OrgEventGuestSpeakerTagSchema = z.object({
+  userId: z.string().uuid(),
+  name: z.string().trim().min(1).max(120),
+  handle: z.string().trim().min(1).max(80),
+  avatarUrl: z.string().trim().url().max(2048).optional().nullable(),
+  coverUrl: z.string().trim().url().max(2048).optional().nullable(),
+})
+
+const OrgEventSponsorTagSchema = z.object({
+  organizationId: z.string().trim().cuid(),
+  name: z.string().trim().min(1).max(160),
+  slug: z.string().trim().min(1).max(80),
+  provinceCode: z.string().trim().min(2).max(32),
+  communitySlug: z.string().trim().min(1).max(160),
+  logoUrl: z.string().trim().url().max(2048).optional().nullable(),
+  coverUrl: z.string().trim().url().max(2048).optional().nullable(),
+})
+
+const OrgEventFeeSchema = z.object({
+  id: z.string().trim().min(2).max(64),
+  label: z.string().trim().min(1).max(120),
+  amountCents: z.coerce.number().int().min(0).max(100_000_000),
+  capacity: z.coerce.number().int().min(1).max(200000).optional().nullable(),
+  cashOnly: z.boolean().default(true),
+})
+
 const CommunityOrgEventBody = z
   .object({
     title: z.string().trim().min(3).max(180),
@@ -6094,7 +6364,9 @@ const CommunityOrgEventBody = z
     category: z.enum(OrgEventCategoryValues).default('Other'),
     priceCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
     currency: z.string().trim().min(3).max(3).default('CAD'),
-    guestSpeakers: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+    guestSpeakers: z.array(z.union([z.string().trim().min(1).max(120), OrgEventGuestSpeakerTagSchema])).max(50).optional(),
+    sponsors: z.array(OrgEventSponsorTagSchema).max(30).optional(),
+    fees: z.array(OrgEventFeeSchema).max(50).optional(),
     agenda: z.array(z.object({ title: z.string().trim().min(1).max(180), startsAt: z.string().datetime().optional().nullable() })).max(100).optional(),
     attachments: z.array(z.object({ title: z.string().trim().min(1).max(160), url: z.string().trim().url().max(2048) })).max(50).optional(),
     primaryPhotoUrl: z.string().trim().url().max(2048).optional().nullable(),
@@ -6119,7 +6391,9 @@ const CommunityOrgEventDraftUpdateBody = z
     category: z.enum(OrgEventCategoryValues).optional(),
     priceCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
     currency: z.string().trim().min(3).max(3).optional(),
-    guestSpeakers: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+    guestSpeakers: z.array(z.union([z.string().trim().min(1).max(120), OrgEventGuestSpeakerTagSchema])).max(50).optional(),
+    sponsors: z.array(OrgEventSponsorTagSchema).max(30).optional(),
+    fees: z.array(OrgEventFeeSchema).max(50).optional(),
     agenda: z
       .array(z.object({ title: z.string().trim().min(1).max(180), startsAt: z.string().datetime().optional().nullable() }))
       .max(100)
@@ -6196,7 +6470,9 @@ const CommunityOrgReputationAdjustBody = z.object({
 
 const CommunityOrgEventRsvpBody = z.object({
   status: z.enum(['GOING', 'INTERESTED', 'DECLINED']),
-  ticketType: z.enum(['FREE', 'PAID']).default('FREE'),
+  ticketType: z.enum(['FREE', 'PAID']).optional(),
+  ticketId: z.string().trim().min(2).max(64).optional().nullable(),
+  message: z.string().trim().max(600).optional().nullable(),
 })
 
 const CommunityOrgEconomicsRecordBody = z.object({
@@ -6646,6 +6922,100 @@ type OrgSponsorDefinition = {
   createdAt: string
 }
 
+type OrgEventSponsorTag = {
+  organizationId: string
+  name: string
+  slug: string
+  provinceCode: string
+  communitySlug: string
+  logoUrl: string | null
+  coverUrl: string | null
+}
+
+type OrgEventGuestSpeakerTag = {
+  userId: string
+  name: string
+  handle: string
+  avatarUrl: string | null
+  coverUrl: string | null
+}
+
+type OrgEventGuestSpeakerInvite = OrgEventGuestSpeakerTag & {
+  status: z.infer<typeof EventInviteStatusSchema>
+  invitedAt: string
+  respondedAt: string | null
+  respondedByUserId: string | null
+}
+
+type OrgEventFee = z.infer<typeof OrgEventFeeSchema>
+
+type OrgEventSponsorInvite = OrgEventSponsorTag & {
+  status: z.infer<typeof EventInviteStatusSchema>
+  invitedAt: string
+  respondedAt: string | null
+  respondedByUserId: string | null
+  recipientUserIds: string[]
+}
+
+function normalizeEventSponsorTags(input: Array<z.infer<typeof OrgEventSponsorTagSchema>> | undefined): OrgEventSponsorTag[] {
+  if (!Array.isArray(input)) return []
+  return input.map((item) => ({
+    organizationId: item.organizationId,
+    name: item.name,
+    slug: item.slug,
+    provinceCode: item.provinceCode,
+    communitySlug: item.communitySlug,
+    logoUrl: item.logoUrl ?? null,
+    coverUrl: item.coverUrl ?? null,
+  }))
+}
+
+function normalizeGuestSpeakerInput(
+  input: Array<string | z.infer<typeof OrgEventGuestSpeakerTagSchema>> | undefined,
+): { guestSpeakers: string[]; guestSpeakerTags: OrgEventGuestSpeakerTag[] } {
+  if (!Array.isArray(input)) return { guestSpeakers: [], guestSpeakerTags: [] }
+
+  const names: string[] = []
+  const nameSeen = new Set<string>()
+  const tags: OrgEventGuestSpeakerTag[] = []
+  const tagSeen = new Set<string>()
+
+  for (const item of input) {
+    if (typeof item === 'string') {
+      const trimmed = item.trim()
+      if (!trimmed) continue
+      const key = trimmed.toLowerCase()
+      if (nameSeen.has(key)) continue
+      nameSeen.add(key)
+      names.push(trimmed)
+      continue
+    }
+
+    const userId = item.userId.trim()
+    if (!userId || tagSeen.has(userId)) continue
+    tagSeen.add(userId)
+
+    const displayName = item.name.trim() || item.handle.trim()
+    if (displayName) {
+      const key = displayName.toLowerCase()
+      if (!nameSeen.has(key)) {
+        nameSeen.add(key)
+        names.push(displayName)
+      }
+    }
+
+    tags.push({
+      userId,
+      name: displayName,
+      handle: item.handle.trim(),
+      avatarUrl: item.avatarUrl ?? null,
+      coverUrl: item.coverUrl ?? null,
+    })
+  }
+
+  return { guestSpeakers: names, guestSpeakerTags: tags }
+}
+
 type OrgEventDefinition = {
   id: string
   title: string
@@ -6660,6 +7030,10 @@ type OrgEventDefinition = {
   priceCents: number | null
   currency: string
   guestSpeakers: string[]
+  guestSpeakerInvites: OrgEventGuestSpeakerInvite[]
+  sponsors: OrgEventSponsorTag[]
+  sponsorInvites: OrgEventSponsorInvite[]
+  fees: OrgEventFee[]
   primaryPhotoUrl: string | null
   galleryPhotoUrls: string[]
   agenda: Array<{ title: string; startsAt: string | null }>
@@ -6711,7 +7085,12 @@ type OrgEventRsvp = {
   userId: string
   status: 'GOING' | 'INTERESTED' | 'DECLINED'
   ticketType: 'FREE' | 'PAID'
+  ticketId: string | null
+  ticketLabel: string | null
+  amountCents: number | null
+  message: string | null
   createdAt: string
+  updatedAt: string
 }
 
 type OrgEconomicRecord = {
@@ -6907,12 +7286,37 @@ function readOrganizationSystemState(metadata: unknown): OrganizationSystemState
     ranks: mergedRanks,
     plans: Array.isArray(typed.plans) ? (typed.plans as OrgPlanDefinition[]) : [],
     sponsors: Array.isArray(typed.sponsors) ? (typed.sponsors as OrgSponsorDefinition[]) : [],
-    events: Array.isArray(typed.events) ? (typed.events as OrgEventDefinition[]) : [],
+    events: Array.isArray(typed.events)
+      ? (typed.events as OrgEventDefinition[]).map((event) => ({
+          ...event,
+          guestSpeakerInvites: Array.isArray((event as Partial<OrgEventDefinition>).guestSpeakerInvites)
+            ? ((event as Partial<OrgEventDefinition>).guestSpeakerInvites as OrgEventGuestSpeakerInvite[])
+            : [],
+          sponsors: Array.isArray((event as Partial<OrgEventDefinition>).sponsors)
+            ? ((event as Partial<OrgEventDefinition>).sponsors as OrgEventSponsorTag[])
+            : [],
+          sponsorInvites: Array.isArray((event as Partial<OrgEventDefinition>).sponsorInvites)
+            ? ((event as Partial<OrgEventDefinition>).sponsorInvites as OrgEventSponsorInvite[])
+            : [],
+          fees: Array.isArray((event as Partial<OrgEventDefinition>).fees)
+            ? ((event as Partial<OrgEventDefinition>).fees as OrgEventFee[])
+            : [],
+        }))
+      : [],
     achievements: Array.isArray(typed.achievements) ? (typed.achievements as OrgAchievementDefinition[]) : [],
     achievementAwards: Array.isArray(typed.achievementAwards) ? (typed.achievementAwards as OrgAchievementAward[]) : [],
     referrals: Array.isArray(typed.referrals) ? (typed.referrals as OrgReferralRecord[]) : [],
     reputationLedger: Array.isArray(typed.reputationLedger) ? (typed.reputationLedger as OrgReputationEntry[]) : [],
-    eventRsvps: Array.isArray(typed.eventRsvps) ? (typed.eventRsvps as OrgEventRsvp[]) : [],
+    eventRsvps: Array.isArray(typed.eventRsvps)
+      ? (typed.eventRsvps as OrgEventRsvp[]).map((row) => ({
+          ...row,
+          ticketId: row.ticketId ?? null,
+          ticketLabel: row.ticketLabel ?? null,
+          amountCents: typeof row.amountCents === 'number' ? row.amountCents : null,
+          message: row.message ?? null,
+          updatedAt: row.updatedAt ?? row.createdAt,
+        }))
+      : [],
     economics: Array.isArray(typed.economics) ? (typed.economics as OrgEconomicRecord[]) : [],
     members: typed.members && typeof typed.members === 'object' && !Array.isArray(typed.members) ? (typed.members as Record<string, OrgMemberState>) : {},
     auditLog: Array.isArray(typed.auditLog) ? (typed.auditLog as OrgAuditLogEntry[]) : [],
@@ -6951,6 +7355,116 @@ function resolveOrganizationPermissions({
 
 function canOrganizationPermission(permissions: OrgPermission[], permission: OrgPermission) {
   return permissions.includes(permission)
+}
+
+function buildGuestSpeakerInvites(args: {
+  previous: OrgEventGuestSpeakerInvite[]
+  selectedTags: OrgEventGuestSpeakerTag[]
+  nowIso: string
+}) {
+  const previousByUserId = new Map(args.previous.map((invite) => [invite.userId, invite]))
+  const nextInvites: OrgEventGuestSpeakerInvite[] = []
+  const newlyInvited: OrgEventGuestSpeakerInvite[] = []
+
+  for (const tag of args.selectedTags) {
+    const existing = previousByUserId.get(tag.userId)
+    if (existing) {
+      nextInvites.push({
+        ...existing,
+        name: tag.name,
+        handle: tag.handle,
+        avatarUrl: tag.avatarUrl,
+        coverUrl: tag.coverUrl,
+      })
+      continue
+    }
+    const created: OrgEventGuestSpeakerInvite = {
+      ...tag,
+      status: 'PENDING',
+      invitedAt: args.nowIso,
+      respondedAt: null,
+      respondedByUserId: null,
+    }
+    nextInvites.push(created)
+    newlyInvited.push(created)
+  }
+
+  return { nextInvites, newlyInvited }
+}
+
+async function resolveOrganizationAdminAndManagerIds(orgIds: string[]) {
+  const uniqueIds = Array.from(new Set(orgIds.filter(Boolean)))
+  if (!uniqueIds.length) return new Map<string, string[]>()
+
+  const [orgRows, managerRows] = await Promise.all([
+    prisma.business.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, ownerId: true },
+    }),
+    prisma.businessMembership.findMany({
+      where: {
+        businessId: { in: uniqueIds },
+        role: { in: ['OWNER', 'MANAGER'] },
+      },
+      select: { businessId: true, userId: true },
+    }),
+  ])
+
+  const recipientMap = new Map<string, Set<string>>()
+  for (const org of orgRows) {
+    if (!recipientMap.has(org.id)) recipientMap.set(org.id, new Set<string>())
+    recipientMap.get(org.id)!.add(org.ownerId)
+  }
+
+  for (const row of managerRows) {
+    if (!recipientMap.has(row.businessId)) recipientMap.set(row.businessId, new Set<string>())
+    recipientMap.get(row.businessId)!.add(row.userId)
+  }
+
+  const result = new Map<string, string[]>()
+  for (const [orgId, userIds] of recipientMap.entries()) {
+    result.set(orgId, [...userIds])
+  }
+  return result
+}
+
+function buildSponsorInvites(args: {
+  previous: OrgEventSponsorInvite[]
+  selectedSponsors: OrgEventSponsorTag[]
+  recipientMap: Map<string, string[]>
+  nowIso: string
+}) {
+  const previousByOrgId = new Map(args.previous.map((invite) => [invite.organizationId, invite]))
+  const nextInvites: OrgEventSponsorInvite[] = []
+  const newlyInvited: OrgEventSponsorInvite[] = []
+
+  for (const sponsor of args.selectedSponsors) {
+    const existing = previousByOrgId.get(sponsor.organizationId)
+    if (existing) {
+      nextInvites.push({
+        ...existing,
+        name: sponsor.name,
+        slug: sponsor.slug,
+        provinceCode: sponsor.provinceCode,
+        communitySlug: sponsor.communitySlug,
+        logoUrl: sponsor.logoUrl,
+        coverUrl: sponsor.coverUrl,
+      })
+      continue
+    }
+    const created: OrgEventSponsorInvite = {
+      ...sponsor,
+      status: 'PENDING',
+      invitedAt: args.nowIso,
+      respondedAt: null,
+      respondedByUserId: null,
+      recipientUserIds: args.recipientMap.get(sponsor.organizationId) ?? [],
+    }
+    nextInvites.push(created)
+    newlyInvited.push(created)
+  }
+
+  return { nextInvites, newlyInvited }
 }
 
 async function appendOrganizationAuditLogEntry(
@@ -7910,6 +8424,10 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events/draf
       priceCents: null,
       currency: 'CAD',
       guestSpeakers: [],
+      guestSpeakerInvites: [],
+      sponsors: [],
+      sponsorInvites: [],
+      fees: [],
       primaryPhotoUrl: null,
       galleryPhotoUrls: [],
       agenda: [],
@@ -7971,7 +8489,31 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/events/:even
     const event = current.events.find((item) => item.id === params.data.eventId) ?? null
     if (!event) return reply.code(404).send({ error: 'event_not_found' })
 
-    return reply.send({ event })
+    const eventRsvps = current.eventRsvps.filter((row) => row.eventId === event.id)
+    const rsvpUserIds = Array.from(new Set(eventRsvps.map((row) => row.userId).filter(Boolean)))
+    const rsvpUsers: FriendUser[] = rsvpUserIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: rsvpUserIds } },
+          select: FRIEND_USER_SELECT,
+        })
+      : []
+    const rsvpUserMap = new Map(rsvpUsers.map((user) => [user.id, user]))
+
+    const rsvps = eventRsvps
+      .map((row) => {
+        const user = rsvpUserMap.get(row.userId)
+        return {
+          ...row,
+          user: user ? formatFriendUser(user) : null,
+        }
+      })
+      .sort((a, b) => {
+        const at = new Date(a.updatedAt ?? a.createdAt).getTime()
+        const bt = new Date(b.updatedAt ?? b.createdAt).getTime()
+        return bt - at
+      })
+
+    return reply.send({ event, rsvps })
   }),
 )
 
@@ -8012,13 +8554,40 @@ app.put('/communities/:province/:municipality/orgs/:slug/governance/events/:even
     if (eventIndex < 0) return reply.code(404).send({ error: 'event_not_found' })
     const previous = current.events[eventIndex]
     if (!previous) return reply.code(404).send({ error: 'event_not_found' })
-    if (previous.status && previous.status !== 'DRAFT') {
-      return reply.code(409).send({ error: 'event_not_draft' })
-    }
 
-    const nextPaid = body.data.paid ?? previous.paid
+    const nextFees = body.data.fees ?? previous.fees ?? []
+    const hasPaidFees = nextFees.some((fee) => fee.amountCents > 0)
+    const nextPaid = body.data.paid ?? hasPaidFees
     const nextStartsAt = body.data.startsAt === undefined ? previous.startsAt : body.data.startsAt ?? previous.startsAt
     const nextCurrency = (body.data.currency ?? previous.currency).toUpperCase()
+    const derivedPriceFromFees = nextFees
+      .map((fee) => fee.amountCents)
+      .filter((amount) => Number.isFinite(amount) && amount > 0)
+      .sort((a, b) => a - b)[0] ?? null
+    const nowIso = new Date().toISOString()
+
+    const normalizedGuestInput = body.data.guestSpeakers === undefined ? null : normalizeGuestSpeakerInput(body.data.guestSpeakers)
+    const guestInviteBuild = normalizedGuestInput
+      ? buildGuestSpeakerInvites({
+          previous: previous.guestSpeakerInvites ?? [],
+          selectedTags: normalizedGuestInput.guestSpeakerTags,
+          nowIso,
+        })
+      : null
+
+    const normalizedSponsors = body.data.sponsors ? normalizeEventSponsorTags(body.data.sponsors) : null
+    const sponsorRecipientMap = normalizedSponsors?.length
+      ? await resolveOrganizationAdminAndManagerIds(normalizedSponsors.map((sponsor) => sponsor.organizationId))
+      : new Map<string, string[]>()
+    const sponsorInviteBuild = normalizedSponsors
+      ? buildSponsorInvites({
+          previous: previous.sponsorInvites ?? [],
+          selectedSponsors: normalizedSponsors,
+          recipientMap: sponsorRecipientMap,
+          nowIso,
+        })
+      : null
+
     const nextAgenda =
       body.data.agenda === undefined
         ? previous.agenda
@@ -8035,15 +8604,19 @@ app.put('/communities/:province/:municipality/orgs/:slug/governance/events/:even
       endsAt: body.data.endsAt === undefined ? previous.endsAt : body.data.endsAt ?? null,
       capacity: body.data.capacity === undefined ? previous.capacity : body.data.capacity ?? null,
       paid: nextPaid,
-      priceCents: nextPaid ? (body.data.priceCents === undefined ? previous.priceCents : body.data.priceCents ?? null) : null,
+      priceCents: nextPaid ? (body.data.priceCents === undefined ? previous.priceCents ?? derivedPriceFromFees : body.data.priceCents ?? null) : null,
       currency: nextCurrency,
-      guestSpeakers: body.data.guestSpeakers ?? previous.guestSpeakers,
+      guestSpeakers: normalizedGuestInput ? normalizedGuestInput.guestSpeakers : previous.guestSpeakers,
+      guestSpeakerInvites: guestInviteBuild ? guestInviteBuild.nextInvites : previous.guestSpeakerInvites ?? [],
+      sponsors: normalizedSponsors ?? previous.sponsors ?? [],
+      sponsorInvites: sponsorInviteBuild ? sponsorInviteBuild.nextInvites : previous.sponsorInvites ?? [],
+      fees: nextFees,
       agenda: nextAgenda,
       attachments: body.data.attachments ?? previous.attachments,
       primaryPhotoUrl: body.data.primaryPhotoUrl === undefined ? previous.primaryPhotoUrl : body.data.primaryPhotoUrl ?? null,
       galleryPhotoUrls: body.data.galleryPhotoUrls ?? previous.galleryPhotoUrls,
       status: 'DRAFT',
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso,
     }
 
     const nextEvents = [...current.events]
@@ -8062,6 +8635,48 @@ app.put('/communities/:province/:municipality/orgs/:slug/governance/events/:even
       previousValue: previous,
       nextValue: next,
     })
+
+    const hostSlug = params.data.slug.trim().toLowerCase()
+    if (guestInviteBuild?.newlyInvited?.length) {
+      await Promise.allSettled(
+        guestInviteBuild.newlyInvited.map((invite) =>
+          notifyEventGuestSpeakerInvite({
+            inviteeUserId: invite.userId,
+            actorUserId,
+            hostOrganizationId: org.id,
+            hostProvinceCode: province,
+            hostCommunitySlug: community.slug,
+            hostOrganizationSlug: hostSlug,
+            eventId: next.id,
+            eventTitle: next.title,
+          }),
+        ),
+      )
+    }
+
+    if (sponsorInviteBuild?.newlyInvited?.length) {
+      const notifications: Array<Promise<void>> = []
+      for (const invite of sponsorInviteBuild.newlyInvited) {
+        for (const userId of invite.recipientUserIds) {
+          notifications.push(
+            notifyEventSponsorInvite({
+              inviteeUserId: userId,
+              actorUserId,
+              hostOrganizationId: org.id,
+              hostProvinceCode: province,
+              hostCommunitySlug: community.slug,
+              hostOrganizationSlug: hostSlug,
+              targetOrganizationId: invite.organizationId,
+              eventId: next.id,
+              eventTitle: next.title,
+            }),
+          )
+        }
+      }
+      if (notifications.length) {
+        await Promise.allSettled(notifications)
+      }
+    }
 
     return reply.send({ event: next })
   }),
@@ -8099,7 +8714,9 @@ app.post(
       const current = readOrganizationSystemState(org.metadata)
       const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
 
-      const requiredPermission: OrgPermission = body.data.paid ? 'create_paid_events' : 'create_announcements'
+      const hasPaidFees = (body.data.fees ?? []).some((fee) => fee.amountCents > 0)
+      const isPaidEvent = body.data.paid || hasPaidFees
+      const requiredPermission: OrgPermission = isPaidEvent ? 'create_paid_events' : 'create_announcements'
       if (!canOrganizationPermission(permissions, requiredPermission) && !canOrganizationPermission(permissions, 'manage_events')) {
         return reply.code(403).send({ error: 'forbidden' })
       }
@@ -8113,6 +8730,26 @@ app.post(
       }
 
       const nowIso = new Date().toISOString()
+      const normalizedGuestInput = normalizeGuestSpeakerInput(body.data.guestSpeakers)
+      const guestInviteBuild = buildGuestSpeakerInvites({
+        previous: previous.guestSpeakerInvites ?? [],
+        selectedTags: normalizedGuestInput.guestSpeakerTags,
+        nowIso,
+      })
+      const normalizedSponsors = normalizeEventSponsorTags(body.data.sponsors)
+      const sponsorRecipientMap = normalizedSponsors.length
+        ? await resolveOrganizationAdminAndManagerIds(normalizedSponsors.map((sponsor) => sponsor.organizationId))
+        : new Map<string, string[]>()
+      const sponsorInviteBuild = buildSponsorInvites({
+        previous: previous.sponsorInvites ?? [],
+        selectedSponsors: normalizedSponsors,
+        recipientMap: sponsorRecipientMap,
+        nowIso,
+      })
+      const publishPriceFromFees = (body.data.fees ?? [])
+        .map((fee) => fee.amountCents)
+        .filter((amount) => Number.isFinite(amount) && amount > 0)
+        .sort((a, b) => a - b)[0] ?? null
       const next: OrgEventDefinition = {
         ...previous,
         title: body.data.title,
@@ -8123,15 +8760,145 @@ app.post(
         startsAt: body.data.startsAt,
         endsAt: body.data.endsAt ?? null,
         capacity: body.data.capacity ?? null,
-        paid: body.data.paid,
-        priceCents: body.data.paid ? body.data.priceCents ?? null : null,
+        paid: body.data.paid || hasPaidFees,
+        priceCents: body.data.paid || hasPaidFees ? body.data.priceCents ?? publishPriceFromFees : null,
         currency: body.data.currency.toUpperCase(),
-        guestSpeakers: body.data.guestSpeakers ?? [],
+        guestSpeakers: normalizedGuestInput.guestSpeakers,
+        guestSpeakerInvites: guestInviteBuild.nextInvites,
+        sponsors: normalizedSponsors,
+        sponsorInvites: sponsorInviteBuild.nextInvites,
+        fees: body.data.fees ?? [],
         primaryPhotoUrl: body.data.primaryPhotoUrl ?? null,
         galleryPhotoUrls: body.data.galleryPhotoUrls ?? [],
         agenda: body.data.agenda?.map((item) => ({ title: item.title, startsAt: item.startsAt ?? null })) ?? [],
         attachments: body.data.attachments ?? [],
         status: 'PUBLISHED',
+        updatedAt: nowIso,
+      }
+
+      const nextEvents = [...current.events]
+      nextEvents[eventIndex] = next
+      const nextSystem: OrganizationSystemState = { ...current, events: nextEvents }
+      const hostSlug = params.data.slug.trim().toLowerCase()
+
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.business.update({
+          where: { id: org.id },
+          data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, nextSystem) },
+          select: { id: true },
+        })
+
+        await createOrganizationEventAnnouncementPost({
+          client: tx,
+          authorUserId: actorUserId,
+          businessId: org.id,
+          provinceCode: province,
+          communitySlug: community.slug,
+          organizationSlug: hostSlug,
+          event: {
+            id: next.id,
+            title: next.title,
+            description: next.description,
+            startsAt: next.startsAt,
+            primaryPhotoUrl: next.primaryPhotoUrl,
+          },
+        })
+      })
+      await appendOrganizationAuditLogEntry(prisma, org.id, {
+        actorUserId,
+        action: 'event.published',
+        reason: null,
+        previousValue: previous,
+        nextValue: next,
+      })
+
+      if (guestInviteBuild.newlyInvited.length) {
+        await Promise.allSettled(
+          guestInviteBuild.newlyInvited.map((invite) =>
+            notifyEventGuestSpeakerInvite({
+              inviteeUserId: invite.userId,
+              actorUserId,
+              hostOrganizationId: org.id,
+              hostProvinceCode: province,
+              hostCommunitySlug: community.slug,
+              hostOrganizationSlug: hostSlug,
+              eventId: next.id,
+              eventTitle: next.title,
+            }),
+          ),
+        )
+      }
+
+      if (sponsorInviteBuild.newlyInvited.length) {
+        const notifications: Promise<void>[] = []
+        for (const invite of sponsorInviteBuild.newlyInvited) {
+          for (const userId of invite.recipientUserIds) {
+            notifications.push(
+              notifyEventSponsorInvite({
+                inviteeUserId: userId,
+                actorUserId,
+                hostOrganizationId: org.id,
+                hostProvinceCode: province,
+                hostCommunitySlug: community.slug,
+                hostOrganizationSlug: hostSlug,
+                targetOrganizationId: invite.organizationId,
+                eventId: next.id,
+                eventTitle: next.title,
+              }),
+            )
+          }
+        }
+        if (notifications.length) {
+          await Promise.allSettled(notifications)
+        }
+      }
+
+      return reply.send({ event: next })
+    }),
+)
+
+app.post(
+  '/communities/:province/:municipality/orgs/:slug/governance/events/:eventId/unpublish',
+  async (req: FastifyRequest, reply: FastifyReply) =>
+    withSchemaGuard(req, reply, async () => {
+      const actorUserId = (await resolveUserId(req)) ?? null
+      if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = CommunityOrgEventParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const province = normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, metadata: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+      const membership = await prisma.businessMembership.findUnique({
+        where: { businessId_userId: { businessId: org.id, userId: actorUserId } },
+        select: { role: true },
+      })
+      const actorRole: 'OWNER' | 'MANAGER' | null = org.ownerId === actorUserId ? 'OWNER' : membership?.role === 'MANAGER' ? 'MANAGER' : null
+
+      const current = readOrganizationSystemState(org.metadata)
+      const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
+      if (!canOrganizationPermission(permissions, 'manage_events')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      const eventIndex = current.events.findIndex((item) => item.id === params.data.eventId)
+      if (eventIndex < 0) return reply.code(404).send({ error: 'event_not_found' })
+      const previous = current.events[eventIndex]
+      if (!previous) return reply.code(404).send({ error: 'event_not_found' })
+
+      const nowIso = new Date().toISOString()
+      const next: OrgEventDefinition = {
+        ...previous,
+        status: 'DRAFT',
         updatedAt: nowIso,
       }
 
@@ -8146,7 +8913,7 @@ app.post(
       })
       await appendOrganizationAuditLogEntry(prisma, org.id, {
         actorUserId,
-        action: 'event.published',
+        action: 'event.unpublished',
         reason: null,
         previousValue: previous,
         nextValue: next,
@@ -8154,6 +8921,67 @@ app.post(
 
       return reply.send({ event: next })
     }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug/governance/events/:eventId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const actorUserId = (await resolveUserId(req)) ?? null
+    if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgEventParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const membership = await prisma.businessMembership.findUnique({
+      where: { businessId_userId: { businessId: org.id, userId: actorUserId } },
+      select: { role: true },
+    })
+    const actorRole: 'OWNER' | 'MANAGER' | null = org.ownerId === actorUserId ? 'OWNER' : membership?.role === 'MANAGER' ? 'MANAGER' : null
+
+    const current = readOrganizationSystemState(org.metadata)
+    const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
+    if (!canOrganizationPermission(permissions, 'manage_events')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const eventIndex = current.events.findIndex((item) => item.id === params.data.eventId)
+    if (eventIndex < 0) return reply.code(404).send({ error: 'event_not_found' })
+    const removed = current.events[eventIndex]
+    if (!removed) return reply.code(404).send({ error: 'event_not_found' })
+
+    const nextEvents = current.events.filter((item) => item.id !== params.data.eventId)
+    const nextRsvps = current.eventRsvps.filter((row) => row.eventId !== params.data.eventId)
+    const nextSystem: OrganizationSystemState = {
+      ...current,
+      events: nextEvents,
+      eventRsvps: nextRsvps,
+    }
+
+    await prisma.business.update({
+      where: { id: org.id },
+      data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, nextSystem) },
+      select: { id: true },
+    })
+    await appendOrganizationAuditLogEntry(prisma, org.id, {
+      actorUserId,
+      action: 'event.deleted',
+      reason: null,
+      previousValue: removed,
+      nextValue: null,
+    })
+
+    return reply.send({ ok: true })
+  }),
 )
 
 app.post('/communities/:province/:municipality/orgs/:slug/governance/join-mode', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -8429,12 +9257,34 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
 
     const current = readOrganizationSystemState(org.metadata)
     const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
-    const requiredPermission: OrgPermission = body.data.paid ? 'create_paid_events' : 'create_announcements'
+    const hasPaidFees = (body.data.fees ?? []).some((fee) => fee.amountCents > 0)
+    const isPaidEvent = body.data.paid || hasPaidFees
+    const requiredPermission: OrgPermission = isPaidEvent ? 'create_paid_events' : 'create_announcements'
     if (!canOrganizationPermission(permissions, requiredPermission) && !canOrganizationPermission(permissions, 'manage_events')) {
       return reply.code(403).send({ error: 'forbidden' })
     }
 
     const nowIso = new Date().toISOString()
+    const normalizedGuestInput = normalizeGuestSpeakerInput(body.data.guestSpeakers)
+    const guestInviteBuild = buildGuestSpeakerInvites({
+      previous: [],
+      selectedTags: normalizedGuestInput.guestSpeakerTags,
+      nowIso,
+    })
+    const normalizedSponsors = normalizeEventSponsorTags(body.data.sponsors)
+    const sponsorRecipientMap = normalizedSponsors.length
+      ? await resolveOrganizationAdminAndManagerIds(normalizedSponsors.map((sponsor) => sponsor.organizationId))
+      : new Map<string, string[]>()
+    const sponsorInviteBuild = buildSponsorInvites({
+      previous: [],
+      selectedSponsors: normalizedSponsors,
+      recipientMap: sponsorRecipientMap,
+      nowIso,
+    })
+    const createPriceFromFees = (body.data.fees ?? [])
+      .map((fee) => fee.amountCents)
+      .filter((amount) => Number.isFinite(amount) && amount > 0)
+      .sort((a, b) => a - b)[0] ?? null
     const event: OrgEventDefinition = {
       id: `event_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
       title: body.data.title,
@@ -8445,10 +9295,14 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
       startsAt: body.data.startsAt,
       endsAt: body.data.endsAt ?? null,
       capacity: body.data.capacity ?? null,
-      paid: body.data.paid,
-      priceCents: body.data.paid ? body.data.priceCents ?? null : null,
+      paid: body.data.paid || hasPaidFees,
+      priceCents: body.data.paid || hasPaidFees ? body.data.priceCents ?? createPriceFromFees : null,
       currency: body.data.currency.toUpperCase(),
-      guestSpeakers: body.data.guestSpeakers ?? [],
+      guestSpeakers: normalizedGuestInput.guestSpeakers,
+      guestSpeakerInvites: guestInviteBuild.nextInvites,
+      sponsors: normalizedSponsors,
+      sponsorInvites: sponsorInviteBuild.nextInvites,
+      fees: body.data.fees ?? [],
       primaryPhotoUrl: body.data.primaryPhotoUrl ?? null,
       galleryPhotoUrls: body.data.galleryPhotoUrls ?? [],
       agenda: body.data.agenda?.map((item) => ({ title: item.title, startsAt: item.startsAt ?? null })) ?? [],
@@ -8459,10 +9313,29 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
     }
 
     const nextSystem: OrganizationSystemState = { ...current, events: [...current.events, event] }
-    await prisma.business.update({
-      where: { id: org.id },
-      data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, nextSystem) },
-      select: { id: true },
+    const hostSlug = params.data.slug.trim().toLowerCase()
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.business.update({
+        where: { id: org.id },
+        data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, nextSystem) },
+        select: { id: true },
+      })
+
+      await createOrganizationEventAnnouncementPost({
+        client: tx,
+        authorUserId: actorUserId,
+        businessId: org.id,
+        provinceCode: province,
+        communitySlug: community.slug,
+        organizationSlug: hostSlug,
+        event: {
+          id: event.id,
+          title: event.title,
+          description: event.description,
+          startsAt: event.startsAt,
+          primaryPhotoUrl: event.primaryPhotoUrl,
+        },
+      })
     })
     await appendOrganizationAuditLogEntry(prisma, org.id, {
       actorUserId,
@@ -8471,6 +9344,47 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
       previousValue: null,
       nextValue: event,
     })
+
+    if (guestInviteBuild.newlyInvited.length) {
+      await Promise.allSettled(
+        guestInviteBuild.newlyInvited.map((invite) =>
+          notifyEventGuestSpeakerInvite({
+            inviteeUserId: invite.userId,
+            actorUserId,
+            hostOrganizationId: org.id,
+            hostProvinceCode: province,
+            hostCommunitySlug: community.slug,
+            hostOrganizationSlug: hostSlug,
+            eventId: event.id,
+            eventTitle: event.title,
+          }),
+        ),
+      )
+    }
+
+    if (sponsorInviteBuild.newlyInvited.length) {
+      const notifications: Promise<void>[] = []
+      for (const invite of sponsorInviteBuild.newlyInvited) {
+        for (const userId of invite.recipientUserIds) {
+          notifications.push(
+            notifyEventSponsorInvite({
+              inviteeUserId: userId,
+              actorUserId,
+              hostOrganizationId: org.id,
+              hostProvinceCode: province,
+              hostCommunitySlug: community.slug,
+              hostOrganizationSlug: hostSlug,
+              targetOrganizationId: invite.organizationId,
+              eventId: event.id,
+              eventTitle: event.title,
+            }),
+          )
+        }
+      }
+      if (notifications.length) {
+        await Promise.allSettled(notifications)
+      }
+    }
 
     return reply.code(201).send({ event })
   }),
@@ -8964,12 +9878,34 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events/:eve
         return reply.code(403).send({ error: 'rank_not_eligible' })
       }
     }
-    if (event.paid && body.data.ticketType !== 'PAID') {
+
+    const eventFees = event.fees ?? []
+    const selectedTicket = body.data.ticketId
+      ? eventFees.find((fee) => fee.id === body.data.ticketId) ?? null
+      : null
+
+    if (body.data.ticketId && !selectedTicket) {
+      return reply.code(400).send({ error: 'invalid_ticket_type' })
+    }
+
+    if (body.data.status === 'GOING' && eventFees.length > 0 && !selectedTicket) {
+      return reply.code(400).send({ error: 'ticket_type_required' })
+    }
+
+    const resolvedTicketType: 'FREE' | 'PAID' = selectedTicket
+      ? selectedTicket.amountCents > 0
+        ? 'PAID'
+        : 'FREE'
+      : body.data.ticketType ?? (event.paid ? 'PAID' : 'FREE')
+
+    if (event.paid && resolvedTicketType !== 'PAID') {
       return reply.code(400).send({ error: 'paid_ticket_required' })
     }
-    if (!event.paid && body.data.ticketType === 'PAID') {
+    if (!event.paid && eventFees.length === 0 && resolvedTicketType === 'PAID') {
       return reply.code(400).send({ error: 'paid_ticket_not_allowed' })
     }
+
+    const message = body.data.message?.trim() ? body.data.message.trim() : null
 
     const previous = current.eventRsvps.find((item) => item.eventId === event.id && item.userId === actorUserId) ?? null
     const existingGoingCount = current.eventRsvps.filter((item) => item.eventId === event.id && item.status === 'GOING' && item.userId !== actorUserId).length
@@ -8977,13 +9913,29 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events/:eve
       return reply.code(409).send({ error: 'event_capacity_reached' })
     }
 
+    if (body.data.status === 'GOING' && selectedTicket && typeof selectedTicket.capacity === 'number' && selectedTicket.capacity > 0) {
+      const existingTicketGoingCount = current.eventRsvps.filter(
+        (item) => item.eventId === event.id && item.status === 'GOING' && item.ticketId === selectedTicket.id && item.userId !== actorUserId,
+      ).length
+      if (existingTicketGoingCount >= selectedTicket.capacity) {
+        return reply.code(409).send({ error: 'ticket_capacity_reached' })
+      }
+    }
+
+    const nowIso = new Date().toISOString()
+
     const rsvp: OrgEventRsvp = {
       id: previous?.id ?? `rsvp_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
       eventId: event.id,
       userId: actorUserId,
       status: body.data.status,
-      ticketType: body.data.ticketType,
-      createdAt: previous?.createdAt ?? new Date().toISOString(),
+      ticketType: resolvedTicketType,
+      ticketId: body.data.status === 'GOING' ? selectedTicket?.id ?? null : null,
+      ticketLabel: body.data.status === 'GOING' ? selectedTicket?.label ?? null : null,
+      amountCents: body.data.status === 'GOING' && selectedTicket ? selectedTicket.amountCents : null,
+      message: body.data.status === 'GOING' ? message : null,
+      createdAt: previous?.createdAt ?? nowIso,
+      updatedAt: nowIso,
     }
 
     const nextSystem: OrganizationSystemState = {
@@ -9010,6 +9962,8 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events/:eve
 
 app.get('/communities/:province/:municipality/orgs/:slug/events/:eventId', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
+    const viewerId = (await resolveUserId(req)) ?? null
+
     const params = CommunityOrgEventParams.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
 
@@ -9026,16 +9980,81 @@ app.get('/communities/:province/:municipality/orgs/:slug/events/:eventId', async
 
     const system = readOrganizationSystemState(org.metadata)
     const event = system.events.find((item) => item.id === params.data.eventId)
-    if (!event || event.status === 'DRAFT') return reply.code(404).send({ error: 'event_not_found' })
+    if (!event) return reply.code(404).send({ error: 'event_not_found' })
 
-    if (event.access === 'RESTRICTED') {
-      const viewerId = (await resolveUserId(req)) ?? null
+    const isDraft = (event.status ?? 'PUBLISHED') === 'DRAFT'
+    const viewerGuestInvite = viewerId ? (event.guestSpeakerInvites ?? []).find((invite) => invite.userId === viewerId) ?? null : null
+    const viewerSponsorInvite = viewerId
+      ? (event.sponsorInvites ?? []).find(
+          (invite) => Array.isArray(invite.recipientUserIds) && invite.recipientUserIds.includes(viewerId),
+        ) ?? null
+      : null
+    const isDraftGuestInvitee = Boolean(
+      viewerGuestInvite && (viewerGuestInvite.status === 'PENDING' || viewerGuestInvite.status === 'ACCEPTED'),
+    )
+    const isDraftSponsorInvitee = Boolean(
+      viewerSponsorInvite && (viewerSponsorInvite.status === 'PENDING' || viewerSponsorInvite.status === 'ACCEPTED'),
+    )
+    const hasExistingRsvp = Boolean(viewerId && system.eventRsvps.some((row) => row.eventId === event.id && row.userId === viewerId))
+    const canViewDraft = Boolean(viewerId && (org.ownerId === viewerId || isDraftGuestInvitee || isDraftSponsorInvitee || hasExistingRsvp))
+
+    if (isDraft && !canViewDraft) {
+      return reply.code(404).send({ error: 'event_not_found' })
+    }
+
+    if (event.access === 'RESTRICTED' && !isDraft) {
       const viewerMember = viewerId ? system.members[viewerId] ?? null : null
       if (!viewerId || !viewerMember || viewerMember.status !== 'ACTIVE') {
         return reply.code(403).send({ error: 'restricted_event' })
       }
       if (event.eligibleRankIds.length > 0 && !event.eligibleRankIds.includes(viewerMember.rankId)) {
         return reply.code(403).send({ error: 'rank_not_eligible' })
+      }
+    }
+
+    const eventRsvps = system.eventRsvps.filter((row) => row.eventId === event.id)
+    const viewerRsvp = viewerId ? eventRsvps.find((row) => row.userId === viewerId) ?? null : null
+    const goingCount = eventRsvps.filter((row) => row.status === 'GOING').length
+    const interestedCount = eventRsvps.filter((row) => row.status === 'INTERESTED').length
+
+    let viewerInvitation:
+      | {
+          kind: 'guest_speaker' | 'sponsor'
+          status: 'PENDING' | 'ACCEPTED' | 'DECLINED'
+          notificationId: string | null
+          inviter: ReturnType<typeof formatFriendUser> | null
+        }
+      | null = null
+
+    if (viewerId && (viewerGuestInvite || viewerSponsorInvite)) {
+      const invitationKind = viewerGuestInvite ? 'guest_speaker' : 'sponsor'
+      const invitationStatus = (viewerGuestInvite?.status ?? viewerSponsorInvite?.status ?? 'PENDING') as 'PENDING' | 'ACCEPTED' | 'DECLINED'
+
+      const notification = await prisma.notification.findFirst({
+        where: {
+          userId: viewerId,
+          type:
+            invitationKind === 'guest_speaker'
+              ? EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE
+              : EVENT_NOTIFICATION_TYPES.SPONSOR_INVITE,
+          payload: {
+            path: ['eventId'],
+            equals: event.id,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: NOTIFICATION_SELECT,
+      })
+
+      const inviter = notification?.actorId
+        ? await prisma.user.findUnique({ where: { id: notification.actorId }, select: FRIEND_USER_SELECT })
+        : null
+
+      viewerInvitation = {
+        kind: invitationKind,
+        status: invitationStatus,
+        notificationId: invitationStatus === 'PENDING' ? notification?.id ?? null : null,
+        inviter: inviter ? formatFriendUser(inviter) : null,
       }
     }
 
@@ -9053,12 +10072,55 @@ app.get('/communities/:province/:municipality/orgs/:slug/events/:eventId', async
         priceCents: event.priceCents,
         currency: event.currency,
         guestSpeakers: event.guestSpeakers,
+        guestSpeakerInvites: (event.guestSpeakerInvites ?? []).map((invite) => ({
+          userId: invite.userId,
+          name: invite.name,
+          handle: invite.handle,
+          avatarUrl: normalizeMediaUrl(invite.avatarUrl ?? null),
+          coverUrl: normalizeMediaUrl(invite.coverUrl ?? null),
+          status: invite.status,
+        })),
+        sponsors: event.sponsors ?? [],
+        sponsorInvites: (event.sponsorInvites ?? []).map((invite) => ({
+          organizationId: invite.organizationId,
+          name: invite.name,
+          slug: invite.slug,
+          provinceCode: invite.provinceCode,
+          communitySlug: invite.communitySlug,
+          logoUrl: normalizeMediaUrl(invite.logoUrl ?? null),
+          coverUrl: normalizeMediaUrl(invite.coverUrl ?? null),
+          status: invite.status,
+        })),
+        fees: (event.fees ?? []).map((fee) => ({
+          id: fee.id,
+          label: fee.label,
+          amountCents: fee.amountCents,
+          capacity: fee.capacity ?? null,
+          cashOnly: fee.cashOnly !== false,
+        })),
         primaryPhotoUrl: event.primaryPhotoUrl,
         galleryPhotoUrls: event.galleryPhotoUrls,
         status: event.status ?? 'PUBLISHED',
         createdAt: event.createdAt,
         updatedAt: event.updatedAt ?? event.createdAt,
       },
+      viewerRsvp: viewerRsvp
+        ? {
+            id: viewerRsvp.id,
+            status: viewerRsvp.status,
+            ticketId: viewerRsvp.ticketId ?? null,
+            ticketLabel: viewerRsvp.ticketLabel ?? null,
+            amountCents: typeof viewerRsvp.amountCents === 'number' ? viewerRsvp.amountCents : null,
+            message: viewerRsvp.message ?? null,
+            createdAt: viewerRsvp.createdAt,
+            updatedAt: viewerRsvp.updatedAt ?? viewerRsvp.createdAt,
+          }
+        : null,
+      rsvpSummary: {
+        goingCount,
+        interestedCount,
+      },
+      viewerInvitation,
       organization: {
         id: org.id,
         name: org.name,
@@ -13821,6 +14883,171 @@ app.get('/search', async (req: FastifyRequest, reply: FastifyReply) =>
         communitiesHasMore,
       },
     })
+  }),
+)
+
+app.post('/notifications/:id/respond', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = NotificationRespondParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+    const body = NotificationRespondBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const notification = await prisma.notification.findFirst({
+      where: { id: params.data.id, userId },
+      select: NOTIFICATION_SELECT,
+    })
+    if (!notification) return reply.code(404).send({ error: 'notification_not_found' })
+
+    if (notification.type !== EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE && notification.type !== EVENT_NOTIFICATION_TYPES.SPONSOR_INVITE) {
+      return reply.code(400).send({ error: 'notification_not_actionable' })
+    }
+
+    const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+      ? (notification.payload as Record<string, unknown>)
+      : null
+    if (!payload) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+    const statusRaw = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : 'pending'
+    if (statusRaw !== 'pending') {
+      return reply.code(409).send({ error: 'invitation_not_pending' })
+    }
+
+    const hostOrganizationId = typeof payload.hostOrganizationId === 'string' ? payload.hostOrganizationId : ''
+    const eventId = typeof payload.eventId === 'string' ? payload.eventId : ''
+    if (!hostOrganizationId || !eventId) {
+      return reply.code(400).send({ error: 'invalid_notification_payload' })
+    }
+
+    const hostOrg = await prisma.business.findUnique({
+      where: { id: hostOrganizationId },
+      select: { id: true, metadata: true, provinceCode: true, communitySlug: true, slug: true },
+    })
+    if (!hostOrg) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const current = readOrganizationSystemState(hostOrg.metadata)
+    const eventIndex = current.events.findIndex((entry) => entry.id === eventId)
+    if (eventIndex < 0) return reply.code(404).send({ error: 'event_not_found' })
+    const previousEvent = current.events[eventIndex]
+    if (!previousEvent) return reply.code(404).send({ error: 'event_not_found' })
+
+    const nowIso = new Date().toISOString()
+    const nextStatus = body.data.action === 'accept' ? 'ACCEPTED' : 'DECLINED'
+    const nextStatusLower = body.data.action === 'accept' ? 'accepted' : 'declined'
+    const nextEvent: OrgEventDefinition = {
+      ...previousEvent,
+      guestSpeakerInvites: [...(previousEvent.guestSpeakerInvites ?? [])],
+      sponsorInvites: [...(previousEvent.sponsorInvites ?? [])],
+      updatedAt: nowIso,
+    }
+
+    if (notification.type === EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE) {
+      const inviteIndex = nextEvent.guestSpeakerInvites.findIndex((invite) => invite.userId === userId)
+      if (inviteIndex < 0) return reply.code(404).send({ error: 'invite_not_found' })
+      const invite = nextEvent.guestSpeakerInvites[inviteIndex]
+      if (!invite || invite.status !== 'PENDING') {
+        return reply.code(409).send({ error: 'invitation_not_pending' })
+      }
+      nextEvent.guestSpeakerInvites[inviteIndex] = {
+        ...invite,
+        status: nextStatus,
+        respondedAt: nowIso,
+        respondedByUserId: userId,
+      }
+    } else {
+      const targetOrganizationId = typeof payload.targetOrganizationId === 'string' ? payload.targetOrganizationId : ''
+      if (!targetOrganizationId) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+      const targetOrg = await prisma.business.findUnique({
+        where: { id: targetOrganizationId },
+        select: { id: true, ownerId: true },
+      })
+      if (!targetOrg) return reply.code(404).send({ error: 'organization_not_found' })
+
+      let authorized = targetOrg.ownerId === userId
+      if (!authorized) {
+        const membership = await prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: targetOrg.id, userId } },
+          select: { role: true },
+        })
+        authorized = membership?.role === 'OWNER' || membership?.role === 'MANAGER'
+      }
+      if (!authorized) return reply.code(403).send({ error: 'forbidden' })
+
+      const inviteIndex = nextEvent.sponsorInvites.findIndex((invite) => invite.organizationId === targetOrganizationId)
+      if (inviteIndex < 0) return reply.code(404).send({ error: 'invite_not_found' })
+      const invite = nextEvent.sponsorInvites[inviteIndex]
+      if (!invite || invite.status !== 'PENDING') {
+        return reply.code(409).send({ error: 'invitation_not_pending' })
+      }
+      nextEvent.sponsorInvites[inviteIndex] = {
+        ...invite,
+        status: nextStatus,
+        respondedAt: nowIso,
+        respondedByUserId: userId,
+      }
+    }
+
+    const nextEvents = [...current.events]
+    nextEvents[eventIndex] = nextEvent
+    const nextSystem: OrganizationSystemState = { ...current, events: nextEvents }
+
+    await prisma.business.update({
+      where: { id: hostOrg.id },
+      data: {
+        metadata: mergeOrganizationSystemStateIntoMetadata(hostOrg.metadata, nextSystem),
+      },
+      select: { id: true },
+    })
+
+    const nextPayload: Prisma.InputJsonValue = {
+      ...payload,
+      status: body.data.action === 'accept' ? 'accepted' : 'rejected',
+      respondedAt: nowIso,
+    }
+
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: {
+        payload: nextPayload,
+        readAt: notification.readAt ?? new Date(),
+      },
+    })
+
+    if (notification.actorId && notification.actorId !== userId) {
+      const inviteKind = notification.type === EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE ? 'guest_speaker' : 'sponsor'
+      const responseType =
+        notification.type === EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE
+          ? EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_RESPONSE
+          : EVENT_NOTIFICATION_TYPES.SPONSOR_RESPONSE
+
+      await createNotificationRecord({
+        userId: notification.actorId,
+        actorId: userId,
+        type: responseType,
+        payload: {
+          invitationKind: inviteKind,
+          status: nextStatusLower,
+          eventId,
+          eventTitle:
+            typeof payload.eventTitle === 'string' && payload.eventTitle.trim()
+              ? payload.eventTitle.trim()
+              : previousEvent.title,
+          url:
+            typeof payload.url === 'string' && payload.url.trim().startsWith('/')
+              ? payload.url.trim()
+              : hostOrg.provinceCode && hostOrg.communitySlug && hostOrg.slug
+                ? `/com/${encodeURIComponent(hostOrg.provinceCode)}/${encodeURIComponent(hostOrg.communitySlug)}/orgs/${encodeURIComponent(hostOrg.slug)}/events/${encodeURIComponent(eventId)}`
+                : '/notifications',
+          respondedAt: nowIso,
+        },
+      })
+    }
+
+    return reply.send({ ok: true, status: body.data.action === 'accept' ? 'accepted' : 'rejected' })
   }),
 )
 

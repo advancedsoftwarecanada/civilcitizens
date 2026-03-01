@@ -12,6 +12,12 @@ type CivilPushPermissionsResult = { receive?: string }
 
 export type CivilPushLastNotificationTapResult = {
   url?: string
+  urlPath?: string
+  path?: string
+  threadId?: string
+  threadID?: string
+  channelId?: string
+  conversationId?: string
   urlAt?: number | null
 }
 
@@ -69,8 +75,24 @@ export async function getLastNativeNotificationTapUrl(): Promise<string | null> 
 
   try {
     const result = await plugin.getLastNotificationTap()
-    const url = typeof result?.url === 'string' ? result.url.trim() : ''
-    return url ? url : null
+    const urlCandidates = [result?.url, result?.urlPath, result?.path]
+    for (const candidate of urlCandidates) {
+      const normalized = typeof candidate === 'string' ? candidate.trim() : ''
+      if (normalized) return normalized
+    }
+
+    const threadCandidate = [
+      result?.threadId,
+      result?.threadID,
+      result?.channelId,
+      result?.conversationId,
+    ].find((value) => typeof value === 'string' && value.trim().length > 0)
+
+    if (typeof threadCandidate === 'string') {
+      return `/messages?thread=${encodeURIComponent(threadCandidate.trim())}`
+    }
+
+    return null
   } catch {
     return null
   }

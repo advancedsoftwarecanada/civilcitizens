@@ -196,10 +196,8 @@ export default function NotificationsClient() {
     }
   }, [nextCursor, loadingMore, loadNotifications])
 
-  const handleFriendRequestAction = useCallback(
+  const handleNotificationRequestAction = useCallback(
     async (notification: NotificationItem, action: 'accept' | 'reject') => {
-      const friendshipId = getFriendshipId(notification)
-      if (!friendshipId) return
       const token = getStoredToken()
       if (!token) {
         redirectToAuthModal('login')
@@ -207,13 +205,26 @@ export default function NotificationsClient() {
       }
       setFriendActionState({ notificationId: notification.id, action })
       try {
-        const res = await fetch(buildApiUrl(`/friends/requests/${friendshipId}/${action}`), {
-          method: 'POST',
-          headers: { authorization: `Bearer ${token}` },
-        })
+        const isFriend = notification.type === 'friend_request'
+        const friendshipId = isFriend ? getFriendshipId(notification) : null
+        if (isFriend && !friendshipId) return
+
+        const res = await fetch(
+          isFriend
+            ? buildApiUrl(`/friends/requests/${friendshipId}/${action}`)
+            : buildApiUrl(`/notifications/${encodeURIComponent(notification.id)}/respond`),
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              ...(!isFriend ? { 'content-type': 'application/json' } : {}),
+            },
+            body: !isFriend ? JSON.stringify({ action }) : undefined,
+          },
+        )
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
         if (!res.ok) {
-          if (res.status === 409 && payload?.error === 'friendship_not_pending') {
+          if (res.status === 409 && (payload?.error === 'friendship_not_pending' || payload?.error === 'invitation_not_pending')) {
             const timestamp = new Date().toISOString()
             setNotifications((prev) =>
               prev.map((item) => {
@@ -230,15 +241,15 @@ export default function NotificationsClient() {
                 }
               }),
             )
-            pushToast('Friend request already resolved.', 'info')
+            pushToast('Request already resolved.', 'info')
             return
           }
           if (res.status === 404) {
             setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
-            pushToast('That friend request is no longer available.', 'info')
+            pushToast('That request is no longer available.', 'info')
             return
           }
-          pushToast(payload?.error ?? 'Unable to update friend request right now.', 'error')
+          pushToast(payload?.error ?? 'Unable to update request right now.', 'error')
           return
         }
         const timestamp = new Date().toISOString()
@@ -257,10 +268,16 @@ export default function NotificationsClient() {
             }
           }),
         )
-        pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
+        if (notification.type === 'event_guest_speaker_invite') {
+          pushToast(action === 'accept' ? 'Guest speaker invite accepted.' : 'Guest speaker invite declined.', action === 'accept' ? 'success' : 'info')
+        } else if (notification.type === 'event_sponsor_invite') {
+          pushToast(action === 'accept' ? 'Sponsor invite accepted.' : 'Sponsor invite declined.', action === 'accept' ? 'success' : 'info')
+        } else {
+          pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
+        }
       } catch (err) {
-        console.error('Failed to respond to friend request', err)
-        pushToast('Unable to update friend request right now.', 'error')
+        console.error('Failed to respond to request', err)
+        pushToast('Unable to update request right now.', 'error')
       } finally {
         setFriendActionState(null)
       }
@@ -293,7 +310,7 @@ export default function NotificationsClient() {
               <NotificationCard
                 key={notification.id}
                 notification={notification}
-                onFriendAction={handleFriendRequestAction}
+                onRequestAction={handleNotificationRequestAction}
                 friendActionState={friendActionState}
               />
             ))

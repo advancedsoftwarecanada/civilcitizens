@@ -116,8 +116,10 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const settingCode = useRef(false)
+  const onChangeRef = useRef(onChange)
   const initialValueRef = useRef(value)
   initialValueRef.current = value
+  onChangeRef.current = onChange
   const initialDisabledRef = useRef(disabled)
   initialDisabledRef.current = disabled
 
@@ -162,7 +164,7 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
 
     const handleChange = (_we: unknown, contents: string) => {
       if (settingCode.current) return
-      onChange(contents)
+      onChangeRef.current(contents)
     }
 
     $element.summernote({
@@ -189,7 +191,7 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
       $element.off('summernote.change', handleChange)
       $element.summernote('destroy')
     }
-  }, [ready, placeholder, minHeight, onChange, toolbar])
+  }, [ready, placeholder, minHeight, toolbar])
 
   useEffect(() => {
     if (!ready || typeof window === 'undefined' || !containerRef.current) return
