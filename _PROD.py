@@ -11,10 +11,15 @@ Usage:
   python3 _PROD.py deploy           # same as default
   python3 _PROD.py build            # build images only (no restart)
   python3 _PROD.py prune-build-cache  # free Docker build cache (fixes ENOSPC)
+  python3 _PROD.py prune-docker      # free more Docker space (no volumes; fixes recurring ENOSPC)
   python3 _PROD.py status           # docker compose ps
   python3 _PROD.py logs             # follow logs
   python3 _PROD.py down             # docker compose down
   python3 _PROD.py rebuild-all      # down -v + build --no-cache + up -d
+
+Notes:
+  - "no space left on device" often refers to Docker's internal storage (overlay2), not your host disk.
+    On Docker Desktop (macOS/Windows), you may need to increase the Docker Disk image size.
 
 Env:
   - Pass `--env-file .env.production` (or `.env.production.googlecloud`) to control settings.
