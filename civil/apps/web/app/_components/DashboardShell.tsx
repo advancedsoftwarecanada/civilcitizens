@@ -4,6 +4,7 @@ import clsx from 'clsx'
 export type DashboardShellProps = {
   children: ReactNode
   rightRail?: ReactNode
+  showMobileRightRail?: boolean
   className?: string
   containerClassName?: string
   gridClassName?: string
@@ -14,6 +15,7 @@ export type DashboardShellProps = {
 export default function DashboardShell({
   children,
   rightRail,
+  showMobileRightRail = false,
   className,
   containerClassName,
   gridClassName,
@@ -28,7 +30,12 @@ export default function DashboardShell({
     <div className={clsx('min-h-screen', className)}>
       <div className={clsx('mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pl-[18rem] lg:pr-0 xl:pl-[20rem] xl:pr-0', containerClassName)}>
         <div className={clsx(gridTemplate, gridClassName)}>
-          <main className={clsx('pt-8', mainClassName)}>{children}</main>
+          <main className={clsx('pt-8', mainClassName)}>
+            {children}
+            {rightRail && showMobileRightRail ? (
+              <aside className={clsx('pt-6 lg:hidden [&_.sticky]:static', rightRailClassName)}>{rightRail}</aside>
+            ) : null}
+          </main>
           {rightRail ? (
             <aside className={clsx('hidden pt-8 lg:block', rightRailClassName)}>{rightRail}</aside>
           ) : null}

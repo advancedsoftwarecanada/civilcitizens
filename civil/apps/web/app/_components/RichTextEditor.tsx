@@ -209,7 +209,11 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
     if (nextValue === lastEditorValueRef.current) return
 
     const activeElement = window.document.activeElement
-    const editorHasFocus = !!activeElement && containerRef.current.contains(activeElement)
+    const noteEditorSibling = containerRef.current.nextElementSibling
+    const noteEditorElement =
+      noteEditorSibling instanceof HTMLElement && noteEditorSibling.classList.contains('note-editor') ? noteEditorSibling : null
+    const editorHasFocus =
+      !!activeElement && (containerRef.current.contains(activeElement) || Boolean(noteEditorElement?.contains(activeElement)))
     if (editorHasFocus) return
 
     const current = ($element.summernote('code') as string) || '<p></p>'

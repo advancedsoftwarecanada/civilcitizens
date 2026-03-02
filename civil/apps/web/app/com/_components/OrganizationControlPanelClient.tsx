@@ -48,7 +48,7 @@ export default function OrganizationControlPanelClient({
     {
       label: 'Jobs',
       description: 'Manage job listings and hiring visibility.',
-      href: `${base}/jobs`,
+      href: `${base}/jobs/manage`,
       icon: HiOutlineBriefcase,
     },
     {
