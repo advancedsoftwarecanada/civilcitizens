@@ -191,7 +191,7 @@ export default function EventsPageClient() {
     setError(null)
 
     try {
-      const params = new URLSearchParams({ limit: '200', includePast: '1' })
+      const params = new URLSearchParams({ limit: '200' })
       if (mineFilter === 'going') params.set('mine', 'going')
 
       const res = await fetch(buildApiUrl(`/events?${params.toString()}`), {
@@ -227,17 +227,19 @@ export default function EventsPageClient() {
   const filteredItems = useMemo(() => {
     const startBoundary = startDate ? new Date(`${startDate}T00:00:00`) : null
     const endBoundary = endDate ? new Date(`${endDate}T23:59:59.999`) : null
+    const now = new Date()
 
     return items.filter((event) => {
       const startsAt = new Date(event.startsAt)
       const category = event.category ?? DEFAULT_EVENT_CATEGORY
 
       if (selectedCategories.length > 0 && !selectedCategories.includes(category)) return false
+      if (!startBoundary && !endBoundary && mineFilter !== 'going' && startsAt < now) return false
       if (startBoundary && startsAt < startBoundary) return false
       if (endBoundary && startsAt > endBoundary) return false
       return true
     })
-  }, [endDate, items, selectedCategories, startDate])
+  }, [endDate, items, mineFilter, selectedCategories, startDate])
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, EventFeedItem[]>()

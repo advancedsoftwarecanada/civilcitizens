@@ -235,6 +235,66 @@ function toLocalDateTimeInputValue(value: string | null | undefined): string {
   return `${year}-${month}-${day}T${hours}:${minutes}`
 }
 
+type Meridiem = 'AM' | 'PM'
+
+type LocalDateTimeParts = {
+  date: string
+  hour12: string
+  minute: string
+  meridiem: Meridiem
+}
+
+const HOUR_12_OPTIONS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+const MINUTE_15_OPTIONS = ['00', '15', '30', '45']
+const MERIDIEM_OPTIONS: Meridiem[] = ['AM', 'PM']
+
+function to12HourAndMeridiem(hours24: number): { hour12: string; meridiem: Meridiem } {
+  if (hours24 >= 12) {
+    return { hour12: String(hours24 === 12 ? 12 : hours24 - 12).padStart(2, '0'), meridiem: 'PM' }
+  }
+  return { hour12: String(hours24 === 0 ? 12 : hours24).padStart(2, '0'), meridiem: 'AM' }
+}
+
+function to24Hour(hour12: string, meridiem: Meridiem): number {
+  const parsed = Number(hour12)
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 12) return meridiem === 'PM' ? 12 : 0
+  if (meridiem === 'PM') return parsed === 12 ? 12 : parsed + 12
+  return parsed === 12 ? 0 : parsed
+}
+
+function floorMinuteToQuarter(minute: number): string {
+  const floored = Math.floor(Math.max(0, Math.min(59, minute)) / 15) * 15
+  return String(floored).padStart(2, '0')
+}
+
+function parseLocalDateTimeParts(value: string): LocalDateTimeParts {
+  if (!value) {
+    return { date: '', hour12: '12', minute: '00', meridiem: 'AM' }
+  }
+
+  const normalized = toLocalDateTimeInputValue(value)
+  if (!normalized) {
+    return { date: '', hour12: '12', minute: '00', meridiem: 'AM' }
+  }
+
+  const [datePart] = normalized.split('T')
+  const date = new Date(normalized)
+  if (Number.isNaN(date.getTime())) {
+    return { date: datePart || '', hour12: '12', minute: '00', meridiem: 'AM' }
+  }
+
+  const { hour12, meridiem } = to12HourAndMeridiem(date.getHours())
+  const minute = floorMinuteToQuarter(date.getMinutes())
+  return { date: datePart || '', hour12, minute, meridiem }
+}
+
+function buildLocalDateTimeValue(parts: LocalDateTimeParts): string {
+  if (!parts.date) return ''
+  const hour24 = to24Hour(parts.hour12, parts.meridiem)
+  const hour = String(hour24).padStart(2, '0')
+  return `${parts.date}T${hour}:${parts.minute}`
+}
+
 function normalizeRichText(value: string | null | undefined): string {
   const source = (value ?? '').trim()
   if (!source) return ''
@@ -1176,6 +1236,25 @@ export default function OrganizationEventCreateClient({
   const sponsorAccepted = selectedSponsors.filter((sponsor) => sponsor.status === 'ACCEPTED')
   const sponsorDeclined = selectedSponsors.filter((sponsor) => sponsor.status === 'DECLINED')
 
+  const startsAtParts = parseLocalDateTimeParts(form.startsAtLocal)
+  const endsAtParts = parseLocalDateTimeParts(form.endsAtLocal)
+
+  const updateDateTimeField = (field: 'startsAtLocal' | 'endsAtLocal', patch: Partial<LocalDateTimeParts>) => {
+    setForm((prev) => {
+      const current = parseLocalDateTimeParts(prev[field])
+      const nextParts: LocalDateTimeParts = {
+        date: patch.date ?? current.date,
+        hour12: patch.hour12 ?? current.hour12,
+        minute: patch.minute ?? current.minute,
+        meridiem: patch.meridiem ?? current.meridiem,
+      }
+      return {
+        ...prev,
+        [field]: buildLocalDateTimeValue(nextParts),
+      }
+    })
+  }
+
   return (
     <div className="space-y-6">
       <section className="surface-card p-4 shadow-subtle">
@@ -1199,7 +1278,7 @@ export default function OrganizationEventCreateClient({
               type="button"
               onClick={() => void saveDraft()}
               disabled={saving || uploading || deleting || unpublishing}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -1221,17 +1300,22 @@ export default function OrganizationEventCreateClient({
           <h3 className="text-sm font-semibold text-slate-900">Event details</h3>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <label className="grid gap-1 text-xs font-semibold text-slate-700">
+          Event title
           <input
             value={form.title}
             onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
             placeholder="Event title"
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal focus:border-[var(--cc-primary)] focus:outline-none"
           />
+        </label>
+
+        <label className="grid gap-1 text-xs font-semibold text-slate-700">
+          Category
           <select
             value={form.category}
             onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value as EventCategory }))}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal focus:border-[var(--cc-primary)] focus:outline-none"
           >
             {EVENT_CATEGORIES.map((category) => (
               <option key={category} value={category}>
@@ -1239,137 +1323,147 @@ export default function OrganizationEventCreateClient({
               </option>
             ))}
           </select>
-        </div>
+        </label>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <label className="grid gap-1 text-xs font-semibold text-slate-700">
+          Visibility
           <select
             value={form.access}
             onChange={(event) => setForm((prev) => ({ ...prev, access: event.target.value as 'PUBLIC' | 'RESTRICTED' }))}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal focus:border-[var(--cc-primary)] focus:outline-none"
           >
             <option value="PUBLIC">Public</option>
             <option value="RESTRICTED">Members only</option>
           </select>
-        </div>
+        </label>
 
-        <div className="rounded-lg border border-slate-200 p-2">
-          <RichTextEditor
-            value={form.description}
-            onChange={(description) => setForm((prev) => ({ ...prev, description }))}
-            placeholder="Describe your event"
-            minHeight={180}
-            disabled={saving || uploading}
-          />
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="grid gap-1 text-xs text-slate-600">
-            Starts at
-            <input
-              type="datetime-local"
-              value={form.startsAtLocal}
-              onChange={(event) => setForm((prev) => ({ ...prev, startsAtLocal: event.target.value }))}
-              step={900}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+        <label className="grid gap-1 text-xs font-semibold text-slate-700">
+          Description
+          <div className="rounded-lg border border-slate-200 p-2">
+            <RichTextEditor
+              value={form.description}
+              onChange={(description) => setForm((prev) => ({ ...prev, description }))}
+              placeholder="Describe your event"
+              minHeight={180}
+              disabled={saving || uploading}
             />
-          </label>
-          <label className="grid gap-1 text-xs text-slate-600">
-            Ends at (optional)
-            <input
-              type="datetime-local"
-              value={form.endsAtLocal}
-              onChange={(event) => setForm((prev) => ({ ...prev, endsAtLocal: event.target.value }))}
-              step={900}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-            />
-          </label>
-        </div>
-
-        <div className="grid gap-2 sm:grid-cols-2">
-          <input
-            value={form.capacity}
-            onChange={(event) => setForm((prev) => ({ ...prev, capacity: event.target.value }))}
-            placeholder="Overall event capacity (optional)"
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-          />
-        </div>
-      </section>
-
-      <section className="surface-card space-y-3 p-4 shadow-subtle">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">Fees</h3>
-            <p className="text-xs text-slate-500">Add ticket rows (cash only for now). Use 0 for free tickets.</p>
           </div>
-          <button
-            type="button"
-            onClick={addFeeRow}
-            className="rounded-full bg-[var(--cc-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
-          >
-            Add fee row
-          </button>
+        </label>
+
+        <div className="space-y-3 rounded-lg border border-slate-200 p-3">
+          <p className="text-xs font-semibold text-slate-700">Starts at</p>
+          <label className="grid gap-1 text-xs font-medium text-slate-600">
+            Date
+            <input
+              type="date"
+              value={startsAtParts.date}
+              onChange={(event) => updateDateTimeField('startsAtLocal', { date: event.target.value })}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </label>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <label className="grid gap-1 text-xs font-medium text-slate-600">
+              Hour
+              <select
+                value={startsAtParts.hour12}
+                onChange={(event) => updateDateTimeField('startsAtLocal', { hour12: event.target.value })}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                {HOUR_12_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-medium text-slate-600">
+              Minute
+              <select
+                value={startsAtParts.minute}
+                onChange={(event) => updateDateTimeField('startsAtLocal', { minute: event.target.value })}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                {MINUTE_15_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-medium text-slate-600">
+              AM/PM
+              <select
+                value={startsAtParts.meridiem}
+                onChange={(event) => updateDateTimeField('startsAtLocal', { meridiem: event.target.value as Meridiem })}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                {MERIDIEM_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-3 py-2 text-left">Fee name</th>
-                <th className="px-3 py-2 text-left">Amount (CAD)</th>
-                <th className="px-3 py-2 text-left">Capacity</th>
-                <th className="px-3 py-2 text-left">Payment</th>
-                <th className="px-3 py-2 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {feeRows.map((row) => (
-                <tr key={row.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2">
-                    <input
-                      value={row.label}
-                      onChange={(event) => updateFeeRow(row.id, { label: event.target.value })}
-                      placeholder="Door fee"
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      value={row.amount}
-                      onChange={(event) => updateFeeRow(row.id, { amount: event.target.value })}
-                      placeholder="0.00"
-                      className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <input
-                      value={row.capacity}
-                      onChange={(event) => updateFeeRow(row.id, { capacity: event.target.value })}
-                      placeholder="Optional"
-                      className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-                    />
-                  </td>
-                  <td className="px-3 py-2 text-xs font-semibold text-slate-600">Cash only</td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => removeFeeRow(row.id)}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {feeRows.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-3 text-xs text-slate-500">
-                    No fee rows yet. Add one for door fee, sponsor fee, guest speaker fee, VIP line, or keep free by setting amount to 0.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+        <div className="space-y-3 rounded-lg border border-slate-200 p-3">
+          <p className="text-xs font-semibold text-slate-700">Ends at (optional)</p>
+          <label className="grid gap-1 text-xs font-medium text-slate-600">
+            Date
+            <input
+              type="date"
+              value={endsAtParts.date}
+              onChange={(event) => updateDateTimeField('endsAtLocal', { date: event.target.value })}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+            />
+          </label>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <label className="grid gap-1 text-xs font-medium text-slate-600">
+              Hour
+              <select
+                value={endsAtParts.hour12}
+                onChange={(event) => updateDateTimeField('endsAtLocal', { hour12: event.target.value })}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                {HOUR_12_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-medium text-slate-600">
+              Minute
+              <select
+                value={endsAtParts.minute}
+                onChange={(event) => updateDateTimeField('endsAtLocal', { minute: event.target.value })}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                {MINUTE_15_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-xs font-medium text-slate-600">
+              AM/PM
+              <select
+                value={endsAtParts.meridiem}
+                onChange={(event) => updateDateTimeField('endsAtLocal', { meridiem: event.target.value as Meridiem })}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                {MERIDIEM_OPTIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
+
       </section>
 
       <section className="surface-card space-y-3 p-4 shadow-subtle">
@@ -1459,6 +1553,83 @@ export default function OrganizationEventCreateClient({
             ) : null}
             <p className="text-[11px] text-slate-500">Up to 12 images.</p>
           </div>
+        </div>
+      </section>
+
+      <section className="surface-card space-y-3 p-4 shadow-subtle">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Fees</h3>
+            <p className="text-xs text-slate-500">Add ticket rows (cash only for now). Use 0 for free tickets.</p>
+          </div>
+          <button
+            type="button"
+            onClick={addFeeRow}
+            className="rounded-full bg-[var(--cc-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
+          >
+            Add fee row
+          </button>
+        </div>
+
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Fee name</th>
+                <th className="px-3 py-2 text-left">Amount (CAD)</th>
+                <th className="px-3 py-2 text-left">Capacity</th>
+                <th className="px-3 py-2 text-left">Payment</th>
+                <th className="px-3 py-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {feeRows.map((row) => (
+                <tr key={row.id} className="border-t border-slate-100">
+                  <td className="px-3 py-2">
+                    <input
+                      value={row.label}
+                      onChange={(event) => updateFeeRow(row.id, { label: event.target.value })}
+                      placeholder="Door fee"
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      value={row.amount}
+                      onChange={(event) => updateFeeRow(row.id, { amount: event.target.value })}
+                      placeholder="0.00"
+                      className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      value={row.capacity}
+                      onChange={(event) => updateFeeRow(row.id, { capacity: event.target.value })}
+                      placeholder="Optional"
+                      className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </td>
+                  <td className="px-3 py-2 text-xs font-semibold text-slate-600">Cash only</td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => removeFeeRow(row.id)}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {feeRows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-3 text-xs text-slate-500">
+                    No fee rows yet. Add one for door fee, sponsor fee, guest speaker fee, VIP line, or keep free by setting amount to 0.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
         </div>
       </section>
 
