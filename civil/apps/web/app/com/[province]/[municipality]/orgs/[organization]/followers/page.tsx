@@ -1,5 +1,4 @@
-import OrganizationSection from '../../../../../_components/OrganizationSection'
-import OrganizationMembersClient from '../../../../../_components/OrganizationMembersClient'
+import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,9 +11,7 @@ type PageProps = {
 }
 
 export default function OrganizationFollowersPage({ params }: PageProps) {
-  return (
-    <OrganizationSection title="Followers" description="People following or connected to this organization.">
-      <OrganizationMembersClient province={params.province} municipality={params.municipality} organizationSlug={params.organization} />
-    </OrganizationSection>
+  redirect(
+    `/com/${encodeURIComponent(params.province)}/${encodeURIComponent(params.municipality)}/orgs/${encodeURIComponent(params.organization)}/joins`,
   )
 }

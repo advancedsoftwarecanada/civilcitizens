@@ -140,7 +140,7 @@ export default function OrganizationRightColumn({ initialOrg, province, municipa
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">{org?.name ?? organization.name}</p>
               <p className="mt-0.5 text-xs text-slate-500">
-                {org?.followerCount ?? 0} followers
+                {org?.followerCount ?? 0} joined
               </p>
             </div>
           </div>

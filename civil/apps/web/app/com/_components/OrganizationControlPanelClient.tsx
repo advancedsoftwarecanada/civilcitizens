@@ -76,9 +76,9 @@ export default function OrganizationControlPanelClient({
       icon: HiOutlineUserGroup,
     },
     {
-      label: 'Followers',
-      description: 'See organization followers and engagement.',
-      href: `${base}/followers`,
+      label: 'Joins',
+      description: 'See people who joined and engagement.',
+      href: `${base}/joins`,
       icon: HiOutlineUsers,
     },
     {

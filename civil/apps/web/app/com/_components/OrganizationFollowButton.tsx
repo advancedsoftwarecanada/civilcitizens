@@ -26,7 +26,7 @@ export default function OrganizationFollowButton({ province, municipality, slug,
 
   const onToggle = useCallback(async () => {
     if (!token) {
-      alert('Please sign in to follow organizations.')
+      alert('Please sign in to join organizations.')
       return
     }
 
@@ -40,7 +40,7 @@ export default function OrganizationFollowButton({ province, municipality, slug,
       })
 
       if (!response.ok) {
-        const message = following ? 'Unable to unfollow organization.' : 'Unable to follow organization.'
+        const message = following ? 'Unable to leave organization.' : 'Unable to join organization.'
         alert(message)
         return
       }
@@ -62,7 +62,7 @@ export default function OrganizationFollowButton({ province, municipality, slug,
           : 'inline-flex items-center rounded-full border border-slate-200 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60'
       }
     >
-      {busy ? 'Please wait…' : following ? 'Following' : 'Follow'}
+      {busy ? 'Please wait…' : following ? 'Joined' : 'Join'}
     </button>
   )
 }

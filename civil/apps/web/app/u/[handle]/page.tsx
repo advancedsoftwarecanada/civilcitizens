@@ -56,6 +56,15 @@ type UserExperience = {
   id: string
   title: string
   organization: string
+  organizationProfile?: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string
+    communitySlug: string
+    logoUrl: string | null
+    coverUrl: string | null
+  } | null
   location?: string | null
   startDate?: string | null
   endDate?: string | null
@@ -1162,9 +1171,39 @@ export default function UserPostsPage({ params }: PageProps) {
             <ol className="mt-4 space-y-4">
               {profile.experiences.map((exp, index) => (
                 <li key={exp.id ?? `${exp.title}-${index}`} className="rounded-2xl border border-slate-100/70 bg-white/90 p-4 shadow-inner">
+                  {exp.organizationProfile ? (
+                    <Link
+                      href={`/com/${encodeURIComponent(exp.organizationProfile.provinceCode.toLowerCase())}/${encodeURIComponent(exp.organizationProfile.communitySlug)}/orgs/${encodeURIComponent(exp.organizationProfile.slug)}`}
+                      className="mb-3 block overflow-hidden rounded-xl border border-slate-200 bg-slate-50 transition hover:border-slate-300"
+                    >
+                      <div className="relative h-16 w-full overflow-hidden">
+                        {exp.organizationProfile.coverUrl ? <img src={exp.organizationProfile.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" /> : null}
+                        <div className={clsx('absolute inset-0', exp.organizationProfile.coverUrl ? 'bg-slate-900/35' : 'bg-slate-100')} />
+                        <div className="absolute left-3 top-1/2 flex -translate-y-1/2 items-center gap-2">
+                          <div className="h-9 w-9 overflow-hidden rounded-full border border-white/80 bg-white">
+                            {exp.organizationProfile.logoUrl ? <img src={exp.organizationProfile.logoUrl} alt="" className="h-full w-full object-cover" /> : null}
+                          </div>
+                          <span className={clsx('text-sm font-semibold', exp.organizationProfile.coverUrl ? 'text-white' : 'text-slate-700')}>
+                            {exp.organizationProfile.name}
+                          </span>
+                        </div>
+                      </div>
+                    </Link>
+                  ) : null}
                   <div className="flex flex-wrap items-center gap-2 text-sm text-slate-900">
                     <span className="font-semibold">{exp.title}</span>
-                    {exp.organization ? <span className="text-slate-600">• {exp.organization}</span> : null}
+                    {exp.organization ? (
+                      exp.organizationProfile ? (
+                        <Link
+                          href={`/com/${encodeURIComponent(exp.organizationProfile.provinceCode.toLowerCase())}/${encodeURIComponent(exp.organizationProfile.communitySlug)}/orgs/${encodeURIComponent(exp.organizationProfile.slug)}`}
+                          className="text-slate-600 hover:text-slate-800 hover:underline"
+                        >
+                          • {exp.organization}
+                        </Link>
+                      ) : (
+                        <span className="text-slate-600">• {exp.organization}</span>
+                      )
+                    ) : null}
                   </div>
                   {exp.location ? <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{exp.location}</div> : null}
                   <div className="mt-2 text-xs text-slate-500">{formatExperienceRange(exp)}</div>

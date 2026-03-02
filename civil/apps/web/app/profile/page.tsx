@@ -31,6 +31,15 @@ type ExperienceResponse = {
   id: string
   title: string
   organization: string
+  organizationProfile?: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string
+    communitySlug: string
+    logoUrl: string | null
+    coverUrl: string | null
+  } | null
   location: string | null
   startDate: string
   endDate: string | null
@@ -78,6 +87,16 @@ type ExperienceFormState = {
   endDate: string
   current: boolean
   description: string
+}
+
+type OrganizationDirectoryResult = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string
+  communitySlug: string
+  logoUrl: string | null
+  coverUrl: string | null
 }
 
 type ProfileMediaCategory = Extract<MediaCategory, 'avatar' | 'cover'>
@@ -495,6 +514,10 @@ export default function ProfileEditPage() {
     avatar: createPhotoDraftState(),
     cover: createPhotoDraftState(),
   }))
+  const [activeOrganizationFieldKey, setActiveOrganizationFieldKey] = useState<string | null>(null)
+  const [organizationSearchResults, setOrganizationSearchResults] = useState<OrganizationDirectoryResult[]>([])
+  const [organizationSearching, setOrganizationSearching] = useState(false)
+  const [linkedOrganizationsByExperienceKey, setLinkedOrganizationsByExperienceKey] = useState<Record<string, OrganizationDirectoryResult>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -610,6 +633,19 @@ export default function ProfileEditPage() {
     (category: ProfileMediaCategory) => {
       const ref = category === 'avatar' ? avatarInputRef : coverInputRef
       ref.current?.click()
+    },
+    [],
+  )
+
+  const handleOrganizationSelect = useCallback(
+    (experienceKey: string, organization: OrganizationDirectoryResult) => {
+      setExperiences((prev) => prev.map((exp) => (exp.key === experienceKey ? { ...exp, organization: organization.name } : exp)))
+      setLinkedOrganizationsByExperienceKey((prev) => ({
+        ...prev,
+        [experienceKey]: organization,
+      }))
+      setActiveOrganizationFieldKey(null)
+      setOrganizationSearchResults([])
     },
     [],
   )
@@ -1045,7 +1081,26 @@ export default function ProfileEditPage() {
         setFirstName(data.user.firstName ?? '')
         setLastName(data.user.lastName ?? '')
         setBio(data.user.bio ?? '')
-        setExperiences(mapExperiencesFromResponse(data.user.experiences))
+        const mappedExperiences = mapExperiencesFromResponse(data.user.experiences)
+        setExperiences(mappedExperiences)
+        const nextLinkedByKey: Record<string, OrganizationDirectoryResult> = {}
+        if (Array.isArray(data.user.experiences)) {
+          data.user.experiences.forEach((exp, index) => {
+            const key = mappedExperiences[index]?.key
+            const linked = exp.organizationProfile
+            if (!key || !linked) return
+            nextLinkedByKey[key] = {
+              id: linked.id,
+              name: linked.name,
+              slug: linked.slug,
+              provinceCode: linked.provinceCode,
+              communitySlug: linked.communitySlug,
+              logoUrl: linked.logoUrl ?? null,
+              coverUrl: linked.coverUrl ?? null,
+            }
+          })
+        }
+        setLinkedOrganizationsByExperienceKey(nextLinkedByKey)
         const derivedName = `${data.user.firstName ?? ''} ${data.user.lastName ?? ''}`.trim()
         setViewer((prev) =>
           prev
@@ -1156,8 +1211,61 @@ export default function ProfileEditPage() {
     }
   }, [coverMedia.processingId, pollAssetStatus])
 
+  useEffect(() => {
+    const activeKey = activeOrganizationFieldKey
+    if (!activeKey) {
+      setOrganizationSearchResults([])
+      return
+    }
+
+    const activeExperience = experiences.find((exp) => exp.key === activeKey)
+    const query = activeExperience?.organization.trim() ?? ''
+
+    if (query.length < 2) {
+      setOrganizationSearchResults([])
+      setOrganizationSearching(false)
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setOrganizationSearching(true)
+      try {
+        const params = new URLSearchParams({ q: query, limit: '8' })
+        const response = await fetch(buildApiUrl(`/organizations/directory?${params.toString()}`), { cache: 'no-store' })
+        if (!response.ok) {
+          if (!cancelled) setOrganizationSearchResults([])
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { items?: OrganizationDirectoryResult[] } | null
+        if (cancelled) return
+        setOrganizationSearchResults(Array.isArray(payload?.items) ? payload.items : [])
+      } catch {
+        if (!cancelled) setOrganizationSearchResults([])
+      } finally {
+        if (!cancelled) setOrganizationSearching(false)
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [activeOrganizationFieldKey, experiences])
+
   const handleExperienceChange = useCallback((key: string, patch: Partial<ExperienceFormState>) => {
     setExperiences((prev) => prev.map((exp) => (exp.key === key ? { ...exp, ...patch } : exp)))
+
+    if (typeof patch.organization === 'string') {
+      setLinkedOrganizationsByExperienceKey((prev) => {
+        const linked = prev[key]
+        if (!linked) return prev
+        if (patch.organization.trim() === linked.name) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+    }
   }, [])
 
   const handlePostPhoto = useCallback(async () => {
@@ -1247,6 +1355,12 @@ export default function ProfileEditPage() {
     setExperiences((prev) => {
       const next = prev.filter((exp) => exp.key !== key)
       return next.length > 0 ? next : [emptyExperience()]
+    })
+    setLinkedOrganizationsByExperienceKey((prev) => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
     })
   }, [])
 
@@ -1735,10 +1849,61 @@ export default function ProfileEditPage() {
                           type="text"
                           value={exp.organization}
                           onChange={(event) => handleExperienceChange(exp.key, { organization: event.target.value })}
+                          onFocus={() => setActiveOrganizationFieldKey(exp.key)}
+                          onBlur={() => setActiveOrganizationFieldKey((current) => (current === exp.key ? null : current))}
                           disabled={formDisabled}
                           className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
                           placeholder="Civic Association"
                         />
+                        {activeOrganizationFieldKey === exp.key ? (
+                          <div className="mt-2 space-y-2">
+                            {organizationSearching ? <p className="text-xs text-slate-500">Searching Civil organizations…</p> : null}
+                            {!organizationSearching && exp.organization.trim().length >= 2 && organizationSearchResults.length === 0 ? (
+                              <p className="text-xs text-slate-500">No Civil organizations found.</p>
+                            ) : null}
+                            {!organizationSearching && organizationSearchResults.length > 0 ? (
+                              <ul className="max-h-52 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
+                                {organizationSearchResults.map((org) => (
+                                  <li key={org.id}>
+                                    <button
+                                      type="button"
+                                      onMouseDown={(event) => {
+                                        event.preventDefault()
+                                        void handleOrganizationSelect(exp.key, org)
+                                      }}
+                                      className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-slate-50"
+                                    >
+                                      <div className="h-8 w-8 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+                                        {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" /> : null}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-sm font-semibold text-slate-800">{org.name}</p>
+                                        <p className="truncate text-xs text-slate-500">/{org.provinceCode.toLowerCase()}/{org.communitySlug}</p>
+                                      </div>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                            <p className="text-xs text-slate-500">Selecting an organization links it to this experience on your public profile.</p>
+                          </div>
+                        ) : null}
+                        {linkedOrganizationsByExperienceKey[exp.key] ? (
+                          <div className="mt-2 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-800">
+                            <span className="inline-flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border border-emerald-300 bg-white">
+                              {linkedOrganizationsByExperienceKey[exp.key]?.logoUrl ? (
+                                <img src={linkedOrganizationsByExperienceKey[exp.key].logoUrl ?? ''} alt="" className="h-full w-full object-cover" />
+                              ) : null}
+                            </span>
+                            <span className="font-medium">Linked to Civil organization</span>
+                            <Link
+                              href={`/com/${encodeURIComponent(linkedOrganizationsByExperienceKey[exp.key].provinceCode.toLowerCase())}/${encodeURIComponent(linkedOrganizationsByExperienceKey[exp.key].communitySlug)}/orgs/${encodeURIComponent(linkedOrganizationsByExperienceKey[exp.key].slug)}`}
+                              className="ml-auto text-emerald-700 hover:text-emerald-900 hover:underline"
+                            >
+                              View
+                            </Link>
+                          </div>
+                        ) : null}
                       </label>
                       <label className="text-sm font-medium text-gray-700">
                         Location (optional)

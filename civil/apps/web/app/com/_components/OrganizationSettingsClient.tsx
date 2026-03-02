@@ -676,7 +676,7 @@ export default function OrganizationSettingsClient({
       }
 
       if (json?.org) setOrg(json.org)
-      pushToast('Organization renamed. Followers received a rename post.', 'success')
+      pushToast('Organization renamed. Joined members received a rename post.', 'success')
     } catch (err) {
       console.error('Failed to rename organization', err)
       pushToast('Unable to rename this organization right now.', 'error')
@@ -1813,7 +1813,7 @@ export default function OrganizationSettingsClient({
       {showDetails && isOwner ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
           <h3 className="text-sm font-semibold text-slate-900">Organization name</h3>
-          <p className="text-xs text-slate-500">Renaming the organization publishes a rename post for followers.</p>
+          <p className="text-xs text-slate-500">Renaming the organization publishes a rename post for joined members.</p>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <input
               value={organizationName}
@@ -2037,9 +2037,9 @@ export default function OrganizationSettingsClient({
 
       {showPeople ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Followers</h3>
-        <p className="text-xs text-slate-500">Promote a follower to manager so they can help run this organization.</p>
-        {!followers.length ? <p className="text-xs text-slate-500">No followers available to promote.</p> : null}
+        <h3 className="text-sm font-semibold text-slate-900">Joined Members</h3>
+        <p className="text-xs text-slate-500">Promote a joined member to manager so they can help run this organization.</p>
+        {!followers.length ? <p className="text-xs text-slate-500">No joined members available to promote.</p> : null}
         {followers.length ? (
           <ul className="space-y-2">
             {followers.map((entry) => {

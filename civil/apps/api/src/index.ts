@@ -1626,6 +1626,45 @@ async function findConnectionById(id: string): Promise<ConnectionRow | null> {
   }
 }
 
+async function createOrRefreshConnectionRequest(requesterId: string, addresseeId: string): Promise<void> {
+  if (!requesterId || !addresseeId || requesterId === addresseeId) return
+
+  try {
+    const existing = await findConnectionBetween(requesterId, addresseeId)
+    if (existing) {
+      if (existing.status === 'ACCEPTED' || existing.status === 'PENDING') {
+        return
+      }
+
+      const now = new Date()
+      await prisma.$executeRaw`
+        UPDATE "Connection"
+        SET "requesterId" = ${requesterId},
+            "addresseeId" = ${addresseeId},
+            "status" = 'PENDING',
+            "requestedAt" = ${now},
+            "respondedAt" = NULL
+        WHERE "id" = ${existing.id}
+      `
+
+      await notifyConnectionRequest(existing.id, requesterId, addresseeId)
+      return
+    }
+
+    const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const now = new Date()
+    await prisma.$executeRaw`
+      INSERT INTO "Connection" ("id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt")
+      VALUES (${id}, ${requesterId}, ${addresseeId}, 'PENDING', ${now}, NULL)
+    `
+
+    await notifyConnectionRequest(id, requesterId, addresseeId)
+  } catch (error) {
+    if (isConnectionTableMissingError(error)) return
+    throw error
+  }
+}
+
 async function loadAcceptedConnectionIds(userId: string): Promise<string[]> {
   try {
     const rows = await prisma.$queryRaw<Array<{ requesterId: string; addresseeId: string }>>`
@@ -3147,6 +3186,13 @@ async function applyOrganizationInviteRegistration(token: string, newUserId: str
       nextValue: nextSystem.members[newUserId],
     })
   })
+
+  if (status === 'ACTIVE' && invite.createdByUserId !== newUserId) {
+    const inviterExists = await prisma.user.findUnique({ where: { id: invite.createdByUserId }, select: { id: true } })
+    if (inviterExists) {
+      await createOrRefreshConnectionRequest(newUserId, invite.createdByUserId)
+    }
+  }
 }
 
 // Auth: register
@@ -3157,7 +3203,9 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
     parse = RegisterInputApi.safeParse(req.body)
   }
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { email, firstName, lastName, password, orgInviteToken } = parse.data
+  const { email, firstName, lastName, password } = parse.data
+  const rawBody = (req.body ?? {}) as Record<string, unknown>
+  const orgInviteToken = typeof rawBody.orgInviteToken === 'string' ? rawBody.orgInviteToken.trim() : ''
   const normalizedFirstName = firstName.trim().toLowerCase()
   const normalizedLastName = lastName.trim().toLowerCase()
   const name = `${normalizedFirstName} ${normalizedLastName}`.trim()
@@ -3166,7 +3214,7 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
   const hash = await bcrypt.hash(password, 10)
   try {
     const user = await prisma.user.create({ data: { id: randomUUID(), email, handle, name, passwordHash: hash } })
-    if (typeof orgInviteToken === 'string' && orgInviteToken.trim()) {
+    if (orgInviteToken) {
       try {
         await applyOrganizationInviteRegistration(orgInviteToken, user.id)
       } catch (inviteErr) {
@@ -3777,6 +3825,15 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
     endDate: Date | null
     current: boolean
     description: string | null
+    organizationProfile: {
+      id: string
+      name: string
+      slug: string
+      provinceCode: string
+      communitySlug: string
+      logoUrl: string | null
+      coverUrl: string | null
+    } | null
   }> = []
 
   try {
@@ -3784,7 +3841,69 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       where: { userId },
       orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
     })
+
+    const normalizedExperienceOrganizationNames: string[] = Array.from(
+      new Set<string>(
+        experiences
+          .map((exp: ExperienceModel) => exp.organization.trim().toLowerCase())
+          .filter((name: string) => name.length > 0),
+      ),
+    )
+
+    const organizationByName = new Map<
+      string,
+      {
+        id: string
+        name: string
+        slug: string
+        provinceCode: string
+        communitySlug: string
+        logoUrl: string | null
+        coverUrl: string | null
+      }
+    >()
+
+    if (normalizedExperienceOrganizationNames.length > 0) {
+      const linkedOrganizations = await prisma.business.findMany({
+        where: {
+          status: 'ACTIVE',
+          OR: normalizedExperienceOrganizationNames.map((name) => ({
+            name: {
+              equals: name,
+              mode: 'insensitive',
+            },
+          })),
+        },
+        orderBy: [{ isVerified: 'desc' }, { name: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          provinceCode: true,
+          communitySlug: true,
+          logoUrl: true,
+          coverUrl: true,
+        },
+      })
+
+      for (const org of linkedOrganizations) {
+        if (!org.provinceCode || !org.communitySlug) continue
+        const key = org.name.trim().toLowerCase()
+        if (!key || organizationByName.has(key)) continue
+        organizationByName.set(key, {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          provinceCode: org.provinceCode,
+          communitySlug: org.communitySlug,
+          logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+          coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+        })
+      }
+    }
+
   experienceItems = experiences.map((exp: ExperienceModel) => ({
+      organizationProfile: organizationByName.get(exp.organization.trim().toLowerCase()) ?? null,
       id: exp.id,
       title: exp.title,
       organization: exp.organization,
@@ -8220,7 +8339,7 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, name: true },
     })
 
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -8416,6 +8535,44 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
       }),
     ])
 
+    const memberUserIds = Array.from(
+      new Set<string>([
+        ...(owner ? [owner.id] : []),
+        ...managers.map((row: { userId: string }) => row.userId),
+        ...followers.map((row: { userId: string }) => row.userId),
+      ]),
+    )
+
+    const memberExperienceByUserId = new Map<string, { title: string | null; description: string | null }>()
+    if (memberUserIds.length > 0) {
+      const experiences = await prisma.experience.findMany({
+        where: {
+          userId: { in: memberUserIds },
+          organization: {
+            equals: org.name,
+            mode: 'insensitive',
+          },
+        },
+        orderBy: [{ current: 'desc' }, { startDate: 'desc' }, { position: 'asc' }],
+        select: {
+          userId: true,
+          title: true,
+          description: true,
+        },
+      })
+
+      for (const exp of experiences) {
+        if (memberExperienceByUserId.has(exp.userId)) continue
+        const title = exp.title.trim()
+        const description = typeof exp.description === 'string' ? exp.description.trim() : ''
+        if (!title && !description) continue
+        memberExperienceByUserId.set(exp.userId, {
+          title: title || null,
+          description: description || null,
+        })
+      }
+    }
+
     const managerIds = new Set(managers.map((row: { userId: string }) => row.userId))
 
     const memberItems = [
@@ -8425,6 +8582,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
               userId: owner.id,
               role: 'OWNER' as const,
               joinedAt: null,
+              jobTitle: memberExperienceByUserId.get(owner.id)?.title ?? null,
+              jobDescription: memberExperienceByUserId.get(owner.id)?.description ?? null,
               user: {
                 id: owner.id,
                 handle: owner.handle,
@@ -8439,6 +8598,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
         userId: row.userId,
         role: row.role,
         joinedAt: row.createdAt,
+        jobTitle: memberExperienceByUserId.get(row.userId)?.title ?? null,
+        jobDescription: memberExperienceByUserId.get(row.userId)?.description ?? null,
         user: {
           id: row.user.id,
           handle: row.user.handle,
@@ -8455,6 +8616,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/members', async (req: F
         userId: row.userId,
         role: 'FOLLOWER' as const,
         joinedAt: row.createdAt,
+        jobTitle: memberExperienceByUserId.get(row.userId)?.title ?? null,
+        jobDescription: memberExperienceByUserId.get(row.userId)?.description ?? null,
         user: {
           id: row.user.id,
           handle: row.user.handle,
@@ -14000,7 +14163,68 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       }
     }
 
+    const normalizedExperienceOrganizationNames = Array.from(
+      new Set(
+        experiences
+          .map((exp) => exp.organization.trim().toLowerCase())
+          .filter((name) => name.length > 0),
+      ),
+    )
+
+    const organizationByName = new Map<
+      string,
+      {
+        id: string
+        name: string
+        slug: string
+        provinceCode: string
+        communitySlug: string
+        logoUrl: string | null
+        coverUrl: string | null
+      }
+    >()
+
+    if (normalizedExperienceOrganizationNames.length > 0) {
+      const linkedOrganizations = await prisma.business.findMany({
+        where: {
+          status: 'ACTIVE',
+          OR: normalizedExperienceOrganizationNames.map((name) => ({
+            name: {
+              equals: name,
+              mode: 'insensitive',
+            },
+          })),
+        },
+        orderBy: [{ isVerified: 'desc' }, { name: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          provinceCode: true,
+          communitySlug: true,
+          logoUrl: true,
+          coverUrl: true,
+        },
+      })
+
+      for (const org of linkedOrganizations) {
+        if (!org.provinceCode || !org.communitySlug) continue
+        const key = org.name.trim().toLowerCase()
+        if (!key || organizationByName.has(key)) continue
+        organizationByName.set(key, {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          provinceCode: org.provinceCode,
+          communitySlug: org.communitySlug,
+          logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+          coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+        })
+      }
+    }
+
     const mappedExperiences = experiences.map((exp) => ({
+      organizationProfile: organizationByName.get(exp.organization.trim().toLowerCase()) ?? null,
       id: exp.id,
       title: exp.title,
       organization: exp.organization,
