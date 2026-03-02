@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useViewerStore } from "../../_lib/viewerStore";
 
 import Modal from "../../_components/Modal";
@@ -10,6 +11,8 @@ import { buildApiUrl } from "../../_lib/api";
 type OrganizationMember = {
   userId: string;
   role: string;
+  jobTitle?: string | null;
+  jobDescription?: string | null;
   status: "active" | "pending" | "removed";
   joinedAt: string | null;
   invitedBy?: string | null;
@@ -24,6 +27,7 @@ type MemberProfile = {
   lastName: string | null;
   image: string | null;
   avatarUrl?: string | null;
+  coverUrl?: string | null;
   slug: string | null;
 };
 
@@ -63,19 +67,18 @@ type Props = {
 
 function getDisplayName(profile?: MemberProfile | SearchUser | null) {
   if (!profile) return "Unknown user";
+  const toTitleCase = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/\b([a-z])/g, (match) => match.toUpperCase())
+      .replace(/([-'’])([a-z])/g, (_match, punctuation: string, char: string) => `${punctuation}${char.toUpperCase()}`);
+
   if ("name" in profile && typeof profile.name === "string" && profile.name.trim().length > 0) {
-    return profile.name.trim();
+    return toTitleCase(profile.name.trim());
   }
   const full = `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim();
-  return full || profile.handle || "Unknown user";
-}
-
-function roleLabel(role: string) {
-  if (role === "owner") return "Owner";
-  if (role === "admin") return "Admin";
-  if (role === "moderator") return "Moderator";
-  if (role === "member") return "Member";
-  return role;
+  if (full) return toTitleCase(full);
+  return profile.handle || "Unknown user";
 }
 
 function normalizeMemberRole(role: unknown): string {
@@ -113,6 +116,7 @@ function normalizeMembersPayload(payload: any): { members: OrganizationMember[];
     const handle = typeof user?.handle === "string" ? user.handle : null;
     const name = typeof user?.name === "string" ? user.name : null;
     const avatarUrl = typeof user?.avatarUrl === "string" ? user.avatarUrl : typeof row?.image === "string" ? row.image : null;
+    const coverUrl = typeof user?.coverUrl === "string" ? user.coverUrl : null;
 
     profiles[userId] = {
       id: userId,
@@ -122,12 +126,15 @@ function normalizeMembersPayload(payload: any): { members: OrganizationMember[];
       lastName: null,
       image: avatarUrl,
       avatarUrl,
+      coverUrl,
       slug: null,
     };
 
     members.push({
       userId,
       role: normalizeMemberRole(row?.role),
+      jobTitle: typeof row?.jobTitle === "string" && row.jobTitle.trim().length > 0 ? row.jobTitle.trim() : null,
+      jobDescription: typeof row?.jobDescription === "string" && row.jobDescription.trim().length > 0 ? row.jobDescription.trim() : null,
       status: "active",
       joinedAt: parseIsoDate(row?.joinedAt),
       invitedBy: null,
@@ -138,16 +145,6 @@ function normalizeMembersPayload(payload: any): { members: OrganizationMember[];
   return { members, profiles };
 }
 
-function statusBadge(status: OrganizationMember["status"]) {
-  if (status === "active") {
-    return "bg-emerald-100 text-emerald-700";
-  }
-  if (status === "pending") {
-    return "bg-amber-100 text-amber-700";
-  }
-  return "bg-neutral-200 text-neutral-600";
-}
-
 export default function OrganizationMembersClient({
   province,
   municipality,
@@ -156,6 +153,7 @@ export default function OrganizationMembersClient({
   initialData,
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const resolvedOrganizationSlug = (organizationSlug ?? slug ?? "").trim();
   const initialNormalized = useMemo(() => {
     if (!initialData) return { members: [] as OrganizationMember[], profiles: {} as Record<string, MemberProfile> };
@@ -182,6 +180,7 @@ export default function OrganizationMembersClient({
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [memberFilterQuery, setMemberFilterQuery] = useState("");
   const [inviteMessage, setInviteMessage] = useState("I'd love for you to join this organization on Civil.");
   const [inviteBusy, setInviteBusy] = useState(false);
 
@@ -204,6 +203,12 @@ export default function OrganizationMembersClient({
     if (currentMembership.status !== "active") return false;
     return currentMembership.role === "owner" || currentMembership.role === "admin";
   }, [currentMembership]);
+
+  const showManagerTools = useMemo(() => {
+    if (!canModerate) return false;
+    if (!pathname) return false;
+    return pathname.includes("/settings/members");
+  }, [canModerate, pathname]);
 
   const getAuthHeaders = () => {
     const headers: Record<string, string> = {};
@@ -393,40 +398,12 @@ export default function OrganizationMembersClient({
   }, [loadedFromApi, province, municipality, resolvedOrganizationSlug]);
 
   useEffect(() => {
-    if (!canModerate || !currentUserId) {
+    if (!showManagerTools || !currentUserId) {
       setMyInviteLinks([]);
       return;
     }
     void refreshMyInviteLinks();
-  }, [canModerate, currentUserId, province, municipality, resolvedOrganizationSlug]);
-
-  async function updateRole(targetUserId: string, nextRole: "admin" | "moderator" | "member") {
-    setError(null);
-    setSuccess(null);
-    setBusyUserId(targetUserId);
-    try {
-      if (nextRole !== "admin") {
-        throw new Error("Demote is not available yet. Use Remove for now.");
-      }
-
-      const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/members/${encodeURIComponent(targetUserId)}/promote`);
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: getAuthHeaders(),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload?.error || "Unable to update member role.");
-      }
-
-      await refreshMembers();
-      setSuccess("Member role updated.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to update member role.");
-    } finally {
-      setBusyUserId(null);
-    }
-  }
+  }, [showManagerTools, currentUserId, province, municipality, resolvedOrganizationSlug]);
 
   async function removeMember(targetUserId: string) {
     setError(null);
@@ -526,6 +503,25 @@ export default function OrganizationMembersClient({
     });
   }, [members]);
 
+  const filteredMembers = useMemo(() => {
+    const query = memberFilterQuery.trim().toLowerCase();
+    if (!query) return sortedMembers;
+
+    return sortedMembers.filter((member) => {
+      const profile = profiles[member.userId];
+      const displayName = getDisplayName(profile).toLowerCase();
+      const handle = (profile?.handle ?? "").toLowerCase();
+      const title = (member.jobTitle ?? "").toLowerCase();
+      const description = (member.jobDescription ?? "").toLowerCase();
+      return (
+        displayName.includes(query) ||
+        handle.includes(query) ||
+        title.includes(query) ||
+        description.includes(query)
+      );
+    });
+  }, [memberFilterQuery, profiles, sortedMembers]);
+
   return (
     <div className="space-y-4">
       {(error || success) && (
@@ -543,7 +539,7 @@ export default function OrganizationMembersClient({
         </div>
       )}
 
-      {canModerate && (
+      {showManagerTools && (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-neutral-200 bg-white p-3">
           <button
             type="button"
@@ -562,7 +558,7 @@ export default function OrganizationMembersClient({
         </div>
       )}
 
-      {canModerate && (
+      {showManagerTools && (
         <div className="rounded-2xl border border-neutral-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-neutral-900">My Invite Pages</h3>
@@ -641,90 +637,86 @@ export default function OrganizationMembersClient({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
-        <table className="min-w-full divide-y divide-neutral-200 text-sm">
-          <thead className="bg-neutral-50 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            <tr>
-              <th className="px-4 py-3">Member</th>
-              <th className="px-4 py-3">Role</th>
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3">Joined</th>
-              {canModerate && <th className="px-4 py-3 text-right">Actions</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-100">
-            {sortedMembers.map((member) => {
-              const profile = profiles[member.userId];
-              const isSelf = member.userId === currentUserId;
-              const isBusy = busyUserId === member.userId;
-              const canManageTarget = canModerate && !isSelf && member.role !== "owner";
+      <div className="rounded-2xl border border-neutral-200 bg-white p-3">
+        <input
+          value={memberFilterQuery}
+          onChange={(event) => setMemberFilterQuery(event.target.value)}
+          placeholder="Filter members by name, @handle, title, or description"
+          className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-400"
+        />
+      </div>
 
-              return (
-                <tr key={`${member.userId}-${member.role}-${member.status}`}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 overflow-hidden rounded-full bg-neutral-200">
+      {filteredMembers.length === 0 ? (
+        <div className="rounded-2xl border border-neutral-200 bg-white p-6 text-sm text-neutral-500">
+          No members match your filter.
+        </div>
+      ) : null}
+
+      <div className="grid gap-4">
+        {filteredMembers.map((member) => {
+          const profile = profiles[member.userId];
+          const isSelf = member.userId === currentUserId;
+          const isBusy = busyUserId === member.userId;
+          const canManageTarget = showManagerTools && !isSelf && member.role !== "owner";
+          const profileHref = profile?.handle ? `/u/${encodeURIComponent(profile.handle)}` : null;
+
+          return (
+            <div key={`${member.userId}-${member.role}-${member.status}`} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm">
+              {profile?.coverUrl ? <img src={profile.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+              <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+
+              <div className="relative flex min-h-[108px] items-center justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-4">
+                  {profileHref ? (
+                    <a href={profileHref}>
+                      <div className="h-16 w-16 overflow-hidden rounded-full border border-white/50 bg-slate-200">
                         {profile?.image ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={profile.image} alt={getDisplayName(profile)} className="h-full w-full object-cover" />
                         ) : null}
                       </div>
-                      <div>
-                        <p className="font-medium text-neutral-900">{getDisplayName(profile)}</p>
-                        <p className="text-xs text-neutral-500">
-                          {profile?.handle ? `@${profile.handle}` : member.userId.slice(0, 8)}
-                        </p>
-                      </div>
+                    </a>
+                  ) : (
+                    <div className="h-16 w-16 overflow-hidden rounded-full border border-white/50 bg-slate-200">
+                      {profile?.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={profile.image} alt={getDisplayName(profile)} className="h-full w-full object-cover" />
+                      ) : null}
                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-neutral-700">{roleLabel(member.role)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadge(member.status)}`}>
-                      {member.status.charAt(0).toUpperCase() + member.status.slice(1)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-neutral-600">
-                    {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : "—"}
-                  </td>
-                  {canModerate && (
-                    <td className="px-4 py-3">
-                      {canManageTarget ? (
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            disabled={isBusy || member.role === "admin"}
-                            onClick={() => updateRole(member.userId, "admin")}
-                            className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Make admin
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isBusy || member.role === "member"}
-                            onClick={() => updateRole(member.userId, "member")}
-                            className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Make member
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => removeMember(member.userId)}
-                            className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="text-right text-xs text-neutral-400">—</div>
-                      )}
-                    </td>
                   )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+
+                  <div className="min-w-0">
+                    {profileHref ? (
+                      <a href={profileHref} className="block truncate text-2xl font-semibold text-white hover:underline">
+                        {getDisplayName(profile)}
+                      </a>
+                    ) : (
+                      <p className="truncate text-2xl font-semibold text-white">{getDisplayName(profile)}</p>
+                    )}
+                    <p className="mt-1 truncate text-sm text-white/80">{profile?.handle ? `@${profile.handle}` : member.userId.slice(0, 8)}</p>
+                    <p className="mt-1 truncate text-sm font-medium text-white/90">{member.jobTitle || "No job title set for this organization"}</p>
+                    {member.jobDescription ? <p className="mt-2 line-clamp-2 text-sm text-white/85">{member.jobDescription}</p> : null}
+                  </div>
+                </div>
+
+                {showManagerTools ? (
+                  <div className="relative z-10 flex shrink-0 items-center gap-2">
+                    {canManageTarget ? (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => removeMember(member.userId)}
+                        className="rounded-lg border border-red-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-red-600 backdrop-blur disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <Modal

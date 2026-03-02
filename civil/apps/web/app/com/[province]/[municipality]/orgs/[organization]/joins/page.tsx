@@ -11,9 +11,9 @@ type PageProps = {
   }
 }
 
-export default function OrganizationMembersPage({ params }: PageProps) {
+export default function OrganizationJoinsPage({ params }: PageProps) {
   return (
-    <OrganizationSection title="Members">
+    <OrganizationSection title="Joins" description="People who joined or connected with this organization. Management tools are in Settings → Members.">
       <OrganizationMembersClient province={params.province} municipality={params.municipality} organizationSlug={params.organization} />
     </OrganizationSection>
   )
