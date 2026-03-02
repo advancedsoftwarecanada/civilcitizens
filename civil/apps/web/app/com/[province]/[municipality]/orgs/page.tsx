@@ -18,7 +18,7 @@ export default async function CommunityOrganizationsPage({ params }: PageProps) 
         <OrganizationCreateButton province={params.province} municipality={params.municipality} />
       </div>
 
-      <p className="text-sm text-slate-600">Your organizations in this community.</p>
+      <p className="text-sm text-slate-600">Browse organizations in this community.</p>
 
       <CommunityOrganizationsList province={params.province} municipality={params.municipality} />
     </CommunitySection>

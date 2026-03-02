@@ -6159,6 +6159,64 @@ app.get('/communities/:province/:municipality', async (req: FastifyRequest, repl
   return reply.code(404).send({ error: 'community_not_found' })
 })
 
+app.get('/communities/:province/:municipality/stats', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z
+    .object({
+      province: z.string().min(2),
+      municipality: z.string().min(1),
+    })
+    .safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+  const province = normalizeProvinceCode(params.data.province)
+  if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+  const municipalitySlug = params.data.municipality.trim().toLowerCase()
+  if (!municipalitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+  const community = findCommunity(province, municipalitySlug)
+  if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+  const [city, subdivision, postsToday, postsThisMonth] = await Promise.all([
+    prisma.city.findFirst({
+      where: { provinceCode: province, slug: municipalitySlug },
+      orderBy: [{ population: 'desc' }, { name: 'asc' }],
+    }),
+    prisma.censusSubdivision.findFirst({
+      where: { provinceCode: province, slug: municipalitySlug },
+      select: { population: true },
+    }),
+    prisma.post.count({
+      where: {
+        provinceCode: province,
+        communitySlug: community.slug,
+        createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+      },
+    }),
+    prisma.post.count({
+      where: {
+        provinceCode: province,
+        communitySlug: community.slug,
+        createdAt: { gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) },
+      },
+    }),
+  ])
+
+  const exclude = new Set<string>([buildFollowKey(province, community.slug)])
+  const nearby = city
+    ? await computeNearbyCommunitySuggestions(city, exclude, 6)
+    : await computeGeodataFallbackSuggestions({ provinceCode: province, communitySlug: community.slug }, exclude, 6)
+
+  return reply.send({
+    provinceCode: province,
+    communitySlug: community.slug,
+    members: city?.population ?? subdivision?.population ?? null,
+    postsToday,
+    postsThisMonth,
+    nearbyCommunities: nearby,
+  })
+})
+
 const CommunityOrgParams = z.object({
   province: z.string().min(2),
   municipality: z.string().min(1),
@@ -9898,7 +9956,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events/:eve
         : 'FREE'
       : body.data.ticketType ?? (event.paid ? 'PAID' : 'FREE')
 
-    if (event.paid && resolvedTicketType !== 'PAID') {
+    if (event.paid && eventFees.length === 0 && resolvedTicketType !== 'PAID') {
       return reply.code(400).send({ error: 'paid_ticket_required' })
     }
     if (!event.paid && eventFees.length === 0 && resolvedTicketType === 'PAID') {
@@ -10013,6 +10071,13 @@ app.get('/communities/:province/:municipality/orgs/:slug/events/:eventId', async
     }
 
     const eventRsvps = system.eventRsvps.filter((row) => row.eventId === event.id)
+    const feeGoingCounts = new Map<string, number>()
+    for (const row of eventRsvps) {
+      if (row.status !== 'GOING') continue
+      const ticketId = row.ticketId ?? null
+      if (!ticketId) continue
+      feeGoingCounts.set(ticketId, (feeGoingCounts.get(ticketId) ?? 0) + 1)
+    }
     const viewerRsvp = viewerId ? eventRsvps.find((row) => row.userId === viewerId) ?? null : null
     const goingCount = eventRsvps.filter((row) => row.status === 'GOING').length
     const interestedCount = eventRsvps.filter((row) => row.status === 'INTERESTED').length
@@ -10091,13 +10156,19 @@ app.get('/communities/:province/:municipality/orgs/:slug/events/:eventId', async
           coverUrl: normalizeMediaUrl(invite.coverUrl ?? null),
           status: invite.status,
         })),
-        fees: (event.fees ?? []).map((fee) => ({
-          id: fee.id,
-          label: fee.label,
-          amountCents: fee.amountCents,
-          capacity: fee.capacity ?? null,
-          cashOnly: fee.cashOnly !== false,
-        })),
+        fees: (event.fees ?? []).map((fee) => {
+          const goingCountForFee = feeGoingCounts.get(fee.id) ?? 0
+          const remainingCount = typeof fee.capacity === 'number' && fee.capacity > 0 ? Math.max(0, fee.capacity - goingCountForFee) : null
+          return {
+            id: fee.id,
+            label: fee.label,
+            amountCents: fee.amountCents,
+            capacity: fee.capacity ?? null,
+            cashOnly: fee.cashOnly !== false,
+            goingCount: goingCountForFee,
+            remainingCount,
+          }
+        }),
         primaryPhotoUrl: event.primaryPhotoUrl,
         galleryPhotoUrls: event.galleryPhotoUrls,
         status: event.status ?? 'PUBLISHED',
@@ -12678,6 +12749,8 @@ app.get('/events/sidebar', async (req: FastifyRequest, reply: FastifyReply) =>
 
 app.get('/events/:organizationId/:eventId', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
+    const viewerId = (await resolveUserId(req)) ?? null
+
     const params = z
       .object({
         organizationId: z.string().trim().min(1).max(120),
@@ -12711,6 +12784,18 @@ app.get('/events/:organizationId/:eventId', async (req: FastifyRequest, reply: F
       return reply.code(404).send({ error: 'event_not_found' })
     }
 
+    const eventRsvps = system.eventRsvps.filter((row) => row.eventId === event.id)
+    const feeGoingCounts = new Map<string, number>()
+    for (const row of eventRsvps) {
+      if (row.status !== 'GOING') continue
+      const ticketId = row.ticketId ?? null
+      if (!ticketId) continue
+      feeGoingCounts.set(ticketId, (feeGoingCounts.get(ticketId) ?? 0) + 1)
+    }
+    const viewerRsvp = viewerId ? eventRsvps.find((row) => row.userId === viewerId) ?? null : null
+    const goingCount = eventRsvps.filter((row) => row.status === 'GOING').length
+    const interestedCount = eventRsvps.filter((row) => row.status === 'INTERESTED').length
+
     return reply.send({
       event: {
         id: event.id,
@@ -12724,12 +12809,41 @@ app.get('/events/:organizationId/:eventId', async (req: FastifyRequest, reply: F
         paid: event.paid,
         priceCents: event.priceCents,
         currency: event.currency,
+        fees: (event.fees ?? []).map((fee) => {
+          const goingCountForFee = feeGoingCounts.get(fee.id) ?? 0
+          const remainingCount = typeof fee.capacity === 'number' && fee.capacity > 0 ? Math.max(0, fee.capacity - goingCountForFee) : null
+          return {
+            id: fee.id,
+            label: fee.label,
+            amountCents: fee.amountCents,
+            capacity: fee.capacity ?? null,
+            cashOnly: fee.cashOnly !== false,
+            goingCount: goingCountForFee,
+            remainingCount,
+          }
+        }),
         guestSpeakers: event.guestSpeakers,
         primaryPhotoUrl: event.primaryPhotoUrl,
         galleryPhotoUrls: event.galleryPhotoUrls,
         status: event.status ?? 'PUBLISHED',
         createdAt: event.createdAt,
         updatedAt: event.updatedAt ?? event.createdAt,
+      },
+      viewerRsvp: viewerRsvp
+        ? {
+            id: viewerRsvp.id,
+            status: viewerRsvp.status,
+            ticketId: viewerRsvp.ticketId ?? null,
+            ticketLabel: viewerRsvp.ticketLabel ?? null,
+            amountCents: typeof viewerRsvp.amountCents === 'number' ? viewerRsvp.amountCents : null,
+            message: viewerRsvp.message ?? null,
+            createdAt: viewerRsvp.createdAt,
+            updatedAt: viewerRsvp.updatedAt ?? viewerRsvp.createdAt,
+          }
+        : null,
+      rsvpSummary: {
+        goingCount,
+        interestedCount,
       },
       organization: {
         id: org.id,
