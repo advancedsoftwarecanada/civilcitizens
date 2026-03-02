@@ -17,8 +17,21 @@ type ChannelListItem = {
   slug: string
   visibility: 'public' | 'private'
   unread: boolean
+  unreadCount?: number
   participantCount: number
   lastMessageAt: string
+  lastMessage?: {
+    body: string | null
+    attachments: string[]
+    isMine: boolean
+    sender: {
+      handle: string
+      name: string | null
+      avatarUrl?: string | null
+      isPremium?: boolean
+      isVerified?: boolean
+    }
+  } | null
   notification?: {
     muteServer?: boolean
     muteChannel?: boolean
@@ -46,6 +59,32 @@ function formatTimestamp(value?: string | null) {
     return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: 'numeric' })
   }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function getChannelLastMessagePreview(item: ChannelListItem) {
+  const lastMessage = item.lastMessage
+  if (!lastMessage) return 'No messages yet.'
+
+  const trimmedBody = (lastMessage.body ?? '').trim()
+  const attachmentCount = Array.isArray(lastMessage.attachments) ? lastMessage.attachments.length : 0
+  const content =
+    trimmedBody ||
+    (attachmentCount > 0
+      ? attachmentCount === 1
+        ? 'sent an attachment'
+        : `sent ${attachmentCount} attachments`
+      : 'sent a message')
+
+  const senderLabel = lastMessage.isMine
+    ? 'You'
+    : (lastMessage.sender.name?.trim() || `@${lastMessage.sender.handle}`)
+
+  return `${senderLabel}: ${content}`
+}
+
+function getUnreadLabel(unreadCount: number) {
+  if (unreadCount <= 0) return null
+  return `(${unreadCount > 99 ? '99+' : unreadCount})`
 }
 
 export default function ChannelsPageClient() {
@@ -93,13 +132,13 @@ export default function ChannelsPageClient() {
     const needle = query.trim().toLowerCase()
     if (!needle) return items
     return items.filter((item) => {
-      const haystack = `${item.slug} ${item.name} ${item.organization.name}`.toLowerCase()
+      const haystack = `${item.slug} ${item.name} ${item.organization.name} ${item.lastMessage?.body ?? ''}`.toLowerCase()
       return haystack.includes(needle)
     })
   }, [items, query])
 
   return (
-    <DashboardShell rightRail={<RightRail mode="organizations" />}>
+    <DashboardShell rightRail={<RightRail mode="organizations" organizationLinkTarget="chat" />}>
       <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -124,6 +163,9 @@ export default function ChannelsPageClient() {
               filteredItems.map((item) => {
                 const href = `/com/${item.organization.province}/${item.organization.municipality}/orgs/${item.organization.slug}/chat-channels?channel=${encodeURIComponent(item.id)}`
                 const muted = item.notification?.muteServer || item.notification?.muteChannel
+                const unreadCount = item.unreadCount ?? 0
+                const unreadLabel = getUnreadLabel(unreadCount)
+                const sender = item.lastMessage?.sender
                 return (
                   <Link
                     key={item.id}
@@ -140,8 +182,8 @@ export default function ChannelsPageClient() {
                     ) : null}
                     <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
 
-                    <div className="relative flex items-start justify-between gap-4">
-                      <div className="flex min-w-0 items-start gap-4">
+                    <div className="relative space-y-3">
+                      <div className="flex items-start justify-between gap-3">
                         <VerifiedAvatar
                           src={item.organization.logoUrl}
                           alt={item.organization.name}
@@ -149,40 +191,34 @@ export default function ChannelsPageClient() {
                           size={64}
                           className="shrink-0"
                         />
-
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="truncate text-2xl font-semibold text-white">#{item.slug}</p>
-                            {item.unread ? <span className="h-2.5 w-2.5 rounded-full bg-[var(--cc-primary)]" aria-hidden="true" /> : null}
-                          </div>
-                          <p className="mt-1 truncate text-sm text-white/80">{item.name}</p>
-
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/80">
-                            <span className="truncate">{item.organization.name}</span>
-                            <span aria-hidden="true">·</span>
-                            <span>{item.participantCount} members</span>
-                            <span
-                              className={clsx(
-                                'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                                'border-white/30 text-white/85',
-                              )}
-                            >
-                              {item.visibility}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-2xl font-semibold text-white">#{item.slug}</p>
+                          <p className="mt-1 truncate text-sm text-white/80">{item.organization.name}</p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <p className="text-xs text-white/70">{formatTimestamp(item.lastMessageAt)}</p>
+                          {unreadLabel ? (
+                            <span className="rounded-full bg-[var(--cc-primary)]/90 px-2 py-0.5 text-xs font-semibold text-white">
+                              {unreadLabel}
                             </span>
-                            {muted ? (
-                              <span
-                                className={clsx(
-                                  'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                                  'border-white/30 text-white/85',
-                                )}
-                              >
-                                Muted
-                              </span>
-                            ) : null}
-                          </div>
+                          ) : null}
                         </div>
                       </div>
-                      <p className="shrink-0 text-xs text-white/70">{formatTimestamp(item.lastMessageAt)}</p>
+
+                      <div className="rounded-xl bg-white/95 px-3 py-2 text-slate-800">
+                        <p className="truncate text-sm font-semibold text-slate-900">{item.name}</p>
+                        <div className="mt-1 flex items-center gap-2">
+                          <VerifiedAvatar
+                            src={sender?.avatarUrl ?? null}
+                            alt={sender?.name || sender?.handle || 'User'}
+                            initials={sender?.name || sender?.handle || 'U'}
+                            size={24}
+                            isVerified={Boolean(sender?.isVerified)}
+                            isBusiness={Boolean(sender?.isPremium)}
+                          />
+                          <p className="line-clamp-1 text-xs text-slate-700">{getChannelLastMessagePreview(item)}</p>
+                        </div>
+                      </div>
                     </div>
                   </Link>
                 )
