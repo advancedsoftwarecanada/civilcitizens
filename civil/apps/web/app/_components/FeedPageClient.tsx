@@ -393,7 +393,22 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       const data = await res.json().catch(() => null)
       const updated = (data as { post?: ApiPost })?.post
       if (updated) {
-        setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
+        setPosts((prev) =>
+          prev.map((p) => {
+            if (p.id !== updated.id) return p
+            const incoming = updated as Partial<ApiPost>
+            return {
+              ...p,
+              ...incoming,
+              author: {
+                ...p.author,
+                ...((incoming.author ?? {}) as Partial<ApiPost['author']>),
+              },
+              organization: incoming.organization === undefined ? p.organization : incoming.organization,
+              recentComments: Array.isArray(incoming.recentComments) ? incoming.recentComments : p.recentComments,
+            }
+          }),
+        )
       }
     } catch (err) {
       console.error('Unable to vote on post', err)
