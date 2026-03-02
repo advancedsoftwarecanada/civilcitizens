@@ -142,6 +142,13 @@ function formatCount(value?: number | null) {
   return value.toLocaleString()
 }
 
+function getDateMs(value?: string | null) {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.getTime()
+}
+
 type PageProps = {
   params: {
     handle: string
@@ -321,7 +328,26 @@ export default function UserPostsPage({ params }: PageProps) {
   )
 
   const isOwner = viewer && profile && viewer.handle === profile.handle
-  const experienceCount = profile?.experiences?.length ?? 0
+  const sortedExperiences = useMemo(() => {
+    const items = Array.isArray(profile?.experiences) ? [...profile.experiences] : []
+    items.sort((left, right) => {
+      const leftStart = getDateMs(left.startDate)
+      const rightStart = getDateMs(right.startDate)
+      if (leftStart !== null && rightStart !== null && leftStart !== rightStart) {
+        return rightStart - leftStart
+      }
+      if (leftStart !== null && rightStart === null) return -1
+      if (leftStart === null && rightStart !== null) return 1
+
+      const leftPosition = typeof left.position === 'number' ? left.position : Number.MAX_SAFE_INTEGER
+      const rightPosition = typeof right.position === 'number' ? right.position : Number.MAX_SAFE_INTEGER
+      if (leftPosition !== rightPosition) return leftPosition - rightPosition
+
+      return left.title.localeCompare(right.title)
+    })
+    return items
+  }, [profile?.experiences])
+  const experienceCount = sortedExperiences.length
   const coverDisplayUrl = profile?.coverUrl ?? null
   const editCoverHref = '/profile/edit?photo=cover#photos'
   const editAvatarHref = '/profile/edit?photo=avatar#photos'
@@ -1165,11 +1191,11 @@ export default function UserPostsPage({ params }: PageProps) {
           </section>
         ) : null}
 
-        {profile?.experiences && profile.experiences.length > 0 ? (
+        {sortedExperiences.length > 0 ? (
           <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
             <h2 className="text-lg font-semibold text-slate-900">Experience</h2>
             <ol className="mt-4 space-y-4">
-              {profile.experiences.map((exp, index) => (
+              {sortedExperiences.map((exp, index) => (
                 <li key={exp.id ?? `${exp.title}-${index}`} className="rounded-2xl border border-slate-100/70 bg-white/90 p-4 shadow-inner">
                   {exp.organizationProfile ? (
                     <Link
