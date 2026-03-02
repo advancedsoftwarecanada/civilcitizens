@@ -149,6 +149,34 @@ function getDateMs(value?: string | null) {
   return date.getTime()
 }
 
+function parseExperienceLocation(raw?: string | null): { label: string; href?: string } | null {
+  const value = raw?.trim()
+  if (!value) return null
+
+  if (value.startsWith('special:')) {
+    const special = value.slice('special:'.length).trim().toLowerCase()
+    if (special === 'remote') return { label: 'Remote' }
+    if (special === 'not_in_canada') return { label: 'Not in Canada' }
+    return null
+  }
+
+  if (value.startsWith('community:')) {
+    const body = value.slice('community:'.length)
+    const [head, labelPart] = body.split('|')
+    const [provinceCodeRaw, communitySlugRaw] = (head ?? '').split(':')
+    const provinceCode = (provinceCodeRaw ?? '').trim().toLowerCase()
+    const communitySlug = (communitySlugRaw ?? '').trim().toLowerCase()
+    if (!provinceCode || !communitySlug) return null
+    const label = (labelPart ?? '').trim() || communitySlug.replace(/-/g, ' ')
+    return {
+      label,
+      href: `/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}`,
+    }
+  }
+
+  return null
+}
+
 type PageProps = {
   params: {
     handle: string
@@ -331,6 +359,12 @@ export default function UserPostsPage({ params }: PageProps) {
   const sortedExperiences = useMemo(() => {
     const items = Array.isArray(profile?.experiences) ? [...profile.experiences] : []
     items.sort((left, right) => {
+      const leftCurrent = Boolean(left.current)
+      const rightCurrent = Boolean(right.current)
+      if (leftCurrent !== rightCurrent) {
+        return leftCurrent ? -1 : 1
+      }
+
       const leftStart = getDateMs(left.startDate)
       const rightStart = getDateMs(right.startDate)
       if (leftStart !== null && rightStart !== null && leftStart !== rightStart) {
@@ -1231,7 +1265,17 @@ export default function UserPostsPage({ params }: PageProps) {
                       )
                     ) : null}
                   </div>
-                  {exp.location ? <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{exp.location}</div> : null}
+                  {(() => {
+                    const location = parseExperienceLocation(exp.location)
+                    if (!location?.label) return null
+                    return location.href ? (
+                      <Link href={location.href} className="mt-1 inline-block text-xs uppercase tracking-wide text-slate-500 hover:text-slate-700 hover:underline">
+                        {location.label}
+                      </Link>
+                    ) : (
+                      <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{location.label}</div>
+                    )
+                  })()}
                   <div className="mt-2 text-xs text-slate-500">{formatExperienceRange(exp)}</div>
                   {exp.description ? <p className="mt-3 whitespace-pre-line text-sm text-slate-700">{exp.description}</p> : null}
                 </li>

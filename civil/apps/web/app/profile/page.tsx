@@ -99,6 +99,25 @@ type OrganizationDirectoryResult = {
   coverUrl: string | null
 }
 
+type ExperienceLocationSelection =
+  | {
+      kind: 'community'
+      provinceCode: string
+      communitySlug: string
+      label: string
+    }
+  | {
+      kind: 'special'
+      value: 'remote' | 'not_in_canada'
+      label: string
+    }
+
+type CommunityLocationSearchResult = {
+  provinceCode: string
+  communitySlug: string
+  label: string
+}
+
 type ProfileMediaCategory = Extract<MediaCategory, 'avatar' | 'cover'>
 
 type MediaSlotState = {
@@ -171,6 +190,56 @@ const COVER_ASPECT_RATIO = COVER_EXPORT_WIDTH / COVER_EXPORT_HEIGHT
 const MAX_CROP_ZOOM = 3
 const POLL_MAX_ATTEMPTS = 30
 const POLL_DELAY_MS = 3000
+const LOCATION_SPECIAL_OPTIONS: Array<{ value: 'remote' | 'not_in_canada'; label: string }> = [
+  { value: 'remote', label: 'Remote' },
+  { value: 'not_in_canada', label: 'Not in Canada' },
+]
+const LOCATION_SPECIAL_LABELS: Record<'remote' | 'not_in_canada', string> = {
+  remote: 'Remote',
+  not_in_canada: 'Not in Canada',
+}
+
+function encodeExperienceLocation(selection: ExperienceLocationSelection): string {
+  if (selection.kind === 'special') {
+    return `special:${selection.value}`
+  }
+  return `community:${selection.provinceCode.toUpperCase()}:${selection.communitySlug.toLowerCase()}|${selection.label}`
+}
+
+function parseExperienceLocation(raw: string | null | undefined): ExperienceLocationSelection | null {
+  const value = raw?.trim()
+  if (!value) return null
+
+  if (value.startsWith('special:')) {
+    const specialValue = value.slice('special:'.length).trim().toLowerCase()
+    if (specialValue === 'remote' || specialValue === 'not_in_canada') {
+      return {
+        kind: 'special',
+        value: specialValue,
+        label: LOCATION_SPECIAL_LABELS[specialValue],
+      }
+    }
+    return null
+  }
+
+  if (value.startsWith('community:')) {
+    const body = value.slice('community:'.length)
+    const [head, labelPart] = body.split('|')
+    const [provinceCodeRaw, communitySlugRaw] = (head ?? '').split(':')
+    const provinceCode = (provinceCodeRaw ?? '').trim().toUpperCase()
+    const communitySlug = (communitySlugRaw ?? '').trim().toLowerCase()
+    if (!provinceCode || !communitySlug) return null
+    const label = (labelPart ?? '').trim() || communitySlug.replace(/-/g, ' ')
+    return {
+      kind: 'community',
+      provinceCode,
+      communitySlug,
+      label,
+    }
+  }
+
+  return null
+}
 
 const buildPostPermalink = (post: {
   id: string
@@ -515,9 +584,13 @@ export default function ProfileEditPage() {
     cover: createPhotoDraftState(),
   }))
   const [activeOrganizationFieldKey, setActiveOrganizationFieldKey] = useState<string | null>(null)
+  const [activeLocationFieldKey, setActiveLocationFieldKey] = useState<string | null>(null)
   const [organizationSearchResults, setOrganizationSearchResults] = useState<OrganizationDirectoryResult[]>([])
   const [organizationSearching, setOrganizationSearching] = useState(false)
+  const [communityLocationSearchResults, setCommunityLocationSearchResults] = useState<CommunityLocationSearchResult[]>([])
+  const [communityLocationSearching, setCommunityLocationSearching] = useState(false)
   const [linkedOrganizationsByExperienceKey, setLinkedOrganizationsByExperienceKey] = useState<Record<string, OrganizationDirectoryResult>>({})
+  const [locationSelectionByExperienceKey, setLocationSelectionByExperienceKey] = useState<Record<string, ExperienceLocationSelection>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1045,7 +1118,7 @@ export default function ProfileEditPage() {
       key: exp.id || generateKey(),
       title: exp.title ?? '',
       organization: exp.organization ?? '',
-      location: exp.location ?? '',
+      location: parseExperienceLocation(exp.location)?.label ?? (exp.location ?? ''),
       startDate: monthInputFromIso(exp.startDate),
       endDate: exp.current ? '' : monthInputFromIso(exp.endDate ?? undefined),
       current: Boolean(exp.current),
@@ -1084,23 +1157,33 @@ export default function ProfileEditPage() {
         const mappedExperiences = mapExperiencesFromResponse(data.user.experiences)
         setExperiences(mappedExperiences)
         const nextLinkedByKey: Record<string, OrganizationDirectoryResult> = {}
+        const nextLocationSelections: Record<string, ExperienceLocationSelection> = {}
         if (Array.isArray(data.user.experiences)) {
           data.user.experiences.forEach((exp, index) => {
             const key = mappedExperiences[index]?.key
+            if (!key) return
+
             const linked = exp.organizationProfile
-            if (!key || !linked) return
-            nextLinkedByKey[key] = {
-              id: linked.id,
-              name: linked.name,
-              slug: linked.slug,
-              provinceCode: linked.provinceCode,
-              communitySlug: linked.communitySlug,
-              logoUrl: linked.logoUrl ?? null,
-              coverUrl: linked.coverUrl ?? null,
+            if (linked) {
+              nextLinkedByKey[key] = {
+                id: linked.id,
+                name: linked.name,
+                slug: linked.slug,
+                provinceCode: linked.provinceCode,
+                communitySlug: linked.communitySlug,
+                logoUrl: linked.logoUrl ?? null,
+                coverUrl: linked.coverUrl ?? null,
+              }
+            }
+
+            const parsedLocation = parseExperienceLocation(exp.location)
+            if (parsedLocation) {
+              nextLocationSelections[key] = parsedLocation
             }
           })
         }
         setLinkedOrganizationsByExperienceKey(nextLinkedByKey)
+        setLocationSelectionByExperienceKey(nextLocationSelections)
         const derivedName = `${data.user.firstName ?? ''} ${data.user.lastName ?? ''}`.trim()
         setViewer((prev) =>
           prev
@@ -1253,6 +1336,94 @@ export default function ProfileEditPage() {
     }
   }, [activeOrganizationFieldKey, experiences])
 
+  useEffect(() => {
+    const activeKey = activeLocationFieldKey
+    if (!activeKey) {
+      setCommunityLocationSearchResults([])
+      return
+    }
+
+    const activeExperience = experiences.find((exp) => exp.key === activeKey)
+    const query = activeExperience?.location.trim() ?? ''
+
+    if (query.length < 2) {
+      setCommunityLocationSearchResults([])
+      setCommunityLocationSearching(false)
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setCommunityLocationSearching(true)
+      try {
+        const params = new URLSearchParams({ q: query, type: 'communities', limit: '8' })
+        const headers = token ? { authorization: `Bearer ${token}` } : undefined
+        const response = await fetch(buildApiUrl(`/search?${params.toString()}`), { cache: 'no-store', headers })
+        if (!response.ok) {
+          if (!cancelled) setCommunityLocationSearchResults([])
+          return
+        }
+
+        const payload = (await response.json().catch(() => null)) as { communities?: Array<Record<string, unknown>> } | null
+        if (cancelled) return
+
+        const normalized = Array.isArray(payload?.communities)
+          ? payload!.communities
+              .map((entry) => {
+                const provinceCodeRaw =
+                  typeof entry.provinceCode === 'string'
+                    ? entry.provinceCode
+                    : typeof entry.province === 'string'
+                      ? entry.province
+                      : null
+                const communitySlugRaw =
+                  typeof entry.communitySlug === 'string'
+                    ? entry.communitySlug
+                    : typeof entry.slug === 'string'
+                      ? entry.slug
+                      : typeof entry.chamberSlug === 'string'
+                        ? entry.chamberSlug
+                        : null
+                const labelRaw =
+                  typeof entry.communityName === 'string'
+                    ? entry.communityName
+                    : typeof entry.chamberName === 'string'
+                      ? entry.chamberName
+                      : typeof entry.name === 'string'
+                        ? entry.name
+                        : null
+
+                const provinceCode = provinceCodeRaw?.trim().toUpperCase() ?? ''
+                const communitySlug = communitySlugRaw?.trim().toLowerCase() ?? ''
+                const label = (labelRaw?.trim() || communitySlug.replace(/-/g, ' ')).trim()
+
+                if (!provinceCode || !communitySlug || !label) return null
+                return {
+                  provinceCode,
+                  communitySlug,
+                  label,
+                } as CommunityLocationSearchResult
+              })
+              .filter((entry): entry is CommunityLocationSearchResult => Boolean(entry))
+          : []
+
+        const deduped = Array.from(
+          new Map(normalized.map((entry) => [`${entry.provinceCode}:${entry.communitySlug}`, entry])).values(),
+        )
+        setCommunityLocationSearchResults(deduped)
+      } catch {
+        if (!cancelled) setCommunityLocationSearchResults([])
+      } finally {
+        if (!cancelled) setCommunityLocationSearching(false)
+      }
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [activeLocationFieldKey, experiences, token])
+
   const handleExperienceChange = useCallback((key: string, patch: Partial<ExperienceFormState>) => {
     setExperiences((prev) => prev.map((exp) => (exp.key === key ? { ...exp, ...patch } : exp)))
 
@@ -1267,6 +1438,27 @@ export default function ProfileEditPage() {
         return next
       })
     }
+  }, [])
+
+  const handleExperienceLocationChange = useCallback((key: string, value: string) => {
+    setExperiences((prev) => prev.map((exp) => (exp.key === key ? { ...exp, location: value } : exp)))
+    setLocationSelectionByExperienceKey((prev) => {
+      const existing = prev[key]
+      if (!existing) return prev
+      if (value.trim() === existing.label) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }, [])
+
+  const handleExperienceLocationSelect = useCallback((key: string, selection: ExperienceLocationSelection) => {
+    setExperiences((prev) => prev.map((exp) => (exp.key === key ? { ...exp, location: selection.label } : exp)))
+    setLocationSelectionByExperienceKey((prev) => ({
+      ...prev,
+      [key]: selection,
+    }))
+    setActiveLocationFieldKey((current) => (current === key ? null : current))
   }, [])
 
   const handlePostPhoto = useCallback(async () => {
@@ -1363,6 +1555,12 @@ export default function ProfileEditPage() {
       delete next[key]
       return next
     })
+    setLocationSelectionByExperienceKey((prev) => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
   }, [])
 
   const addExperience = useCallback(() => {
@@ -1406,12 +1604,18 @@ export default function ProfileEditPage() {
 
       const title = exp.title.trim()
       const organization = exp.organization.trim()
-      const location = exp.location.trim()
+      const locationText = exp.location.trim()
+      const selectedLocation = locationSelectionByExperienceKey[exp.key]
+      if (locationText && !selectedLocation) {
+        pushToast(`Experience ${index + 1} location must be selected from Civil options.`, 'error')
+        return
+      }
+      const location = selectedLocation ? encodeExperienceLocation(selectedLocation) : locationText
       const description = exp.description.trim()
       const hasAnyValue = Boolean(
         title ||
           organization ||
-          location ||
+          locationText ||
           exp.startDate ||
           exp.endDate ||
           description ||
@@ -1505,7 +1709,7 @@ export default function ProfileEditPage() {
     } finally {
       setSaving(false)
     }
-  }, [bio, ensurePhotoApplied, experiences, firstName, lastName, loadProfile, photoDrafts.avatar.file, photoDrafts.cover.file, token])
+  }, [bio, ensurePhotoApplied, experiences, firstName, lastName, loadProfile, locationSelectionByExperienceKey, photoDrafts.avatar.file, photoDrafts.cover.file, token])
 
   const handleLogout = useCallback(async () => {
     try {
@@ -1913,11 +2117,93 @@ export default function ProfileEditPage() {
                         <input
                           type="text"
                           value={exp.location}
-                          onChange={(event) => handleExperienceChange(exp.key, { location: event.target.value })}
+                          onChange={(event) => handleExperienceLocationChange(exp.key, event.target.value)}
+                          onFocus={() => setActiveLocationFieldKey(exp.key)}
+                          onBlur={() => setActiveLocationFieldKey((current) => (current === exp.key ? null : current))}
                           disabled={formDisabled}
                           className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-                          placeholder="Ottawa, ON"
+                          placeholder="Search a Civil community, or choose Remote / Not in Canada"
                         />
+                        <p className="mt-1 text-xs text-slate-500">Free text is not saved. Choose a Civil community, Remote, or Not in Canada.</p>
+                        {activeLocationFieldKey === exp.key ? (
+                          <div className="mt-2 space-y-2">
+                            <ul className="space-y-1 rounded-xl border border-slate-200 bg-white p-2">
+                              {LOCATION_SPECIAL_OPTIONS.map((option) => (
+                                <li key={option.value}>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(event) => {
+                                      event.preventDefault()
+                                      handleExperienceLocationSelect(exp.key, {
+                                        kind: 'special',
+                                        value: option.value,
+                                        label: option.label,
+                                      })
+                                    }}
+                                    className="w-full rounded-lg px-2 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                                  >
+                                    {option.label}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+
+                            {communityLocationSearching ? <p className="text-xs text-slate-500">Searching Civil communities…</p> : null}
+                            {!communityLocationSearching && exp.location.trim().length >= 2 && communityLocationSearchResults.length === 0 ? (
+                              <p className="text-xs text-slate-500">No Civil communities found.</p>
+                            ) : null}
+                            {!communityLocationSearching && communityLocationSearchResults.length > 0 ? (
+                              <ul className="max-h-52 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2">
+                                {communityLocationSearchResults.map((community) => (
+                                  <li key={`${community.provinceCode}:${community.communitySlug}`}>
+                                    <button
+                                      type="button"
+                                      onMouseDown={(event) => {
+                                        event.preventDefault()
+                                        handleExperienceLocationSelect(exp.key, {
+                                          kind: 'community',
+                                          provinceCode: community.provinceCode,
+                                          communitySlug: community.communitySlug,
+                                          label: community.label,
+                                        })
+                                      }}
+                                      className="w-full rounded-lg px-2 py-2 text-left transition hover:bg-slate-50"
+                                    >
+                                      <p className="truncate text-sm font-semibold text-slate-800">{community.label}</p>
+                                      <p className="truncate text-xs text-slate-500">/{community.provinceCode.toLowerCase()}/{community.communitySlug}</p>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {(() => {
+                          const locationSelection = locationSelectionByExperienceKey[exp.key]
+                          if (!locationSelection) return null
+
+                          if (locationSelection.kind === 'community') {
+                            return (
+                              <div className="mt-2 flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1.5 text-xs text-sky-800">
+                                <span className="font-medium">Linked to Civil community</span>
+                                <span className="truncate text-sky-700">{locationSelection.label}</span>
+                                <Link
+                                  href={`/${encodeURIComponent(locationSelection.provinceCode.toLowerCase())}/${encodeURIComponent(locationSelection.communitySlug)}`}
+                                  className="ml-auto text-sky-700 hover:text-sky-900 hover:underline"
+                                >
+                                  View
+                                </Link>
+                              </div>
+                            )
+                          }
+
+                          return (
+                            <div className="mt-2 flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700">
+                              <span className="font-medium">Selected location</span>
+                              <span className="truncate">{locationSelection.label}</span>
+                            </div>
+                          )
+                        })()}
                       </label>
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <label className="text-sm font-medium text-gray-700">
