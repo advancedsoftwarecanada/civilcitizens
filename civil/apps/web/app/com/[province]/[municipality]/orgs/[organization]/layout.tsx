@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { headers } from 'next/headers'
 import type { ReactNode } from 'react'
 import { OrganizationContextProvider } from '../../../../_components/OrganizationContext'
-import OrganizationRightColumn from '../../../../_components/OrganizationRightColumn'
+import OrganizationLayoutClient from '../../../../_components/OrganizationLayoutClient'
 import { fetchCommunityOrganization } from '../../../../../_lib/organizations'
 
 export const dynamic = 'force-dynamic'
@@ -168,14 +168,9 @@ export default async function OrganizationLayout({ children, params }: LayoutPro
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
       />
-      <div className="mx-auto max-w-screen-2xl overflow-x-hidden px-4 py-5 sm:px-8 sm:py-6">
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-8">
-          <div className="min-w-0 space-y-5">{children}</div>
-          <aside className="hidden lg:block">
-            <OrganizationRightColumn initialOrg={org} province={params.province} municipality={params.municipality} />
-          </aside>
-        </div>
-      </div>
+      <OrganizationLayoutClient initialOrg={org} province={params.province} municipality={params.municipality}>
+        {children}
+      </OrganizationLayoutClient>
     </OrganizationContextProvider>
   )
 }

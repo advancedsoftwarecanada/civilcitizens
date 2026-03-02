@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import Sidebar from './Sidebar'
+import { useInviteViewStore } from '../_lib/inviteViewStore'
 
 const TOP_NAV_HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 const SIDEBAR_HIDDEN_PATHS = new Set([...TOP_NAV_HIDDEN_PATHS, '/reset', '/terms', '/privacy'])
@@ -15,9 +16,12 @@ type AppFrameProps = {
 
 export default function AppFrame({ children, modal }: AppFrameProps) {
   const pathname = usePathname()
+  const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
+  const isInviteRoute = pathname ? pathname.includes('/invite/') : false
+  const hideForInviteGuest = isInviteRoute && inviteGuestMode !== false
 
-  const topNavHidden = pathname ? TOP_NAV_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') : false
-  const sidebarHidden = pathname ? SIDEBAR_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') : false
+  const topNavHidden = pathname ? TOP_NAV_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || hideForInviteGuest : false
+  const sidebarHidden = pathname ? SIDEBAR_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || hideForInviteGuest : false
 
   return (
     <div
