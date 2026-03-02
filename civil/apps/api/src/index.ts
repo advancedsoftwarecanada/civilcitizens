@@ -1127,6 +1127,16 @@ function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof for
       message: eventTitle ? `${actorLabel} ${verb} your sponsor invite for "${eventTitle}".` : `${actorLabel} ${verb} your sponsor invite.`,
     }
   }
+  if (record.type === ORG_NOTIFICATION_TYPES.USER_INVITE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const organizationName = typeof payload?.organizationName === 'string' ? payload.organizationName.trim() : 'an organization'
+    return {
+      title: 'Organization invite',
+      message: `${actorLabel} invited you to join ${organizationName}.`,
+    }
+  }
   return null
 }
 
@@ -1418,6 +1428,10 @@ const EVENT_NOTIFICATION_TYPES = {
   SPONSOR_INVITE: 'event_sponsor_invite',
   GUEST_SPEAKER_RESPONSE: 'event_guest_speaker_response',
   SPONSOR_RESPONSE: 'event_sponsor_response',
+} as const
+
+const ORG_NOTIFICATION_TYPES = {
+  USER_INVITE: 'org_user_invite',
 } as const
 
 const MESSAGE_NOTIFICATION_DEDUPE_WINDOW_MS = 45_000
@@ -2468,6 +2482,7 @@ const RegisterInputApi = z.object({
   firstName: z.string().min(1).max(40),
   lastName: z.string().min(1).max(40),
   password: z.string().min(8).max(72),
+  orgInviteToken: z.string().trim().min(12).max(160).optional(),
   acceptTerms: z.literal(true, {
     errorMap: () => ({ message: 'You must accept the terms' }),
   }),
@@ -3005,6 +3020,135 @@ app.setErrorHandler((err, req, reply) => {
 
 // Prisma migrations/db push handle schema; no manual ensureSchema needed in production
 
+async function applyOrganizationInviteRegistration(token: string, newUserId: string) {
+  const normalizedToken = token.trim()
+  if (!normalizedToken) return
+
+  const businesses = await prisma.business.findMany({
+    where: { status: 'ACTIVE' },
+    select: {
+      id: true,
+      ownerId: true,
+      provinceCode: true,
+      communitySlug: true,
+      slug: true,
+      metadata: true,
+    },
+  })
+
+  const matched = businesses.find((org: (typeof businesses)[number]) => {
+    const system = readOrganizationSystemState(org.metadata)
+    return system.inviteLinks.some((entry) => entry.token === normalizedToken)
+  })
+  if (!matched) return
+
+  const current = readOrganizationSystemState(matched.metadata)
+  const inviteIndex = current.inviteLinks.findIndex((entry) => entry.token === normalizedToken)
+  if (inviteIndex < 0) return
+  const invite = current.inviteLinks[inviteIndex]
+  if (!invite) return
+
+  const nowIso = new Date().toISOString()
+  const existingMember = current.members[newUserId] ?? null
+  const status: OrgMembershipStatus = current.joinMode === 'APPLICATION_REQUIRED' ? 'PENDING' : 'ACTIVE'
+
+  const referralAlreadyExists = current.referrals.some(
+    (item) => item.referrerUserId === invite.createdByUserId && item.referredUserId === newUserId,
+  )
+  const referralId = `ref_${randomUUID().replace(/-/g, '').slice(0, 14)}`
+  const referral: OrgReferralRecord | null = referralAlreadyExists
+    ? null
+    : {
+        id: referralId,
+        referrerUserId: invite.createdByUserId,
+        referredUserId: newUserId,
+        planId: invite.planId ?? null,
+        createdAt: nowIso,
+      }
+
+  const inviterCurrentMember = current.members[invite.createdByUserId] ?? {
+    rankId: invite.createdByUserId === matched.ownerId ? SYSTEM_OWNER_RANK_ID : SYSTEM_MEMBER_RANK_ID,
+    planId: null,
+    status: 'ACTIVE' as OrgMembershipStatus,
+    referredByUserId: null,
+    reputation: 0,
+    updatedAt: nowIso,
+  }
+
+  const hasRewardLedger = current.reputationLedger.some(
+    (entry) => entry.source === 'signup_referral' && entry.userId === invite.createdByUserId && entry.sourceRefId === (referral?.id ?? null),
+  )
+
+  const rewardLedger: OrgReputationEntry | null =
+    referral && !hasRewardLedger
+      ? {
+          id: `rep_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
+          userId: invite.createdByUserId,
+          delta: ORG_SIGNUP_REPUTATION_POINTS,
+          source: 'signup_referral',
+          sourceRefId: referral.id,
+          note: `Signup referral reward (+${ORG_SIGNUP_REPUTATION_POINTS})`,
+          createdAt: nowIso,
+        }
+      : null
+
+  const nextInviteLinks = [...current.inviteLinks]
+  nextInviteLinks[inviteIndex] = {
+    ...invite,
+    registrationCount: invite.registrationCount + 1,
+    joinCount: status === 'ACTIVE' ? invite.joinCount + 1 : invite.joinCount,
+    lastRegisteredAt: nowIso,
+    lastJoinedAt: status === 'ACTIVE' ? nowIso : invite.lastJoinedAt,
+  }
+
+  const nextSystem: OrganizationSystemState = {
+    ...current,
+    inviteLinks: nextInviteLinks,
+    referrals: referral ? [...current.referrals, referral] : current.referrals,
+    reputationLedger: rewardLedger ? [...current.reputationLedger, rewardLedger] : current.reputationLedger,
+    members: {
+      ...current.members,
+      [newUserId]: {
+        rankId: existingMember?.rankId ?? SYSTEM_MEMBER_RANK_ID,
+        planId: invite.planId ?? existingMember?.planId ?? null,
+        status,
+        referredByUserId: invite.createdByUserId,
+        reputation: existingMember?.reputation ?? 0,
+        updatedAt: nowIso,
+      },
+      [invite.createdByUserId]: rewardLedger
+        ? {
+            ...inviterCurrentMember,
+            reputation: (inviterCurrentMember.reputation ?? 0) + ORG_SIGNUP_REPUTATION_POINTS,
+            updatedAt: nowIso,
+          }
+        : inviterCurrentMember,
+    },
+  }
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.businessFollow.upsert({
+      where: { businessId_userId: { businessId: matched.id, userId: newUserId } },
+      create: { businessId: matched.id, userId: newUserId },
+      update: {},
+    })
+
+    await tx.business.update({
+      where: { id: matched.id },
+      data: { metadata: mergeOrganizationSystemStateIntoMetadata(matched.metadata, nextSystem) },
+      select: { id: true },
+    })
+
+    await appendOrganizationAuditLogEntry(tx, matched.id, {
+      actorUserId: newUserId,
+      action: status === 'ACTIVE' ? 'member.joined_via_invite' : 'member.join_requested_via_invite',
+      reason: 'Joined via invite landing registration',
+      previousValue: existingMember,
+      nextValue: nextSystem.members[newUserId],
+    })
+  })
+}
+
 // Auth: register
 app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
   // Accept both shapes: shared RegisterInput and our local variant with optional handle
@@ -3013,7 +3157,7 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
     parse = RegisterInputApi.safeParse(req.body)
   }
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
-  const { email, firstName, lastName, password } = parse.data
+  const { email, firstName, lastName, password, orgInviteToken } = parse.data
   const normalizedFirstName = firstName.trim().toLowerCase()
   const normalizedLastName = lastName.trim().toLowerCase()
   const name = `${normalizedFirstName} ${normalizedLastName}`.trim()
@@ -3022,6 +3166,13 @@ app.post('/auth/register', async (req: FastifyRequest, reply: FastifyReply) => {
   const hash = await bcrypt.hash(password, 10)
   try {
     const user = await prisma.user.create({ data: { id: randomUUID(), email, handle, name, passwordHash: hash } })
+    if (typeof orgInviteToken === 'string' && orgInviteToken.trim()) {
+      try {
+        await applyOrganizationInviteRegistration(orgInviteToken, user.id)
+      } catch (inviteErr) {
+        req.log.warn({ err: inviteErr }, 'org_invite_registration_apply_failed')
+      }
+    }
     const token = await (app as any).jwt.sign({ sub: user.id })
     return reply.send({ token, user: { id: user.id, email: user.email, handle: user.handle, name: user.name } })
   } catch (e: any) {
@@ -6519,6 +6670,21 @@ const CommunityOrgReferralBody = z.object({
   planId: z.string().trim().min(2).max(64).optional().nullable(),
 })
 
+const CommunityOrgInviteLinkBody = z.object({
+  message: z.string().trim().max(280).optional().nullable(),
+  planId: z.string().trim().min(2).max(64).optional().nullable(),
+})
+
+const CommunityOrgInviteUserBody = z.object({
+  targetUserId: z.string().uuid(),
+  message: z.string().trim().max(280).optional().nullable(),
+  planId: z.string().trim().min(2).max(64).optional().nullable(),
+})
+
+const CommunityOrgInviteResolveBody = z.object({
+  deviceId: z.string().trim().min(1).max(120).optional().nullable(),
+})
+
 const CommunityOrgReputationAdjustBody = z.object({
   userId: z.string().uuid(),
   delta: z.coerce.number().int().min(-10000).max(10000),
@@ -7127,6 +7293,21 @@ type OrgReferralRecord = {
   createdAt: string
 }
 
+type OrgInviteLinkRecord = {
+  id: string
+  token: string
+  createdByUserId: string
+  message: string | null
+  planId: string | null
+  createdAt: string
+  viewCount: number
+  registrationCount: number
+  joinCount: number
+  lastViewedAt: string | null
+  lastRegisteredAt: string | null
+  lastJoinedAt: string | null
+}
+
 type OrgReputationEntry = {
   id: string
   userId: string
@@ -7191,6 +7372,7 @@ type OrganizationSystemState = {
   achievements: OrgAchievementDefinition[]
   achievementAwards: OrgAchievementAward[]
   referrals: OrgReferralRecord[]
+  inviteLinks: OrgInviteLinkRecord[]
   reputationLedger: OrgReputationEntry[]
   eventRsvps: OrgEventRsvp[]
   economics: OrgEconomicRecord[]
@@ -7205,6 +7387,7 @@ const SYSTEM_EVENT_MANAGER_RANK_ID = 'system_event_manager'
 const SYSTEM_SHOP_MANAGER_RANK_ID = 'system_shop_manager'
 const SYSTEM_MEMBER_RANK_ID = 'system_member'
 const ORG_AUDIT_LOG_LIMIT = 1000
+const ORG_SIGNUP_REPUTATION_POINTS = 100
 
 const DEFAULT_MANAGER_PERMISSIONS: OrgPermission[] = [
   ...OrgPermissionValues,
@@ -7309,6 +7492,7 @@ function readOrganizationSystemState(metadata: unknown): OrganizationSystemState
     achievements: [],
     achievementAwards: [],
     referrals: [],
+    inviteLinks: [],
     reputationLedger: [],
     eventRsvps: [],
     economics: [],
@@ -7364,6 +7548,22 @@ function readOrganizationSystemState(metadata: unknown): OrganizationSystemState
     achievements: Array.isArray(typed.achievements) ? (typed.achievements as OrgAchievementDefinition[]) : [],
     achievementAwards: Array.isArray(typed.achievementAwards) ? (typed.achievementAwards as OrgAchievementAward[]) : [],
     referrals: Array.isArray(typed.referrals) ? (typed.referrals as OrgReferralRecord[]) : [],
+    inviteLinks: Array.isArray((typed as any).inviteLinks)
+      ? ((typed as any).inviteLinks as OrgInviteLinkRecord[]).map((row) => ({
+          id: row.id,
+          token: row.token,
+          createdByUserId: row.createdByUserId,
+          message: row.message ?? null,
+          planId: row.planId ?? null,
+          createdAt: row.createdAt,
+          viewCount: Number.isFinite(row.viewCount) ? row.viewCount : 0,
+          registrationCount: Number.isFinite(row.registrationCount) ? row.registrationCount : 0,
+          joinCount: Number.isFinite(row.joinCount) ? row.joinCount : 0,
+          lastViewedAt: row.lastViewedAt ?? null,
+          lastRegisteredAt: row.lastRegisteredAt ?? null,
+          lastJoinedAt: row.lastJoinedAt ?? null,
+        }))
+      : [],
     reputationLedger: Array.isArray(typed.reputationLedger) ? (typed.reputationLedger as OrgReputationEntry[]) : [],
     eventRsvps: Array.isArray(typed.eventRsvps)
       ? (typed.eventRsvps as OrgEventRsvp[]).map((row) => ({
@@ -9732,6 +9932,321 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/achievement
     })
 
     return reply.code(201).send({ award, member: nextMemberState })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/governance/invite-links', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const actorUserId = (await resolveUserId(req)) ?? null
+    if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgInviteLinkBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const membership = await prisma.businessMembership.findUnique({
+      where: { businessId_userId: { businessId: org.id, userId: actorUserId } },
+      select: { role: true },
+    })
+    const actorRole: 'OWNER' | 'MANAGER' | null = org.ownerId === actorUserId ? 'OWNER' : membership?.role === 'MANAGER' ? 'MANAGER' : null
+
+    const current = readOrganizationSystemState(org.metadata)
+    const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
+    if (!canOrganizationPermission(permissions, 'manage_referrals')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    if (body.data.planId && !current.plans.some((plan) => plan.id === body.data.planId)) {
+      return reply.code(400).send({ error: 'plan_not_found' })
+    }
+
+    const nowIso = new Date().toISOString()
+    const token = randomUUID().replace(/-/g, '')
+    const invite: OrgInviteLinkRecord = {
+      id: `inv_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
+      token,
+      createdByUserId: actorUserId,
+      message: body.data.message?.trim() || null,
+      planId: body.data.planId ?? null,
+      createdAt: nowIso,
+      viewCount: 0,
+      registrationCount: 0,
+      joinCount: 0,
+      lastViewedAt: null,
+      lastRegisteredAt: null,
+      lastJoinedAt: null,
+    }
+
+    const nextSystem: OrganizationSystemState = {
+      ...current,
+      inviteLinks: [...current.inviteLinks, invite],
+    }
+
+    await prisma.business.update({
+      where: { id: org.id },
+      data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, nextSystem) },
+      select: { id: true },
+    })
+
+    await appendOrganizationAuditLogEntry(prisma, org.id, {
+      actorUserId,
+      action: 'invite_link.created',
+      reason: body.data.message?.trim() || null,
+      previousValue: null,
+      nextValue: invite,
+    })
+
+    const landingUrl = `/com/${encodeURIComponent(province)}/${encodeURIComponent(community.slug)}/orgs/${encodeURIComponent(params.data.slug.trim().toLowerCase())}/invite/${encodeURIComponent(token)}`
+    return reply.code(201).send({ invite, landingUrl })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/governance/invite-links', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const actorUserId = (await resolveUserId(req)) ?? null
+    if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const orgSlug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: orgSlug },
+      select: { id: true, ownerId: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const membership = await prisma.businessMembership.findUnique({
+      where: { businessId_userId: { businessId: org.id, userId: actorUserId } },
+      select: { role: true },
+    })
+    const actorRole: 'OWNER' | 'MANAGER' | null = org.ownerId === actorUserId ? 'OWNER' : membership?.role === 'MANAGER' ? 'MANAGER' : null
+
+    const current = readOrganizationSystemState(org.metadata)
+    const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
+    if (!canOrganizationPermission(permissions, 'manage_referrals')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const inviteLinks = current.inviteLinks
+      .filter((entry) => entry.createdByUserId === actorUserId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+      .map((entry) => ({
+        ...entry,
+        landingUrl: `/com/${encodeURIComponent(province)}/${encodeURIComponent(community.slug)}/orgs/${encodeURIComponent(orgSlug)}/invite/${encodeURIComponent(entry.token)}`,
+      }))
+
+    return reply.send({ inviteLinks })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/governance/invite-users', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const actorUserId = (await resolveUserId(req)) ?? null
+    if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgInviteUserBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const orgSlug = params.data.slug.trim().toLowerCase()
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: orgSlug },
+      select: { id: true, ownerId: true, name: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (body.data.targetUserId === actorUserId) return reply.code(400).send({ error: 'invalid_invitee' })
+
+    const membership = await prisma.businessMembership.findUnique({
+      where: { businessId_userId: { businessId: org.id, userId: actorUserId } },
+      select: { role: true },
+    })
+    const actorRole: 'OWNER' | 'MANAGER' | null = org.ownerId === actorUserId ? 'OWNER' : membership?.role === 'MANAGER' ? 'MANAGER' : null
+
+    const current = readOrganizationSystemState(org.metadata)
+    const permissions = resolveOrganizationPermissions({ org: { ownerId: org.ownerId }, role: actorRole, system: current, userId: actorUserId })
+    if (!canOrganizationPermission(permissions, 'manage_referrals')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+    if (body.data.planId && !current.plans.some((plan) => plan.id === body.data.planId)) {
+      return reply.code(400).send({ error: 'plan_not_found' })
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id: body.data.targetUserId }, select: { id: true } })
+    if (!targetUser) return reply.code(404).send({ error: 'user_not_found' })
+
+    const nowIso = new Date().toISOString()
+    const token = randomUUID().replace(/-/g, '')
+    const invite: OrgInviteLinkRecord = {
+      id: `inv_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
+      token,
+      createdByUserId: actorUserId,
+      message: body.data.message?.trim() || null,
+      planId: body.data.planId ?? null,
+      createdAt: nowIso,
+      viewCount: 0,
+      registrationCount: 0,
+      joinCount: 0,
+      lastViewedAt: null,
+      lastRegisteredAt: null,
+      lastJoinedAt: null,
+    }
+
+    const nextSystem: OrganizationSystemState = {
+      ...current,
+      inviteLinks: [...current.inviteLinks, invite],
+    }
+
+    await prisma.business.update({
+      where: { id: org.id },
+      data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, nextSystem) },
+      select: { id: true },
+    })
+
+    const landingUrl = `/com/${encodeURIComponent(province)}/${encodeURIComponent(community.slug)}/orgs/${encodeURIComponent(orgSlug)}/invite/${encodeURIComponent(token)}`
+
+    await createNotificationRecord({
+      userId: targetUser.id,
+      actorId: actorUserId,
+      type: ORG_NOTIFICATION_TYPES.USER_INVITE,
+      payload: {
+        status: 'pending',
+        organizationId: org.id,
+        organizationName: org.name,
+        inviteToken: token,
+        message: body.data.message?.trim() || null,
+        url: landingUrl,
+      },
+    })
+
+    await appendOrganizationAuditLogEntry(prisma, org.id, {
+      actorUserId,
+      action: 'invite_user.sent',
+      reason: body.data.message?.trim() || null,
+      previousValue: null,
+      nextValue: { inviteId: invite.id, targetUserId: targetUser.id },
+    })
+
+    return reply.code(201).send({ invite, landingUrl })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/invite/:token/resolve', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const viewerUserId = (await resolveUserId(req)) ?? null
+    const params = CommunityOrgSlugParams.extend({ token: z.string().trim().min(12).max(160) }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgInviteResolveBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+    const orgSlug = params.data.slug.trim().toLowerCase()
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: orgSlug, status: 'ACTIVE' },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        coverUrl: true,
+        logoUrl: true,
+        ownerId: true,
+        metadata: true,
+        provinceCode: true,
+        communitySlug: true,
+      },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const current = readOrganizationSystemState(org.metadata)
+    const inviteIndex = current.inviteLinks.findIndex((entry) => entry.token === params.data.token)
+    if (inviteIndex < 0) return reply.code(404).send({ error: 'invite_not_found' })
+    const invite = current.inviteLinks[inviteIndex]
+    if (!invite) return reply.code(404).send({ error: 'invite_not_found' })
+
+    const inviter = await prisma.user.findUnique({
+      where: { id: invite.createdByUserId },
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        coverUrl: true,
+      },
+    })
+
+    const isInviteOwner = Boolean(viewerUserId && (viewerUserId === invite.createdByUserId || viewerUserId === org.ownerId))
+    const shouldIncrementView = !isInviteOwner
+
+    const nextInviteLinks = [...current.inviteLinks]
+    if (shouldIncrementView) {
+      const nowIso = new Date().toISOString()
+      nextInviteLinks[inviteIndex] = {
+        ...invite,
+        viewCount: invite.viewCount + 1,
+        lastViewedAt: nowIso,
+      }
+
+      await prisma.business.update({
+        where: { id: org.id },
+        data: { metadata: mergeOrganizationSystemStateIntoMetadata(org.metadata, { ...current, inviteLinks: nextInviteLinks }) },
+        select: { id: true },
+      })
+    }
+
+    return reply.send({
+      invite: nextInviteLinks[inviteIndex],
+      viewer: {
+        id: viewerUserId,
+        isInviteOwner,
+      },
+      inviter: inviter
+        ? {
+            id: inviter.id,
+            handle: inviter.handle,
+            name: inviter.name,
+            avatarUrl: normalizeMediaUrl(inviter.avatarUrl ?? null),
+            coverUrl: normalizeMediaUrl(inviter.coverUrl ?? null),
+          }
+        : null,
+      organization: {
+        id: org.id,
+        name: org.name,
+        slug: org.slug,
+        description: org.description ?? null,
+        coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+        logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+        provinceCode: org.provinceCode,
+        communitySlug: org.communitySlug,
+      },
+    })
   }),
 )
 

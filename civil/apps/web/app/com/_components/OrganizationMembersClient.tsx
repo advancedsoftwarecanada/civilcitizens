@@ -1,373 +1,854 @@
-'use client'
+"use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
-import VerifiedAvatar from '../../_components/VerifiedAvatar'
-import { buildApiUrl, parseApiResponse } from '../../_lib/api'
-import { formatUserDisplayName } from '../../_lib/text'
-import { redirectToAuthModal } from '../../_lib/authModal'
-import { pushToast } from '../../_components/useToasts'
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useViewerStore } from "../../_lib/viewerStore";
 
-type MemberRow = {
-  userId: string
-  role: 'OWNER' | 'MANAGER' | 'FOLLOWER'
-  joinedAt: string | null
-  user: {
-    id: string
-    handle: string
-    name: string | null
-    avatarUrl: string | null
-    coverUrl?: string | null
+import Modal from "../../_components/Modal";
+import { buildApiUrl } from "../../_lib/api";
+
+type OrganizationMember = {
+  userId: string;
+  role: string;
+  status: "active" | "pending" | "removed";
+  joinedAt: string | null;
+  invitedBy?: string | null;
+  notes?: string | null;
+};
+
+type MemberProfile = {
+  id: string;
+  handle: string | null;
+  name?: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  image: string | null;
+  avatarUrl?: string | null;
+  slug: string | null;
+};
+
+type SearchUser = {
+  id: string;
+  handle: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  image: string | null;
+};
+
+type OrganizationMembersPayload = {
+  organizationId: string;
+  slug: string;
+  members: OrganizationMember[];
+  profiles: Record<string, MemberProfile>;
+};
+
+type MyInviteLink = {
+  id: string;
+  token: string;
+  createdAt: string;
+  message: string | null;
+  viewCount: number;
+  registrationCount: number;
+  joinCount: number;
+  landingUrl: string;
+};
+
+type Props = {
+  province: string;
+  municipality: string;
+  organizationSlug?: string;
+  slug?: string;
+  initialData?: OrganizationMembersPayload;
+};
+
+function getDisplayName(profile?: MemberProfile | SearchUser | null) {
+  if (!profile) return "Unknown user";
+  if ("name" in profile && typeof profile.name === "string" && profile.name.trim().length > 0) {
+    return profile.name.trim();
   }
+  const full = `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim();
+  return full || profile.handle || "Unknown user";
 }
 
-type MembersResponse = {
-  members?: MemberRow[]
-  followers?: MemberRow[]
+function roleLabel(role: string) {
+  if (role === "owner") return "Owner";
+  if (role === "admin") return "Admin";
+  if (role === "moderator") return "Moderator";
+  if (role === "member") return "Member";
+  return role;
 }
 
-type OrganizationRoleResponse = {
-  org?: {
-    ownerId?: string
-    viewerRole?: 'OWNER' | 'MANAGER' | null
+function normalizeMemberRole(role: unknown): string {
+  const value = typeof role === "string" ? role.trim().toLowerCase() : "";
+  if (value === "owner") return "owner";
+  if (value === "manager") return "admin";
+  if (value === "admin") return "admin";
+  if (value === "moderator") return "moderator";
+  if (value === "follower") return "member";
+  if (value === "member") return "member";
+  return "member";
+}
+
+function parseIsoDate(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function normalizeMembersPayload(payload: any): { members: OrganizationMember[]; profiles: Record<string, MemberProfile> } {
+  const rowsRaw = [
+    ...(Array.isArray(payload?.members) ? payload.members : []),
+    ...(Array.isArray(payload?.followers) ? payload.followers : []),
+  ];
+
+  const profiles: Record<string, MemberProfile> = {};
+  const members: OrganizationMember[] = [];
+
+  rowsRaw.forEach((row: any) => {
+    const userId = typeof row?.userId === "string" ? row.userId : typeof row?.id === "string" ? row.id : null;
+    if (!userId) return;
+
+    const user = row?.user && typeof row.user === "object" ? row.user : null;
+    const handle = typeof user?.handle === "string" ? user.handle : null;
+    const name = typeof user?.name === "string" ? user.name : null;
+    const avatarUrl = typeof user?.avatarUrl === "string" ? user.avatarUrl : typeof row?.image === "string" ? row.image : null;
+
+    profiles[userId] = {
+      id: userId,
+      handle,
+      name,
+      firstName: null,
+      lastName: null,
+      image: avatarUrl,
+      avatarUrl,
+      slug: null,
+    };
+
+    members.push({
+      userId,
+      role: normalizeMemberRole(row?.role),
+      status: "active",
+      joinedAt: parseIsoDate(row?.joinedAt),
+      invitedBy: null,
+      notes: null,
+    });
+  });
+
+  return { members, profiles };
+}
+
+function statusBadge(status: OrganizationMember["status"]) {
+  if (status === "active") {
+    return "bg-emerald-100 text-emerald-700";
   }
-}
-
-type MeResponse = {
-  user?: {
-    id?: string
+  if (status === "pending") {
+    return "bg-amber-100 text-amber-700";
   }
-}
-
-function roleLabel(role: MemberRow['role']) {
-  if (role === 'OWNER') return 'Owner'
-  if (role === 'MANAGER') return 'Manager'
-  return 'Member'
+  return "bg-neutral-200 text-neutral-600";
 }
 
 export default function OrganizationMembersClient({
   province,
   municipality,
+  organizationSlug,
   slug,
-}: {
-  province: string
-  municipality: string
-  slug: string
-}) {
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('token') : null), [])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [items, setItems] = useState<MemberRow[]>([])
-  const [viewerUserId, setViewerUserId] = useState<string | null>(null)
-  const [ownerId, setOwnerId] = useState<string | null>(null)
-  const [viewerRole, setViewerRole] = useState<'OWNER' | 'MANAGER' | null>(null)
-  const [actionBusyUserId, setActionBusyUserId] = useState<string | null>(null)
-
-  const loadOrgRole = useCallback(async () => {
-    if (!token) {
-      setViewerRole(null)
-      setOwnerId(null)
-      setViewerUserId(null)
-      return
+  initialData,
+}: Props) {
+  const router = useRouter();
+  const resolvedOrganizationSlug = (organizationSlug ?? slug ?? "").trim();
+  const initialNormalized = useMemo(() => {
+    if (!initialData) return { members: [] as OrganizationMember[], profiles: {} as Record<string, MemberProfile> };
+    if (initialData.profiles && typeof initialData.profiles === "object") {
+      return {
+        members: Array.isArray(initialData.members) ? initialData.members : [],
+        profiles: initialData.profiles,
+      };
     }
+    return normalizeMembersPayload(initialData as any);
+  }, [initialData]);
 
-    try {
-      const [meRes, orgRes] = await Promise.all([
-        fetch(buildApiUrl('/auth/me'), {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        }),
-        fetch(
-          buildApiUrl(
-            `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
-          ),
-          {
-            headers: { authorization: `Bearer ${token}` },
-            cache: 'no-store',
-          },
-        ),
-      ])
+  const [members, setMembers] = useState<OrganizationMember[]>(initialNormalized.members);
+  const [profiles, setProfiles] = useState<Record<string, MemberProfile>>(initialNormalized.profiles);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [loadedFromApi, setLoadedFromApi] = useState<boolean>(Boolean(initialData));
 
-      if (meRes.ok) {
-        const { json } = await parseApiResponse<MeResponse>(meRes)
-        setViewerUserId(json?.user?.id ?? null)
-      } else {
-        setViewerUserId(null)
-      }
+  const [inviteUsersOpen, setInviteUsersOpen] = useState(false);
+  const [inviteUrlOpen, setInviteUrlOpen] = useState(false);
 
-      if (orgRes.ok) {
-        const { json } = await parseApiResponse<OrganizationRoleResponse>(orgRes)
-        setOwnerId(json?.org?.ownerId ?? null)
-        setViewerRole(json?.org?.viewerRole ?? null)
-      } else {
-        setOwnerId(null)
-        setViewerRole(null)
-      }
-    } catch {
-      setViewerUserId(null)
-      setOwnerId(null)
-      setViewerRole(null)
-    }
-  }, [municipality, province, slug, token])
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [inviteMessage, setInviteMessage] = useState("I'd love for you to join this organization on Civil.");
+  const [inviteBusy, setInviteBusy] = useState(false);
 
-  const loadMembers = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await fetch(
-        buildApiUrl(
-          `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/members`,
-        ),
-        { cache: 'no-store' },
-      )
+  const [linkMessage, setLinkMessage] = useState("Join my organization on Civil and help us grow our impact.");
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [myInviteLinks, setMyInviteLinks] = useState<MyInviteLink[]>([]);
+  const [inviteLinksLoading, setInviteLinksLoading] = useState(false);
 
-      if (!res.ok) {
-        setError(res.status === 404 ? 'Organization not found.' : 'Unable to load members right now.')
-        setItems([])
-        return
-      }
+  const currentUserIdFromStore = useViewerStore((state) => state.me?.id ?? null);
+  const [currentUserIdFallback, setCurrentUserIdFallback] = useState<string | null>(null);
+  const currentUserId = currentUserIdFromStore ?? currentUserIdFallback;
 
-      const payload = (await res.json().catch(() => null)) as MembersResponse | null
-      const members = Array.isArray(payload?.members) ? payload.members : []
-      const followers = Array.isArray(payload?.followers) ? payload.followers : []
+  const currentMembership = useMemo(() => {
+    if (!currentUserId) return null;
+    return members.find((member) => member.userId === currentUserId) ?? null;
+  }, [currentUserId, members]);
 
-      const merged = [...members, ...followers]
-      const uniqueByUserId = new Map<string, MemberRow>()
-      merged.forEach((entry) => {
-        if (!uniqueByUserId.has(entry.userId)) {
-          uniqueByUserId.set(entry.userId, entry)
-        }
-      })
+  const canModerate = useMemo(() => {
+    if (!currentMembership) return false;
+    if (currentMembership.status !== "active") return false;
+    return currentMembership.role === "owner" || currentMembership.role === "admin";
+  }, [currentMembership]);
 
-      setItems(Array.from(uniqueByUserId.values()))
-    } catch (err) {
-      console.error('Failed to load organization members', err)
-      setError('Unable to load members right now.')
-      setItems([])
-    } finally {
-      setLoading(false)
-    }
-  }, [municipality, province, slug])
+  const getAuthHeaders = () => {
+    const headers: Record<string, string> = {};
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
+    if (token) headers.authorization = `Bearer ${token}`;
+    return headers;
+  };
 
-  const runMemberAction = useCallback(
-    async ({
-      userId,
-      method,
-      endpoint,
-      body,
-      successMessage,
-    }: {
-      userId: string
-      method: 'POST' | 'DELETE'
-      endpoint: string
-      body?: Record<string, unknown>
-      successMessage: string
-    }) => {
-      if (!token) {
-        redirectToAuthModal('login')
-        return
-      }
+  useEffect(() => {
+    if (currentUserIdFromStore) return;
+    let cancelled = false;
 
-      setActionBusyUserId(userId)
+    const run = async () => {
       try {
-        const res = await fetch(buildApiUrl(endpoint), {
-          method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            ...(body ? { 'content-type': 'application/json' } : {}),
-          },
-          ...(body ? { body: JSON.stringify(body) } : {}),
-        })
+        const response = await fetch(buildApiUrl("/me"), {
+          headers: getAuthHeaders(),
+          cache: "no-store",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (cancelled || !response.ok) return;
+        const id =
+          typeof payload?.id === "string"
+            ? payload.id
+            : typeof payload?.me?.id === "string"
+              ? payload.me.id
+              : typeof payload?.user?.id === "string"
+                ? payload.user.id
+                : null;
+        if (id) setCurrentUserIdFallback(id);
+      } catch {
+        // ignore
+      }
+    };
 
-        const { json } = await parseApiResponse<{ error?: unknown }>(res)
-        if (!res.ok) {
-          const rawError =
-            typeof (json as any)?.error === 'string'
-              ? (json as any).error
-              : typeof (json as any)?.error?.message === 'string'
-                ? (json as any).error.message
-                : null
-          pushToast(rawError ?? 'Member action failed.', 'error')
-          return
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserIdFromStore]);
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!inviteUsersOpen || trimmed.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const params = new URLSearchParams({ q: trimmed, limit: "10" });
+        const response = await fetch(buildApiUrl(`/search/users?${params.toString()}`), {
+          headers: getAuthHeaders(),
+          cache: "no-store",
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!response.ok) {
+          setSearchResults([]);
+          return;
         }
 
-        pushToast(successMessage, 'success')
-        await loadMembers()
+        const usersRaw =
+          Array.isArray(payload?.items) ? payload.items : Array.isArray(payload?.users) ? payload.users : Array.isArray(payload) ? payload : [];
+        const users = usersRaw
+          .map((item: any): SearchUser | null => {
+            const id = typeof item?.id === "string" ? item.id : null;
+            if (!id) return null;
+            return {
+              id,
+              handle: typeof item?.handle === "string" ? item.handle : null,
+              firstName: typeof item?.firstName === "string" ? item.firstName : null,
+              lastName: typeof item?.lastName === "string" ? item.lastName : null,
+              image: typeof item?.image === "string" ? item.image : null,
+            };
+          })
+          .filter((item: SearchUser | null): item is SearchUser => Boolean(item))
+          .filter((user: SearchUser) => !members.some((member) => member.userId === user.id));
+
+        setSearchResults(users.slice(0, 10));
       } catch {
-        pushToast('Member action failed.', 'error')
+        if (!cancelled) {
+          setSearchResults([]);
+        }
       } finally {
-        setActionBusyUserId(null)
+        if (!cancelled) {
+          setSearching(false);
+        }
       }
-    },
-    [loadMembers, token],
-  )
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [searchQuery, inviteUsersOpen, members]);
+
+  async function refreshMembers() {
+    if (!resolvedOrganizationSlug) {
+      throw new Error("Organization slug is required.");
+    }
+
+    const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/members`);
+    const response = await fetch(endpoint, {
+      headers: getAuthHeaders(),
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || "Unable to refresh members.");
+    }
+
+    const normalized = normalizeMembersPayload(payload);
+    setMembers(normalized.members);
+    setProfiles(normalized.profiles);
+    setLoadedFromApi(true);
+  }
+
+  async function refreshMyInviteLinks() {
+    if (!resolvedOrganizationSlug || !currentUserId) {
+      setMyInviteLinks([]);
+      return;
+    }
+    setInviteLinksLoading(true);
+    try {
+      const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/governance/invite-links`);
+      const response = await fetch(endpoint, {
+        headers: getAuthHeaders(),
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 403) {
+          setMyInviteLinks([]);
+          return;
+        }
+        throw new Error(payload?.error || "Unable to load invite pages.");
+      }
+
+      const rows = Array.isArray(payload?.inviteLinks) ? payload.inviteLinks : [];
+      const normalized = rows
+        .map((row: any): MyInviteLink | null => {
+          const id = typeof row?.id === "string" ? row.id : null;
+          const tokenValue = typeof row?.token === "string" ? row.token : null;
+          const landingUrl = typeof row?.landingUrl === "string" ? row.landingUrl : null;
+          if (!id || !tokenValue || !landingUrl) return null;
+          return {
+            id,
+            token: tokenValue,
+            createdAt: typeof row?.createdAt === "string" ? row.createdAt : new Date().toISOString(),
+            message: typeof row?.message === "string" ? row.message : null,
+            viewCount: typeof row?.viewCount === "number" ? row.viewCount : 0,
+            registrationCount: typeof row?.registrationCount === "number" ? row.registrationCount : 0,
+            joinCount: typeof row?.joinCount === "number" ? row.joinCount : 0,
+            landingUrl,
+          };
+        })
+        .filter((item: MyInviteLink | null): item is MyInviteLink => Boolean(item));
+
+      setMyInviteLinks(normalized);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load invite pages.");
+    } finally {
+      setInviteLinksLoading(false);
+    }
+  }
 
   useEffect(() => {
-    void loadMembers()
-  }, [loadMembers])
+    if (loadedFromApi) return;
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        await refreshMembers();
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to load members.");
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadedFromApi, province, municipality, resolvedOrganizationSlug]);
 
   useEffect(() => {
-    void loadOrgRole()
-  }, [loadOrgRole])
+    if (!canModerate || !currentUserId) {
+      setMyInviteLinks([]);
+      return;
+    }
+    void refreshMyInviteLinks();
+  }, [canModerate, currentUserId, province, municipality, resolvedOrganizationSlug]);
 
-  const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) => {
-      const order = { OWNER: 0, MANAGER: 1, FOLLOWER: 2 }
-      const roleDelta = order[a.role] - order[b.role]
-      if (roleDelta !== 0) return roleDelta
-      const aName = (formatUserDisplayName(a.user.name, a.user.handle) || a.user.handle).toLowerCase()
-      const bName = (formatUserDisplayName(b.user.name, b.user.handle) || b.user.handle).toLowerCase()
-      return aName.localeCompare(bName)
-    })
-  }, [items])
+  async function updateRole(targetUserId: string, nextRole: "admin" | "moderator" | "member") {
+    setError(null);
+    setSuccess(null);
+    setBusyUserId(targetUserId);
+    try {
+      if (nextRole !== "admin") {
+        throw new Error("Demote is not available yet. Use Remove for now.");
+      }
 
-  const isOwner = Boolean(viewerRole === 'OWNER' || (viewerUserId && ownerId && viewerUserId === ownerId))
-  const canModerate = Boolean(isOwner || viewerRole === 'MANAGER')
+      const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/members/${encodeURIComponent(targetUserId)}/promote`);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Unable to update member role.");
+      }
 
-  if (loading) {
-    return <p className="text-sm text-slate-500">Loading members…</p>
+      await refreshMembers();
+      setSuccess("Member role updated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update member role.");
+    } finally {
+      setBusyUserId(null);
+    }
   }
 
-  if (error) {
-    return <p className="text-sm text-red-600">{error}</p>
+  async function removeMember(targetUserId: string) {
+    setError(null);
+    setSuccess(null);
+    setBusyUserId(targetUserId);
+    try {
+      const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/members/${encodeURIComponent(targetUserId)}`);
+      const response = await fetch(endpoint, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Unable to remove member.");
+      }
+
+      await refreshMembers();
+      setSuccess("Member removed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to remove member.");
+    } finally {
+      setBusyUserId(null);
+    }
   }
 
-  if (!sortedItems.length) {
-    return <p className="text-sm text-slate-500">No members yet.</p>
+  async function inviteSelectedUser() {
+    if (!selectedUserId) return;
+    setError(null);
+    setSuccess(null);
+    setInviteBusy(true);
+    try {
+      const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/governance/invite-users`);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ userId: selectedUserId, message: inviteMessage.trim() || undefined }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Unable to send invite.");
+      }
+
+      setSuccess("Invite sent to Civil user.");
+      setInviteUsersOpen(false);
+      setSelectedUserId(null);
+      setSearchQuery("");
+      setSearchResults([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send invite.");
+    } finally {
+      setInviteBusy(false);
+    }
   }
+
+  async function createInviteLink() {
+    setError(null);
+    setSuccess(null);
+    setLinkBusy(true);
+    try {
+      const endpoint = buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/governance/invite-links`);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ message: linkMessage.trim() || undefined }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Unable to create invite URL.");
+      }
+
+      const landingUrl = typeof payload?.landingUrl === "string" ? payload.landingUrl : null;
+      if (!landingUrl) {
+        throw new Error("Invite URL was created but no landing URL was returned.");
+      }
+
+      await refreshMyInviteLinks();
+
+      router.push(landingUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to create invite URL.");
+    } finally {
+      setLinkBusy(false);
+      setInviteUrlOpen(false);
+    }
+  }
+
+  const sortedMembers = useMemo(() => {
+    return [...members].sort((a, b) => {
+      const roleOrder = { owner: 0, admin: 1, moderator: 2, member: 3 } as const;
+      const roleDiff =
+        (roleOrder[a.role as keyof typeof roleOrder] ?? 4) -
+        (roleOrder[b.role as keyof typeof roleOrder] ?? 4);
+      if (roleDiff !== 0) return roleDiff;
+      const aTime = a.joinedAt ? new Date(a.joinedAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.joinedAt ? new Date(b.joinedAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    });
+  }, [members]);
 
   return (
-    <div className="grid gap-4">
-      {sortedItems.map((entry) => {
-        const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
-        return (
-        <Link
-          key={entry.userId}
-          href={`/u/${entry.user.handle}`}
-          className="relative block overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm transition hover:brightness-105"
-        >
-          {entry.user.coverUrl ? (
-            <img src={entry.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-          ) : null}
-          <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-
-          <div className="relative flex min-h-[96px] items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-4">
-              <VerifiedAvatar
-                src={entry.user.avatarUrl}
-                alt={displayName}
-                initials={displayName}
-                size={64}
-              />
-              <div className="min-w-0">
-                <p className="truncate text-2xl font-semibold text-white">{displayName}</p>
-                <p className="mt-1 truncate text-sm text-white/80">@{entry.user.handle}</p>
-              </div>
+    <div className="space-y-4">
+      {(error || success) && (
+        <div className="space-y-2">
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <span>{error}</span>
             </div>
-            <span className="rounded-full border border-white/40 bg-black/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white">
-              {roleLabel(entry.role)}
-            </span>
+          )}
+          {success && (
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              <span>{success}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {canModerate && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-neutral-200 bg-white p-3">
+          <button
+            type="button"
+            onClick={() => setInviteUsersOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-blue-600 bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+          >
+            Invite Civil Users
+          </button>
+          <button
+            type="button"
+            onClick={() => setInviteUrlOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl border border-blue-500 bg-blue-500 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600"
+          >
+            Get Invite URL
+          </button>
+        </div>
+      )}
+
+      {canModerate && (
+        <div className="rounded-2xl border border-neutral-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-neutral-900">My Invite Pages</h3>
+            <button
+              type="button"
+              onClick={() => void refreshMyInviteLinks()}
+              className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
+            >
+              Refresh
+            </button>
           </div>
 
-          {canModerate && entry.role !== 'OWNER' ? (
-            <div className="relative mt-3 flex flex-wrap gap-2">
-              {isOwner && entry.role === 'FOLLOWER' ? (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    void runMemberAction({
-                      userId: entry.userId,
-                      method: 'POST',
-                      endpoint: `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/members/${encodeURIComponent(entry.userId)}/promote`,
-                      successMessage: 'Promoted to manager.',
-                    })
-                  }}
-                  disabled={actionBusyUserId === entry.userId}
-                  className="rounded-full border border-white/40 bg-black/30 px-3 py-1 text-xs font-semibold text-white hover:bg-black/40 disabled:opacity-60"
-                >
-                  Promote
-                </button>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault()
-                  void runMemberAction({
-                    userId: entry.userId,
-                    method: 'POST',
-                    endpoint: `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/governance/members/${encodeURIComponent(entry.userId)}/status`,
-                    body: { status: 'ACTIVE', reason: 'Reactivated by admin' },
-                    successMessage: 'Member activated.',
-                  })
-                }}
-                disabled={actionBusyUserId === entry.userId}
-                className="rounded-full border border-white/40 bg-black/30 px-3 py-1 text-xs font-semibold text-white hover:bg-black/40 disabled:opacity-60"
-              >
-                Activate
-              </button>
-
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault()
-                  void runMemberAction({
-                    userId: entry.userId,
-                    method: 'POST',
-                    endpoint: `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/governance/members/${encodeURIComponent(entry.userId)}/status`,
-                    body: { status: 'SUSPENDED', reason: 'Suspended by admin' },
-                    successMessage: 'Member suspended.',
-                  })
-                }}
-                disabled={actionBusyUserId === entry.userId}
-                className="rounded-full border border-white/40 bg-black/30 px-3 py-1 text-xs font-semibold text-white hover:bg-black/40 disabled:opacity-60"
-              >
-                Suspend
-              </button>
-
-              {isOwner ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void runMemberAction({
-                        userId: entry.userId,
-                        method: 'POST',
-                        endpoint: `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/governance/members/${encodeURIComponent(entry.userId)}/status`,
-                        body: { status: 'BANNED', reason: 'Banned by owner' },
-                        successMessage: 'Member banned.',
-                      })
-                    }}
-                    disabled={actionBusyUserId === entry.userId}
-                    className="rounded-full border border-rose-300 bg-rose-600/90 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600 disabled:opacity-60"
-                  >
-                    Ban
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault()
-                      void runMemberAction({
-                        userId: entry.userId,
-                        method: 'DELETE',
-                        endpoint: `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/members/${encodeURIComponent(entry.userId)}`,
-                        successMessage: 'Member removed.',
-                      })
-                    }}
-                    disabled={actionBusyUserId === entry.userId}
-                    className="rounded-full border border-rose-300 bg-rose-600/90 px-3 py-1 text-xs font-semibold text-white hover:bg-rose-600 disabled:opacity-60"
-                  >
-                    Remove
-                  </button>
-                </>
-              ) : null}
+          {inviteLinksLoading ? (
+            <p className="text-sm text-neutral-500">Loading your invite pages…</p>
+          ) : myInviteLinks.length === 0 ? (
+            <p className="text-sm text-neutral-500">No invite pages yet. Create one with “Get Invite URL”.</p>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-neutral-200">
+              <table className="min-w-full divide-y divide-neutral-200 text-sm">
+                <thead className="bg-neutral-50 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-2">Welcome message</th>
+                    <th className="px-3 py-2">Views</th>
+                    <th className="px-3 py-2">Signups</th>
+                    <th className="px-3 py-2">Joins</th>
+                    <th className="px-3 py-2">Open</th>
+                    <th className="px-3 py-2">Copy Share URL</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100">
+                  {myInviteLinks.map((item) => (
+                    <tr key={item.id}>
+                      <td className="px-3 py-2 text-neutral-800">{item.message || "No welcome message"}</td>
+                      <td className="px-3 py-2 text-neutral-700">{item.viewCount}</td>
+                      <td className="px-3 py-2 text-neutral-700">{item.registrationCount}</td>
+                      <td className="px-3 py-2 text-neutral-700">{item.joinCount}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const absoluteUrl = item.landingUrl.startsWith("http")
+                              ? item.landingUrl
+                              : `${window.location.origin}${item.landingUrl}`;
+                            window.open(absoluteUrl, "_blank", "noopener,noreferrer");
+                          }}
+                          className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-100"
+                        >
+                          Open
+                        </button>
+                      </td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const absoluteUrl = item.landingUrl.startsWith("http")
+                              ? item.landingUrl
+                              : `${window.location.origin}${item.landingUrl}`;
+                            try {
+                              await navigator.clipboard.writeText(absoluteUrl);
+                              setSuccess("Invite URL copied.");
+                            } catch {
+                              setError("Unable to copy invite URL.");
+                            }
+                          }}
+                          className="rounded-lg border border-blue-600 bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                        >
+                          Copy Share URL
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ) : null}
-        </Link>
-        )
-      })}
+          )}
+        </div>
+      )}
+
+      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
+        <table className="min-w-full divide-y divide-neutral-200 text-sm">
+          <thead className="bg-neutral-50 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <tr>
+              <th className="px-4 py-3">Member</th>
+              <th className="px-4 py-3">Role</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Joined</th>
+              {canModerate && <th className="px-4 py-3 text-right">Actions</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-neutral-100">
+            {sortedMembers.map((member) => {
+              const profile = profiles[member.userId];
+              const isSelf = member.userId === currentUserId;
+              const isBusy = busyUserId === member.userId;
+              const canManageTarget = canModerate && !isSelf && member.role !== "owner";
+
+              return (
+                <tr key={`${member.userId}-${member.role}-${member.status}`}>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 overflow-hidden rounded-full bg-neutral-200">
+                        {profile?.image ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={profile.image} alt={getDisplayName(profile)} className="h-full w-full object-cover" />
+                        ) : null}
+                      </div>
+                      <div>
+                        <p className="font-medium text-neutral-900">{getDisplayName(profile)}</p>
+                        <p className="text-xs text-neutral-500">
+                          {profile?.handle ? `@${profile.handle}` : member.userId.slice(0, 8)}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-neutral-700">{roleLabel(member.role)}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadge(member.status)}`}>
+                      {member.status.charAt(0).toUpperCase() + member.status.slice(1)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-neutral-600">
+                    {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : "—"}
+                  </td>
+                  {canModerate && (
+                    <td className="px-4 py-3">
+                      {canManageTarget ? (
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={isBusy || member.role === "admin"}
+                            onClick={() => updateRole(member.userId, "admin")}
+                            className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Make admin
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy || member.role === "member"}
+                            onClick={() => updateRole(member.userId, "member")}
+                            className="rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs font-medium text-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Make member
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => removeMember(member.userId)}
+                            className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-right text-xs text-neutral-400">—</div>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <Modal
+        open={inviteUsersOpen}
+        onClose={() => {
+          setInviteUsersOpen(false);
+          setSelectedUserId(null);
+        }}
+        title="Invite Civil Users"
+        maxWidthClassName="max-w-2xl"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-neutral-600">
+            Search Civil users and send an in-app invitation to join this organization.
+          </p>
+          <div className="relative">
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search by name or @handle"
+              className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-400"
+            />
+          </div>
+          <textarea
+            value={inviteMessage}
+            onChange={(event) => setInviteMessage(event.target.value)}
+            rows={3}
+            className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-400"
+            placeholder="Optional personal note"
+          />
+          <div className="max-h-64 space-y-2 overflow-auto rounded-xl border border-neutral-200 p-2">
+            {searching ? (
+              <p className="px-2 py-3 text-sm text-neutral-500">Searching…</p>
+            ) : searchQuery.trim().length < 2 ? (
+              <p className="px-2 py-3 text-sm text-neutral-500">Enter at least 2 characters to search.</p>
+            ) : searchResults.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-neutral-500">No matching users found.</p>
+            ) : (
+              searchResults.map((user) => {
+                const selected = selectedUserId === user.id;
+                return (
+                  <button
+                    key={user.id}
+                    type="button"
+                    onClick={() => setSelectedUserId(user.id)}
+                    className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition ${
+                      selected ? "bg-neutral-100" : "hover:bg-neutral-50"
+                    }`}
+                  >
+                    <div className="h-8 w-8 overflow-hidden rounded-full bg-neutral-200">
+                      {user.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={user.image} alt={getDisplayName(user)} className="h-full w-full object-cover" />
+                      ) : null}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-neutral-900">{getDisplayName(user)}</p>
+                      <p className="text-xs text-neutral-500">{user.handle ? `@${user.handle}` : user.id.slice(0, 8)}</p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setInviteUsersOpen(false)}
+              className="rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={inviteSelectedUser}
+              disabled={inviteBusy || !selectedUserId}
+              className="rounded-xl bg-neutral-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {inviteBusy ? "Sending…" : "Send invite"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={inviteUrlOpen}
+        onClose={() => setInviteUrlOpen(false)}
+        title="Get Invite URL"
+        maxWidthClassName="max-w-xl"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-neutral-600">
+            Generate a unique invite URL for this organization. You can share it publicly, and registrations from that link will be tracked.
+          </p>
+          <textarea
+            value={linkMessage}
+            onChange={(event) => setLinkMessage(event.target.value)}
+            rows={3}
+            className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-400"
+            placeholder="Optional invite message"
+          />
+          <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-600">
+            Each successful signup from this invite awards the inviter 100 organization reputation points.
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setInviteUrlOpen(false)}
+              className="rounded-xl border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={createInviteLink}
+              disabled={linkBusy}
+              className="rounded-xl bg-neutral-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {linkBusy ? "Creating…" : "Create invite URL"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
     </div>
-  )
+  );
 }
