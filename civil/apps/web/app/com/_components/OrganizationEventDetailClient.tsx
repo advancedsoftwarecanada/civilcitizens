@@ -13,6 +13,8 @@ type EventFee = {
   amountCents: number
   capacity: number | null
   cashOnly: boolean
+  goingCount?: number
+  remainingCount?: number | null
 }
 
 type ViewerRsvp = {
@@ -193,6 +195,10 @@ export default function OrganizationEventDetailClient({
   const invitation = payload?.viewerInvitation ?? null
   const viewerRsvp = payload?.viewerRsvp ?? null
   const fees = Array.isArray(event?.fees) ? event.fees : []
+  const minimumPaidFee = fees
+    .map((fee) => fee.amountCents)
+    .filter((amount) => Number.isFinite(amount) && amount > 0)
+    .sort((a, b) => a - b)[0] ?? null
 
   const communityHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}`
   const organizationHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization)}`
@@ -437,13 +443,6 @@ export default function OrganizationEventDetailClient({
                   {toTitleCase(organization)}
                 </Link>
               </p>
-              <p className="text-lg font-semibold text-slate-900">
-                {event.paid
-                  ? event.priceCents && event.priceCents > 0
-                    ? `From ${formatMoney(event.priceCents)}`
-                    : 'Check ticket price on event'
-                  : 'Free'}
-              </p>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -452,15 +451,53 @@ export default function OrganizationEventDetailClient({
                 >
                   {viewerRsvp?.status === 'GOING' ? 'Update RSVP' : 'Join'}
                 </button>
-                <p className="text-xs text-slate-500">
-                  Going: {payload?.rsvpSummary?.goingCount ?? 0} · Interested: {payload?.rsvpSummary?.interestedCount ?? 0}
-                </p>
               </div>
 
               {event.description ? <div className="prose max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: event.description }} /> : null}
               {event.capacity ? <p className="text-sm text-slate-600">Capacity: {event.capacity}</p> : null}
             </div>
           </section>
+
+          {fees.length > 0 ? (
+            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-base font-semibold text-slate-900">Fees</h2>
+                {viewerRsvp?.status === 'GOING' ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    {viewerRsvp.ticketLabel?.trim() ? `You RSVP’d: ${viewerRsvp.ticketLabel}` : 'You have 1 RSVP'}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Fee name</th>
+                      <th className="px-3 py-2 text-left">Amount (CAD)</th>
+                      <th className="px-3 py-2 text-left">Capacity</th>
+                      <th className="px-3 py-2 text-left">Payment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fees.map((fee) => (
+                      <tr key={fee.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2 text-sm font-semibold text-slate-800">{fee.label}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{formatMoney(fee.amountCents)}</td>
+                        <td className="px-3 py-2 text-sm text-slate-700">
+                          {typeof fee.remainingCount === 'number'
+                            ? `${fee.remainingCount} remaining`
+                            : typeof fee.capacity === 'number' && fee.capacity > 0
+                              ? `${fee.capacity} remaining`
+                              : 'Unlimited'}
+                        </td>
+                        <td className="px-3 py-2 text-sm text-slate-700">{fee.cashOnly ? 'Cash only' : 'Online'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
 
           {org ? (
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">

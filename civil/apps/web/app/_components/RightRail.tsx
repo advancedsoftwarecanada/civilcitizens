@@ -169,6 +169,7 @@ type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 export function RightRail({
   mode = 'default',
   showOrganizations = false,
+  showRsvps = false,
   sticky = true,
   hideContactsAndCommunities = false,
   hideContacts = false,
@@ -176,8 +177,9 @@ export function RightRail({
   showPendingFriendRequests = false,
   showPendingConnectionRequests = false,
 }: {
-  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events'
+  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed'
   showOrganizations?: boolean
+  showRsvps?: boolean
   sticky?: boolean
   hideContactsAndCommunities?: boolean
   hideContacts?: boolean
@@ -197,14 +199,14 @@ export function RightRail({
   const [eventRsvps, setEventRsvps] = useState<EventSidebarRsvpItem[]>([])
   const [eventOrganizations, setEventOrganizations] = useState<EventSidebarOrganization[]>([])
 
-  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events'
-  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || showOrganizations
+  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community'
+  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'community' || mode === 'communitiesFeed' || showOrganizations
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
   const shouldLoadConnections = mode === 'network'
   const shouldLoadPendingFriendRequests = showPendingFriendRequests
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
-  const shouldLoadEventsSidebar = mode === 'events'
+  const shouldLoadEventsSidebar = mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps
   const shouldLoadHomeRail = !hideSocialBlocks
 
   const subscribedOrganizations = useMemo(
@@ -522,6 +524,95 @@ export function RightRail({
 
   if (status === 'unauthorized') return null
 
+  if (mode === 'communitiesFeed') {
+    return (
+      <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
+        <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
+          {data?.communities.length ? (
+            <ul className="space-y-3">
+              {data.communities.map((comm) => {
+                const formattedName = comm.name
+                  .split('-')
+                  .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                  .join(' ')
+
+                return (
+                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
+                    <Link
+                      href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
+                      className="max-w-[160px] truncate text-sm font-semibold text-white hover:text-white"
+                    >
+                      {formattedName}
+                    </Link>
+                    {comm.newPosts > 0 ? (
+                      <Link
+                        href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
+                        className="flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
+                      >
+                        <HiOutlineBell className="h-4 w-4" />
+                        ({comm.newPosts})
+                      </Link>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No communities followed.</p>
+          )}
+        </Block>
+
+        <Block title="Your Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
+          {combinedOrganizations.length ? (
+            <ul className="space-y-3">
+              {combinedOrganizations.slice(0, 8).map((org) => (
+                <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                  {org.coverUrl ? (
+                    <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+                  ) : null}
+                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                  <Link
+                    href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                    className="group relative flex items-center gap-2.5 px-3 py-2"
+                  >
+                    <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                    <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No organizations yet.</p>
+          )}
+        </Block>
+
+        {eventRsvps.length ? (
+          <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
+            <ul className="space-y-3">
+              {eventRsvps.map((entry) => {
+                const href =
+                  entry.organization.provinceCode && entry.organization.communitySlug
+                    ? `/com/${entry.organization.provinceCode.toLowerCase()}/${entry.organization.communitySlug.toLowerCase()}/orgs/${entry.organization.slug}/events/${entry.eventId}`
+                    : '/events'
+
+                return (
+                  <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                    {entry.primaryPhotoUrl ? <img src={entry.primaryPhotoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                    <Link href={href} className="group relative block px-3 py-2">
+                      <p className="line-clamp-1 text-sm font-semibold text-white">{entry.title}</p>
+                      <p className="mt-0.5 text-xs text-white/85">{new Date(entry.startsAt).toLocaleString()}</p>
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+          </Block>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
       {showPendingFriendRequests && pendingFriendRequests.length ? (
@@ -756,9 +847,33 @@ export function RightRail({
         </>
       ) : null}
 
-      {mode === 'events' ? (
+      {mode === 'community' ? (
         <>
-          <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
+          <Block title="Organizations" action={{ label: 'See all', href: '/organizations/directory' }}>
+            {combinedOrganizations.length ? (
+              <ul className="space-y-3">
+                {combinedOrganizations.slice(0, 8).map((org) => (
+                  <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                    {org.coverUrl ? (
+                      <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+                    ) : null}
+                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                    <Link
+                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                      className="group relative flex items-center gap-2.5 px-3 py-2"
+                    >
+                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
+                      <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No organizations yet.</p>
+            )}
+          </Block>
+
+          <Block title="Events" action={{ label: 'View all', href: '/events?mine=going' }}>
             {eventRsvps.length ? (
               <ul className="space-y-3">
                 {eventRsvps.map((entry) => {
@@ -780,9 +895,37 @@ export function RightRail({
                 })}
               </ul>
             ) : (
-              <p className="text-sm text-slate-500">No upcoming RSVPs yet.</p>
+              <p className="text-sm text-slate-500">No upcoming events yet.</p>
             )}
           </Block>
+        </>
+      ) : null}
+
+      {mode === 'events' ? (
+        <>
+          {eventRsvps.length ? (
+            <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
+              <ul className="space-y-3">
+                {eventRsvps.map((entry) => {
+                  const href =
+                    entry.organization.provinceCode && entry.organization.communitySlug
+                      ? `/com/${entry.organization.provinceCode.toLowerCase()}/${entry.organization.communitySlug.toLowerCase()}/orgs/${entry.organization.slug}/events/${entry.eventId}`
+                      : '/events'
+
+                  return (
+                    <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                      {entry.primaryPhotoUrl ? <img src={entry.primaryPhotoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                      <Link href={href} className="group relative block px-3 py-2">
+                        <p className="line-clamp-1 text-sm font-semibold text-white">{entry.title}</p>
+                        <p className="mt-0.5 text-xs text-white/85">{new Date(entry.startsAt).toLocaleString()}</p>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </Block>
+          ) : null}
 
           {eventOrganizations.length ? (
             <Block title="Events from your organization" action={{ label: 'View all', href: '/organizations/manager' }}>
@@ -927,6 +1070,30 @@ export function RightRail({
           ) : (
             <p className="text-sm text-slate-500">No communities followed.</p>
           )}
+        </Block>
+      ) : null}
+
+      {mode !== 'events' && showRsvps && eventRsvps.length ? (
+        <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
+          <ul className="space-y-3">
+            {eventRsvps.map((entry) => {
+              const href =
+                entry.organization.provinceCode && entry.organization.communitySlug
+                  ? `/com/${entry.organization.provinceCode.toLowerCase()}/${entry.organization.communitySlug.toLowerCase()}/orgs/${entry.organization.slug}/events/${entry.eventId}`
+                  : '/events'
+
+              return (
+                <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                  {entry.primaryPhotoUrl ? <img src={entry.primaryPhotoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                  <Link href={href} className="group relative block px-3 py-2">
+                    <p className="line-clamp-1 text-sm font-semibold text-white">{entry.title}</p>
+                    <p className="mt-0.5 text-xs text-white/85">{new Date(entry.startsAt).toLocaleString()}</p>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
         </Block>
       ) : null}
     </div>

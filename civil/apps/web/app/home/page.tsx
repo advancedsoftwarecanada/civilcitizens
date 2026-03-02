@@ -11,7 +11,7 @@ export default function HomePage() {
         sidebarActive="home"
         title="Civic Pulse"
         description="Everything happening across your friends, follows, and the communities you track."
-        rightRail={<RightRail showOrganizations />}
+        rightRail={<RightRail showOrganizations showRsvps />}
       />
     </>
   )

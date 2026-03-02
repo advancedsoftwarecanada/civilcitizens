@@ -45,10 +45,6 @@ type EventFeedResponse = {
   items?: EventFeedItem[]
 }
 
-function formatMoney(cents: number, currency: string) {
-  return `${(cents / 100).toFixed(2)} ${currency}`
-}
-
 function formatStartsLabel(isoString: string) {
   const value = new Date(isoString)
   const now = new Date()
@@ -384,11 +380,6 @@ export default function EventsPageClient() {
 
               const startsLabel = formatStartsLabel(event.startsAt)
               const locationLine = `${toTitleCase(event.organization.communitySlug)} · ${event.organization.name}`
-              const priceLine = event.paid
-                ? event.priceCents && event.priceCents > 0
-                  ? `From ${formatMoney(event.priceCents, event.currency)}`
-                  : 'Check ticket price on event'
-                : 'Free'
               const isEnded = new Date(event.startsAt).getTime() < Date.now()
 
               return (
@@ -406,7 +397,6 @@ export default function EventsPageClient() {
                         <h2 className="text-3xl/none text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h2>
                         <p className="text-xl/none text-base text-slate-700">{startsLabel}</p>
                         <p className="text-xl/none text-base text-slate-600">{locationLine}</p>
-                        <p className="pt-1 text-lg font-semibold text-slate-800">{priceLine}</p>
                       </div>
                     </article>
                   </Link>
@@ -510,13 +500,6 @@ export default function EventsPageClient() {
                               <h3 className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h3>
                               <p className="text-base text-slate-700">{formatStartsLabel(event.startsAt)}</p>
                               <p className="text-base text-slate-600">{toTitleCase(event.organization.communitySlug)} · {event.organization.name}</p>
-                              <p className="pt-1 text-lg font-semibold text-slate-800">
-                                {event.paid
-                                  ? event.priceCents && event.priceCents > 0
-                                    ? `From ${formatMoney(event.priceCents, event.currency)}`
-                                    : 'Check ticket price on event'
-                                  : 'Free'}
-                              </p>
                             </div>
                           </article>
                         </Link>

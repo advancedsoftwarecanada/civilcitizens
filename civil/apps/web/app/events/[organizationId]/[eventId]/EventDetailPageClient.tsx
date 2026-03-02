@@ -6,6 +6,27 @@ import DashboardShell from '../../../_components/DashboardShell'
 import { RightRail } from '../../../_components/RightRail'
 import { buildApiUrl } from '../../../_lib/api'
 
+type EventFee = {
+  id: string
+  label: string
+  amountCents: number
+  capacity: number | null
+  cashOnly: boolean
+  goingCount?: number
+  remainingCount?: number | null
+}
+
+type ViewerRsvp = {
+  id: string
+  status: 'GOING' | 'INTERESTED' | 'DECLINED'
+  ticketId: string | null
+  ticketLabel: string | null
+  amountCents: number | null
+  message: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 type EventDetailPayload = {
   event?: {
     id: string
@@ -19,9 +40,15 @@ type EventDetailPayload = {
     paid: boolean
     priceCents: number | null
     currency: string
+    fees?: EventFee[]
     guestSpeakers: string[]
     primaryPhotoUrl: string | null
     galleryPhotoUrls: string[]
+  }
+  viewerRsvp?: ViewerRsvp | null
+  rsvpSummary?: {
+    goingCount: number
+    interestedCount: number
   }
   organization?: {
     id: string
@@ -57,13 +84,19 @@ export default function EventDetailPageClient({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [payload, setPayload] = useState<EventDetailPayload | null>(null)
+  const [showJoinModal, setShowJoinModal] = useState(false)
+  const [selectedTicketId, setSelectedTicketId] = useState<string>('')
+  const [joinMessage, setJoinMessage] = useState('')
+  const [joining, setJoining] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
 
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       const res = await fetch(buildApiUrl(`/events/${encodeURIComponent(organizationId)}/${encodeURIComponent(eventId)}`), {
+        headers: token ? { authorization: `Bearer ${token}` } : undefined,
         cache: 'no-store',
       })
 
@@ -95,9 +128,73 @@ export default function EventDetailPageClient({
 
   const event = payload?.event
   const organization = payload?.organization
+  const viewerRsvp = payload?.viewerRsvp ?? null
+  const fees = Array.isArray(event?.fees) ? event.fees : []
+  useEffect(() => {
+    if (viewerRsvp?.ticketId) {
+      setSelectedTicketId(viewerRsvp.ticketId)
+      setJoinMessage(viewerRsvp.message ?? '')
+      return
+    }
+    const firstFee = fees[0]
+    setSelectedTicketId(firstFee?.id ?? '')
+    setJoinMessage('')
+  }, [fees, viewerRsvp?.message, viewerRsvp?.ticketId])
+
+  const submitJoin = useCallback(async () => {
+    if (!event || !organization?.provinceCode || !organization.communitySlug) return
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) return
+
+    if (fees.length > 0 && !selectedTicketId) return
+
+    setJoining(true)
+    try {
+      const res = await fetch(
+        buildApiUrl(
+          `/communities/${encodeURIComponent(organization.provinceCode)}/${encodeURIComponent(organization.communitySlug)}/orgs/${encodeURIComponent(organization.slug)}/governance/events/${encodeURIComponent(event.id)}/rsvp`,
+        ),
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            status: 'GOING',
+            ticketId: fees.length > 0 ? selectedTicketId : null,
+            message: joinMessage.trim() || null,
+          }),
+        },
+      )
+
+      if (!res.ok) {
+        setJoining(false)
+        return
+      }
+
+      setShowJoinModal(false)
+      await load()
+    } finally {
+      setJoining(false)
+    }
+  }, [event, fees.length, joinMessage, load, organization?.communitySlug, organization?.provinceCode, organization?.slug, selectedTicketId])
+
+  const startRsvpForFee = useCallback((feeId: string) => {
+    setSelectedTicketId(feeId)
+    setShowJoinModal(true)
+  }, [])
   const organizationEventsHref =
     organization?.provinceCode && organization?.communitySlug
       ? `/com/${encodeURIComponent(organization.provinceCode)}/${encodeURIComponent(organization.communitySlug)}/orgs/${encodeURIComponent(organization.slug)}/events`
+      : null
+  const communityHref =
+    organization?.provinceCode && organization?.communitySlug
+      ? `/com/${encodeURIComponent(organization.provinceCode)}/${encodeURIComponent(organization.communitySlug)}`
+      : null
+  const organizationHref =
+    organization?.provinceCode && organization?.communitySlug
+      ? `/com/${encodeURIComponent(organization.provinceCode)}/${encodeURIComponent(organization.communitySlug)}/orgs/${encodeURIComponent(organization.slug)}`
       : null
 
   return (
@@ -120,13 +217,22 @@ export default function EventDetailPageClient({
                   {new Date(event.startsAt).toLocaleString()}
                   {event.endsAt ? ` → ${new Date(event.endsAt).toLocaleString()}` : ''}
                 </p>
-                <p className="text-base text-slate-600">{toTitleCase(organization.communitySlug)} · {organization.name}</p>
-                <p className="text-lg font-semibold text-slate-900">
-                  {event.paid
-                    ? event.priceCents && event.priceCents > 0
-                      ? `From ${formatMoney(event.priceCents, event.currency)}`
-                      : 'Check ticket price on event'
-                    : 'Free'}
+                <p className="text-base text-slate-600">
+                  {communityHref ? (
+                    <Link href={communityHref} className="font-semibold text-slate-700 hover:underline">
+                      {toTitleCase(organization.communitySlug)}
+                    </Link>
+                  ) : (
+                    toTitleCase(organization.communitySlug)
+                  )}{' '}
+                  ·{' '}
+                  {organizationHref ? (
+                    <Link href={organizationHref} className="font-semibold text-slate-700 hover:underline">
+                      {organization.name}
+                    </Link>
+                  ) : (
+                    organization.name
+                  )}
                 </p>
 
                 {event.description ? (
@@ -139,6 +245,82 @@ export default function EventDetailPageClient({
                 {event.capacity ? <p className="text-sm text-slate-600">Capacity: {event.capacity}</p> : null}
               </div>
             </section>
+
+            {organizationHref ? (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
+                <h2 className="text-base font-semibold text-slate-900">Organization</h2>
+                <Link href={organizationHref} className="mt-3 block">
+                  <div className="relative overflow-hidden rounded-xl border border-slate-200 p-3">
+                    {organization.coverUrl ? <img src={organization.coverUrl} alt={`${organization.name} cover`} className="absolute inset-0 h-full w-full object-cover" /> : null}
+                    <div className={organization.coverUrl ? 'absolute inset-0 bg-slate-900/45' : 'absolute inset-0 bg-slate-50'} />
+                    <div className="relative z-[1] flex items-center gap-3">
+                      <div className="h-12 w-12 overflow-hidden rounded-full border border-slate-200 bg-white">
+                        {organization.logoUrl ? <img src={organization.logoUrl} alt={organization.name} className="h-full w-full object-cover" /> : null}
+                      </div>
+                      <div className="min-w-0">
+                        <p className={organization.coverUrl ? 'truncate text-sm font-semibold text-white' : 'truncate text-sm font-semibold text-slate-900'}>
+                          {organization.name}
+                        </p>
+                        <p className={organization.coverUrl ? 'truncate text-xs text-white/85' : 'truncate text-xs text-slate-500'}>
+                          /{(organization.provinceCode ?? '').toLowerCase()}/{organization.communitySlug ?? ''}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              </section>
+            ) : null}
+
+            {fees.length > 0 ? (
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-base font-semibold text-slate-900">Fees</h2>
+                  {viewerRsvp?.status === 'GOING' ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                      {viewerRsvp.ticketLabel?.trim() ? `You RSVP’d: ${viewerRsvp.ticketLabel}` : 'You have 1 RSVP'}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Fee name</th>
+                        <th className="px-3 py-2 text-left">Amount</th>
+                        <th className="px-3 py-2 text-left">Capacity</th>
+                        <th className="px-3 py-2 text-left">Payment</th>
+                        <th className="px-3 py-2 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fees.map((fee) => (
+                        <tr key={fee.id} className="border-t border-slate-100">
+                          <td className="px-3 py-2 text-sm font-semibold text-slate-800">{fee.label}</td>
+                          <td className="px-3 py-2 text-sm text-slate-700">{formatMoney(fee.amountCents, event.currency)}</td>
+                          <td className="px-3 py-2 text-sm text-slate-700">
+                            {typeof fee.remainingCount === 'number'
+                              ? `${fee.remainingCount} remaining`
+                              : typeof fee.capacity === 'number' && fee.capacity > 0
+                                ? `${fee.capacity} remaining`
+                                : 'Unlimited'}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-slate-700">{fee.cashOnly ? 'Cash only' : 'Online'}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => startRsvpForFee(fee.id)}
+                              className="rounded-full bg-[var(--cc-primary)] px-3 py-1 text-xs font-semibold text-white transition hover:brightness-110"
+                            >
+                              RSVP
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
 
             {event.galleryPhotoUrls?.length ? (
               <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
@@ -164,6 +346,68 @@ export default function EventDetailPageClient({
                 </Link>
               ) : null}
             </section>
+
+            {showJoinModal && event ? (
+              <div className="fixed inset-0 z-[101] flex items-center justify-center bg-black/60 p-4" onClick={() => setShowJoinModal(false)}>
+                <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl" onClick={(evt) => evt.stopPropagation()}>
+                  <h3 className="text-base font-semibold text-slate-900">Confirm RSVP</h3>
+                  <p className="mt-1 text-xs text-slate-500">Select your ticket type and optional message for the organizer.</p>
+
+                  <div className="mt-4 space-y-3">
+                    {fees.length > 0 ? (
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-slate-600">Ticket type</label>
+                        {fees.map((fee) => (
+                          <label key={fee.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
+                            <span className="font-semibold">{fee.label}</span>
+                            <span>{formatMoney(fee.amountCents, event.currency)}</span>
+                            <input
+                              type="radio"
+                              name="event-ticket"
+                              value={fee.id}
+                              checked={selectedTicketId === fee.id}
+                              onChange={() => setSelectedTicketId(fee.id)}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">Default ticket: Free</p>
+                    )}
+
+                    <label className="block text-xs font-semibold text-slate-600">
+                      Message to organizer (optional)
+                      <textarea
+                        value={joinMessage}
+                        onChange={(evt) => setJoinMessage(evt.target.value)}
+                        rows={4}
+                        maxLength={600}
+                        placeholder="Any notes for the organizer..."
+                        className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowJoinModal(false)}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void submitJoin()}
+                      disabled={joining || (fees.length > 0 && !selectedTicketId)}
+                      className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+                    >
+                      {joining ? 'Submitting…' : 'Confirm join'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </>
         ) : null}
       </div>
