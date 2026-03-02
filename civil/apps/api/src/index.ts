@@ -12731,6 +12731,25 @@ app.get('/org-channels', async (req: FastifyRequest, reply: FastifyReply) =>
       orderBy: [{ updatedAt: 'desc' }],
     })
 
+    type UnreadCountRow = { threadId: string; count: number }
+    const threadIds = threads.map((thread: ThreadSummaryRecord) => thread.id)
+    const unreadRows = threadIds.length
+      ? (await prisma.$queryRaw(Prisma.sql`
+          SELECT m."threadId" as "threadId", COUNT(*)::int as "count"
+          FROM "Message" m
+          JOIN "MessageParticipant" mp ON mp."threadId" = m."threadId"
+          WHERE mp."userId" = ${userId}
+            AND m."threadId" IN (${Prisma.join(threadIds)})
+            AND m."senderId" <> ${userId}
+            AND m."deletedAt" IS NULL
+            AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+          GROUP BY m."threadId"
+        `)) as UnreadCountRow[]
+      : []
+    const unreadCountByThreadId = new Map(
+      unreadRows.map((row: UnreadCountRow) => [row.threadId, Number(row.count) || 0]),
+    )
+
     const orgIds = Array.from(
       new Set(
         threads
@@ -12775,15 +12794,9 @@ app.get('/org-channels', async (req: FastifyRequest, reply: FastifyReply) =>
         const orgPrefs = readOrgChatPrefs(user.communityMeta ?? null, parsed.orgId)
         const channelPrefs = orgPrefs.channels?.[thread.id]
 
-        const participant = thread.participants.find((entry: ThreadParticipantRecord) => entry.userId === userId)
         const lastMessage = thread.messages[0]
-        const unread =
-          Boolean(participant) &&
-          Boolean(lastMessage) &&
-          lastMessage?.senderId !== userId &&
-          (participant?.lastReadAt
-            ? new Date(lastMessage!.createdAt).getTime() > new Date(participant.lastReadAt).getTime()
-            : true)
+        const unreadCount = unreadCountByThreadId.get(thread.id) ?? 0
+        const unread = unreadCount > 0
 
         return {
           id: thread.id,
@@ -12791,6 +12804,7 @@ app.get('/org-channels', async (req: FastifyRequest, reply: FastifyReply) =>
           slug: parsed.slug,
           visibility: parsed.visibility,
           unread,
+          unreadCount,
           participantCount: thread.participants.length,
           lastMessageAt: thread.lastMessageAt ?? thread.updatedAt,
           notification: {

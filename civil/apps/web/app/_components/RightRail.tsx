@@ -170,6 +170,7 @@ export function RightRail({
   mode = 'default',
   showOrganizations = false,
   showRsvps = false,
+  organizationLinkTarget = 'org',
   sticky = true,
   hideContactsAndCommunities = false,
   hideContacts = false,
@@ -180,6 +181,7 @@ export function RightRail({
   mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed'
   showOrganizations?: boolean
   showRsvps?: boolean
+  organizationLinkTarget?: 'org' | 'chat'
   sticky?: boolean
   hideContactsAndCommunities?: boolean
   hideContacts?: boolean
@@ -198,6 +200,14 @@ export function RightRail({
   const [pendingConnectionAction, setPendingConnectionAction] = useState<{ id: string; action: 'accept' | 'reject' } | null>(null)
   const [eventRsvps, setEventRsvps] = useState<EventSidebarRsvpItem[]>([])
   const [eventOrganizations, setEventOrganizations] = useState<EventSidebarOrganization[]>([])
+
+  const getOrganizationHref = useCallback(
+    (org: { provinceCode: string | null; communitySlug: string | null; slug: string }) => {
+      const base = `/com/${String(org.provinceCode).toLowerCase()}/${String(org.communitySlug).toLowerCase()}/orgs/${org.slug}`
+      return organizationLinkTarget === 'chat' ? `${base}/chat-channels` : base
+    },
+    [organizationLinkTarget],
+  )
 
   const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community'
   const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'community' || mode === 'communitiesFeed' || showOrganizations
@@ -572,7 +582,7 @@ export function RightRail({
                   ) : null}
                   <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                   <Link
-                    href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                    href={getOrganizationHref(org)}
                     className="group relative flex items-center gap-2.5 px-3 py-2"
                   >
                     <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
@@ -660,7 +670,7 @@ export function RightRail({
                     ) : null}
                     <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                     <Link
-                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                      href={getOrganizationHref(org)}
                       className="group relative flex items-center gap-2.5 px-3 py-2"
                     >
                       <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
@@ -686,7 +696,7 @@ export function RightRail({
                     ) : null}
                     <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                     <Link
-                      href={`/com/${String(org.provinceCode).toLowerCase()}/${String(org.communitySlug).toLowerCase()}/orgs/${org.slug}`}
+                      href={getOrganizationHref(org)}
                       className="group relative flex items-center gap-2.5 px-3 py-2"
                     >
                       <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
@@ -719,7 +729,7 @@ export function RightRail({
                   ) : null}
                   <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                   <Link
-                    href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                    href={getOrganizationHref(org)}
                     className="group relative flex items-center gap-2.5 px-3 py-2"
                   >
                     <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
@@ -800,7 +810,7 @@ export function RightRail({
                     ) : null}
                     <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                     <Link
-                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                      href={getOrganizationHref(org)}
                       className="group relative flex items-center gap-2.5 px-3 py-2"
                     >
                       <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
@@ -859,7 +869,7 @@ export function RightRail({
                     ) : null}
                     <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                     <Link
-                      href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                      href={getOrganizationHref(org)}
                       className="group relative flex items-center gap-2.5 px-3 py-2"
                     >
                       <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
@@ -1018,7 +1028,7 @@ export function RightRail({
                   ) : null}
                   <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
                   <Link
-                    href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                    href={getOrganizationHref(org)}
                     className="group relative flex items-center gap-2.5 px-3 py-2"
                   >
                     <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
