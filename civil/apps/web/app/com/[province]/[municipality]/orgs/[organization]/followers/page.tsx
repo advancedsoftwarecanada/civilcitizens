@@ -14,7 +14,7 @@ type PageProps = {
 export default function OrganizationFollowersPage({ params }: PageProps) {
   return (
     <OrganizationSection title="Followers" description="People following or connected to this organization.">
-      <OrganizationMembersClient province={params.province} municipality={params.municipality} slug={params.organization} />
+      <OrganizationMembersClient province={params.province} municipality={params.municipality} organizationSlug={params.organization} />
     </OrganizationSection>
   )
 }

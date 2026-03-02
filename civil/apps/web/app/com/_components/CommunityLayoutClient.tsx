@@ -8,6 +8,7 @@ import type { CommunitySummary } from '../../_lib/community'
 import CommunityContextRightRail from './CommunityContextRightRail'
 import { CommunityContextProvider } from './CommunityContext'
 import CommunityHeader from './CommunityHeader'
+import { useInviteViewStore } from '../../_lib/inviteViewStore'
 
 export default function CommunityLayoutClient({
   summary,
@@ -21,11 +22,21 @@ export default function CommunityLayoutClient({
   children: ReactNode
 }) {
   const pathname = usePathname()
+  const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
 
   const isOrganizationDetailRoute = useMemo(() => {
     if (!pathname) return false
     return /^\/com\/[^/]+\/[^/]+\/orgs\/[^/]+(\/.*)?$/.test(pathname)
   }, [pathname])
+
+  const isInviteRoute = useMemo(() => {
+    if (!pathname) return false
+    return pathname.includes('/invite/')
+  }, [pathname])
+
+  if (isInviteRoute && inviteGuestMode !== false) {
+    return <>{children}</>
+  }
 
   return (
     <CommunityContextProvider value={summary}>

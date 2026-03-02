@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -29,9 +29,11 @@ type RegisterErrorResponse = {
 }
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+const ORG_INVITE_TOKEN_KEY = 'civil.orgInviteToken'
 
 export default function RegisterPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [email, setEmail] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -67,9 +69,25 @@ export default function RegisterPage() {
       return
     }
 
+    const inviteTokenFromUrl = searchParams?.get('orgInviteToken')?.trim() || ''
+    const inviteTokenFromStorage = (() => {
+      if (typeof window === 'undefined') return ''
+      try {
+        return window.localStorage.getItem(ORG_INVITE_TOKEN_KEY)?.trim() || ''
+      } catch {
+        return ''
+      }
+    })()
+    const inviteToken = inviteTokenFromUrl || inviteTokenFromStorage || ''
+
     const signInAndRedirect = async (registerToken?: string) => {
       if (typeof registerToken === 'string' && registerToken.length > 0) {
         setAuthToken(registerToken)
+        if (typeof window !== 'undefined') {
+          try {
+            window.localStorage.removeItem(ORG_INVITE_TOKEN_KEY)
+          } catch {}
+        }
         router.replace('/welcome')
         return true
       }
@@ -84,6 +102,11 @@ export default function RegisterPage() {
 
       if (loginData && typeof loginData.token === 'string' && loginData.token.length > 0) {
         setAuthToken(loginData.token)
+        if (typeof window !== 'undefined') {
+          try {
+            window.localStorage.removeItem(ORG_INVITE_TOKEN_KEY)
+          } catch {}
+        }
         router.replace('/welcome')
         return true
       }
@@ -99,6 +122,7 @@ export default function RegisterPage() {
         lastName,
         password,
         acceptTerms,
+        ...(inviteToken ? { orgInviteToken: inviteToken } : {}),
       }
 
       const response = await fetch(buildApiUrl('/auth/register'), {
