@@ -1,0 +1,47 @@
+'use client'
+
+import type { ReactNode } from 'react'
+import { useMemo } from 'react'
+import { usePathname } from 'next/navigation'
+import DashboardShell from '../../_components/DashboardShell'
+import type { CommunitySummary } from '../../_lib/community'
+import CommunityContextRightRail from './CommunityContextRightRail'
+import { CommunityContextProvider } from './CommunityContext'
+import CommunityHeader from './CommunityHeader'
+
+export default function CommunityLayoutClient({
+  summary,
+  province,
+  municipality,
+  children,
+}: {
+  summary: CommunitySummary
+  province: string
+  municipality: string
+  children: ReactNode
+}) {
+  const pathname = usePathname()
+
+  const isOrganizationDetailRoute = useMemo(() => {
+    if (!pathname) return false
+    return /^\/com\/[^/]+\/[^/]+\/orgs\/[^/]+(\/.*)?$/.test(pathname)
+  }, [pathname])
+
+  return (
+    <CommunityContextProvider value={summary}>
+      <DashboardShell
+        rightRail={
+          isOrganizationDetailRoute ? null : <CommunityContextRightRail province={province} municipality={municipality} />
+        }
+        className="bg-slate-50"
+        containerClassName="px-0 sm:px-0"
+        mainClassName="pt-0"
+      >
+        <div className="min-h-screen bg-slate-50">
+          <CommunityHeader summary={summary} />
+          <div className="pb-16">{children}</div>
+        </div>
+      </DashboardShell>
+    </CommunityContextProvider>
+  )
+}

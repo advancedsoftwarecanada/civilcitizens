@@ -3,8 +3,6 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
-import { pushToast } from '../../_components/useToasts'
-import { redirectToAuthModal } from '../../_lib/authModal'
 import { DEFAULT_EVENT_CATEGORY, EVENT_CATEGORIES, type EventCategory } from '../_lib/eventCategories'
 
 type GovernanceEvent = {
@@ -185,7 +183,6 @@ export default function OrganizationEventsClient({
 }) {
   const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('token') : null), [])
   const [loading, setLoading] = useState(true)
-  const [rsvpBusyId, setRsvpBusyId] = useState<string | null>(null)
   const [events, setEvents] = useState<GovernanceEvent[]>([])
   const [displayMode, setDisplayMode] = useState<'calendar' | 'list'>('list')
   const [startDate, setStartDate] = useState<string>('')
@@ -315,46 +312,6 @@ export default function OrganizationEventsClient({
     if (!year || !month || !day) return selectedDayKey
     return new Date(year, month - 1, day).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
   }, [selectedDayKey])
-
-  const submitRsvp = useCallback(
-    async (eventId: string, status: 'GOING' | 'INTERESTED' | 'DECLINED', ticketType: 'FREE' | 'PAID') => {
-      if (!token) {
-        redirectToAuthModal('login')
-        return
-      }
-
-      setRsvpBusyId(eventId)
-      try {
-        const res = await fetch(buildApiUrl(`${orgApiPath}/governance/events/${encodeURIComponent(eventId)}/rsvp`), {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ status, ticketType }),
-        })
-
-        const { json } = await parseApiResponse<{ error?: unknown }>(res)
-        if (!res.ok) {
-          const rawError =
-            typeof (json as any)?.error === 'string'
-              ? (json as any).error
-              : typeof (json as any)?.error?.message === 'string'
-                ? (json as any).error.message
-                : null
-          pushToast(rawError ?? 'Unable to RSVP right now.', 'error')
-          return
-        }
-
-        pushToast(`RSVP updated to ${status}.`, 'success')
-      } catch {
-        pushToast('Unable to RSVP right now.', 'error')
-      } finally {
-        setRsvpBusyId(null)
-      }
-    },
-    [orgApiPath, token],
-  )
 
   return (
     <div className="space-y-6">
@@ -641,13 +598,6 @@ export default function OrganizationEventsClient({
                             <h3 className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h3>
                             <p className="text-base text-slate-700">{formatStartsLabel(event.startsAt)}</p>
                             <p className="text-base text-slate-600">{toTitleCase(municipality)} · {toTitleCase(slug)}</p>
-                            <p className="pt-1 text-lg font-semibold text-slate-800">
-                              {event.paid
-                                ? event.priceCents && event.priceCents > 0
-                                  ? `From ${formatMoney(event.priceCents)}`
-                                  : 'Check ticket price on event'
-                                : 'Free'}
-                            </p>
                             {event.guestSpeakers.length ? (
                               <p className="text-xs text-slate-500">Speakers: {event.guestSpeakers.join(', ')}</p>
                             ) : null}
@@ -668,32 +618,12 @@ export default function OrganizationEventsClient({
                             Manage event
                           </Link>
                         ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void submitRsvp(event.id, 'GOING', event.paid ? 'PAID' : 'FREE')}
-                              disabled={rsvpBusyId === event.id}
-                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              {rsvpBusyId === event.id ? 'Saving…' : 'RSVP Going'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void submitRsvp(event.id, 'INTERESTED', event.paid ? 'PAID' : 'FREE')}
-                              disabled={rsvpBusyId === event.id}
-                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              Interested
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void submitRsvp(event.id, 'DECLINED', event.paid ? 'PAID' : 'FREE')}
-                              disabled={rsvpBusyId === event.id}
-                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              Decline
-                            </button>
-                          </>
+                          <Link
+                            href={eventDetailHref(event.id)}
+                            className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            RSVP
+                          </Link>
                         )}
                       </div>
                     </li>
@@ -758,13 +688,6 @@ export default function OrganizationEventsClient({
                             <h3 className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h3>
                             <p className="text-base text-slate-700">{formatStartsLabel(event.startsAt)}</p>
                             <p className="text-base text-slate-600">{toTitleCase(municipality)} · {toTitleCase(slug)}</p>
-                            <p className="pt-1 text-lg font-semibold text-slate-800">
-                              {event.paid
-                                ? event.priceCents && event.priceCents > 0
-                                  ? `From ${formatMoney(event.priceCents)}`
-                                  : 'Check ticket price on event'
-                                : 'Free'}
-                            </p>
                             {event.guestSpeakers.length ? (
                               <p className="text-xs text-slate-500">Speakers: {event.guestSpeakers.join(', ')}</p>
                             ) : null}
@@ -786,32 +709,12 @@ export default function OrganizationEventsClient({
                           </Link>
                         ) : null}
                         {mode !== 'manage' ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void submitRsvp(event.id, 'GOING', event.paid ? 'PAID' : 'FREE')}
-                              disabled={rsvpBusyId === event.id}
-                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              {rsvpBusyId === event.id ? 'Saving…' : 'RSVP Going'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void submitRsvp(event.id, 'INTERESTED', event.paid ? 'PAID' : 'FREE')}
-                              disabled={rsvpBusyId === event.id}
-                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              Interested
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void submitRsvp(event.id, 'DECLINED', event.paid ? 'PAID' : 'FREE')}
-                              disabled={rsvpBusyId === event.id}
-                              className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              Decline
-                            </button>
-                          </>
+                          <Link
+                            href={eventDetailHref(event.id)}
+                            className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            RSVP
+                          </Link>
                         ) : null}
                       </div>
                     </li>

@@ -2,6 +2,7 @@
 
 import FeedPageClient from '../../_components/FeedPageClient'
 import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
+import CommunityRightRailClient from '../../_components/CommunityRightRailClient'
 
 type PageProps = {
   params: {
@@ -27,6 +28,7 @@ export default function ProvinceChamberPage({ params }: PageProps) {
       province={params.province}
       community={params.chamber}
       emptyState={`No posts in ${formattedCommunityName} yet. Be the first to post!`}
+      rightRail={<CommunityRightRailClient province={params.province} municipality={params.chamber} />}
     />
   )
 }

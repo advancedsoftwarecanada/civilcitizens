@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { normalizeProvinceCode } from '@civil/shared'
 import {
   HiOutlineBars3,
   HiOutlineBellAlert,
@@ -20,6 +21,7 @@ import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
 import FriendsRightRail from './FriendsRightRail'
+import CommunityRightRailClient from './CommunityRightRailClient'
 import { getStoredToken } from '../_lib/tokenStorage'
 import Block from './Block'
 import { useViewerStore } from '../_lib/viewerStore'
@@ -69,6 +71,29 @@ function getOrgRouteFromPathname(pathname: string | null | undefined):
   if (!province || !municipality || !organization) return null
   const basePath = `/com/${province}/${municipality}/orgs/${organization}`
   return { basePath, activePath: pathname }
+}
+
+function getCommunityRouteFromPathname(pathname: string | null | undefined):
+  | { province: string; municipality: string }
+  | null {
+  if (!pathname) return null
+  const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
+  if (!parts.length) return null
+
+  if (parts[0] === 'com') {
+    if (parts.length < 3) return null
+    const province = parts[1]
+    const municipality = parts[2]
+    if (!province || !municipality) return null
+    return { province, municipality }
+  }
+
+  if (parts.length < 2) return null
+  const province = parts[0]
+  const municipality = parts[1]
+  if (!province || !municipality) return null
+  if (!normalizeProvinceCode(province)) return null
+  return { province, municipality }
 }
 
 function OrganizationMoreBlock({
@@ -334,6 +359,9 @@ export default function MobileDock() {
     gridTemplateColumns: `repeat(${NAV_BUTTONS.length}, minmax(0, 1fr))`,
   }), [])
 
+  const orgRoute = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
+  const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
+
   const morePanelContent = useMemo(() => {
     if (pathname?.startsWith('/friends') || pathname?.startsWith('/network')) {
       if (pathname?.startsWith('/network')) {
@@ -348,13 +376,26 @@ export default function MobileDock() {
         <RightRail mode="organizations" sticky={false} />
       )
     }
+    if (orgRoute) {
+      return (
+        <div className="space-y-6">
+          <OrganizationMoreBlock pathname={pathname} onNavigate={handleCloseMore} />
+        </div>
+      )
+    }
+    if (pathname?.startsWith('/communities')) {
+      return <RightRail mode="communitiesFeed" sticky={false} />
+    }
+    if (communityRoute) {
+      return <CommunityRightRailClient province={communityRoute.province} municipality={communityRoute.municipality} />
+    }
     return (
       <div className="space-y-6">
         <OrganizationMoreBlock pathname={pathname} onNavigate={handleCloseMore} />
         <RightRail sticky={false} />
       </div>
     )
-  }, [pathname, handleCloseMore, isOrganizationsDirectory])
+  }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute])
 
   useEffect(() => {
     if (!hydrated || !hasSession) return undefined
