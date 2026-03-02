@@ -1256,11 +1256,12 @@ export default function ProfileEditPage() {
   const handleExperienceChange = useCallback((key: string, patch: Partial<ExperienceFormState>) => {
     setExperiences((prev) => prev.map((exp) => (exp.key === key ? { ...exp, ...patch } : exp)))
 
-    if (typeof patch.organization === 'string') {
+    const organization = patch.organization
+    if (typeof organization === 'string') {
       setLinkedOrganizationsByExperienceKey((prev) => {
         const linked = prev[key]
         if (!linked) return prev
-        if (patch.organization.trim() === linked.name) return prev
+        if (organization.trim() === linked.name) return prev
         const next = { ...prev }
         delete next[key]
         return next
@@ -1888,22 +1889,24 @@ export default function ProfileEditPage() {
                             <p className="text-xs text-slate-500">Selecting an organization links it to this experience on your public profile.</p>
                           </div>
                         ) : null}
-                        {linkedOrganizationsByExperienceKey[exp.key] ? (
+                        {(() => {
+                          const linkedOrg = linkedOrganizationsByExperienceKey[exp.key]
+                          if (!linkedOrg) return null
+                          return (
                           <div className="mt-2 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-xs text-emerald-800">
                             <span className="inline-flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border border-emerald-300 bg-white">
-                              {linkedOrganizationsByExperienceKey[exp.key]?.logoUrl ? (
-                                <img src={linkedOrganizationsByExperienceKey[exp.key].logoUrl ?? ''} alt="" className="h-full w-full object-cover" />
-                              ) : null}
+                              {linkedOrg.logoUrl ? <img src={linkedOrg.logoUrl} alt="" className="h-full w-full object-cover" /> : null}
                             </span>
                             <span className="font-medium">Linked to Civil organization</span>
                             <Link
-                              href={`/com/${encodeURIComponent(linkedOrganizationsByExperienceKey[exp.key].provinceCode.toLowerCase())}/${encodeURIComponent(linkedOrganizationsByExperienceKey[exp.key].communitySlug)}/orgs/${encodeURIComponent(linkedOrganizationsByExperienceKey[exp.key].slug)}`}
+                              href={`/com/${encodeURIComponent(linkedOrg.provinceCode.toLowerCase())}/${encodeURIComponent(linkedOrg.communitySlug)}/orgs/${encodeURIComponent(linkedOrg.slug)}`}
                               className="ml-auto text-emerald-700 hover:text-emerald-900 hover:underline"
                             >
                               View
                             </Link>
                           </div>
-                        ) : null}
+                          )
+                        })()}
                       </label>
                       <label className="text-sm font-medium text-gray-700">
                         Location (optional)
