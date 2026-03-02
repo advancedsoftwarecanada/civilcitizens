@@ -116,6 +116,7 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const settingCode = useRef(false)
+  const lastEditorValueRef = useRef(value || '<p></p>')
   const onChangeRef = useRef(onChange)
   const initialValueRef = useRef(value)
   initialValueRef.current = value
@@ -164,6 +165,7 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
 
     const handleChange = (_we: unknown, contents: string) => {
       if (settingCode.current) return
+      lastEditorValueRef.current = contents || '<p></p>'
       onChangeRef.current(contents)
     }
 
@@ -181,7 +183,9 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
 
     $element.on('summernote.change', handleChange)
     const initialValue = initialValueRef.current
-    $element.summernote('code', initialValue || '<p></p>')
+    const initialCode = initialValue || '<p></p>'
+    $element.summernote('code', initialCode)
+    lastEditorValueRef.current = initialCode
 
     if (initialDisabledRef.current) {
       $element.summernote('disable')
@@ -200,10 +204,25 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
     if (!jQuery || !jQuery.fn?.summernote) return
 
     const $element = jQuery(containerRef.current) as JQueryWithSummernote
-    const current = $element.summernote('code')
-    if (value !== current) {
-      settingCode.current = true
-      $element.summernote('code', value || '<p></p>')
+    const nextValue = value || '<p></p>'
+
+    if (nextValue === lastEditorValueRef.current) return
+
+    const activeElement = window.document.activeElement
+    const editorHasFocus = !!activeElement && containerRef.current.contains(activeElement)
+    if (editorHasFocus) return
+
+    const current = ($element.summernote('code') as string) || '<p></p>'
+    if (nextValue === current) {
+      lastEditorValueRef.current = current
+      return
+    }
+
+    settingCode.current = true
+    try {
+      $element.summernote('code', nextValue)
+      lastEditorValueRef.current = nextValue
+    } finally {
       settingCode.current = false
     }
   }, [ready, value])
