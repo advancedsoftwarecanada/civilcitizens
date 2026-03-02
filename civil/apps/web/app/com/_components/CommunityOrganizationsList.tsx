@@ -102,7 +102,7 @@ export default function CommunityOrganizationsList({ province, municipality }: {
                 {org.status === 'DRAFT' ? 'Draft' : 'Live'}
               </span>
                   <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">
-                    {org.followerCount} followers
+                    {org.followerCount} joined
                   </span>
               {org.isVerified ? (
                 <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">

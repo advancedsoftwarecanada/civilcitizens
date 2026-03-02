@@ -196,30 +196,50 @@ export default function OrganizationInviteLandingPage() {
   const inviteCard = (
     <div className="overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-sm">
       <div className="relative h-44 w-full bg-neutral-100">
-        {data.inviter?.coverUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={data.inviter.coverUrl} alt={inviterName} className="h-full w-full object-cover" />
-        ) : data.organization.coverUrl ? (
+        {data.organization.coverUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={data.organization.coverUrl} alt={orgName} className="h-full w-full object-cover" />
+        ) : data.inviter?.coverUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={data.inviter.coverUrl} alt={inviterName} className="h-full w-full object-cover" />
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-t from-black/45 to-transparent" />
         <div className="absolute bottom-4 left-4 flex items-center gap-3 text-white">
-          <div className="h-14 w-14 overflow-hidden rounded-full border border-white/60 bg-white/20">
-            {data.inviter?.avatarUrl ? (
+          <div className="h-14 w-14 overflow-hidden rounded-full border border-white/70 bg-white/20">
+            {data.organization.logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={data.inviter.avatarUrl} alt={inviterName} className="h-full w-full object-cover" />
+              <img src={data.organization.logoUrl} alt={orgName} className="h-full w-full object-cover" />
             ) : null}
           </div>
           <div>
-            <p className="text-xs uppercase tracking-wide text-white/80">You were invited by</p>
-            <p className="text-lg font-semibold">{inviterName}</p>
+            <p className="text-xs uppercase tracking-wide text-white/80">Organization invite</p>
+            <p className="text-lg font-semibold">{orgName}</p>
           </div>
         </div>
       </div>
 
       <div className="grid gap-6 p-5 md:grid-cols-[1fr_280px]">
         <div className="space-y-4">
+          <div className="relative inline-flex items-center gap-3 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2">
+            {data.inviter?.coverUrl ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={data.inviter.coverUrl} alt={`${inviterName} cover`} className="absolute inset-0 h-full w-full object-cover" />
+                <div className="absolute inset-0 bg-black/45" />
+              </>
+            ) : null}
+            <div className="relative h-9 w-9 overflow-hidden rounded-full bg-neutral-200">
+              {data.inviter?.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={data.inviter.avatarUrl} alt={inviterName} className="h-full w-full object-cover" />
+              ) : null}
+            </div>
+            <div className="relative">
+              <p className={`text-[11px] uppercase tracking-wide ${data.inviter?.coverUrl ? "text-white/80" : "text-neutral-500"}`}>Invited by</p>
+              <p className={`text-sm font-semibold ${data.inviter?.coverUrl ? "text-white" : "text-neutral-800"}`}>{inviterName}</p>
+            </div>
+          </div>
+
           <div>
             <h1 className="text-2xl font-bold text-neutral-900">Join {orgName} on Civil</h1>
             <p className="mt-1 text-sm text-neutral-600">

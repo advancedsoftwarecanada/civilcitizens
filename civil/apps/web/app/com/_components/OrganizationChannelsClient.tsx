@@ -629,6 +629,12 @@ export default function OrganizationChannelsClient({
                 type="text"
                 value={composer}
                 onChange={(event) => setComposer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  if (!selectedChannel.joined || !composer.trim() || saving) return
+                  void sendMessage()
+                }}
                 placeholder={selectedChannel.joined ? 'Message channel…' : 'Join channel to message'}
                 disabled={!selectedChannel.joined}
                 className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none disabled:opacity-60"

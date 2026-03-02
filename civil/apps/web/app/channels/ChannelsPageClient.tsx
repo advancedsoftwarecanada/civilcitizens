@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
+import { RightRail } from '../_components/RightRail'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 import { clearAuthSession } from '../_lib/authSession'
@@ -98,7 +99,7 @@ export default function ChannelsPageClient() {
   }, [items, query])
 
   return (
-    <DashboardShell>
+    <DashboardShell rightRail={<RightRail mode="organizations" />}>
       <div className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
