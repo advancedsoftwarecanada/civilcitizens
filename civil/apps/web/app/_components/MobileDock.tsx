@@ -7,7 +7,8 @@ import { normalizeProvinceCode } from '@civil/shared'
 import {
   HiOutlineBars3,
   HiOutlineBellAlert,
-  HiOutlineEnvelope,
+  HiOutlineChatBubbleOvalLeft,
+  HiOutlineHashtag,
   HiOutlineMagnifyingGlass,
   HiOutlineSquares2X2,
   HiOutlineWallet,
@@ -26,16 +27,17 @@ import { getStoredToken } from '../_lib/tokenStorage'
 import Block from './Block'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
+import { SearchResults } from './search/SearchResults'
 
 const NAV_BUTTONS: Array<{
-  key: 'menu' | 'search' | 'notifications' | 'messages' | 'wallet' | 'more'
+  key: 'menu' | 'notifications' | 'messages' | 'channels' | 'wallet' | 'more'
   label: string
   icon: IconType
 }> = [
   { key: 'menu', label: 'Menu', icon: HiOutlineBars3 },
-  { key: 'search', label: 'Search', icon: HiOutlineMagnifyingGlass },
   { key: 'notifications', label: 'Alerts', icon: HiOutlineBellAlert },
-  { key: 'messages', label: 'Messages', icon: HiOutlineEnvelope },
+  { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
+  { key: 'channels', label: 'Channels', icon: HiOutlineHashtag },
   { key: 'wallet', label: 'Wallet', icon: HiOutlineWallet },
   { key: 'more', label: 'More', icon: HiOutlineSquares2X2 },
 ] as const
@@ -147,6 +149,10 @@ export default function MobileDock() {
   const [hasSession, setHasSession] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
+  const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
+  const [menuSearchQuery, setMenuSearchQuery] = useState('')
+  const [menuSearchFocused, setMenuSearchFocused] = useState(false)
+  const menuSearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const moreCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuMountedRef = useRef(false)
@@ -193,11 +199,14 @@ export default function MobileDock() {
       if (!token) return
 
       try {
-        const [notifRes, msgRes] = await Promise.all([
+        const [notifRes, msgRes, orgChannelsRes] = await Promise.all([
           fetch(buildApiUrl('/notifications?limit=1'), {
             headers: { authorization: `Bearer ${token}` },
           }),
           fetch(buildApiUrl('/messages/unread-count'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+          fetch(buildApiUrl('/org-channels/unread-count'), {
             headers: { authorization: `Bearer ${token}` },
           }),
         ])
@@ -210,6 +219,11 @@ export default function MobileDock() {
         if (msgRes.ok) {
           const data = (await msgRes.json()) as { count: number }
           setMessageUnreadCount(data.count || 0)
+        }
+
+        if (orgChannelsRes.ok) {
+          const data = (await orgChannelsRes.json()) as { count: number }
+          setOrgChannelUnreadCount(data.count || 0)
         }
       } catch (err) {
         console.error('Failed to load notification counts', err)
@@ -305,18 +319,32 @@ export default function MobileDock() {
       if (moreCloseTimeoutRef.current) {
         clearTimeout(moreCloseTimeoutRef.current)
       }
+      if (menuSearchBlurTimeoutRef.current) {
+        clearTimeout(menuSearchBlurTimeoutRef.current)
+      }
     },
     [],
   )
+
+  const handleMenuSearchFocus = useCallback(() => {
+    if (menuSearchBlurTimeoutRef.current) {
+      clearTimeout(menuSearchBlurTimeoutRef.current)
+      menuSearchBlurTimeoutRef.current = null
+    }
+    setMenuSearchFocused(true)
+  }, [])
+
+  const handleMenuSearchBlur = useCallback(() => {
+    if (menuSearchBlurTimeoutRef.current) clearTimeout(menuSearchBlurTimeoutRef.current)
+    menuSearchBlurTimeoutRef.current = setTimeout(() => {
+      setMenuSearchFocused(false)
+    }, 120)
+  }, [])
 
   const handleButtonPress = useCallback(
     (key: NavButtonKey) => {
       if (key === 'menu') {
         handleOpenMenu()
-        return
-      }
-      if (key === 'search') {
-        router.push('/search')
         return
       }
       if (key === 'notifications') {
@@ -325,6 +353,10 @@ export default function MobileDock() {
       }
       if (key === 'messages') {
         router.push('/messages')
+        return
+      }
+      if (key === 'channels') {
+        router.push('/channels')
         return
       }
       if (key === 'wallet') {
@@ -368,6 +400,9 @@ export default function MobileDock() {
         return <RightRail mode="network" sticky={false} />
       }
       return <FriendsRightRail />
+    }
+    if (pathname?.startsWith('/channels')) {
+      return <RightRail mode="organizations" organizationLinkTarget="chat" sticky={false} />
     }
     if (pathname?.startsWith('/organizations')) {
       return isOrganizationsDirectory ? (
@@ -454,13 +489,20 @@ export default function MobileDock() {
             const Icon = item.icon
             const isActive =
               (item.key === 'menu' && menuOpen) ||
-              (item.key === 'search' && pathname?.startsWith('/search')) ||
               (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
               (item.key === 'messages' && pathname?.startsWith('/messages')) ||
+              (item.key === 'channels' && pathname?.startsWith('/channels')) ||
               (item.key === 'wallet' && pathname?.startsWith('/wallet')) ||
               (item.key === 'more' && moreOpen)
             
-            const count = item.key === 'notifications' ? unreadCount : item.key === 'messages' ? messageUnreadCount : 0
+            const count =
+              item.key === 'notifications'
+                ? unreadCount
+                : item.key === 'messages'
+                  ? messageUnreadCount
+                  : item.key === 'channels'
+                    ? orgChannelUnreadCount
+                    : 0
 
             return (
               <button
@@ -563,6 +605,28 @@ export default function MobileDock() {
               </button>
             </div>
             <div className="mt-[var(--drawer-top-gap)] flex-1 overflow-y-auto pb-[calc(var(--drawer-pad)*0.85)]">
+              <div className="relative mb-3">
+                <div className="relative w-full rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+                  <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <form action="/search" method="GET" autoComplete="off">
+                    <input
+                      type="search"
+                      name="q"
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      placeholder="Search"
+                      className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
+                      value={menuSearchQuery}
+                      onChange={(event) => setMenuSearchQuery(event.target.value)}
+                      onFocus={handleMenuSearchFocus}
+                      onBlur={handleMenuSearchBlur}
+                    />
+                  </form>
+                  <SearchResults query={menuSearchQuery} open={menuSearchFocused && menuSearchQuery.trim().length >= 2} />
+                </div>
+              </div>
               {navGroups.map((group, index) => (
                 <div key={index} className={index === 0 ? undefined : 'mt-[calc(var(--drawer-top-gap)*0.9)]'}>
                   <div className="grid grid-cols-3 gap-[var(--drawer-gap)]">
