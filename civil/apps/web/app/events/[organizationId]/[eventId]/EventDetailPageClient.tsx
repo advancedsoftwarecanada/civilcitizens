@@ -74,6 +74,33 @@ function toTitleCase(value: string | null | undefined) {
     .join(' ')
 }
 
+function formatEventDateBadge(isoString: string) {
+  const value = new Date(isoString)
+  const now = new Date()
+
+  const startOfToday = new Date(now)
+  startOfToday.setHours(0, 0, 0, 0)
+  const startOfTomorrow = new Date(startOfToday)
+  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1)
+
+  const startOfDate = new Date(value)
+  startOfDate.setHours(0, 0, 0, 0)
+
+  if (startOfDate.getTime() === startOfToday.getTime()) return 'Today'
+  if (startOfDate.getTime() === startOfTomorrow.getTime()) return 'Tomorrow'
+
+  return value.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
+function formatEventTimeBadge(isoString: string) {
+  const value = new Date(isoString)
+  return value.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
 export default function EventDetailPageClient({
   organizationId,
   eventId,
@@ -198,7 +225,7 @@ export default function EventDetailPageClient({
       : null
 
   return (
-    <DashboardShell rightRail={<RightRail mode="events" showOrganizations />}>
+    <DashboardShell rightRail={<RightRail mode="events" showOrganizations />} showMobileRightRail>
       <div className="space-y-5 pb-12">
         {loading ? <p className="text-sm text-slate-500">Loading event…</p> : null}
         {error ? <p className="text-sm text-rose-600">{error}</p> : null}
@@ -213,10 +240,24 @@ export default function EventDetailPageClient({
               <div className="space-y-3 p-5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{event.category ?? 'Other'}</p>
                 <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{event.title}</h1>
-                <p className="text-base text-slate-700">
-                  {new Date(event.startsAt).toLocaleString()}
-                  {event.endsAt ? ` → ${new Date(event.endsAt).toLocaleString()}` : ''}
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                    {formatEventDateBadge(event.startsAt)}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                    {formatEventTimeBadge(event.startsAt)}
+                  </span>
+                  {event.endsAt ? (
+                    <>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                        Ends {formatEventDateBadge(event.endsAt)}
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                        {formatEventTimeBadge(event.endsAt)}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
                 <p className="text-base text-slate-600">
                   {communityHref ? (
                     <Link href={communityHref} className="font-semibold text-slate-700 hover:underline">

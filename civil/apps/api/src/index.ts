@@ -70,6 +70,7 @@ import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import Stripe from 'stripe'
 type DailyCount = { date: string; count: number }
+type JobAnalyticsKind = 'job_added' | 'applicant_submitted' | 'applications_viewed' | 'applicant_hired'
 
 const METRIC_TABLES = {
   users: { table: '"User"', column: '"createdAt"' },
@@ -101,6 +102,43 @@ async function queryPageViewSeries(range: DateRange): Promise<DailyCount[]> {
     order by 1 asc
   `
   return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
+}
+
+async function queryJobAnalyticsSeries(kind: JobAnalyticsKind, range: DateRange): Promise<DailyCount[]> {
+  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
+    select date_trunc('day', "createdAt") as date, count(*)::bigint as count
+    from "JobAnalyticsEvent"
+    where "kind" = ${kind}::"JobAnalyticsEventKind"
+      and "createdAt" >= ${range.start}
+      and "createdAt" < ${range.end}
+    group by 1
+    order by 1 asc
+  `
+  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
+}
+
+async function trackJobAnalyticsEvent(args: {
+  kind: JobAnalyticsKind
+  businessId: string
+  jobPostingId?: string | null
+  jobApplicationId?: string | null
+  actorUserId?: string | null
+  createdAt?: Date
+}) {
+  await prisma.$executeRaw`
+    INSERT INTO "JobAnalyticsEvent" (
+      "id", "kind", "businessId", "jobPostingId", "jobApplicationId", "actorUserId", "createdAt"
+    )
+    VALUES (
+      ${randomUUID()},
+      ${args.kind}::"JobAnalyticsEventKind",
+      ${args.businessId},
+      ${args.jobPostingId ?? null},
+      ${args.jobApplicationId ?? null},
+      ${args.actorUserId ?? null},
+      ${args.createdAt ?? new Date()}
+    )
+  `
 }
 
 function startOfUtcDay(date: Date) {
@@ -15485,6 +15523,363 @@ app.get('/admin/geodata', async (req: FastifyRequest, reply: FastifyReply) => {
   })
 })
 
+const AdminIndustryInput = z.object({
+  name: z.string().trim().min(2).max(120),
+  slug: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(500).optional().nullable(),
+  sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
+  active: z.boolean().default(true),
+})
+
+const AdminSubIndustryInput = z.object({
+  industryId: z.string().cuid(),
+  name: z.string().trim().min(2).max(120),
+  slug: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(500).optional().nullable(),
+  sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
+  active: z.boolean().default(true),
+})
+
+const AdminIndustryUpdateInput = z.object({
+  name: z.string().trim().min(2).max(120),
+  slug: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(500).optional().nullable(),
+  sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
+  active: z.boolean().default(true),
+})
+
+const AdminSubIndustryUpdateInput = z.object({
+  name: z.string().trim().min(2).max(120),
+  slug: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(500).optional().nullable(),
+  sortOrder: z.coerce.number().int().min(0).max(10000).default(0),
+  active: z.boolean().default(true),
+})
+
+const AdminIndustryIdParams = z.object({ industryId: z.string().cuid() })
+const AdminSubIndustryIdParams = z.object({ subIndustryId: z.string().cuid() })
+
+const DEFAULT_JOB_TAXONOMY: Array<{
+  name: string
+  slug: string
+  sortOrder: number
+  subIndustries: Array<{ name: string; slug: string; sortOrder: number }>
+}> = [
+  {
+    name: 'Technology',
+    slug: 'technology',
+    sortOrder: 10,
+    subIndustries: [
+      { name: 'Software Development', slug: 'software-development', sortOrder: 10 },
+      { name: 'IT Support', slug: 'it-support', sortOrder: 20 },
+      { name: 'Data & AI', slug: 'data-ai', sortOrder: 30 },
+    ],
+  },
+  {
+    name: 'Healthcare',
+    slug: 'healthcare',
+    sortOrder: 20,
+    subIndustries: [
+      { name: 'Nursing', slug: 'nursing', sortOrder: 10 },
+      { name: 'Allied Health', slug: 'allied-health', sortOrder: 20 },
+      { name: 'Administration', slug: 'health-admin', sortOrder: 30 },
+    ],
+  },
+  {
+    name: 'Education',
+    slug: 'education',
+    sortOrder: 30,
+    subIndustries: [
+      { name: 'Teaching', slug: 'teaching', sortOrder: 10 },
+      { name: 'Early Childhood', slug: 'early-childhood', sortOrder: 20 },
+      { name: 'Academic Support', slug: 'academic-support', sortOrder: 30 },
+    ],
+  },
+  {
+    name: 'Government & Public Service',
+    slug: 'government-public-service',
+    sortOrder: 40,
+    subIndustries: [
+      { name: 'Administration', slug: 'public-admin', sortOrder: 10 },
+      { name: 'Policy', slug: 'policy', sortOrder: 20 },
+      { name: 'Community Services', slug: 'community-services', sortOrder: 30 },
+    ],
+  },
+  {
+    name: 'Trades & Construction',
+    slug: 'trades-construction',
+    sortOrder: 50,
+    subIndustries: [
+      { name: 'Skilled Trades', slug: 'skilled-trades', sortOrder: 10 },
+      { name: 'General Labour', slug: 'general-labour', sortOrder: 20 },
+      { name: 'Project Management', slug: 'construction-pm', sortOrder: 30 },
+    ],
+  },
+  {
+    name: 'Sales & Marketing',
+    slug: 'sales-marketing',
+    sortOrder: 60,
+    subIndustries: [
+      { name: 'Sales', slug: 'sales', sortOrder: 10 },
+      { name: 'Marketing', slug: 'marketing', sortOrder: 20 },
+      { name: 'Customer Success', slug: 'customer-success', sortOrder: 30 },
+    ],
+  },
+  {
+    name: 'Operations & Logistics',
+    slug: 'operations-logistics',
+    sortOrder: 70,
+    subIndustries: [
+      { name: 'Operations', slug: 'operations', sortOrder: 10 },
+      { name: 'Supply Chain', slug: 'supply-chain', sortOrder: 20 },
+      { name: 'Warehouse', slug: 'warehouse', sortOrder: 30 },
+    ],
+  },
+]
+
+async function loadAdminUserOrReply(req: FastifyRequest, reply: FastifyReply) {
+  let user: { id: string; email: string | null } | null
+  try {
+    user = await loadAuthenticatedUser(req)
+  } catch {
+    reply.code(401).send({ error: 'unauthorized' })
+    return null
+  }
+
+  if (!user || !isSuperAdminEmail(user.email)) {
+    reply.code(403).send({ error: 'forbidden' })
+    return null
+  }
+
+  return user
+}
+
+app.get('/admin/jobs/taxonomy', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const industries = await prisma.jobIndustry.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    include: {
+      subIndustries: {
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      },
+    },
+  })
+
+  return reply.send({
+    items: industries.map((industry: Prisma.JobIndustryGetPayload<{ include: { subIndustries: true } }>) => ({
+      id: industry.id,
+      name: industry.name,
+      slug: industry.slug,
+      description: industry.description,
+      sortOrder: industry.sortOrder,
+      active: industry.active,
+      subIndustries: industry.subIndustries.map((subIndustry: Prisma.JobSubIndustryGetPayload<{}>) => ({
+        id: subIndustry.id,
+        industryId: subIndustry.industryId,
+        name: subIndustry.name,
+        slug: subIndustry.slug,
+        description: subIndustry.description,
+        sortOrder: subIndustry.sortOrder,
+        active: subIndustry.active,
+      })),
+    })),
+  })
+})
+
+app.post('/admin/jobs/seed', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const now = new Date()
+  let industriesInserted = 0
+  let subIndustriesInserted = 0
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    for (const industrySeed of DEFAULT_JOB_TAXONOMY) {
+      const existingIndustry = await tx.jobIndustry.findUnique({ where: { slug: industrySeed.slug }, select: { id: true } })
+      let industryId = existingIndustry?.id
+      if (!industryId) {
+        const insertedIndustry = await tx.jobIndustry.create({
+          data: {
+            name: industrySeed.name,
+            slug: industrySeed.slug,
+            sortOrder: industrySeed.sortOrder,
+            active: true,
+          },
+          select: { id: true },
+        })
+        industryId = insertedIndustry.id
+        industriesInserted += 1
+      }
+
+      for (const subSeed of industrySeed.subIndustries) {
+        const existingSub = await tx.jobSubIndustry.findFirst({
+          where: {
+            industryId,
+            slug: subSeed.slug,
+          },
+          select: { id: true },
+        })
+        if (!existingSub) {
+          await tx.jobSubIndustry.create({
+            data: {
+              industryId,
+              name: subSeed.name,
+              slug: subSeed.slug,
+              sortOrder: subSeed.sortOrder,
+              active: true,
+            },
+          })
+          subIndustriesInserted += 1
+        }
+      }
+    }
+
+    await tx.$executeRaw`
+      UPDATE "JobIndustry"
+      SET "updatedAt" = ${now}
+      WHERE "id" IN (
+        SELECT "id" FROM "JobIndustry"
+      )
+    `
+  })
+
+  return reply.send({ ok: true, industriesInserted, subIndustriesInserted })
+})
+
+app.post('/admin/jobs/industries', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const body = AdminIndustryInput.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const slug = body.data.slug.trim().toLowerCase()
+  const duplicate = await prisma.jobIndustry.findUnique({ where: { slug }, select: { id: true } })
+  if (duplicate) return reply.code(409).send({ error: 'industry_slug_exists' })
+
+  const created = await prisma.jobIndustry.create({
+    data: {
+      name: body.data.name.trim(),
+      slug,
+      description: body.data.description?.trim() || null,
+      sortOrder: body.data.sortOrder,
+      active: body.data.active,
+    },
+    select: { id: true },
+  })
+
+  return reply.code(201).send({ id: created.id })
+})
+
+app.put('/admin/jobs/industries/:industryId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const params = AdminIndustryIdParams.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+  const body = AdminIndustryUpdateInput.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const slug = body.data.slug.trim().toLowerCase()
+  const duplicate = await prisma.jobIndustry.findFirst({
+    where: { slug, id: { not: params.data.industryId } },
+    select: { id: true },
+  })
+  if (duplicate) return reply.code(409).send({ error: 'industry_slug_exists' })
+
+  const updated = await prisma.jobIndustry.updateMany({
+    where: { id: params.data.industryId },
+    data: {
+      name: body.data.name.trim(),
+      slug,
+      description: body.data.description?.trim() || null,
+      sortOrder: body.data.sortOrder,
+      active: body.data.active,
+      updatedAt: new Date(),
+    },
+  })
+  if (!updated.count) return reply.code(404).send({ error: 'industry_not_found' })
+
+  return reply.send({ ok: true })
+})
+
+app.post('/admin/jobs/sub-industries', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const body = AdminSubIndustryInput.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const parent = await prisma.jobIndustry.findUnique({ where: { id: body.data.industryId }, select: { id: true } })
+  if (!parent) return reply.code(404).send({ error: 'industry_not_found' })
+
+  const slug = body.data.slug.trim().toLowerCase()
+  const duplicate = await prisma.jobSubIndustry.findFirst({
+    where: { industryId: body.data.industryId, slug },
+    select: { id: true },
+  })
+  if (duplicate) return reply.code(409).send({ error: 'sub_industry_slug_exists' })
+
+  const created = await prisma.jobSubIndustry.create({
+    data: {
+      industryId: body.data.industryId,
+      name: body.data.name.trim(),
+      slug,
+      description: body.data.description?.trim() || null,
+      sortOrder: body.data.sortOrder,
+      active: body.data.active,
+    },
+    select: { id: true },
+  })
+
+  return reply.code(201).send({ id: created.id })
+})
+
+app.put('/admin/jobs/sub-industries/:subIndustryId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const params = AdminSubIndustryIdParams.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+  const body = AdminSubIndustryUpdateInput.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const existing = await prisma.jobSubIndustry.findUnique({
+    where: { id: params.data.subIndustryId },
+    select: { id: true, industryId: true },
+  })
+  if (!existing) return reply.code(404).send({ error: 'sub_industry_not_found' })
+
+  const slug = body.data.slug.trim().toLowerCase()
+  const duplicate = await prisma.jobSubIndustry.findFirst({
+    where: {
+      industryId: existing.industryId,
+      slug,
+      id: { not: params.data.subIndustryId },
+    },
+    select: { id: true },
+  })
+  if (duplicate) return reply.code(409).send({ error: 'sub_industry_slug_exists' })
+
+  const updated = await prisma.jobSubIndustry.updateMany({
+    where: { id: params.data.subIndustryId },
+    data: {
+      name: body.data.name.trim(),
+      slug,
+      description: body.data.description?.trim() || null,
+      sortOrder: body.data.sortOrder,
+      active: body.data.active,
+      updatedAt: new Date(),
+    },
+  })
+  if (!updated.count) return reply.code(404).send({ error: 'sub_industry_not_found' })
+
+  return reply.send({ ok: true })
+})
+
 app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = TrackViewInput.safeParse(req.body)
   if (!parse.success) {
@@ -15533,8 +15928,22 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     commentSeries,
     reactionSeries,
     pageViewSeries,
+    jobsAddedSeries,
+    applicantsSeries,
+    applicationsViewedSeries,
+    hiredSeries,
     routeTraffic,
     topPostViews,
+    totalJobsAdded,
+    jobsAddedToday,
+    totalApplicants,
+    applicantsToday,
+    totalApplicationsViewed,
+    applicationsViewedToday,
+    totalApplicantsHired,
+    applicantsHiredToday,
+    organizationsViewedTotalRows,
+    organizationsViewedTodayRows,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { createdAt: { gte: today } } }),
@@ -15549,6 +15958,10 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     queryDailyCounts('comments', range),
     queryDailyCounts('reactions', range),
     queryPageViewSeries(range),
+    queryJobAnalyticsSeries('job_added', range),
+    queryJobAnalyticsSeries('applicant_submitted', range),
+    queryJobAnalyticsSeries('applications_viewed', range),
+    queryJobAnalyticsSeries('applicant_hired', range),
     prisma.$queryRaw<Array<{ path: string; views: bigint }>>`
       select path, count(*)::bigint as views
       from "PageView"
@@ -15566,7 +15979,73 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
       order by views desc
       limit 20
     `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'job_added'::"JobAnalyticsEventKind"
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'job_added'::"JobAnalyticsEventKind"
+        and "createdAt" >= ${today}
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applicant_submitted'::"JobAnalyticsEventKind"
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applicant_submitted'::"JobAnalyticsEventKind"
+        and "createdAt" >= ${today}
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applications_viewed'::"JobAnalyticsEventKind"
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applications_viewed'::"JobAnalyticsEventKind"
+        and "createdAt" >= ${today}
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applicant_hired'::"JobAnalyticsEventKind"
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(*)::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applicant_hired'::"JobAnalyticsEventKind"
+        and "createdAt" >= ${today}
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(distinct "businessId")::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applications_viewed'::"JobAnalyticsEventKind"
+    `,
+    prisma.$queryRaw<Array<{ count: bigint }>>`
+      select count(distinct "businessId")::bigint as count
+      from "JobAnalyticsEvent"
+      where "kind" = 'applications_viewed'::"JobAnalyticsEventKind"
+        and "createdAt" >= ${today}
+    `,
   ])
+
+  const jobsAddedTotalCount = Number(totalJobsAdded[0]?.count ?? 0)
+  const jobsAddedTodayCount = Number(jobsAddedToday[0]?.count ?? 0)
+  const applicantsTotalCount = Number(totalApplicants[0]?.count ?? 0)
+  const applicantsTodayCount = Number(applicantsToday[0]?.count ?? 0)
+  const applicationsViewedTotalCount = Number(totalApplicationsViewed[0]?.count ?? 0)
+  const applicationsViewedTodayCount = Number(applicationsViewedToday[0]?.count ?? 0)
+  const applicantsHiredTotalCount = Number(totalApplicantsHired[0]?.count ?? 0)
+  const applicantsHiredTodayCount = Number(applicantsHiredToday[0]?.count ?? 0)
+  const organizationsViewedTotalCount = Number(organizationsViewedTotalRows[0]?.count ?? 0)
+  const organizationsViewedTodayCount = Number(organizationsViewedTodayRows[0]?.count ?? 0)
 
   const responsePayload = {
     generatedAt: new Date().toISOString(),
@@ -15590,6 +16069,34 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
       today: reactionsToday,
       series: reactionSeries,
     },
+    jobs: {
+      added: {
+        total: jobsAddedTotalCount,
+        today: jobsAddedTodayCount,
+        series: jobsAddedSeries,
+      },
+      applicants: {
+        total: applicantsTotalCount,
+        today: applicantsTodayCount,
+        series: applicantsSeries,
+      },
+      applicationsViewed: {
+        views: {
+          total: applicationsViewedTotalCount,
+          today: applicationsViewedTodayCount,
+          series: applicationsViewedSeries,
+        },
+        organizations: {
+          total: organizationsViewedTotalCount,
+          today: organizationsViewedTodayCount,
+        },
+      },
+      hired: {
+        total: applicantsHiredTotalCount,
+        today: applicantsHiredTodayCount,
+        series: hiredSeries,
+      },
+    },
     pageViews: {
       series: pageViewSeries,
     },
@@ -15600,7 +16107,17 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
   }
 
   if (format === 'csv') {
-    const dateMap = new Map<string, { users?: number; posts?: number; comments?: number; reactions?: number; views?: number }>()
+    const dateMap = new Map<string, {
+      users?: number
+      posts?: number
+      comments?: number
+      reactions?: number
+      views?: number
+      jobsAdded?: number
+      applicants?: number
+      applicationsViewed?: number
+      hired?: number
+    }>()
     const ingest = (series: DailyCount[], key: keyof NonNullable<ReturnType<typeof dateMap.get>>) => {
       series.forEach((point) => {
         const existing = dateMap.get(point.date) || {}
@@ -15613,6 +16130,10 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     ingest(commentSeries, 'comments')
     ingest(reactionSeries, 'reactions')
     ingest(pageViewSeries, 'views')
+    ingest(jobsAddedSeries, 'jobsAdded')
+    ingest(applicantsSeries, 'applicants')
+    ingest(applicationsViewedSeries, 'applicationsViewed')
+    ingest(hiredSeries, 'hired')
 
     const sortedDates = Array.from(dateMap.keys()).sort((a, b) => new Date(a).getTime() - new Date(b).getTime())
     const rows = sortedDates.map((date) => {
@@ -15624,10 +16145,14 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
         entry.comments ?? 0,
         entry.reactions ?? 0,
         entry.views ?? 0,
+        entry.jobsAdded ?? 0,
+        entry.applicants ?? 0,
+        entry.applicationsViewed ?? 0,
+        entry.hired ?? 0,
       ].join(',')
     })
 
-    const csv = ['date,users,posts,comments,reactions,pageViews', ...rows].join('\n')
+    const csv = ['date,users,posts,comments,reactions,pageViews,jobsAdded,applicants,applicationsViewed,applicantsHired', ...rows].join('\n')
     return reply.header('content-type', 'text/csv').send(csv)
   }
 
@@ -16325,6 +16850,1432 @@ app.get('/users/:handle/organizations', async (req: FastifyRequest, reply: Fasti
     }))
 
     return { userHandle: user.handle, items }
+  }),
+)
+
+const JobListQuery = z.object({
+  q: z.string().trim().max(120).optional(),
+  provinceCode: z.string().trim().min(2).max(2).optional(),
+  communitySlug: z.string().trim().min(1).max(120).optional(),
+  industrySlug: z.string().trim().min(1).max(120).optional(),
+  subIndustrySlug: z.string().trim().min(1).max(120).optional(),
+  employmentType: z.enum(['full_time', 'part_time', 'contract', 'internship', 'temporary', 'volunteer']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
+const WorkApplicationsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  jobId: z.string().trim().uuid().optional(),
+})
+
+const OrgJobListQuery = z.object({
+  includeDrafts: z.coerce.boolean().optional().default(false),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+})
+
+const JobLocationInput = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => {
+    if (value === 'special:remote' || value === 'special:not_in_canada') return true
+    if (!value.startsWith('community:')) return false
+    const body = value.slice('community:'.length)
+    const [head] = body.split('|')
+    const [provinceCode, communitySlug] = (head ?? '').split(':')
+    return Boolean(provinceCode?.trim()) && Boolean(communitySlug?.trim())
+  }, 'invalid_location')
+
+const CreateJobBody = z.object({
+  title: z.string().trim().min(3).max(180),
+  employmentType: z.enum(['full_time', 'part_time', 'contract', 'internship', 'temporary', 'volunteer']),
+  salaryMin: z.number().int().min(0).max(100_000_000).optional().nullable(),
+  salaryMax: z.number().int().min(0).max(100_000_000).optional().nullable(),
+  salaryCurrency: z.string().trim().length(3).default('CAD'),
+  salaryPeriod: z.string().trim().max(40).optional().nullable(),
+  duties: z.string().trim().min(20).max(20000),
+  roleRequirements: z.string().trim().min(20).max(20000),
+  description: z.string().trim().max(20000).optional().nullable(),
+  photoUrl: z.string().trim().url().max(2000).optional().nullable(),
+  location: JobLocationInput,
+  industryId: z.string().trim().min(3),
+  subIndustryId: z.string().trim().min(3).optional().nullable(),
+  expiresAt: z.string().datetime(),
+  publish: z.boolean().default(true),
+})
+
+const UpdateJobBody = z.object({
+  title: z.string().trim().min(3).max(180),
+  employmentType: z.enum(['full_time', 'part_time', 'contract', 'internship', 'temporary', 'volunteer']),
+  salaryMin: z.number().int().min(0).max(100_000_000).optional().nullable(),
+  salaryMax: z.number().int().min(0).max(100_000_000).optional().nullable(),
+  salaryCurrency: z.string().trim().length(3).default('CAD'),
+  salaryPeriod: z.string().trim().max(40).optional().nullable(),
+  duties: z.string().trim().min(20).max(20000),
+  roleRequirements: z.string().trim().min(20).max(20000),
+  description: z.string().trim().max(20000).optional().nullable(),
+  photoUrl: z.string().trim().url().max(2000).optional().nullable(),
+  location: JobLocationInput,
+  industryId: z.string().trim().min(3),
+  subIndustryId: z.string().trim().min(3).optional().nullable(),
+  expiresAt: z.string().datetime(),
+})
+
+const ApplyJobBody = z.object({
+  motivationHtml: z.string().trim().min(20).max(20000),
+})
+
+const JobEntityId = z.string().trim().refine(
+  (value) => z.string().cuid().safeParse(value).success || z.string().uuid().safeParse(value).success,
+  'invalid_id',
+)
+
+const JobIdParams = z.object({
+  jobId: JobEntityId,
+})
+
+const CommunityOrgJobParams = CommunityOrgSlugParams.extend({
+  jobId: JobEntityId,
+})
+
+const CommunityOrgJobApplicationParams = CommunityOrgJobParams.extend({
+  applicationId: JobEntityId,
+})
+
+const UpdateJobApplicationStatusBody = z.object({
+  status: z.enum(['submitted', 'reviewing', 'shortlisted', 'rejected', 'hired', 'withdrawn']),
+})
+
+function parseStructuredJobLocation(raw: string): {
+  locationType: 'community' | 'remote' | 'not_in_canada'
+  locationProvinceCode: string | null
+  locationCommunitySlug: string | null
+  locationLabel: string
+} {
+  if (raw === 'special:remote') {
+    return {
+      locationType: 'remote',
+      locationProvinceCode: null,
+      locationCommunitySlug: null,
+      locationLabel: 'Remote',
+    }
+  }
+  if (raw === 'special:not_in_canada') {
+    return {
+      locationType: 'not_in_canada',
+      locationProvinceCode: null,
+      locationCommunitySlug: null,
+      locationLabel: 'Not in Canada',
+    }
+  }
+
+  const body = raw.slice('community:'.length)
+  const [head, labelPart] = body.split('|')
+  const [provinceCodeRaw, communitySlugRaw] = (head ?? '').split(':')
+  const locationProvinceCode = (provinceCodeRaw ?? '').trim().toUpperCase()
+  const locationCommunitySlug = (communitySlugRaw ?? '').trim().toLowerCase()
+  const locationLabel = (labelPart ?? '').trim() || locationCommunitySlug.replace(/-/g, ' ')
+
+  return {
+    locationType: 'community',
+    locationProvinceCode,
+    locationCommunitySlug,
+    locationLabel,
+  }
+}
+
+function buildJobLocationValue(row: {
+  locationType: 'community' | 'remote' | 'not_in_canada'
+  locationProvinceCode: string | null
+  locationCommunitySlug: string | null
+  locationLabel: string | null
+}) {
+  if (row.locationType === 'remote') return 'special:remote'
+  if (row.locationType === 'not_in_canada') return 'special:not_in_canada'
+  const provinceCode = (row.locationProvinceCode ?? '').toUpperCase()
+  const communitySlug = (row.locationCommunitySlug ?? '').toLowerCase()
+  const label = (row.locationLabel ?? communitySlug).trim()
+  return `community:${provinceCode}:${communitySlug}|${label}`
+}
+
+async function resolveOrgManagerOrOwner(args: {
+  province: string
+  municipality: string
+  slug: string
+  userId: string
+}) {
+  const province = normalizeProvinceCode(args.province)
+  if (!province) return { error: 'province_not_found' as const }
+  const community = findCommunity(province, args.municipality.trim().toLowerCase())
+  if (!community) return { error: 'community_not_found' as const }
+
+  const org = await prisma.business.findFirst({
+    where: {
+      provinceCode: province,
+      communitySlug: community.slug,
+      slug: args.slug.trim().toLowerCase(),
+    },
+    select: { id: true, ownerId: true, name: true, slug: true, provinceCode: true, communitySlug: true },
+  })
+  if (!org) return { error: 'organization_not_found' as const }
+
+  const membership = await prisma.businessMembership.findUnique({
+    where: { businessId_userId: { businessId: org.id, userId: args.userId } },
+    select: { role: true },
+  })
+  const isOwner = org.ownerId === args.userId
+  const isManager = membership?.role === 'MANAGER'
+  if (!isOwner && !isManager) return { error: 'forbidden' as const }
+
+  return {
+    org,
+    role: isOwner ? ('OWNER' as const) : ('MANAGER' as const),
+  }
+}
+
+type JobListRow = {
+  id: string
+  title: string
+  slug: string
+  status: 'draft' | 'active' | 'closed' | 'expired'
+  employmentType: string
+  salaryMin: number | null
+  salaryMax: number | null
+  salaryCurrency: string | null
+  salaryPeriod: string | null
+  description: string | null
+  duties: string
+  roleRequirements: string
+  locationType: 'community' | 'remote' | 'not_in_canada'
+  photoUrl: string | null
+  locationProvinceCode: string | null
+  locationCommunitySlug: string | null
+  locationLabel: string | null
+  industryId: string
+  industryName: string
+  industrySlug: string
+  subIndustryId: string | null
+  subIndustryName: string | null
+  subIndustrySlug: string | null
+  applicantCount: number
+  createdAt: Date
+  updatedAt: Date
+  publishedAt: Date | null
+  expiresAt: Date
+  businessId: string
+  businessName: string
+  businessSlug: string
+  businessProvinceCode: string | null
+  businessCommunitySlug: string | null
+  businessLogoUrl: string | null
+  businessCoverUrl: string | null
+  activePromotionId: string | null
+  totalImpressionsServed?: number | null
+  totalViews?: number | null
+  activeImpressionCap?: number | null
+}
+
+function mapJobListRow(row: JobListRow) {
+  return {
+    id: row.id,
+    title: row.title,
+    slug: row.slug,
+    status: row.status,
+    employmentType: row.employmentType,
+    salaryMin: row.salaryMin,
+    salaryMax: row.salaryMax,
+    salaryCurrency: row.salaryCurrency,
+    salaryPeriod: row.salaryPeriod,
+    description: row.description,
+    photoUrl: normalizeMediaUrl(row.photoUrl),
+    duties: row.duties,
+    roleRequirements: row.roleRequirements,
+    location: buildJobLocationValue({
+      locationType: row.locationType,
+      locationProvinceCode: row.locationProvinceCode,
+      locationCommunitySlug: row.locationCommunitySlug,
+      locationLabel: row.locationLabel,
+    }),
+    industry: {
+      id: row.industryId,
+      name: row.industryName,
+      slug: row.industrySlug,
+      subIndustry: row.subIndustryName
+        ? {
+            id: row.subIndustryId,
+            name: row.subIndustryName,
+            slug: row.subIndustrySlug,
+          }
+        : null,
+    },
+    applicantCount: Number(row.applicantCount) || 0,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    publishedAt: row.publishedAt?.toISOString() ?? null,
+    expiresAt: row.expiresAt.toISOString(),
+    sponsored: Boolean(row.activePromotionId),
+    marketing: {
+      impressions: Number(row.totalImpressionsServed ?? 0) || 0,
+      views: Number(row.totalViews ?? row.totalImpressionsServed ?? 0) || 0,
+      applications: Number(row.applicantCount) || 0,
+      activePromotion: Boolean(row.activePromotionId),
+      impressionCap: Number(row.activeImpressionCap ?? 1000) || 1000,
+    },
+    organization: {
+      id: row.businessId,
+      name: row.businessName,
+      slug: row.businessSlug,
+      provinceCode: row.businessProvinceCode,
+      communitySlug: row.businessCommunitySlug,
+      logoUrl: normalizeMediaUrl(row.businessLogoUrl),
+      coverUrl: normalizeMediaUrl(row.businessCoverUrl),
+    },
+  }
+}
+
+app.get('/work/jobs', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const query = JobListQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const now = new Date()
+    await prisma.$executeRaw`
+      UPDATE "JobPosting"
+      SET "status" = 'expired'::"JobStatus", "updatedAt" = NOW()
+      WHERE "status" = 'active'::"JobStatus" AND "expiresAt" <= ${now}
+    `
+
+    await prisma.$executeRaw`
+      UPDATE "JobPromotion"
+      SET "status" = 'ended'::"JobPromotionStatus", "updatedAt" = NOW()
+      WHERE "status" = 'active'::"JobPromotionStatus"
+        AND ("endsAt" <= ${now} OR "impressionsServed" >= "impressionCap")
+    `
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        jp."id",
+        jp."title",
+        jp."slug",
+        jp."status",
+        jp."employmentType",
+        jp."salaryMin",
+        jp."salaryMax",
+        jp."salaryCurrency",
+        jp."salaryPeriod",
+        jp."description",
+        jp."photoUrl",
+        jp."duties",
+        jp."roleRequirements",
+        jp."locationType",
+        jp."locationProvinceCode",
+        jp."locationCommunitySlug",
+        jp."locationLabel",
+        jp."industryId",
+        ji."name" as "industryName",
+        ji."slug" as "industrySlug",
+        jp."subIndustryId",
+        jsi."name" as "subIndustryName",
+        jsi."slug" as "subIndustrySlug",
+        jp."applicantCount",
+        jp."createdAt",
+        jp."updatedAt",
+        jp."publishedAt",
+        jp."expiresAt",
+        b."id" as "businessId",
+        b."name" as "businessName",
+        b."slug" as "businessSlug",
+        b."provinceCode" as "businessProvinceCode",
+        b."communitySlug" as "businessCommunitySlug",
+        b."logoUrl" as "businessLogoUrl",
+        b."coverUrl" as "businessCoverUrl",
+        (
+          SELECT prm."id"
+          FROM "JobPromotion" prm
+          WHERE prm."jobPostingId" = jp."id"
+            AND prm."status" = 'active'::"JobPromotionStatus"
+            AND prm."startsAt" <= ${now}
+            AND prm."endsAt" > ${now}
+            AND prm."impressionsServed" < prm."impressionCap"
+          ORDER BY prm."createdAt" DESC
+          LIMIT 1
+        ) as "activePromotionId"
+      FROM "JobPosting" jp
+      JOIN "Business" b ON b."id" = jp."businessId"
+      JOIN "JobIndustry" ji ON ji."id" = jp."industryId"
+      LEFT JOIN "JobSubIndustry" jsi ON jsi."id" = jp."subIndustryId"
+      WHERE jp."status" = 'active'::"JobStatus"
+        AND jp."publishedAt" IS NOT NULL
+        AND jp."expiresAt" > ${now}
+        ${query.data.q ? Prisma.sql`AND (jp."title" ILIKE ${`%${query.data.q}%`} OR jp."description" ILIKE ${`%${query.data.q}%`})` : Prisma.empty}
+        ${query.data.provinceCode ? Prisma.sql`AND jp."locationProvinceCode" = ${query.data.provinceCode.toUpperCase()}` : Prisma.empty}
+        ${query.data.communitySlug ? Prisma.sql`AND jp."locationCommunitySlug" = ${query.data.communitySlug.toLowerCase()}` : Prisma.empty}
+        ${query.data.industrySlug ? Prisma.sql`AND ji."slug" = ${query.data.industrySlug.toLowerCase()}` : Prisma.empty}
+        ${query.data.subIndustrySlug ? Prisma.sql`AND jsi."slug" = ${query.data.subIndustrySlug.toLowerCase()}` : Prisma.empty}
+        ${query.data.employmentType ? Prisma.sql`AND jp."employmentType" = ${query.data.employmentType}::"JobEmploymentType"` : Prisma.empty}
+      ORDER BY
+        CASE WHEN (
+          SELECT COUNT(*)
+          FROM "JobPromotion" prm2
+          WHERE prm2."jobPostingId" = jp."id"
+            AND prm2."status" = 'active'::"JobPromotionStatus"
+            AND prm2."startsAt" <= ${now}
+            AND prm2."endsAt" > ${now}
+            AND prm2."impressionsServed" < prm2."impressionCap"
+        ) > 0 THEN 0 ELSE 1 END,
+        jp."publishedAt" DESC NULLS LAST,
+        jp."createdAt" DESC
+      LIMIT ${query.data.limit}
+    `)) as JobListRow[]
+
+    const sponsored: ReturnType<typeof mapJobListRow>[] = []
+    const items: ReturnType<typeof mapJobListRow>[] = []
+    const rowJobIds = rows.map((row: JobListRow) => row.id)
+    const userId = (req as any).user?.id as string | undefined
+    let appliedJobIds: string[] = []
+
+    if (userId && rowJobIds.length > 0) {
+      const appliedRows = (await prisma.$queryRaw(Prisma.sql`
+        SELECT DISTINCT ja."jobPostingId"
+        FROM "JobApplication" ja
+        WHERE ja."applicantUserId" = ${userId}
+          AND ja."jobPostingId" IN (${Prisma.join(rowJobIds)})
+      `)) as Array<{ jobPostingId: string }>
+      appliedJobIds = appliedRows.map((row: { jobPostingId: string }) => row.jobPostingId)
+    }
+
+    rows.forEach((row: JobListRow) => {
+      const mapped = mapJobListRow(row)
+      if (mapped.sponsored) sponsored.push(mapped)
+      else items.push(mapped)
+    })
+
+    return reply.send({ sponsored, items, appliedJobIds })
+  }),
+)
+
+app.get('/work/applications', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const query = WorkApplicationsQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        ja."id",
+        ja."status",
+        ja."createdAt",
+        ja."jobPostingId",
+        jp."title" as "jobTitle",
+        jp."photoUrl" as "jobPhotoUrl",
+        jp."status" as "jobStatus",
+        jp."expiresAt" as "jobExpiresAt",
+        b."name" as "businessName",
+        b."slug" as "businessSlug",
+        b."provinceCode" as "businessProvinceCode",
+        b."communitySlug" as "businessCommunitySlug",
+        b."logoUrl" as "businessLogoUrl",
+        b."coverUrl" as "businessCoverUrl"
+      FROM "JobApplication" ja
+      JOIN "JobPosting" jp ON jp."id" = ja."jobPostingId"
+      JOIN "Business" b ON b."id" = jp."businessId"
+      WHERE ja."applicantUserId" = ${userId}
+      ${query.data.jobId ? Prisma.sql`AND ja."jobPostingId" = ${query.data.jobId}` : Prisma.empty}
+      ORDER BY ja."createdAt" DESC
+      LIMIT ${query.data.limit}
+    `)) as Array<{
+      id: string
+      status: string
+      createdAt: Date
+      jobPostingId: string
+      jobTitle: string
+      jobPhotoUrl: string | null
+      jobStatus: string
+      jobExpiresAt: Date
+      businessName: string
+      businessSlug: string
+      businessProvinceCode: string | null
+      businessCommunitySlug: string | null
+      businessLogoUrl: string | null
+      businessCoverUrl: string | null
+    }>
+
+    return reply.send({
+      items: rows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        createdAt: row.createdAt.toISOString(),
+        job: {
+          id: row.jobPostingId,
+          title: row.jobTitle,
+          photoUrl: normalizeMediaUrl(row.jobPhotoUrl),
+          status: row.jobStatus,
+          expiresAt: row.jobExpiresAt.toISOString(),
+          organization: {
+            name: row.businessName,
+            slug: row.businessSlug,
+            provinceCode: row.businessProvinceCode,
+            communitySlug: row.businessCommunitySlug,
+            logoUrl: normalizeMediaUrl(row.businessLogoUrl),
+            coverUrl: normalizeMediaUrl(row.businessCoverUrl),
+          },
+        },
+      })),
+    })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/jobs', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const query = OrgJobListQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: {
+        provinceCode: province,
+        communitySlug: community.slug,
+        slug: params.data.slug.trim().toLowerCase(),
+      },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const includeDraftsRequested = query.data.includeDrafts
+    let canManage = false
+    if (includeDraftsRequested) {
+      const userId = (req as any).user?.id as string | undefined
+      if (userId) {
+        const membership = await prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: org.id, userId } },
+          select: { role: true },
+        })
+        canManage = org.ownerId === userId || membership?.role === 'MANAGER'
+      }
+    }
+
+    const now = new Date()
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        jp."id",
+        jp."title",
+        jp."slug",
+        jp."status",
+        jp."employmentType",
+        jp."salaryMin",
+        jp."salaryMax",
+        jp."salaryCurrency",
+        jp."salaryPeriod",
+        jp."description",
+        jp."photoUrl",
+        jp."duties",
+        jp."roleRequirements",
+        jp."locationType",
+        jp."locationProvinceCode",
+        jp."locationCommunitySlug",
+        jp."locationLabel",
+        jp."industryId",
+        ji."name" as "industryName",
+        ji."slug" as "industrySlug",
+        jp."subIndustryId",
+        jsi."name" as "subIndustryName",
+        jsi."slug" as "subIndustrySlug",
+        jp."applicantCount",
+        jp."createdAt",
+        jp."updatedAt",
+        jp."publishedAt",
+        jp."expiresAt",
+        b."id" as "businessId",
+        b."name" as "businessName",
+        b."slug" as "businessSlug",
+        b."provinceCode" as "businessProvinceCode",
+        b."communitySlug" as "businessCommunitySlug",
+        b."logoUrl" as "businessLogoUrl",
+        b."coverUrl" as "businessCoverUrl",
+        (
+          SELECT prm."id"
+          FROM "JobPromotion" prm
+          WHERE prm."jobPostingId" = jp."id"
+            AND prm."status" = 'active'::"JobPromotionStatus"
+            AND prm."startsAt" <= ${now}
+            AND prm."endsAt" > ${now}
+            AND prm."impressionsServed" < prm."impressionCap"
+          ORDER BY prm."createdAt" DESC
+          LIMIT 1
+        ) as "activePromotionId"
+      FROM "JobPosting" jp
+      JOIN "Business" b ON b."id" = jp."businessId"
+      JOIN "JobIndustry" ji ON ji."id" = jp."industryId"
+      LEFT JOIN "JobSubIndustry" jsi ON jsi."id" = jp."subIndustryId"
+      WHERE jp."businessId" = ${org.id}
+      ${includeDraftsRequested && canManage ? Prisma.empty : Prisma.sql`AND jp."status" = 'active'::"JobStatus" AND jp."publishedAt" IS NOT NULL AND jp."expiresAt" > ${now}`}
+      ORDER BY jp."createdAt" DESC
+      LIMIT ${query.data.limit}
+    `)) as JobListRow[]
+
+    return reply.send({ items: rows.map((row: JobListRow) => mapJobListRow(row)), canManage: includeDraftsRequested ? canManage : undefined })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/jobs/draft', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const industryRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "JobIndustry"
+      WHERE "active" = true
+      ORDER BY "sortOrder" ASC, "name" ASC
+      LIMIT 1
+    `
+    const industryId = industryRows[0]?.id
+    if (!industryId) return reply.code(400).send({ error: 'industry_required' })
+
+    const defaultProvinceCode = normalizeProvinceCode(params.data.province)
+    const defaultCommunity = defaultProvinceCode ? findCommunity(defaultProvinceCode, params.data.municipality.trim().toLowerCase()) : null
+    const defaultLocationProvinceCode = defaultProvinceCode ?? null
+    const defaultLocationCommunitySlug = defaultCommunity?.slug ?? null
+    const defaultLocationLabel = defaultCommunity?.name ?? params.data.municipality.replace(/-/g, ' ')
+
+    const now = new Date()
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+
+    const inserted = (await prisma.$queryRaw(Prisma.sql`
+      INSERT INTO "JobPosting" (
+        "id", "businessId", "createdByUserId", "title", "slug", "employmentType",
+        "salaryCurrency", "duties", "roleRequirements", "description",
+        "locationType", "locationProvinceCode", "locationCommunitySlug", "locationLabel", "industryId", "status", "publishedAt", "expiresAt", "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${randomUUID()}, ${orgResult.org.id}, ${userId}, 'Untitled job', ${`draft-${randomSlugSuffix()}`}, 'full_time'::"JobEmploymentType",
+        'CAD', '<p>Describe responsibilities.</p>', '<p>Describe requirements.</p>', null,
+        'community'::"JobWorkplaceType", ${defaultLocationProvinceCode}, ${defaultLocationCommunitySlug}, ${defaultLocationLabel}, ${industryId}, 'draft'::"JobStatus", null, ${expiresAt}, ${now}, ${now}
+      )
+      RETURNING "id"
+    `)) as Array<{ id: string }>
+
+    const jobId = inserted[0]?.id
+    if (!jobId) return reply.code(500).send({ error: 'draft_create_failed' })
+
+    try {
+      await trackJobAnalyticsEvent({
+        kind: 'job_added',
+        businessId: orgResult.org.id,
+        jobPostingId: jobId,
+        actorUserId: userId,
+        createdAt: now,
+      })
+    } catch (err) {
+      req.log.warn({ err, jobId }, 'job_analytics_track_failed')
+    }
+
+    return reply.code(201).send({ id: jobId })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/jobs/:jobId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        jp."id",
+        jp."title",
+        jp."slug",
+        jp."status",
+        jp."employmentType",
+        jp."salaryMin",
+        jp."salaryMax",
+        jp."salaryCurrency",
+        jp."salaryPeriod",
+        jp."description",
+        jp."photoUrl",
+        jp."duties",
+        jp."roleRequirements",
+        jp."locationType",
+        jp."locationProvinceCode",
+        jp."locationCommunitySlug",
+        jp."locationLabel",
+        jp."industryId",
+        ji."name" as "industryName",
+        ji."slug" as "industrySlug",
+        jp."subIndustryId",
+        jsi."name" as "subIndustryName",
+        jsi."slug" as "subIndustrySlug",
+        jp."applicantCount",
+        jp."createdAt",
+        jp."updatedAt",
+        jp."publishedAt",
+        jp."expiresAt",
+        b."id" as "businessId",
+        b."name" as "businessName",
+        b."slug" as "businessSlug",
+        b."provinceCode" as "businessProvinceCode",
+        b."communitySlug" as "businessCommunitySlug",
+        b."logoUrl" as "businessLogoUrl",
+        b."coverUrl" as "businessCoverUrl",
+        (
+          SELECT prm."id"
+          FROM "JobPromotion" prm
+          WHERE prm."jobPostingId" = jp."id"
+            AND prm."status" = 'active'::"JobPromotionStatus"
+            AND prm."startsAt" <= ${new Date()}
+            AND prm."endsAt" > ${new Date()}
+            AND prm."impressionsServed" < prm."impressionCap"
+          ORDER BY prm."createdAt" DESC
+          LIMIT 1
+        ) as "activePromotionId",
+        (
+          SELECT COALESCE(SUM(prm."impressionsServed"), 0)::int
+          FROM "JobPromotion" prm
+          WHERE prm."jobPostingId" = jp."id"
+        ) as "totalImpressionsServed",
+        (
+          SELECT COALESCE(SUM(prm."impressionsServed"), 0)::int
+          FROM "JobPromotion" prm
+          WHERE prm."jobPostingId" = jp."id"
+        ) as "totalViews",
+        (
+          SELECT prm."impressionCap"::int
+          FROM "JobPromotion" prm
+          WHERE prm."jobPostingId" = jp."id"
+            AND prm."status" = 'active'::"JobPromotionStatus"
+            AND prm."startsAt" <= ${new Date()}
+            AND prm."endsAt" > ${new Date()}
+            AND prm."impressionsServed" < prm."impressionCap"
+          ORDER BY prm."createdAt" DESC
+          LIMIT 1
+        ) as "activeImpressionCap"
+      FROM "JobPosting" jp
+      JOIN "Business" b ON b."id" = jp."businessId"
+      JOIN "JobIndustry" ji ON ji."id" = jp."industryId"
+      LEFT JOIN "JobSubIndustry" jsi ON jsi."id" = jp."subIndustryId"
+      WHERE jp."id" = ${params.data.jobId}
+        AND jp."businessId" = ${orgResult.org.id}
+      LIMIT 1
+    `)) as JobListRow[]
+
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'job_not_found' })
+    return reply.send({ job: mapJobListRow(row) })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/jobs/:jobId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = UpdateJobBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const now = new Date()
+    const expiresAt = new Date(body.data.expiresAt)
+    const maxExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt <= now) {
+      return reply.code(400).send({ error: 'invalid_expiry' })
+    }
+    if (expiresAt > maxExpiresAt) {
+      return reply.code(400).send({ error: 'expiry_exceeds_30_days' })
+    }
+
+    const industry = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "JobIndustry" WHERE "id" = ${body.data.industryId} AND "active" = true LIMIT 1
+    `
+    if (!industry.length) return reply.code(400).send({ error: 'invalid_industry' })
+
+    if (body.data.subIndustryId) {
+      const sub = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "JobSubIndustry"
+        WHERE "id" = ${body.data.subIndustryId} AND "industryId" = ${body.data.industryId} AND "active" = true
+        LIMIT 1
+      `
+      if (!sub.length) return reply.code(400).send({ error: 'invalid_sub_industry' })
+    }
+
+    const location = parseStructuredJobLocation(body.data.location)
+    const updated = await prisma.$executeRaw`
+      UPDATE "JobPosting"
+      SET
+        "title" = ${body.data.title.trim()},
+        "employmentType" = ${body.data.employmentType}::"JobEmploymentType",
+        "salaryMin" = ${body.data.salaryMin ?? null},
+        "salaryMax" = ${body.data.salaryMax ?? null},
+        "salaryCurrency" = ${body.data.salaryCurrency.toUpperCase()},
+        "salaryPeriod" = ${body.data.salaryPeriod ?? null},
+        "duties" = ${body.data.duties.trim()},
+        "roleRequirements" = ${body.data.roleRequirements.trim()},
+        "description" = ${body.data.description?.trim() ?? null},
+        "photoUrl" = ${body.data.photoUrl?.trim() ?? null},
+        "locationType" = ${location.locationType}::"JobWorkplaceType",
+        "locationProvinceCode" = ${location.locationProvinceCode},
+        "locationCommunitySlug" = ${location.locationCommunitySlug},
+        "locationLabel" = ${location.locationLabel},
+        "industryId" = ${body.data.industryId},
+        "subIndustryId" = ${body.data.subIndustryId ?? null},
+        "expiresAt" = ${expiresAt},
+        "updatedAt" = ${now}
+      WHERE "id" = ${params.data.jobId}
+        AND "businessId" = ${orgResult.org.id}
+    `
+
+    if (!updated) return reply.code(404).send({ error: 'job_not_found' })
+    return reply.send({ ok: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/publish', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const now = new Date()
+    const updated = await prisma.$executeRaw`
+      UPDATE "JobPosting"
+      SET "status" = 'active'::"JobStatus", "publishedAt" = COALESCE("publishedAt", ${now}), "updatedAt" = ${now}
+      WHERE "id" = ${params.data.jobId}
+        AND "businessId" = ${orgResult.org.id}
+    `
+    if (!updated) return reply.code(404).send({ error: 'job_not_found' })
+    return reply.send({ ok: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/unpublish', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const now = new Date()
+    const updated = await prisma.$executeRaw`
+      UPDATE "JobPosting"
+      SET "status" = 'draft'::"JobStatus", "publishedAt" = null, "updatedAt" = ${now}
+      WHERE "id" = ${params.data.jobId}
+        AND "businessId" = ${orgResult.org.id}
+    `
+    if (!updated) return reply.code(404).send({ error: 'job_not_found' })
+    return reply.send({ ok: true })
+  }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug/jobs/:jobId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const deleted = await prisma.$executeRaw`
+      DELETE FROM "JobPosting"
+      WHERE "id" = ${params.data.jobId}
+        AND "businessId" = ${orgResult.org.id}
+    `
+    if (!deleted) return reply.code(404).send({ error: 'job_not_found' })
+    return reply.send({ ok: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/jobs', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CreateJobBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      if (orgResult.error === 'province_not_found' || orgResult.error === 'community_not_found' || orgResult.error === 'organization_not_found') {
+        return reply.code(404).send({ error: orgResult.error })
+      }
+      return reply.code(400).send({ error: orgResult.error })
+    }
+
+    const now = new Date()
+    const expiresAt = new Date(body.data.expiresAt)
+    const maxExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt <= now) {
+      return reply.code(400).send({ error: 'invalid_expiry' })
+    }
+    if (expiresAt > maxExpiresAt) {
+      return reply.code(400).send({ error: 'expiry_exceeds_30_days' })
+    }
+
+    const industry = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "JobIndustry" WHERE "id" = ${body.data.industryId} AND "active" = true LIMIT 1
+    `
+    if (!industry.length) return reply.code(400).send({ error: 'invalid_industry' })
+
+    if (body.data.subIndustryId) {
+      const sub = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "JobSubIndustry"
+        WHERE "id" = ${body.data.subIndustryId} AND "industryId" = ${body.data.industryId} AND "active" = true
+        LIMIT 1
+      `
+      if (!sub.length) return reply.code(400).send({ error: 'invalid_sub_industry' })
+    }
+
+    const location = parseStructuredJobLocation(body.data.location)
+    const baseSlug = trimSlugLength(slugifyText(body.data.title), 80) || 'job'
+
+    const existingSlugRows = await prisma.$queryRaw<Array<{ slug: string }>>`
+      SELECT "slug" FROM "JobPosting"
+      WHERE "businessId" = ${orgResult.org.id} AND "slug" ILIKE ${`${baseSlug}%`}
+      LIMIT 100
+    `
+    const existing = new Set(existingSlugRows.map((row: { slug: string }) => row.slug))
+    let slug = baseSlug
+    let suffix = 2
+    while (existing.has(slug)) {
+      slug = trimSlugLength(`${baseSlug}-${suffix}`, 80)
+      suffix += 1
+    }
+
+    const inserted = (await prisma.$queryRaw(Prisma.sql`
+      INSERT INTO "JobPosting" (
+        "id", "businessId", "createdByUserId", "title", "slug", "employmentType",
+        "salaryMin", "salaryMax", "salaryCurrency", "salaryPeriod", "duties", "roleRequirements", "description",
+        "locationType", "locationProvinceCode", "locationCommunitySlug", "locationLabel",
+        "industryId", "subIndustryId", "status", "publishedAt", "expiresAt", "createdAt", "updatedAt"
+      )
+      VALUES (
+        ${randomUUID()}, ${orgResult.org.id}, ${userId}, ${body.data.title.trim()}, ${slug}, ${body.data.employmentType}::"JobEmploymentType",
+        ${body.data.salaryMin ?? null}, ${body.data.salaryMax ?? null}, ${body.data.salaryCurrency.toUpperCase()}, ${body.data.salaryPeriod ?? null},
+        ${body.data.duties.trim()}, ${body.data.roleRequirements.trim()}, ${body.data.description?.trim() ?? null},
+        ${location.locationType}::"JobWorkplaceType", ${location.locationProvinceCode}, ${location.locationCommunitySlug}, ${location.locationLabel},
+        ${body.data.industryId}, ${body.data.subIndustryId ?? null},
+        ${body.data.publish ? Prisma.sql`'active'::"JobStatus"` : Prisma.sql`'draft'::"JobStatus"`},
+        ${body.data.publish ? now : null}, ${expiresAt}, ${now}, ${now}
+      )
+      RETURNING "id"
+    `)) as Array<{ id: string }>
+
+    const createdJobId = inserted[0]?.id
+    if (createdJobId) {
+      try {
+        await trackJobAnalyticsEvent({
+          kind: 'job_added',
+          businessId: orgResult.org.id,
+          jobPostingId: createdJobId,
+          actorUserId: userId,
+          createdAt: now,
+        })
+      } catch (err) {
+        req.log.warn({ err, jobId: createdJobId }, 'job_analytics_track_failed')
+      }
+    }
+
+    return reply.code(201).send({ id: inserted[0]?.id, slug })
+  }),
+)
+
+app.post('/work/jobs/:jobId/apply', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = JobIdParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = ApplyJobBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const now = new Date()
+    const motivationHtml = sanitizeHtml(body.data.motivationHtml, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat(['h1', 'h2', 'h3', 'img']),
+      allowedAttributes: {
+        ...sanitizeHtml.defaults.allowedAttributes,
+        a: ['href', 'name', 'target', 'rel'],
+        img: ['src', 'alt'],
+      },
+    }).trim()
+
+    if (!motivationHtml) return reply.code(400).send({ error: 'motivation_required' })
+
+    const jobRows = await prisma.$queryRaw<Array<{ id: string; businessId: string; title: string; status: string; expiresAt: Date }>>`
+      SELECT "id", "businessId", "title", "status", "expiresAt"
+      FROM "JobPosting"
+      WHERE "id" = ${params.data.jobId}
+        AND "status" = 'active'::"JobStatus"
+      LIMIT 1
+    `
+    const job = jobRows[0]
+    if (!job) return reply.code(404).send({ error: 'job_not_found' })
+    if (job.status !== 'active' || new Date(job.expiresAt).getTime() <= now.getTime()) {
+      return reply.code(400).send({ error: 'job_not_open' })
+    }
+
+    const existing = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "JobApplication"
+      WHERE "jobPostingId" = ${job.id} AND "applicantUserId" = ${userId}
+      LIMIT 1
+    `
+    if (existing.length) return reply.code(409).send({ error: 'already_applied' })
+
+    const thread = await prisma.messageThread.create({
+      data: {
+        type: MessageThreadType.job,
+        uniqueKey: `job:${job.id}:applicant:${userId}`,
+        contextType: 'job_application',
+        contextId: job.id,
+        lastMessageAt: now,
+        participants: {
+          create: [
+            {
+              userId,
+              role: MessageParticipantRole.member,
+              lastReadAt: now,
+              lastActivityAt: now,
+            },
+          ],
+        },
+      },
+      select: { id: true },
+    })
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const insertedApplication = await tx.$queryRaw<Array<{ id: string }>>`
+        INSERT INTO "JobApplication" (
+          "id", "jobPostingId", "applicantUserId", "motivationHtml", "status", "threadId", "createdAt", "updatedAt"
+        ) VALUES (
+          ${randomUUID()}, ${job.id}, ${userId}, ${motivationHtml}, 'submitted'::"JobApplicationStatus", ${thread.id}, ${now}, ${now}
+        )
+        RETURNING "id"
+      `
+      const applicationId = insertedApplication[0]?.id
+
+      await tx.$executeRaw`
+        UPDATE "JobPosting"
+        SET "applicantCount" = "applicantCount" + 1, "updatedAt" = ${now}
+        WHERE "id" = ${job.id}
+      `
+
+      if (applicationId) {
+        await tx.$executeRaw`
+          INSERT INTO "JobAnalyticsEvent" (
+            "id", "kind", "businessId", "jobPostingId", "jobApplicationId", "actorUserId", "createdAt"
+          )
+          VALUES (
+            ${randomUUID()},
+            'applicant_submitted'::"JobAnalyticsEventKind",
+            ${job.businessId},
+            ${job.id},
+            ${applicationId},
+            ${userId},
+            ${now}
+          )
+        `
+      }
+
+      const managerRows = await tx.businessMembership.findMany({
+        where: { businessId: job.businessId, role: { in: [BusinessRole.OWNER, BusinessRole.MANAGER] } },
+        select: { userId: true },
+      })
+      const managerIds = Array.from(new Set(managerRows.map((row) => row.userId).filter((id) => id && id !== userId)))
+
+      if (managerIds.length > 0) {
+        await tx.messageParticipant.createMany({
+          data: managerIds.map((managerId) => ({
+            threadId: thread.id,
+            userId: managerId,
+            role: MessageParticipantRole.admin,
+            lastReadAt: null,
+            lastActivityAt: now,
+          })),
+          skipDuplicates: true,
+        })
+
+        await tx.notification.createMany({
+          data: managerIds.map((managerId) => ({
+            userId: managerId,
+            type: 'job_application_created',
+            actorId: userId,
+            payload: {
+              jobId: job.id,
+              jobTitle: job.title,
+              threadId: thread.id,
+            },
+          })),
+        })
+      }
+    })
+
+    return reply.code(201).send({ ok: true, threadId: thread.id })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/applications', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        ja."id",
+        ja."motivationHtml",
+        ja."status",
+        ja."threadId",
+        ja."createdAt",
+        u."id" as "applicantId",
+        u."handle" as "applicantHandle",
+        u."name" as "applicantName",
+        u."avatarUrl" as "applicantAvatarUrl"
+      FROM "JobApplication" ja
+      JOIN "JobPosting" jp ON jp."id" = ja."jobPostingId"
+      JOIN "User" u ON u."id" = ja."applicantUserId"
+      WHERE jp."id" = ${params.data.jobId}
+        AND jp."businessId" = ${orgResult.org.id}
+      ORDER BY ja."createdAt" DESC
+    `)) as Array<{
+      id: string
+      motivationHtml: string
+      status: string
+      threadId: string | null
+      createdAt: Date
+      applicantId: string
+      applicantHandle: string
+      applicantName: string | null
+      applicantAvatarUrl: string | null
+    }>
+
+    try {
+      await trackJobAnalyticsEvent({
+        kind: 'applications_viewed',
+        businessId: orgResult.org.id,
+        jobPostingId: params.data.jobId,
+        actorUserId: userId,
+      })
+    } catch (err) {
+      req.log.warn({ err, jobId: params.data.jobId }, 'job_analytics_track_failed')
+    }
+
+    return reply.send({
+      items: rows.map((row: {
+        id: string
+        motivationHtml: string
+        status: string
+        threadId: string | null
+        createdAt: Date
+        applicantId: string
+        applicantHandle: string
+        applicantName: string | null
+        applicantAvatarUrl: string | null
+      }) => ({
+        id: row.id,
+        motivationHtml: row.motivationHtml,
+        status: row.status,
+        threadId: row.threadId,
+        createdAt: row.createdAt.toISOString(),
+        applicant: {
+          id: row.applicantId,
+          handle: row.applicantHandle,
+          name: row.applicantName,
+          avatarUrl: normalizeMediaUrl(row.applicantAvatarUrl),
+        },
+      })),
+    })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/applications/:applicationId/status', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobApplicationParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = UpdateJobApplicationStatusBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const applicationRows = await prisma.$queryRaw<Array<{ id: string; currentStatus: string; jobPostingId: string }>>`
+      SELECT ja."id", ja."status"::text as "currentStatus", ja."jobPostingId"
+      FROM "JobApplication" ja
+      JOIN "JobPosting" jp ON jp."id" = ja."jobPostingId"
+      WHERE ja."id" = ${params.data.applicationId}
+        AND ja."jobPostingId" = ${params.data.jobId}
+        AND jp."businessId" = ${orgResult.org.id}
+      LIMIT 1
+    `
+    const application = applicationRows[0]
+    if (!application) return reply.code(404).send({ error: 'application_not_found' })
+
+    const now = new Date()
+    await prisma.$executeRaw`
+      UPDATE "JobApplication"
+      SET "status" = ${body.data.status}::"JobApplicationStatus", "updatedAt" = ${now}
+      WHERE "id" = ${application.id}
+    `
+
+    if (body.data.status === 'hired' && application.currentStatus !== 'hired') {
+      try {
+        await trackJobAnalyticsEvent({
+          kind: 'applicant_hired',
+          businessId: orgResult.org.id,
+          jobPostingId: application.jobPostingId,
+          jobApplicationId: application.id,
+          actorUserId: userId,
+          createdAt: now,
+        })
+      } catch (err) {
+        req.log.warn({ err, applicationId: application.id }, 'job_analytics_track_failed')
+      }
+    }
+
+    return reply.send({ ok: true, status: body.data.status })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/promote', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgJobParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const orgResult = await resolveOrgManagerOrOwner({
+      province: params.data.province,
+      municipality: params.data.municipality,
+      slug: params.data.slug,
+      userId,
+    })
+    if ('error' in orgResult) {
+      if (orgResult.error === 'forbidden') return reply.code(403).send({ error: orgResult.error })
+      return reply.code(404).send({ error: orgResult.error })
+    }
+
+    const now = new Date()
+    const active = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT prm."id"
+      FROM "JobPromotion" prm
+      JOIN "JobPosting" jp ON jp."id" = prm."jobPostingId"
+      WHERE prm."status" = 'active'::"JobPromotionStatus"
+        AND prm."jobPostingId" = ${params.data.jobId}
+        AND jp."businessId" = ${orgResult.org.id}
+        AND prm."startsAt" <= ${now}
+        AND prm."endsAt" > ${now}
+        AND prm."impressionsServed" < prm."impressionCap"
+      LIMIT 1
+    `
+    if (active.length) return reply.send({ ok: true, promotionId: active[0].id, alreadyActive: true })
+
+    const endsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    const inserted = (await prisma.$queryRaw(Prisma.sql`
+      INSERT INTO "JobPromotion" (
+        "id", "jobPostingId", "createdByUserId", "status", "label", "startsAt", "endsAt", "impressionCap", "impressionsServed", "createdAt", "updatedAt"
+      )
+      SELECT ${randomUUID()}, jp."id", ${userId}, 'active'::"JobPromotionStatus", '$0 Limited time bonus', ${now}, ${endsAt}, 1000, 0, ${now}, ${now}
+      FROM "JobPosting" jp
+      WHERE jp."id" = ${params.data.jobId}
+        AND jp."businessId" = ${orgResult.org.id}
+        AND jp."status" = 'active'::"JobStatus"
+        AND jp."expiresAt" > ${now}
+      RETURNING "id"
+    `)) as Array<{ id: string }>
+
+    const promotionId = inserted[0]?.id
+    if (!promotionId) return reply.code(400).send({ error: 'job_not_promotable' })
+    return reply.code(201).send({ ok: true, promotionId, endsAt: endsAt.toISOString(), impressionCap: 1000 })
+  }),
+)
+
+app.post('/work/jobs/:jobId/impression', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = JobIdParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const now = new Date()
+    const updated = await prisma.$executeRaw`
+      UPDATE "JobPromotion"
+      SET "impressionsServed" = "impressionsServed" + 1,
+          "status" = CASE
+            WHEN ("impressionsServed" + 1) >= "impressionCap" OR "endsAt" <= ${now}
+              THEN 'ended'::"JobPromotionStatus"
+            ELSE "status"
+          END,
+          "updatedAt" = ${now}
+      WHERE "jobPostingId" = ${params.data.jobId}
+        AND "status" = 'active'::"JobPromotionStatus"
+        AND "startsAt" <= ${now}
+        AND "endsAt" > ${now}
+        AND "impressionsServed" < "impressionCap"
+    `
+
+    return reply.send({ tracked: updated > 0 })
+  }),
+)
+
+app.get('/work/industries', async (_req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(_req, reply, async () => {
+    const rows = await prisma.$queryRaw<
+      Array<{
+        industryId: string
+        industryName: string
+        industrySlug: string
+        industrySortOrder: number
+        subIndustryId: string | null
+        subIndustryName: string | null
+        subIndustrySlug: string | null
+        subIndustrySortOrder: number | null
+      }>
+    >`
+      SELECT
+        ji."id" as "industryId",
+        ji."name" as "industryName",
+        ji."slug" as "industrySlug",
+        ji."sortOrder" as "industrySortOrder",
+        jsi."id" as "subIndustryId",
+        jsi."name" as "subIndustryName",
+        jsi."slug" as "subIndustrySlug",
+        jsi."sortOrder" as "subIndustrySortOrder"
+      FROM "JobIndustry" ji
+      LEFT JOIN "JobSubIndustry" jsi ON jsi."industryId" = ji."id" AND jsi."active" = true
+      WHERE ji."active" = true
+      ORDER BY ji."sortOrder" ASC, ji."name" ASC, jsi."sortOrder" ASC NULLS LAST, jsi."name" ASC NULLS LAST
+    `
+
+    const byIndustry = new Map<string, { id: string; name: string; slug: string; subIndustries: Array<{ id: string; name: string; slug: string }> }>()
+    for (const row of rows) {
+      if (!byIndustry.has(row.industryId)) {
+        byIndustry.set(row.industryId, {
+          id: row.industryId,
+          name: row.industryName,
+          slug: row.industrySlug,
+          subIndustries: [],
+        })
+      }
+      if (row.subIndustryId && row.subIndustryName && row.subIndustrySlug) {
+        byIndustry.get(row.industryId)!.subIndustries.push({
+          id: row.subIndustryId,
+          name: row.subIndustryName,
+          slug: row.subIndustrySlug,
+        })
+      }
+    }
+
+    return reply.send({ items: Array.from(byIndustry.values()) })
   }),
 )
 

@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
+import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 import { DEFAULT_EVENT_CATEGORY, EVENT_CATEGORIES, type EventCategory } from '../com/_lib/eventCategories'
 
@@ -45,7 +46,7 @@ type EventFeedResponse = {
   items?: EventFeedItem[]
 }
 
-function formatStartsLabel(isoString: string) {
+function formatEventDateBadge(isoString: string) {
   const value = new Date(isoString)
   const now = new Date()
 
@@ -57,24 +58,33 @@ function formatStartsLabel(isoString: string) {
   const startOfDate = new Date(value)
   startOfDate.setHours(0, 0, 0, 0)
 
-  const time = value.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  if (startOfDate.getTime() === startOfToday.getTime()) return `Today at ${time}`
-  if (startOfDate.getTime() === startOfTomorrow.getTime()) return `Tomorrow at ${time}`
-  return value.toLocaleString(undefined, {
-    weekday: 'short',
-    month: 'short',
+  if (startOfDate.getTime() === startOfToday.getTime()) return 'Today'
+  if (startOfDate.getTime() === startOfTomorrow.getTime()) return 'Tomorrow'
+
+  return value.toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
     day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
   })
 }
 
-function toTitleCase(value: string | null | undefined) {
-  if (!value) return ''
-  return value
-    .split('-')
-    .map((part) => (part ? `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}` : part))
-    .join(' ')
+function formatEventTimeBadge(isoString: string) {
+  const value = new Date(isoString)
+  return value.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+function truncateDescription(value: string | null | undefined, maxChars = 140) {
+  const text = (value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .trim()
+    .replace(/\s+/g, ' ')
+  if (!text) return null
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars).trimEnd()}…`
 }
 
 function pad2(value: number) {
@@ -162,7 +172,13 @@ function buildPresetRange(preset: 'today' | 'this_week' | 'this_month' | 'next_3
   return { start: toDateInputValue(start), end: toDateInputValue(endOfDay(end)) }
 }
 
+function getEventOrganizationHref(event: EventFeedItem): string | null {
+  if (!event.organization.provinceCode || !event.organization.communitySlug) return null
+  return `/com/${encodeURIComponent(event.organization.provinceCode.toLowerCase())}/${encodeURIComponent(event.organization.communitySlug)}/orgs/${encodeURIComponent(event.organization.slug)}/events`
+}
+
 export default function EventsPageClient() {
+  const router = useRouter()
   const [items, setItems] = useState<EventFeedItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -265,8 +281,8 @@ export default function EventsPageClient() {
   }, [selectedCategories])
 
   return (
-    <DashboardShell rightRail={<RightRail mode="events" showOrganizations />}>
-      <div className="space-y-5 pb-12">
+    <DashboardShell rightRail={<RightRail mode="events" showOrganizations />} showMobileRightRail mainClassName="space-y-5 pb-12">
+      <div className="space-y-5">
         <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{mineFilter === 'going' ? 'Your RSVPs' : 'Events'}</h1>
 
         <section className="surface-card space-y-3 p-4 shadow-subtle">
@@ -377,29 +393,63 @@ export default function EventsPageClient() {
           <ul className="space-y-6">
             {filteredItems.map((event) => {
               const detailHref = `/events/${encodeURIComponent(event.organization.id)}/${encodeURIComponent(event.id)}`
+              const organizationHref = getEventOrganizationHref(event)
 
-              const startsLabel = formatStartsLabel(event.startsAt)
-              const locationLine = `${toTitleCase(event.organization.communitySlug)} · ${event.organization.name}`
+              const startsDateBadge = formatEventDateBadge(event.startsAt)
+              const startsTimeBadge = formatEventTimeBadge(event.startsAt)
+              const descriptionPreview = truncateDescription(event.description)
               const isEnded = new Date(event.startsAt).getTime() < Date.now()
 
               return (
                 <li key={`${event.organization.id}:${event.id}`}>
-                  <Link href={detailHref} className="group block rounded-2xl bg-white p-3 transition hover:bg-slate-50/70">
-                    <article className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                      <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32 sm:w-60 sm:flex-none">
-                        {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
-                        {isEnded ? (
-                          <span className="absolute left-2 top-2 rounded-full bg-slate-700/90 px-2 py-1 text-xs font-semibold text-white">Sales Ended</span>
+                  <article
+                    className="group cursor-pointer rounded-2xl bg-white p-3 transition hover:bg-slate-50/70"
+                    role="link"
+                    tabIndex={0}
+                    onClick={() => router.push(detailHref)}
+                    onKeyDown={(eventKey) => {
+                      if (eventKey.key === 'Enter' || eventKey.key === ' ') {
+                        eventKey.preventDefault()
+                        router.push(detailHref)
+                      }
+                    }}
+                  >
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                      <div className="w-full sm:w-60 sm:flex-none">
+                        <Link href={detailHref} className="block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                          <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32">
+                            {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
+                            {isEnded ? (
+                              <span className="absolute left-2 top-2 rounded-full bg-slate-700/90 px-2 py-1 text-xs font-semibold text-white">Sales Ended</span>
+                            ) : null}
+                          </div>
+                        </Link>
+
+                        {organizationHref ? (
+                          <Link href={organizationHref} className="mt-3 block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                            <div className="relative overflow-hidden rounded-xl border border-slate-200 px-3 py-2">
+                              <div className="absolute inset-0 bg-slate-50" />
+                              <div className="relative z-[1] flex items-center gap-2">
+                                <VerifiedAvatar src={event.organization.logoUrl} alt={event.organization.name} initials={event.organization.name} size={24} />
+                                <p className="truncate text-sm font-semibold text-slate-700">{event.organization.name}</p>
+                              </div>
+                            </div>
+                          </Link>
                         ) : null}
                       </div>
 
                       <div className="min-w-0 space-y-1.5">
-                        <h2 className="text-3xl/none text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h2>
-                        <p className="text-xl/none text-base text-slate-700">{startsLabel}</p>
-                        <p className="text-xl/none text-base text-slate-600">{locationLine}</p>
+                        <Link href={detailHref} className="text-3xl/none text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)] hover:underline">
+                          {event.title}
+                        </Link>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">{startsDateBadge}</span>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">{startsTimeBadge}</span>
+                        </div>
+                        {descriptionPreview ? <p className="text-sm text-slate-600">{descriptionPreview}</p> : null}
                       </div>
-                    </article>
-                  </Link>
+                    </div>
+                  </article>
                 </li>
               )
             })}
@@ -489,20 +539,56 @@ export default function EventsPageClient() {
                 <ul className="space-y-3">
                   {selectedDayEvents.map((event) => {
                     const detailHref = `/events/${encodeURIComponent(event.organization.id)}/${encodeURIComponent(event.id)}`
+                    const organizationHref = getEventOrganizationHref(event)
+                    const startsDateBadge = formatEventDateBadge(event.startsAt)
+                    const startsTimeBadge = formatEventTimeBadge(event.startsAt)
+                    const descriptionPreview = truncateDescription(event.description)
                     return (
                       <li key={`${event.organization.id}:${event.id}`}>
-                        <Link href={detailHref} className="group block rounded-2xl bg-white p-3 transition hover:bg-slate-50/70">
-                          <article className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                            <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32 sm:w-60 sm:flex-none">
-                              {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
+                        <article
+                          className="group cursor-pointer rounded-2xl bg-white p-3 transition hover:bg-slate-50/70"
+                          role="link"
+                          tabIndex={0}
+                          onClick={() => router.push(detailHref)}
+                          onKeyDown={(eventKey) => {
+                            if (eventKey.key === 'Enter' || eventKey.key === ' ') {
+                              eventKey.preventDefault()
+                              router.push(detailHref)
+                            }
+                          }}
+                        >
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                            <div className="w-full sm:w-60 sm:flex-none">
+                              <Link href={detailHref} className="block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                                <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32">
+                                  {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
+                                </div>
+                              </Link>
+
+                              {organizationHref ? (
+                                <Link href={organizationHref} className="mt-3 block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                                  <div className="relative overflow-hidden rounded-xl border border-slate-200 px-3 py-2">
+                                    <div className="absolute inset-0 bg-slate-50" />
+                                    <div className="relative z-[1] flex items-center gap-2">
+                                      <VerifiedAvatar src={event.organization.logoUrl} alt={event.organization.name} initials={event.organization.name} size={24} />
+                                      <p className="truncate text-sm font-semibold text-slate-700">{event.organization.name}</p>
+                                    </div>
+                                  </div>
+                                </Link>
+                              ) : null}
                             </div>
                             <div className="min-w-0 space-y-1.5">
-                              <h3 className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h3>
-                              <p className="text-base text-slate-700">{formatStartsLabel(event.startsAt)}</p>
-                              <p className="text-base text-slate-600">{toTitleCase(event.organization.communitySlug)} · {event.organization.name}</p>
+                              <Link href={detailHref} className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)] hover:underline">
+                                {event.title}
+                              </Link>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">{startsDateBadge}</span>
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">{startsTimeBadge}</span>
+                              </div>
+                              {descriptionPreview ? <p className="text-sm text-slate-600">{descriptionPreview}</p> : null}
                             </div>
-                          </article>
-                        </Link>
+                          </div>
+                        </article>
                       </li>
                     )
                   })}

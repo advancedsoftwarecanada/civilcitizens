@@ -1,12 +1,17 @@
 import CommunitySection from '../../../_components/CommunitySection'
+import CommunityJobsPageClient from './CommunityJobsPageClient'
 
-export default function CommunityJobsPage() {
+type PageProps = {
+  params: {
+    province: string
+    municipality: string
+  }
+}
+
+export default function CommunityJobsPage({ params }: PageProps) {
   return (
     <CommunitySection title="Jobs" description="Permanent and contract roles from employers inside this municipality.">
-      <p>
-        Job posts will require a verified organization and a Canada-only address. The routing scaffold is ready so we can
-        plug in the Prisma models and fetcher hooks once the hiring API is finalized.
-      </p>
+      <CommunityJobsPageClient province={params.province} municipality={params.municipality} />
     </CommunitySection>
   )
 }
