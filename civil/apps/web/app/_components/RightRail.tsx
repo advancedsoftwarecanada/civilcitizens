@@ -164,6 +164,31 @@ type EventsSidebarResponse = {
   manageableOrganizations?: EventSidebarOrganization[]
 }
 
+type WorkApplicationRailItem = {
+  id: string
+  status: string
+  createdAt: string
+  job: {
+    id: string
+    title: string
+    photoUrl: string | null
+    status: string
+    expiresAt: string
+    organization: {
+      name: string
+      slug: string
+      provinceCode: string | null
+      communitySlug: string | null
+      logoUrl: string | null
+      coverUrl: string | null
+    }
+  }
+}
+
+type WorkApplicationsRailResponse = {
+  items?: WorkApplicationRailItem[]
+}
+
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 
 export function RightRail({
@@ -178,7 +203,7 @@ export function RightRail({
   showPendingFriendRequests = false,
   showPendingConnectionRequests = false,
 }: {
-  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed'
+  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed' | 'work'
   showOrganizations?: boolean
   showRsvps?: boolean
   organizationLinkTarget?: 'org' | 'chat'
@@ -200,6 +225,7 @@ export function RightRail({
   const [pendingConnectionAction, setPendingConnectionAction] = useState<{ id: string; action: 'accept' | 'reject' } | null>(null)
   const [eventRsvps, setEventRsvps] = useState<EventSidebarRsvpItem[]>([])
   const [eventOrganizations, setEventOrganizations] = useState<EventSidebarOrganization[]>([])
+  const [workApplications, setWorkApplications] = useState<WorkApplicationRailItem[]>([])
 
   const getOrganizationHref = useCallback(
     (org: { provinceCode: string | null; communitySlug: string | null; slug: string }) => {
@@ -209,7 +235,7 @@ export function RightRail({
     [organizationLinkTarget],
   )
 
-  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community'
+  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community' || mode === 'work'
   const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'community' || mode === 'communitiesFeed' || showOrganizations
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
@@ -217,6 +243,7 @@ export function RightRail({
   const shouldLoadPendingFriendRequests = showPendingFriendRequests
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
   const shouldLoadEventsSidebar = mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps
+  const shouldLoadWorkApplications = mode === 'work'
   const shouldLoadHomeRail = !hideSocialBlocks
 
   const subscribedOrganizations = useMemo(
@@ -285,7 +312,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications'
         promise: Promise<Response>
       }> = []
 
@@ -361,6 +388,15 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadWorkApplications) {
+        requests.push({
+          key: 'workApplications',
+          promise: fetch(buildApiUrl('/work/applications?limit=5'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        })
+      }
+
       const results = await Promise.all(requests.map((entry) => entry.promise))
       const byKey = new Map(requests.map((entry, index) => [entry.key, results[index] as Response]))
 
@@ -372,6 +408,7 @@ export function RightRail({
       const friendRequestsRes = byKey.get('friendRequests')
       const connectionRequestsRes = byKey.get('connectionRequests')
       const eventsSidebarRes = byKey.get('eventsSidebar')
+      const workApplicationsRes = byKey.get('workApplications')
 
       if (
         homeRes?.status === 401 ||
@@ -381,7 +418,8 @@ export function RightRail({
         connectionsRes?.status === 401 ||
         friendRequestsRes?.status === 401 ||
         connectionRequestsRes?.status === 401 ||
-        eventsSidebarRes?.status === 401
+        eventsSidebarRes?.status === 401 ||
+        workApplicationsRes?.status === 401
       ) {
         setStatus('unauthorized')
         return
@@ -395,8 +433,9 @@ export function RightRail({
       const requiredFriendRequestsOk = shouldLoadPendingFriendRequests ? Boolean(friendRequestsRes?.ok) : true
       const requiredConnectionRequestsOk = shouldLoadPendingConnectionRequests ? Boolean(connectionRequestsRes?.ok) : true
       const requiredEventsSidebarOk = shouldLoadEventsSidebar ? Boolean(eventsSidebarRes?.ok) : true
+      const requiredWorkApplicationsOk = shouldLoadWorkApplications ? Boolean(workApplicationsRes?.ok) : true
 
-      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredMembershipsOk || !requiredConnectionsOk || !requiredFriendRequestsOk || !requiredConnectionRequestsOk || !requiredEventsSidebarOk) {
+      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredMembershipsOk || !requiredConnectionsOk || !requiredFriendRequestsOk || !requiredConnectionRequestsOk || !requiredEventsSidebarOk || !requiredWorkApplicationsOk) {
         setStatus('error')
         if (!shouldLoadHomeRail) setData(null)
         if (!shouldLoadOrganizations) setOrganizations([])
@@ -409,6 +448,7 @@ export function RightRail({
           setEventRsvps([])
           setEventOrganizations([])
         }
+        if (!shouldLoadWorkApplications) setWorkApplications([])
         return
       }
 
@@ -476,12 +516,19 @@ export function RightRail({
         setEventOrganizations([])
       }
 
+      if (workApplicationsRes?.ok) {
+        const payload = (await workApplicationsRes.json().catch(() => null)) as WorkApplicationsRailResponse | null
+        setWorkApplications(Array.isArray(payload?.items) ? payload.items : [])
+      } else {
+        setWorkApplications([])
+      }
+
       setStatus('ready')
     } catch (err) {
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications])
 
   useEffect(() => {
     void loadData()
@@ -961,6 +1008,38 @@ export function RightRail({
             </Block>
           ) : null}
         </>
+      ) : null}
+
+      {mode === 'work' ? (
+        <Block title="Your Applications" action={{ label: 'View all', href: '/work/applications' }}>
+          {workApplications.length ? (
+            <ul className="space-y-3">
+              {workApplications.map((entry) => {
+                const org = entry.job.organization
+                const href =
+                  org.provinceCode && org.communitySlug
+                    ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}/jobs/${entry.job.id}`
+                    : '/work/applications'
+
+                return (
+                  <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                    {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                    <Link href={href} className="group relative flex items-center gap-2.5 px-3 py-2">
+                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-white">{entry.job.title}</p>
+                        <p className="truncate text-xs text-white/85">{org.name}</p>
+                      </div>
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No applications submitted yet.</p>
+          )}
+        </Block>
       ) : null}
 
       {/* Friends Section */}

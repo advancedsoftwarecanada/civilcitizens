@@ -67,6 +67,10 @@ model User {
   connectionsReceived       Connection[]         @relation("connectionsReceived")
   messageParticipants       MessageParticipant[]
   messagesSent              Message[]
+  jobPostingsCreated        JobPosting[]          @relation("JobPostingCreator")
+  jobApplications           JobApplication[]
+  jobPromotionsCreated      JobPromotion[]        @relation("JobPromotionCreator")
+  jobAnalyticsEvents        JobAnalyticsEvent[]   @relation("JobAnalyticsActor")
   communityMeta             Json?
   lastViewedHomeAt          DateTime?
   lastViewedFriendsAt       DateTime?
@@ -544,11 +548,143 @@ model Business {
   memberships          BusinessMembership[]
   follows              BusinessFollow[]
   posts                Post[]
+  jobPostings          JobPosting[]
+  jobAnalyticsEvents   JobAnalyticsEvent[]
 
   @@unique([provinceCode, communitySlug, slug])
   @@index([ownerId])
   @@index([provinceCode, communitySlug])
   @@index([slug])
+}
+
+model JobIndustry {
+  id            String           @id @default(cuid())
+  name          String
+  slug          String           @unique
+  description   String?
+  active        Boolean          @default(true)
+  sortOrder     Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  subIndustries JobSubIndustry[]
+  jobPostings   JobPosting[]
+
+  @@index([active, sortOrder])
+}
+
+model JobSubIndustry {
+  id            String       @id @default(cuid())
+  industryId    String
+  name          String
+  slug          String
+  description   String?
+  active        Boolean      @default(true)
+  sortOrder     Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  industry      JobIndustry  @relation(fields: [industryId], references: [id], onDelete: Cascade)
+  jobPostings   JobPosting[]
+
+  @@unique([industryId, slug])
+  @@index([industryId, active, sortOrder])
+}
+
+model JobPosting {
+  id                    String            @id @default(cuid())
+  businessId            String
+  createdByUserId       String
+  title                 String
+  slug                  String
+  employmentType        JobEmploymentType @default(full_time)
+  salaryMin             Int?
+  salaryMax             Int?
+  salaryCurrency        String?           @default("CAD")
+  salaryPeriod          String?
+  duties                String
+  roleRequirements      String
+  description           String?
+  photoUrl              String?
+  locationType          JobWorkplaceType
+  locationProvinceCode  String?
+  locationCommunitySlug String?
+  locationLabel         String?
+  industryId            String
+  subIndustryId         String?
+  status                JobStatus         @default(draft)
+  publishedAt           DateTime?
+  expiresAt             DateTime
+  closedAt              DateTime?
+  applicantCount        Int               @default(0)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  business              Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdBy             User              @relation("JobPostingCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  industry              JobIndustry       @relation(fields: [industryId], references: [id])
+  subIndustry           JobSubIndustry?   @relation(fields: [subIndustryId], references: [id])
+  applications          JobApplication[]
+  promotions            JobPromotion[]
+  analyticsEvents       JobAnalyticsEvent[]
+
+  @@unique([businessId, slug])
+  @@index([status, publishedAt, expiresAt])
+  @@index([locationType, locationProvinceCode, locationCommunitySlug])
+  @@index([industryId, subIndustryId, status])
+  @@index([businessId, status, createdAt])
+}
+
+model JobApplication {
+  id              String               @id @default(cuid())
+  jobPostingId    String
+  applicantUserId String
+  motivationHtml  String
+  status          JobApplicationStatus @default(submitted)
+  threadId        String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  jobPosting      JobPosting           @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  applicant       User                 @relation(fields: [applicantUserId], references: [id], onDelete: Cascade)
+  analyticsEvents JobAnalyticsEvent[]
+
+  @@unique([jobPostingId, applicantUserId])
+  @@index([jobPostingId, status, createdAt])
+  @@index([applicantUserId, createdAt])
+}
+
+model JobAnalyticsEvent {
+  id               String               @id @default(cuid())
+  kind             JobAnalyticsEventKind
+  businessId       String
+  jobPostingId     String?
+  jobApplicationId String?
+  actorUserId      String?
+  createdAt        DateTime             @default(now())
+  business         Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  jobPosting       JobPosting?          @relation(fields: [jobPostingId], references: [id], onDelete: SetNull)
+  jobApplication   JobApplication?      @relation(fields: [jobApplicationId], references: [id], onDelete: SetNull)
+  actor            User?                @relation("JobAnalyticsActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([kind, createdAt])
+  @@index([businessId, kind, createdAt])
+  @@index([jobPostingId, kind, createdAt])
+}
+
+model JobPromotion {
+  id               String             @id @default(cuid())
+  jobPostingId     String
+  createdByUserId  String
+  status           JobPromotionStatus @default(active)
+  label            String             @default("$0 Limited time bonus")
+  startsAt         DateTime
+  endsAt           DateTime
+  impressionCap    Int                @default(1000)
+  impressionsServed Int               @default(0)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  jobPosting       JobPosting         @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  createdBy        User               @relation("JobPromotionCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([jobPostingId, status])
+  @@index([status, startsAt, endsAt])
 }
 
 model BusinessFollow {
@@ -687,4 +823,47 @@ enum MessageParticipantRole {
 enum MessageType {
   text
   system
+}
+
+enum JobStatus {
+  draft
+  active
+  closed
+  expired
+}
+
+enum JobEmploymentType {
+  full_time
+  part_time
+  contract
+  internship
+  temporary
+  volunteer
+}
+
+enum JobWorkplaceType {
+  community
+  remote
+  not_in_canada
+}
+
+enum JobApplicationStatus {
+  submitted
+  reviewing
+  shortlisted
+  rejected
+  hired
+  withdrawn
+}
+
+enum JobPromotionStatus {
+  active
+  ended
+}
+
+enum JobAnalyticsEventKind {
+  job_added
+  applicant_submitted
+  applications_viewed
+  applicant_hired
 }

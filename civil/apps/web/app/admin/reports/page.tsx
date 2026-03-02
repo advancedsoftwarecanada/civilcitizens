@@ -18,6 +18,15 @@ type ReportSummary = {
   comments: MetricSeries
   reactions: MetricSeries
   follows: MetricSeries
+  jobs: {
+    added: MetricSeries
+    applicants: MetricSeries
+    applicationsViewed: {
+      views: MetricSeries
+      organizations: { total: number; today: number }
+    }
+    hired: MetricSeries
+  }
   pageViews: { series: SeriesPoint[] }
   traffic: { routes: Array<{ path: string; views: number }>; posts: Array<{ postId: string; title: string | null; views: number }> }
 }
@@ -306,6 +315,15 @@ export default function AdminReportsPage() {
           <MetricCard title="Comments" total={summary.comments.total} today={summary.comments.today} />
           <MetricCard title="Reactions" total={summary.reactions.total} today={summary.reactions.today} />
           <MetricCard title="Follows" total={summary.follows.total} today={summary.follows.today} />
+          <MetricCard title="Jobs added" total={summary.jobs.added.total} today={summary.jobs.added.today} />
+          <MetricCard title="Applicants" total={summary.jobs.applicants.total} today={summary.jobs.applicants.today} />
+          <MetricCard
+            title="Org application views"
+            total={summary.jobs.applicationsViewed.organizations.total}
+            today={summary.jobs.applicationsViewed.organizations.today}
+            footer={`${summary.jobs.applicationsViewed.views.total.toLocaleString()} total application view events`}
+          />
+          <MetricCard title="Applicants hired" total={summary.jobs.hired.total} today={summary.jobs.hired.today} />
           <MetricCard
             title="Page views"
             total={pageViewsTotal}
@@ -326,6 +344,14 @@ export default function AdminReportsPage() {
             <SeriesPanel label="Comments" series={summary.comments.series} highlight={`${summary.comments.today.toLocaleString()} today`} />
             <SeriesPanel label="Reactions" series={summary.reactions.series} highlight={`${summary.reactions.today.toLocaleString()} today`} />
             <SeriesPanel label="Follows" series={summary.follows.series} highlight={`${summary.follows.today.toLocaleString()} today`} />
+            <SeriesPanel label="Jobs added" series={summary.jobs.added.series} highlight={`${summary.jobs.added.today.toLocaleString()} today`} />
+            <SeriesPanel label="Applicants" series={summary.jobs.applicants.series} highlight={`${summary.jobs.applicants.today.toLocaleString()} today`} />
+            <SeriesPanel
+              label="Application views"
+              series={summary.jobs.applicationsViewed.views.series}
+              highlight={`${summary.jobs.applicationsViewed.views.today.toLocaleString()} today`}
+            />
+            <SeriesPanel label="Applicants hired" series={summary.jobs.hired.series} highlight={`${summary.jobs.hired.today.toLocaleString()} today`} />
             <SeriesPanel label="Page views" series={summary.pageViews.series} highlight={`${pageViewsTotal.toLocaleString()} total`} />
           </div>
         </section>

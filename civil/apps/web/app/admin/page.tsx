@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useMemo } from 'react'
-import { HiOutlineCog8Tooth, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
+import { HiOutlineBriefcase, HiOutlineCog8Tooth, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import DashboardShell from '../_components/DashboardShell'
 import { useAdminAccess } from './_hooks/useAdminAccess'
@@ -36,6 +36,13 @@ const ACTIONS: AdminAction[] = [
     description: 'Open dashboards for usage, engagement, and traffic trends.',
     href: '/admin/analytics',
     icon: HiOutlinePresentationChartBar,
+  },
+  {
+    key: 'jobs',
+    label: 'Jobs taxonomy',
+    description: 'Manage industries/sub-industries and populate seed data.',
+    href: '/admin/jobs',
+    icon: HiOutlineBriefcase,
   },
 ]
 
