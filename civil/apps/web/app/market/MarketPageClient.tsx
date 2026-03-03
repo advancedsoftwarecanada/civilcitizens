@@ -4,8 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../_components/DashboardShell'
 import { buildApiUrl } from '../_lib/api'
-import MarketCommunitiesPanel from './_components/MarketCommunitiesPanel'
-import YourOrdersPanel from './_components/YourOrdersPanel'
+import MarketRightRail from './_components/MarketRightRail'
 
 type MarketProduct = {
   id: string
@@ -118,12 +117,7 @@ export default function MarketPageClient() {
 
   return (
     <DashboardShell
-      rightRail={
-        <div className="space-y-6">
-          <YourOrdersPanel title="Your Orders" limit={8} />
-          <MarketCommunitiesPanel />
-        </div>
-      }
+      rightRail={<MarketRightRail />}
       showMobileRightRail
       mainClassName="space-y-5 pb-12"
     >

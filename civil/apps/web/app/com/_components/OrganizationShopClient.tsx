@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { HiOutlineArrowLeft, HiOutlineCog6Tooth } from 'react-icons/hi2'
+import { HiOutlineArrowLeft } from 'react-icons/hi2'
 import { buildApiUrl } from '../../_lib/api'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../_lib/authModal'
@@ -1332,24 +1332,6 @@ export default function OrganizationShopClient({
 
     return (
       <div className="space-y-5">
-        <div className="flex items-center justify-end gap-2">
-          <Link
-            href="/market/cart"
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:text-slate-900"
-          >
-            Open cart
-          </Link>
-          {canManage ? (
-            <Link
-              href={`${baseComPath}/shop/manage`}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:text-slate-900"
-            >
-              <HiOutlineCog6Tooth className="h-4 w-4" />
-              Manage shop
-            </Link>
-          ) : null}
-        </div>
-
         {storefrontSelectedProduct ? (
           <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
             <button

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineHashtag, HiOutlineShoppingBag } from 'react-icons/hi2'
+import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineChatBubbleLeftRight, HiOutlineHashtag, HiOutlineShoppingBag } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
@@ -542,6 +542,18 @@ export default function TopNav() {
             aria-label="Messages"
           >
             <HiOutlineChatBubbleOvalLeft className="text-xl" />
+            {messageUnreadCount > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
+                {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
+              </span>
+            ) : null}
+          </Link>
+          <Link
+            href="/market/chats"
+            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+            aria-label="Marketplace chats"
+          >
+            <HiOutlineChatBubbleLeftRight className="text-xl" />
             {messageUnreadCount > 0 ? (
               <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
