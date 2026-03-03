@@ -6,11 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { normalizeProvinceCode } from '@civil/shared'
 import {
   HiOutlineBars3,
-  HiOutlineBellAlert,
-  HiOutlineChatBubbleOvalLeft,
+  HiOutlineBell,
   HiOutlineHashtag,
   HiOutlineMagnifyingGlass,
   HiOutlineSquares2X2,
+  HiOutlineUserGroup,
   HiOutlineWallet,
   HiOutlineXMark,
 } from 'react-icons/hi2'
@@ -35,8 +35,8 @@ const NAV_BUTTONS: Array<{
   icon: IconType
 }> = [
   { key: 'menu', label: 'Menu', icon: HiOutlineBars3 },
-  { key: 'notifications', label: 'Alerts', icon: HiOutlineBellAlert },
-  { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
+  { key: 'notifications', label: 'Alerts', icon: HiOutlineBell },
+  { key: 'messages', label: 'Messages', icon: HiOutlineUserGroup },
   { key: 'channels', label: 'Channels', icon: HiOutlineHashtag },
   { key: 'wallet', label: 'Wallet', icon: HiOutlineWallet },
   { key: 'more', label: 'More', icon: HiOutlineSquares2X2 },

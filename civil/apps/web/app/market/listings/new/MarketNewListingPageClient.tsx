@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import DashboardShell from '../../../_components/DashboardShell'
+import Modal from '../../../_components/Modal'
 import { pushToast } from '../../../_components/useToasts'
 import { buildApiUrl } from '../../../_lib/api'
 import MarketRightRail from '../../_components/MarketRightRail'
@@ -15,6 +16,8 @@ type ListingDetail = {
   priceCents: number
   currency: string
   photoUrls: string[]
+  listingProvinceCode?: string | null
+  listingCommunitySlug?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupAddressLine1: string | null
@@ -51,6 +54,8 @@ type DraftForm = {
   title: string
   description: string
   price: string
+  listingProvinceCode: string
+  listingCommunitySlug: string
   pickupCity: string
   pickupProvince: string
   pickupAddressLine1: string
@@ -76,6 +81,8 @@ const EMPTY_FORM: DraftForm = {
   title: 'Draft Listing',
   description: '',
   price: '0.00',
+  listingProvinceCode: '',
+  listingCommunitySlug: '',
   pickupCity: '',
   pickupProvince: '',
   pickupAddressLine1: '',
@@ -95,6 +102,27 @@ const EMPTY_FORM: DraftForm = {
   eTransferEmail: '',
   paymentTypes: ['cash_pickup'],
   photoUrls: [],
+}
+
+type CommunityFollowOption = {
+  provinceCode: string
+  communitySlug: string
+  label: string
+  home: boolean
+}
+
+type CommunityFollowsResponse = {
+  items?: Array<{
+    province?: string
+    communitySlug?: string
+    home?: boolean
+    community?: {
+      name?: string
+      cityName?: string
+      communityName?: string
+      slug?: string
+    } | null
+  }>
 }
 
 const DELIVERY_RANGES: Array<{ key: 'short50km' | 'medium100km' | 'long250km'; label: string; distance: string }> = [
@@ -188,6 +216,8 @@ export default function MarketNewListingPageClient() {
   const [form, setForm] = useState<DraftForm>(EMPTY_FORM)
   const [statusLabel, setStatusLabel] = useState<'draft' | 'active'>('draft')
   const [uploadingPhotos, setUploadingPhotos] = useState(false)
+  const [publishConfirmOpen, setPublishConfirmOpen] = useState(false)
+  const [communityOptions, setCommunityOptions] = useState<CommunityFollowOption[]>([])
 
   const loadListing = useCallback(async (id: string) => {
     const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(id)}`), {
@@ -209,6 +239,8 @@ export default function MarketNewListingPageClient() {
       title: listing.title || 'Draft Listing',
       description: listing.description ?? '',
       price: formatMoneyInput(listing.priceCents),
+      listingProvinceCode: listing.listingProvinceCode ?? '',
+      listingCommunitySlug: listing.listingCommunitySlug ?? '',
       pickupCity: listing.pickupCity ?? '',
       pickupProvince: listing.pickupProvince ?? '',
       pickupAddressLine1: listing.pickupAddressLine1 ?? '',
@@ -231,7 +263,56 @@ export default function MarketNewListingPageClient() {
       ),
       photoUrls: Array.isArray(listing.photoUrls) ? listing.photoUrls : [],
     })
-    setStatusLabel(listing.isDraft ? 'draft' : 'active')
+    setStatusLabel(listing.status === 'active' || !listing.isDraft ? 'active' : 'draft')
+  }, [])
+
+  const loadCommunityOptions = useCallback(async () => {
+    try {
+      const res = await fetch(buildApiUrl('/communities/follows'), {
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      })
+      if (!res.ok) return
+      const payload = (await res.json().catch(() => null)) as CommunityFollowsResponse | null
+      const items = Array.isArray(payload?.items) ? payload.items : []
+      const options = items
+        .map((item) => {
+          const provinceCode = String(item?.province ?? '').trim().toUpperCase()
+          const communitySlug = String(item?.communitySlug ?? '').trim().toLowerCase()
+          if (!provinceCode || !communitySlug) return null
+          const community = item?.community
+          const rawName =
+            (typeof community?.name === 'string' && community.name.trim()) ||
+            (typeof community?.cityName === 'string' && community.cityName.trim()) ||
+            (typeof community?.communityName === 'string' && community.communityName.trim()) ||
+            communitySlug
+          return {
+            provinceCode,
+            communitySlug,
+            label: `${rawName} (${provinceCode})${item?.home ? ' • Home' : ''}`,
+            home: Boolean(item?.home),
+          } satisfies CommunityFollowOption
+        })
+        .filter((entry): entry is CommunityFollowOption => Boolean(entry))
+
+      setCommunityOptions(options)
+
+      if (options.length) {
+        const preferred = options.find((entry) => entry.home) ?? options[0]
+        if (preferred) {
+          setForm((prev) => {
+            if (prev.listingProvinceCode && prev.listingCommunitySlug) return prev
+            return {
+              ...prev,
+              listingProvinceCode: preferred.provinceCode,
+              listingCommunitySlug: preferred.communitySlug,
+            }
+          })
+        }
+      }
+    } catch {
+      // best effort
+    }
   }, [])
 
   const createDraft = useCallback(async () => {
@@ -301,6 +382,10 @@ export default function MarketNewListingPageClient() {
       cancelled = true
     }
   }, [createDraft, listingParam, loadListing])
+
+  useEffect(() => {
+    void loadCommunityOptions()
+  }, [loadCommunityOptions])
 
   const togglePaymentType = useCallback((type: 'cash_pickup' | 'etransfer') => {
     setForm((prev) => {
@@ -463,8 +548,11 @@ export default function MarketNewListingPageClient() {
   )
 
   const saveListing = useCallback(
-    async (publish: boolean) => {
+    async (mode: 'save' | 'publish' | 'unpublish') => {
       if (!listingId) return
+
+      const publish = mode === 'publish'
+      const unpublish = mode === 'unpublish'
 
       const priceCents = toCents(form.price)
       if (publish) {
@@ -482,6 +570,10 @@ export default function MarketNewListingPageClient() {
         }
         if (!form.paymentTypes.length) {
           pushToast('Select at least one payment type.', 'error')
+          return
+        }
+        if (!form.listingProvinceCode.trim() || !form.listingCommunitySlug.trim()) {
+          pushToast('Select a community to list in.', 'error')
           return
         }
         if (form.willingToDeliver) {
@@ -502,6 +594,9 @@ export default function MarketNewListingPageClient() {
 
       setSaving(true)
       try {
+        const nextStatus: 'draft' | 'active' = publish ? 'active' : unpublish ? 'draft' : statusLabel
+        const nextIsDraft = nextStatus !== 'active'
+
         const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(listingId)}`), {
           method: 'PUT',
           headers: getAuthHeaders({ 'content-type': 'application/json' }),
@@ -511,6 +606,8 @@ export default function MarketNewListingPageClient() {
             priceCents,
             currency: 'CAD',
             photoUrls: form.photoUrls,
+            listingProvinceCode: form.listingProvinceCode.trim().toUpperCase() || null,
+            listingCommunitySlug: form.listingCommunitySlug.trim().toLowerCase() || null,
             pickupCity: form.pickupCity.trim() || null,
             pickupProvince: form.pickupProvince.trim() || null,
             pickupAddressLine1: form.pickupAddressLine1.trim() || null,
@@ -520,8 +617,8 @@ export default function MarketNewListingPageClient() {
             willingToDeliver: form.willingToDeliver,
             deliveryOptions,
             eTransferEmail: form.eTransferEmail.trim() || null,
-            isDraft: !publish,
-            status: publish ? 'active' : 'draft',
+            isDraft: nextIsDraft,
+            status: nextStatus,
           }),
         })
 
@@ -530,18 +627,15 @@ export default function MarketNewListingPageClient() {
           return
         }
 
-        setStatusLabel(publish ? 'active' : 'draft')
-        pushToast(publish ? 'Listing is now active.' : 'Saved.', 'success')
-        if (publish) {
-          router.push(`/market/listings?listing=${encodeURIComponent(listingId)}`)
-        }
+        setStatusLabel(nextStatus)
+        pushToast(publish ? 'Listing is now active.' : unpublish ? 'Listing is now unpublished.' : 'Saved.', 'success')
       } catch {
         pushToast('Unable to save listing right now.', 'error')
       } finally {
         setSaving(false)
       }
     },
-    [form, listingId, router],
+    [form, listingId, statusLabel],
   )
 
   return (
@@ -600,6 +694,41 @@ export default function MarketNewListingPageClient() {
                 maxLength={4000}
               />
             </label>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Community</p>
+              <p className="mt-1 text-xs text-slate-600">Choose the community this listing belongs to.</p>
+              <label className="mt-3 block space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">List in community</span>
+                <select
+                  value={form.listingProvinceCode && form.listingCommunitySlug ? `${form.listingProvinceCode}|${form.listingCommunitySlug}` : ''}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    if (!value) {
+                      setForm((prev) => ({ ...prev, listingProvinceCode: '', listingCommunitySlug: '' }))
+                      return
+                    }
+                    const [provinceCode, communitySlug] = value.split('|')
+                    setForm((prev) => ({
+                      ...prev,
+                      listingProvinceCode: provinceCode ?? '',
+                      listingCommunitySlug: communitySlug ?? '',
+                    }))
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="">Select community…</option>
+                  {communityOptions.map((option) => (
+                    <option key={`${option.provinceCode}|${option.communitySlug}`} value={`${option.provinceCode}|${option.communitySlug}`}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!communityOptions.length ? (
+                <p className="mt-2 text-xs text-amber-700">Follow or set a home community first to publish listings into market feed scope.</p>
+              ) : null}
+            </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">Photos</p>
@@ -804,7 +933,7 @@ export default function MarketNewListingPageClient() {
               <button
                 type="button"
                 disabled={saving || initializing}
-                onClick={() => void saveListing(false)}
+                onClick={() => void saveListing('save')}
                 className="inline-flex items-center justify-center rounded-full bg-green-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
               >
                 {saving ? 'Saving…' : 'Save'}
@@ -813,13 +942,53 @@ export default function MarketNewListingPageClient() {
                 <button
                   type="button"
                   disabled={saving || initializing}
-                  onClick={() => void saveListing(true)}
-                  className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+                  onClick={() => setPublishConfirmOpen(true)}
+                  className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
                 >
                   Publish listing
                 </button>
-              ) : null}
+              ) : (
+                <button
+                  type="button"
+                  disabled={saving || initializing}
+                  onClick={() => void saveListing('unpublish')}
+                  className="inline-flex items-center justify-center rounded-full bg-rose-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
+                >
+                  Unpublish
+                </button>
+              )}
             </div>
+
+            <Modal
+              open={publishConfirmOpen}
+              onClose={() => {
+                if (!saving) setPublishConfirmOpen(false)
+              }}
+              title="Publish listing?"
+            >
+              <p className="text-sm text-slate-600">This listing will be active in the marketplace and visible to buyers.</p>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPublishConfirmOpen(false)}
+                  disabled={saving}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPublishConfirmOpen(false)
+                    void saveListing('publish')
+                  }}
+                  disabled={saving}
+                  className="rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {saving ? 'Publishing…' : 'Confirm publish'}
+                </button>
+              </div>
+            </Modal>
           </section>
         ) : null}
       </div>
