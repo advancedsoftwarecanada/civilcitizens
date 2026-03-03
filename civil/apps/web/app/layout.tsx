@@ -11,6 +11,7 @@ import AnalyticsTracker from './_components/AnalyticsTracker'
 import GoogleAnalytics from './_components/GoogleAnalytics'
 import AppFrame from './_components/AppFrame'
 import NotificationTapRouter from './_components/NotificationTapRouter'
+import IosPwaPushPrompt from './_components/IosPwaPushPrompt'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -46,7 +47,7 @@ export const metadata: Metadata = {
   icons: {
     icon: '/favicon.png',
     shortcut: '/favicon.png',
-    apple: '/favicon.png',
+    apple: '/PWA-ICON.jpg?v=20260303',
   },
   openGraph: {
     title: 'Civil Citizens',
@@ -98,6 +99,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
         <Suspense fallback={null}>
           <ScrollManager />
         </Suspense>
+        <IosPwaPushPrompt />
         <AppFrame modal={modal}>{children}</AppFrame>
         <MobileDockVisibility />
         <Toasts />

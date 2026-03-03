@@ -33,6 +33,7 @@ import {
   getPermissionState as getWebPushPermissionState,
   isPushEnabled as isWebPushEnabled,
 } from '../_lib/pushClient'
+import { resetIosPwaPushPromptForNextOpen } from '../_lib/iosPwaPushPromptState'
 import YourOrdersPanel from '../market/_components/YourOrdersPanel'
 import ShippingAddressesPanel from '../market/_components/ShippingAddressesPanel'
 
@@ -229,6 +230,9 @@ export default function SettingsPage() {
         const result = await disableWebPush()
         setWebPushEnabled(false)
         setWebPushPermission(getWebPushPermissionState())
+        if (result.ok) {
+          resetIosPwaPushPromptForNextOpen()
+        }
         if (!result.ok) setWebPushMessage(result.message ?? 'Unable to disable notifications.')
       } finally {
         setWebPushBusy(false)
