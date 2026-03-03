@@ -455,7 +455,7 @@ export default function BillingSettingsPage() {
           <article className="surface-card flex h-full flex-col justify-between gap-5 px-6 py-5 shadow-subtle">
             <div className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Premium Membership</p>
-              <h1 className="text-xl font-semibold text-slate-900">{premiumActive ? 'Premium is active' : 'Upgrade to Premium'}</h1>
+              <h1 className="text-xl font-semibold text-slate-900">{premiumActive ? 'Premium is active' : 'Premium membership'}</h1>
               <ul className="list-disc space-y-1 pl-5 text-sm text-slate-500">
                 <li>Trust boosts on your profile, posts, and comments</li>
                 <li>Organizations (pages, news, boosts)</li>
@@ -488,16 +488,7 @@ export default function BillingSettingsPage() {
                 >
                   Manage subscription
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handlePremiumCheckout}
-                  disabled={!stripeReady || pendingAction === 'premium-checkout'}
-                  className="rounded-full border border-[var(--cc-primary)] px-4 py-2 text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/10 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {pendingAction === 'premium-checkout' ? 'Preparing checkout…' : 'Upgrade for $9.99/month'}
-                </button>
-              )}
+              ) : null /* TODO: Re-enable Premium checkout CTA when upsell should be visible. */}
               <button
                 type="button"
                 onClick={refreshBilling}
@@ -529,7 +520,7 @@ export default function BillingSettingsPage() {
               >
                 Open organizations
               </Link>
-              <p className="text-xs font-semibold text-slate-500">{premiumActive ? 'Premium unlocked.' : 'Upgrade to create organizations.'}</p>
+              <p className="text-xs font-semibold text-slate-500">{premiumActive ? 'Premium unlocked.' : 'Premium required to create organizations.'}</p>
             </div>
           </article>
         </section>
