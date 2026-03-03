@@ -196,6 +196,19 @@ import { createHash, randomInt, randomUUID } from 'crypto'
 import { locateCommunityFromPoint, getCommunityCentroid } from './geodata.js'
 import { locateFsaFromPoint } from './fsaLocator.js'
 import { statsCanPointToWgs84 } from './statscan.js'
+import {
+  deactivateSubscription,
+  pruneInvalidSubscriptions,
+  upsertSubscription,
+  type PushSubscriptionMetaInput,
+  type WebPushSubscriptionInput as WebPushSubscriptionRecordInput,
+} from './pushSubscriptions.js'
+import {
+  getVapidPublicKey,
+  sendPushToUser,
+  validatePushEnvironment,
+  type PushPayloadType,
+} from './pushSender.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
@@ -263,6 +276,46 @@ const PushDeviceUnregisterInput = z.object({
   token: z.string().min(1),
   platform: z.string().trim().min(1).max(32).optional().default('ios'),
 })
+
+const PUSH_ROUTE_BODY_LIMIT_BYTES = 16 * 1024
+const PUSH_SUBSCRIBE_LIMIT_PER_MINUTE = 12
+const PUSH_TEST_LIMIT_PER_MINUTE = 5
+
+const WebPushSubscriptionInput = z
+  .object({
+    endpoint: z.string().trim().url().max(2048),
+    expirationTime: z.number().nullable().optional(),
+    keys: z
+      .object({
+        p256dh: z.string().trim().min(1).max(1024),
+        auth: z.string().trim().min(1).max(1024),
+      })
+      .strict(),
+  })
+  .strict()
+
+const WebPushMetaInput = z
+  .object({
+    userAgent: z.string().trim().max(1024).optional(),
+    platform: z.enum(['android', 'ios', 'desktop', 'unknown']).optional(),
+    browser: z.enum(['chrome', 'edge', 'safari', 'unknown']).optional(),
+  })
+  .strict()
+
+const WebPushSubscribeRouteInput = z
+  .object({
+    subscription: WebPushSubscriptionInput,
+    meta: WebPushMetaInput.optional(),
+  })
+  .strict()
+
+const WebPushUnsubscribeRouteInput = z
+  .object({
+    endpoint: z.string().trim().url().max(2048),
+  })
+  .strict()
+
+const WebPushTestRouteInput = z.object({}).strict()
 
 let pushDeviceRegistryReady: Promise<void> | null = null
 
@@ -1058,6 +1111,70 @@ function parseApnsReason(payloadText: string): string {
   }
 }
 
+function exceedsPushBodyLimit(value: unknown, maxBytes = PUSH_ROUTE_BODY_LIMIT_BYTES): boolean {
+  try {
+    const serialized = JSON.stringify(value ?? {})
+    return Buffer.byteLength(serialized, 'utf8') > maxBytes
+  } catch {
+    return true
+  }
+}
+
+function detectPushPlatformAndBrowser(userAgent: string | null | undefined): {
+  platform: NonNullable<PushSubscriptionMetaInput['platform']>
+  browser: NonNullable<PushSubscriptionMetaInput['browser']>
+} {
+  const ua = (userAgent || '').toLowerCase()
+  let platform: NonNullable<PushSubscriptionMetaInput['platform']> = 'unknown'
+  if (/iphone|ipad|ipod/.test(ua)) platform = 'ios'
+  else if (/android/.test(ua)) platform = 'android'
+  else if (/windows|macintosh|linux|x11|cros/.test(ua)) platform = 'desktop'
+
+  let browser: NonNullable<PushSubscriptionMetaInput['browser']> = 'unknown'
+  if (/edg\//.test(ua)) browser = 'edge'
+  else if ((/chrome\//.test(ua) || /crios\//.test(ua)) && !/edg\//.test(ua)) browser = 'chrome'
+  else if (/safari\//.test(ua) && !/chrome\//.test(ua) && !/crios\//.test(ua) && !/edg\//.test(ua)) browser = 'safari'
+
+  return { platform, browser }
+}
+
+function resolvePushSubscriptionMeta(req: FastifyRequest, meta?: z.infer<typeof WebPushMetaInput>): PushSubscriptionMetaInput {
+  const userAgentHeader = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : ''
+  const userAgent = (meta?.userAgent?.trim() || userAgentHeader || '').trim().slice(0, 1024)
+  const inferred = detectPushPlatformAndBrowser(userAgent)
+
+  return {
+    userAgent: userAgent || null,
+    platform: meta?.platform ?? inferred.platform,
+    browser: meta?.browser ?? inferred.browser,
+  }
+}
+
+async function withinPushRateLimit(options: {
+  userId: string
+  bucket: string
+  maxPerMinute: number
+}): Promise<boolean> {
+  const key = `ratelimit:push:${options.bucket}:${options.userId}`
+  try {
+    const count = await redis.incr(key)
+    if (count === 1) {
+      await redis.expire(key, 60)
+    }
+    return count <= Math.max(1, options.maxPerMinute)
+  } catch {
+    return true
+  }
+}
+
+function mapNotificationPushType(type: string): PushPayloadType {
+  const normalized = type.trim().toLowerCase()
+  if (normalized.startsWith('message_')) return 'message'
+  if (normalized.includes('market')) return 'marketplace'
+  if (normalized.startsWith('org_') || normalized.startsWith('event_')) return 'org'
+  return 'system'
+}
+
 async function loadUnreadMessageCount(userId: string): Promise<number> {
   try {
     const result = await prisma.$queryRaw<Array<{ count: number }>>`
@@ -1175,7 +1292,10 @@ function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof for
       message: `${actorLabel} invited you to join ${organizationName}.`,
     }
   }
-  return null
+  return {
+    title: 'Civil Citizens',
+    message: `${actorLabel} sent you a notification.`,
+  }
 }
 
 function getNotificationDeepLink(record: NotificationRecord): string | null {
@@ -1194,6 +1314,28 @@ function getNotificationDeepLink(record: NotificationRecord): string | null {
     }
   }
   return null
+}
+
+function buildWebPushPayloadForNotification(
+  record: NotificationRecord,
+  actor: ReturnType<typeof formatFriendUser> | null,
+): {
+  title: string
+  body: string
+  url: string
+  type: PushPayloadType
+  entityId: string
+} | null {
+  const alert = buildPushAlert(record, actor)
+  if (!alert) return null
+
+  return {
+    title: alert.title,
+    body: alert.message,
+    url: getNotificationDeepLink(record) ?? '/notifications',
+    type: mapNotificationPushType(record.type),
+    entityId: record.id,
+  }
 }
 
 async function sendMobilePushNotification(record: NotificationRecord, actor: ReturnType<typeof formatFriendUser> | null) {
@@ -1285,9 +1427,8 @@ async function sendMobilePushForMessageCreated(args: {
   threadId: string
   message: MessageRecord
   participants: Array<{ userId: string; mutedUntil?: Date | null }>
+  pushUrl?: string
 }) {
-  if (!PUSH_DELIVERY_URL) return
-
   const rawSenderLabel = args.message.sender?.name || args.message.sender?.handle || 'Someone'
   const senderLabel = formatDisplayNameForPush(rawSenderLabel) || rawSenderLabel
   const attachmentCount = normalizeAttachmentList(args.message.attachments).length
@@ -1301,10 +1442,25 @@ async function sendMobilePushForMessageCreated(args: {
   const title = senderLabel
   const body = truncatePushBody(preview)
   if (!body) return
+  const pushUrl = args.pushUrl?.trim() || `/messages?thread=${encodeURIComponent(args.threadId)}`
 
   const targets = args.participants
     .filter((p) => p.userId !== args.message.senderId)
     .filter((p) => !isThreadMuted(p.mutedUntil ?? null))
+
+  await Promise.allSettled(
+    targets.map((participant) =>
+      sendPushToUser(participant.userId, {
+        title,
+        body,
+        url: pushUrl,
+        type: 'message',
+        entityId: args.threadId,
+      }),
+    ),
+  )
+
+  if (!PUSH_DELIVERY_URL) return
 
   await Promise.allSettled(
     targets.map(async (participant) => {
@@ -1330,7 +1486,7 @@ async function sendMobilePushForMessageCreated(args: {
               data: {
                 kind: 'message',
                 threadId: args.threadId,
-                url: `/messages?thread=${encodeURIComponent(args.threadId)}`,
+                url: pushUrl,
               },
             }),
           })
@@ -1393,6 +1549,10 @@ async function dispatchNotification(
   })
   if (!options?.suppressMobilePush) {
     void sendMobilePushNotification(record, actor)
+    const payload = buildWebPushPayloadForNotification(record, actor)
+    if (payload) {
+      void sendPushToUser(record.userId, payload)
+    }
   }
 }
 
@@ -5085,6 +5245,106 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     return reply.code(401).send({ error: 'unauthorized' })
   }
 })
+
+app.get('/push/public-key', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = await resolveUserId(req)
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const publicKey = getVapidPublicKey()
+    if (!publicKey) return reply.code(503).send({ error: 'push_not_configured' })
+
+    return reply.send({ publicKey })
+  }),
+)
+
+app.post('/push/subscribe', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = await resolveUserId(req)
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    if (exceedsPushBodyLimit(req.body)) return reply.code(413).send({ error: 'payload_too_large' })
+
+    const withinLimit = await withinPushRateLimit({
+      userId,
+      bucket: 'subscribe',
+      maxPerMinute: PUSH_SUBSCRIBE_LIMIT_PER_MINUTE,
+    })
+    if (!withinLimit) return reply.code(429).send({ error: 'rate_limited' })
+
+    const parse = WebPushSubscribeRouteInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const subscriptionInput: WebPushSubscriptionRecordInput = {
+      endpoint: parse.data.subscription.endpoint,
+      expirationTime: parse.data.subscription.expirationTime ?? null,
+      keys: {
+        p256dh: parse.data.subscription.keys.p256dh,
+        auth: parse.data.subscription.keys.auth,
+      },
+    }
+
+    const meta = resolvePushSubscriptionMeta(req, parse.data.meta)
+    await upsertSubscription(userId, subscriptionInput, meta)
+
+    return reply.send({ ok: true })
+  }),
+)
+
+app.post('/push/unsubscribe', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = await resolveUserId(req)
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    if (exceedsPushBodyLimit(req.body)) return reply.code(413).send({ error: 'payload_too_large' })
+
+    const parse = WebPushUnsubscribeRouteInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const count = await deactivateSubscription(userId, parse.data.endpoint)
+    return reply.send({ ok: true, count })
+  }),
+)
+
+app.post('/push/test', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = await resolveUserId(req)
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    if (exceedsPushBodyLimit(req.body)) return reply.code(413).send({ error: 'payload_too_large' })
+
+    const withinLimit = await withinPushRateLimit({
+      userId,
+      bucket: 'test',
+      maxPerMinute: PUSH_TEST_LIMIT_PER_MINUTE,
+    })
+    if (!withinLimit) return reply.code(429).send({ error: 'rate_limited' })
+
+    const parse = WebPushTestRouteInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const payload = {
+      title: 'Civil Citizens',
+      body: 'This is a test notification from Civil.',
+      url: '/notifications',
+      type: 'system' as const,
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      req.log.info(
+        { route: '/push/test', userId, payload },
+        'push_test_dispatch_dev',
+      )
+    }
+
+    const summary = await sendPushToUser(userId, payload)
+    if (summary.failed > 0) {
+      await pruneInvalidSubscriptions()
+    }
+
+    return reply.send({ ok: true, summary })
+  }),
+)
 
 app.post('/mobile/push/register', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = PushDeviceRegisterInput.safeParse(req.body ?? {})
@@ -15239,6 +15499,13 @@ app.post('/market/chats/:threadId/messages', async (req: FastifyRequest, reply: 
       ),
     )
 
+    void sendMobilePushForMessageCreated({
+      threadId: thread.id,
+      message: messageRecord,
+      participants: thread.participants,
+      pushUrl: `/market/chats/${encodeURIComponent(thread.id)}`,
+    })
+
     return reply.code(201).send({ message: formatMessage(messageRecord, userId) })
   }),
 )
@@ -21387,6 +21654,7 @@ app.get('/work/industries', async (_req: FastifyRequest, reply: FastifyReply) =>
 // Server startup code
 const start = async () => {
   try {
+    validatePushEnvironment(app.log)
     await app.listen({ port: PORT, host: '0.0.0.0' })
     console.log(`Server listening on port ${PORT}`)
   } catch (err) {

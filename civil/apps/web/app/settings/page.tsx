@@ -26,6 +26,13 @@ import {
   isNativePushOptedOut,
   type PushPermissionState,
 } from '../_lib/nativePush'
+import {
+  canEnablePush as canEnableWebPush,
+  disablePush as disableWebPush,
+  enablePush as enableWebPush,
+  getPermissionState as getWebPushPermissionState,
+  isPushEnabled as isWebPushEnabled,
+} from '../_lib/pushClient'
 import YourOrdersPanel from '../market/_components/YourOrdersPanel'
 import ShippingAddressesPanel from '../market/_components/ShippingAddressesPanel'
 
@@ -59,10 +66,15 @@ export default function SettingsPage() {
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
-  const [showPushControl, setShowPushControl] = useState(false)
-  const [pushState, setPushState] = useState<PushPermissionState>('unknown')
-  const [pushBusy, setPushBusy] = useState(false)
-  const [pushOptedOut, setPushOptedOut] = useState(false)
+  const [showNativePushControl, setShowNativePushControl] = useState(false)
+  const [nativePushState, setNativePushState] = useState<PushPermissionState>('unknown')
+  const [nativePushBusy, setNativePushBusy] = useState(false)
+  const [nativePushOptedOut, setNativePushOptedOut] = useState(false)
+  const [showWebPushControl, setShowWebPushControl] = useState(false)
+  const [webPushBusy, setWebPushBusy] = useState(false)
+  const [webPushEnabled, setWebPushEnabled] = useState(false)
+  const [webPushPermission, setWebPushPermission] = useState<NotificationPermission | 'unsupported'>('unsupported')
+  const [webPushMessage, setWebPushMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -93,13 +105,38 @@ export default function SettingsPage() {
     if (typeof window === 'undefined') return
     if (!isAppleNativeApp()) return
 
-    setShowPushControl(true)
-    setPushOptedOut(isNativePushOptedOut())
+    setShowNativePushControl(true)
+    setNativePushOptedOut(isNativePushOptedOut())
 
     let cancelled = false
     void (async () => {
       const state = await ensureNativePushRegistration({ requestIfPrompt: false })
-      if (!cancelled) setPushState(state)
+      if (!cancelled) setNativePushState(state)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (isAppleNativeApp()) return
+
+    setShowWebPushControl(true)
+    setWebPushPermission(getWebPushPermissionState())
+    if (!canEnableWebPush()) {
+      setWebPushMessage('Install the PWA (especially on iOS) and allow notifications to enable web push.')
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      const enabled = await isWebPushEnabled()
+      if (cancelled) return
+      setWebPushEnabled(enabled)
+      setWebPushPermission(getWebPushPermissionState())
+      if (!enabled) setWebPushMessage(null)
     })()
 
     return () => {
@@ -133,48 +170,77 @@ export default function SettingsPage() {
     setShowLogoutConfirm(false)
   }
 
-  const handleEnablePush = useCallback(async () => {
-    if (!showPushControl) return
-    setPushBusy(true)
+  const handleEnableNativePush = useCallback(async () => {
+    if (!showNativePushControl) return
+    setNativePushBusy(true)
     try {
       enableNativePushOptIn()
-      setPushOptedOut(false)
+      setNativePushOptedOut(false)
       const state = await ensureNativePushRegistration({ requestIfPrompt: true, ignoreOptOut: true })
-      setPushState(state)
-      setPushOptedOut(isNativePushOptedOut())
+      setNativePushState(state)
+      setNativePushOptedOut(isNativePushOptedOut())
     } finally {
-      setPushBusy(false)
+      setNativePushBusy(false)
     }
-  }, [showPushControl])
+  }, [showNativePushControl])
 
-  const handleTogglePush = useCallback(
+  const handleToggleNativePush = useCallback(
     async (nextEnabled: boolean) => {
-      if (!showPushControl) return
-      if (pushBusy) return
+      if (!showNativePushControl) return
+      if (nativePushBusy) return
 
-      setPushBusy(true)
+      setNativePushBusy(true)
       try {
         if (nextEnabled) {
           enableNativePushOptIn()
-          setPushOptedOut(false)
+          setNativePushOptedOut(false)
           const state = await ensureNativePushRegistration({ requestIfPrompt: true, ignoreOptOut: true })
-          setPushState(state)
-          setPushOptedOut(isNativePushOptedOut())
+          setNativePushState(state)
+          setNativePushOptedOut(isNativePushOptedOut())
           return
         }
 
         await disableNativePushNotifications()
-        setPushOptedOut(true)
+        setNativePushOptedOut(true)
       } finally {
-        setPushBusy(false)
+        setNativePushBusy(false)
       }
     },
-    [pushBusy, showPushControl],
+    [nativePushBusy, showNativePushControl],
   )
 
-  const isPushToggleOn = useMemo(() => {
-    return !pushOptedOut
-  }, [pushOptedOut])
+  const handleToggleWebPush = useCallback(
+    async (nextEnabled: boolean) => {
+      if (!showWebPushControl) return
+      if (webPushBusy) return
+
+      setWebPushBusy(true)
+      setWebPushMessage(null)
+      try {
+        if (nextEnabled) {
+          const result = await enableWebPush()
+          const enabled = await isWebPushEnabled()
+          setWebPushEnabled(enabled)
+          setWebPushPermission(getWebPushPermissionState())
+          if (!result.ok) setWebPushMessage(result.message ?? 'Unable to enable notifications.')
+          return
+        }
+
+        const result = await disableWebPush()
+        setWebPushEnabled(false)
+        setWebPushPermission(getWebPushPermissionState())
+        if (!result.ok) setWebPushMessage(result.message ?? 'Unable to disable notifications.')
+      } finally {
+        setWebPushBusy(false)
+      }
+    },
+    [showWebPushControl, webPushBusy],
+  )
+
+  const isNativePushToggleOn = useMemo(() => {
+    return !nativePushOptedOut
+  }, [nativePushOptedOut])
+  const isWebPushSupported = canEnableWebPush()
 
   const greeting = useMemo(() => {
     if (!viewer?.name) return 'Settings'
@@ -201,46 +267,82 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {showPushControl ? (
+        {showNativePushControl ? (
           <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-semibold text-slate-900">iOS Notifications</p>
                 <p className="text-xs text-slate-600">
-                  {isPushToggleOn
+                  {isNativePushToggleOn
                     ? 'We will attempt to send you push notifications.'
                     : 'Turn this on to allow the server to send push notifications.'}
                 </p>
               </div>
               <label className="inline-flex items-center gap-3 select-none">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {pushBusy ? 'Working…' : isPushToggleOn ? 'On' : 'Off'}
+                  {nativePushBusy ? 'Working…' : isNativePushToggleOn ? 'On' : 'Off'}
                 </span>
                 <input
                   type="checkbox"
                   className="h-5 w-5 accent-[var(--cc-primary)] disabled:cursor-not-allowed"
-                  checked={isPushToggleOn}
-                  disabled={pushBusy}
-                  onChange={(e) => void handleTogglePush(e.target.checked)}
+                  checked={isNativePushToggleOn}
+                  disabled={nativePushBusy}
+                  onChange={(e) => void handleToggleNativePush(e.target.checked)}
                 />
               </label>
             </div>
-            {isPushToggleOn && pushState !== 'granted' ? (
+            {isNativePushToggleOn && nativePushState !== 'granted' ? (
               <div className="mt-3 text-xs text-slate-500">
                 Please ensure your notifications are allowed, in config -&gt; notifications -&gt; civil -&gt; on.
               </div>
             ) : null}
-            {pushState !== 'denied' && pushState !== 'unknown' && pushState !== 'prompt' && pushOptedOut ? (
+            {nativePushState !== 'denied' && nativePushState !== 'unknown' && nativePushState !== 'prompt' && nativePushOptedOut ? (
               <div className="mt-3">
                 <button
                   type="button"
-                  onClick={handleEnablePush}
-                  disabled={pushBusy}
+                  onClick={handleEnableNativePush}
+                  disabled={nativePushBusy}
                   className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {pushBusy ? 'Checking…' : 'Re-enable Notifications'}
+                  {nativePushBusy ? 'Checking…' : 'Re-enable Notifications'}
                 </button>
               </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {showWebPushControl ? (
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Enable notifications</p>
+                <p className="text-xs text-slate-600">
+                  Turn on web push notifications for this device and browser.
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-3 select-none">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  {webPushBusy ? 'Working…' : webPushEnabled ? 'On' : 'Off'}
+                </span>
+                <input
+                  type="checkbox"
+                  className="h-5 w-5 accent-[var(--cc-primary)] disabled:cursor-not-allowed"
+                  checked={webPushEnabled}
+                  disabled={webPushBusy || (!webPushEnabled && !isWebPushSupported)}
+                  onChange={(e) => void handleToggleWebPush(e.target.checked)}
+                />
+              </label>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              Permission: {webPushPermission}
+            </p>
+            {!isWebPushSupported ? (
+              <p className="mt-1 text-xs text-slate-500">
+                iOS requires opening the installed PWA from your home screen before enabling push.
+              </p>
+            ) : null}
+            {webPushMessage ? (
+              <p className="mt-1 text-xs text-slate-500">{webPushMessage}</p>
             ) : null}
           </div>
         ) : null}
