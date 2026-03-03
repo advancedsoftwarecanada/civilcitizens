@@ -20,8 +20,12 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
   const isInviteRoute = pathname ? pathname.includes('/invite/') : false
   const hideForInviteGuest = isInviteRoute && inviteGuestMode !== false
 
-  const topNavHidden = pathname ? TOP_NAV_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || hideForInviteGuest : false
-  const sidebarHidden = pathname ? SIDEBAR_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || hideForInviteGuest : false
+  const topNavHidden = pathname
+    ? TOP_NAV_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || pathname.startsWith('/install/') || hideForInviteGuest
+    : false
+  const sidebarHidden = pathname
+    ? SIDEBAR_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || pathname.startsWith('/install/') || hideForInviteGuest
+    : false
 
   return (
     <div
