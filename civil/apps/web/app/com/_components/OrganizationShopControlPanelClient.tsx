@@ -4,6 +4,7 @@ import Link from 'next/link'
 import {
   HiOutlineShoppingBag,
   HiOutlineRectangleStack,
+  HiOutlineArchiveBox,
   HiOutlineClipboardDocumentList,
   HiOutlineCog6Tooth,
 } from 'react-icons/hi2'
@@ -38,6 +39,12 @@ export default function OrganizationShopControlPanelClient({
       description: 'Add and reorder storefront sections.',
       href: `${base}/catalogs`,
       icon: HiOutlineRectangleStack,
+    },
+    {
+      label: 'Warehouses',
+      description: 'Define warehouse locations for inventory and fulfillment.',
+      href: `${base}/warehouses`,
+      icon: HiOutlineArchiveBox,
     },
     {
       label: 'Orders',

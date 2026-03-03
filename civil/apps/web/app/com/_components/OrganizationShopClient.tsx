@@ -11,6 +11,7 @@ import { redirectToAuthModal } from '../../_lib/authModal'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { pushToast } from '../../_components/useToasts'
+import { addMarketCartItem, readMarketCart, writeMarketCart } from '../../market/_lib/cart'
 
 type ShopWarehouse = {
   id: string
@@ -24,6 +25,9 @@ type ShopProduct = {
   catalogId?: string | null
   name: string
   description: string | null
+  featuredHomepage?: boolean
+  taxCollect?: boolean
+  taxRatesByRegion?: Record<string, string>
   priceCents: number
   currency: string
   sku: string | null
@@ -75,6 +79,7 @@ type CatalogEditDraft = {
 
 type ProductEditDraft = {
   catalogId: string
+  featuredHomepage: boolean
   name: string
   description: string
   priceDollars: string
@@ -177,6 +182,7 @@ type ShopSettingsPanel = 'shipping' | 'stripe'
 function toDraft(product: ShopProduct): ProductEditDraft {
   return {
     catalogId: product.catalogId ?? '',
+    featuredHomepage: Boolean(product.featuredHomepage),
     name: product.name,
     description: product.description ?? '',
     priceDollars: ((product.priceCents || 0) / 100).toFixed(2),
@@ -205,7 +211,7 @@ export default function OrganizationShopClient({
   slug: string
   mode?: 'storefront' | 'manage' | 'new'
   focusProductId?: string
-  manageSection?: 'products' | 'catalogs' | 'orders' | 'settings'
+  manageSection?: 'products' | 'catalogs' | 'warehouses' | 'orders' | 'settings'
 }) {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -217,6 +223,15 @@ export default function OrganizationShopClient({
   const [warehouses, setWarehouses] = useState<ShopWarehouse[]>([])
   const [products, setProducts] = useState<ShopProduct[]>([])
   const [newCatalogDraft, setNewCatalogDraft] = useState<CatalogEditDraft>({ title: '', description: '', imageUrl: '', enabled: true })
+  const [newWarehouseName, setNewWarehouseName] = useState('')
+  const [newWarehouseLine1, setNewWarehouseLine1] = useState('')
+  const [newWarehouseLine2, setNewWarehouseLine2] = useState('')
+  const [newWarehouseCity, setNewWarehouseCity] = useState('')
+  const [newWarehouseProvince, setNewWarehouseProvince] = useState('')
+  const [newWarehousePostalCode, setNewWarehousePostalCode] = useState('')
+  const [newWarehouseCountry, setNewWarehouseCountry] = useState('CA')
+  const [showNewCatalogForm, setShowNewCatalogForm] = useState(false)
+  const [showNewWarehouseForm, setShowNewWarehouseForm] = useState(false)
   const [catalogDrafts, setCatalogDrafts] = useState<Record<string, CatalogEditDraft>>({})
   const [draggingCatalogId, setDraggingCatalogId] = useState<string | null>(null)
   const [dragOverCatalogId, setDragOverCatalogId] = useState<string | null>(null)
@@ -268,6 +283,8 @@ export default function OrganizationShopClient({
   const manageProductsComHref = useMemo(() => `${baseComPath}/shop/manage/products`, [baseComPath])
 
   const [settingsPanel, setSettingsPanel] = useState<ShopSettingsPanel>('shipping')
+  const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(null)
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
 
   const loadConnectStatus = useCallback(async () => {
     if (!canManage || mode !== 'manage') return
@@ -437,13 +454,25 @@ export default function OrganizationShopClient({
       setTaxDrafts((prev) => {
         const next = { ...prev }
         nextProducts.forEach((product) => {
-          if (!next[product.id]) {
-            const provinceCode = String(province || '').trim().toUpperCase()
-            const defaultSelection = TAX_REGION_CODES.includes(provinceCode as any) ? `region:${provinceCode}` : 'gst_5'
-            next[product.id] = { collectTax: false, selectionKey: defaultSelection, ratesByRegion: {} }
+          const provinceCode = String(province || '').trim().toUpperCase()
+          const defaultSelection = TAX_REGION_CODES.includes(provinceCode as any) ? `region:${provinceCode}` : 'gst_5'
+          const initialRatesByRegion = product.taxRatesByRegion && typeof product.taxRatesByRegion === 'object' ? product.taxRatesByRegion : {}
+          next[product.id] = {
+            collectTax: Boolean(product.taxCollect),
+            selectionKey: next[product.id]?.selectionKey || defaultSelection,
+            ratesByRegion: initialRatesByRegion,
           }
         })
         return next
+      })
+
+      setSelectedCatalogId((current) => {
+        if (!current) return null
+        return nextCatalogs.some((catalog) => catalog.id === current && catalog.enabled) ? current : null
+      })
+      setSelectedProductId((current) => {
+        if (!current) return null
+        return nextProducts.some((product) => product.id === current && product.isActive && !product.isDraft) ? current : null
       })
     } catch {
       setCatalogs([])
@@ -693,6 +722,7 @@ export default function OrganizationShopClient({
       }
       const draft = productDrafts[productId]
       if (!draft) return false
+      const taxDraft = taxDrafts[productId] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
 
       const price = Number(draft.priceDollars)
       if (!Number.isFinite(price) || price < 0) {
@@ -710,6 +740,9 @@ export default function OrganizationShopClient({
           },
           body: JSON.stringify({
             catalogId: draft.catalogId || null,
+            featuredHomepage: draft.featuredHomepage,
+            taxCollect: taxDraft.collectTax,
+            taxRatesByRegion: taxDraft.ratesByRegion,
             name: draft.name.trim(),
             description: draft.description.trim() || null,
             priceCents: Math.round(price * 100),
@@ -739,7 +772,7 @@ export default function OrganizationShopClient({
         setSaving(false)
       }
     },
-    [load, productDrafts, shopPath],
+    [load, productDrafts, shopPath, taxDrafts],
   )
 
   const requestProductStatusChange = useCallback((productId: string, currentStatus: 'DRAFT' | 'PUBLISHED', nextStatus: 'DRAFT' | 'PUBLISHED') => {
@@ -1004,6 +1037,7 @@ export default function OrganizationShopClient({
         return
       }
       setNewCatalogDraft({ title: '', description: '', imageUrl: '', enabled: true })
+      setShowNewCatalogForm(false)
       pushToast('Catalog created.', 'success')
       await load()
     } catch {
@@ -1012,6 +1046,63 @@ export default function OrganizationShopClient({
       setSaving(false)
     }
   }, [load, newCatalogDraft, shopPath])
+
+  const createWarehouse = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!newWarehouseName.trim()) {
+      pushToast('Warehouse name is required.', 'error')
+      return
+    }
+    if (!newWarehouseLine1.trim() || !newWarehouseCity.trim() || !newWarehouseProvince.trim() || !newWarehousePostalCode.trim()) {
+      pushToast('Complete the full warehouse shipping address.', 'error')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${shopPath}/warehouses`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newWarehouseName.trim(),
+          address: {
+            line1: newWarehouseLine1.trim(),
+            line2: newWarehouseLine2.trim() || null,
+            city: newWarehouseCity.trim(),
+            province: newWarehouseProvince.trim(),
+            postalCode: newWarehousePostalCode.trim(),
+            country: (newWarehouseCountry.trim() || 'CA').toUpperCase(),
+          },
+        }),
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to create warehouse.', 'error')
+        return
+      }
+      setNewWarehouseName('')
+      setNewWarehouseLine1('')
+      setNewWarehouseLine2('')
+      setNewWarehouseCity('')
+      setNewWarehouseProvince('')
+      setNewWarehousePostalCode('')
+      setNewWarehouseCountry('CA')
+      setShowNewWarehouseForm(false)
+      pushToast('Warehouse created.', 'success')
+      await load()
+    } catch {
+      pushToast('Unable to create warehouse.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }, [load, newWarehouseCity, newWarehouseCountry, newWarehouseLine1, newWarehouseLine2, newWarehouseName, newWarehousePostalCode, newWarehouseProvince, shopPath])
 
   const saveCatalog = useCallback(
     async (catalogId: string) => {
@@ -1140,6 +1231,30 @@ export default function OrganizationShopClient({
     () => products.filter((product) => product.isActive && !product.isDraft),
     [products],
   )
+  const featuredProducts = useMemo(() => visibleProducts.filter((product) => product.featuredHomepage), [visibleProducts])
+  const nonFeaturedProducts = useMemo(() => visibleProducts.filter((product) => !product.featuredHomepage), [visibleProducts])
+  const hasCatalogs = enabledCatalogs.length > 0
+  const catalogProductCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const product of visibleProducts) {
+      const key = product.catalogId ?? ''
+      if (!key) continue
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }, [visibleProducts])
+  const selectedCatalog = useMemo(
+    () => enabledCatalogs.find((catalog) => catalog.id === selectedCatalogId) ?? null,
+    [enabledCatalogs, selectedCatalogId],
+  )
+  const storefrontCatalogProducts = useMemo(() => {
+    if (!selectedCatalogId) return []
+    return visibleProducts.filter((product) => product.catalogId === selectedCatalogId)
+  }, [selectedCatalogId, visibleProducts])
+  const storefrontSelectedProduct = useMemo(
+    () => visibleProducts.find((product) => product.id === selectedProductId) ?? null,
+    [selectedProductId, visibleProducts],
+  )
   const draftProducts = useMemo(() => products.filter((product) => product.isDraft), [products])
   const activeProducts = useMemo(() => products.filter((product) => !product.isDraft), [products])
   const sortedProducts = useMemo(() => {
@@ -1166,14 +1281,48 @@ export default function OrganizationShopClient({
     setAutoDraftAttempted(true)
     void createDraftProduct()
   }, [autoDraftAttempted, createDraftProduct, mode, saving])
+
+  const addToCart = useCallback(
+    (productId: string, delta = 1) => {
+      const current = readMarketCart()
+      const next = addMarketCartItem(current, productId, delta)
+      writeMarketCart(next)
+      window.dispatchEvent(new Event('civil:market-cart-changed'))
+      pushToast('Added to cart.', 'success')
+    },
+    [],
+  )
+
   if (loading) {
     return <p className="text-sm text-slate-500">Loading shop…</p>
   }
 
   if (mode === 'storefront') {
+    const renderProductCard = (product: ShopProduct) => (
+      <button
+        key={product.id}
+        type="button"
+        onClick={() => setSelectedProductId(product.id)}
+        className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300"
+      >
+        {product.primaryImageUrl ? (
+          <img src={product.primaryImageUrl} alt={product.name} className="mb-3 h-44 w-full rounded-xl border border-slate-200 object-cover" />
+        ) : null}
+        <p className="text-base font-semibold text-slate-900">{product.name}</p>
+        {product.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600">{product.description}</p> : null}
+        <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(product.priceCents, product.currency)}</p>
+      </button>
+    )
+
     return (
       <div className="space-y-5">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <Link
+            href="/market/cart"
+            className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300 hover:text-slate-900"
+          >
+            Open cart
+          </Link>
           {canManage ? (
             <Link
               href={`${baseComPath}/shop/manage`}
@@ -1185,40 +1334,123 @@ export default function OrganizationShopClient({
           ) : null}
         </div>
 
-        {enabledCatalogs.length ? (
-          <div className="grid gap-3">
-            {enabledCatalogs.map((catalog) => (
-              <article
-                key={catalog.id}
-                className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-100"
-                style={catalog.imageUrl ? { backgroundImage: `url(${catalog.imageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+        {storefrontSelectedProduct ? (
+          <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+            <button
+              type="button"
+              onClick={() => setSelectedProductId(null)}
+              className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50"
+            >
+              <HiOutlineArrowLeft className="h-4 w-4" />
+              {selectedCatalog ? `Return to ${selectedCatalog.title}` : 'Return to products'}
+            </button>
+
+            {storefrontSelectedProduct.primaryImageUrl ? (
+              <img
+                src={storefrontSelectedProduct.primaryImageUrl}
+                alt={storefrontSelectedProduct.name}
+                className="h-64 w-full rounded-xl border border-slate-200 object-cover"
+              />
+            ) : null}
+
+            <div>
+              <h3 className="text-xl font-semibold text-slate-900">{storefrontSelectedProduct.name}</h3>
+              <p className="mt-2 text-sm font-semibold text-slate-900">
+                {formatCurrency(storefrontSelectedProduct.priceCents, storefrontSelectedProduct.currency)}
+              </p>
+              {storefrontSelectedProduct.description ? <p className="mt-2 text-sm text-slate-600">{storefrontSelectedProduct.description}</p> : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => addToCart(storefrontSelectedProduct.id, 1)}
+                className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-xs font-semibold text-white transition hover:brightness-110"
               >
-                <div className={clsx('h-44 w-full', catalog.imageUrl ? 'bg-slate-900/50' : 'bg-gradient-to-br from-slate-200 to-slate-100')} />
-                <div className="absolute inset-0 flex flex-col justify-end p-4">
-                  <p className={clsx('text-lg font-semibold', catalog.imageUrl ? 'text-white' : 'text-slate-900')}>{catalog.title}</p>
-                  {catalog.description ? <p className={clsx('mt-1 text-sm', catalog.imageUrl ? 'text-white/90' : 'text-slate-600')}>{catalog.description}</p> : null}
+                Add to cart
+              </button>
+              <Link
+                href="/market/cart"
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                View cart & checkout
+              </Link>
+            </div>
+          </section>
+        ) : hasCatalogs && selectedCatalog ? (
+          <section className="space-y-4">
+            <button
+              type="button"
+              onClick={() => setSelectedCatalogId(null)}
+              className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50"
+            >
+              <HiOutlineArrowLeft className="h-4 w-4" />
+              Return to catalogs
+            </button>
+
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">{selectedCatalog.title}</h3>
+              {selectedCatalog.description ? <p className="mt-1 text-sm text-slate-600">{selectedCatalog.description}</p> : null}
+            </div>
+
+            {storefrontCatalogProducts.length ? (
+              <div className="grid gap-3 sm:grid-cols-2">{storefrontCatalogProducts.map(renderProductCard)}</div>
+            ) : (
+              <p className="text-sm text-slate-500">No products in this catalog yet.</p>
+            )}
+          </section>
+        ) : (
+          <>
+            {featuredProducts.length ? (
+              <section className="space-y-3">
+                <h3 className="text-lg font-semibold text-slate-900">Featured products</h3>
+                <div className="grid gap-3 sm:grid-cols-2">{featuredProducts.map(renderProductCard)}</div>
+              </section>
+            ) : null}
+
+            {hasCatalogs ? (
+              <section className="space-y-3">
+                <h3 className="text-lg font-semibold text-slate-900">Catalogs</h3>
+                <div className="grid gap-3">
+                  {enabledCatalogs.map((catalog) => {
+                    const productCount = catalogProductCounts.get(catalog.id) ?? 0
+                    return (
+                      <button
+                        type="button"
+                        key={catalog.id}
+                        onClick={() => {
+                          setSelectedCatalogId(catalog.id)
+                          setSelectedProductId(null)
+                        }}
+                        className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 text-left"
+                        style={
+                          catalog.imageUrl
+                            ? { backgroundImage: `url(${catalog.imageUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+                            : undefined
+                        }
+                      >
+                        <div className={clsx('h-44 w-full', catalog.imageUrl ? 'bg-slate-900/50' : 'bg-gradient-to-br from-slate-200 to-slate-100')} />
+                        <div className="absolute inset-0 flex flex-col justify-end p-4">
+                          <p className={clsx('text-lg font-semibold', catalog.imageUrl ? 'text-white' : 'text-slate-900')}>{catalog.title}</p>
+                          <p className={clsx('mt-1 text-sm font-semibold', catalog.imageUrl ? 'text-white/90' : 'text-slate-600')}>
+                            {productCount} {productCount === 1 ? 'product' : 'products'}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
-              </article>
-            ))}
-          </div>
-        ) : null}
+              </section>
+            ) : nonFeaturedProducts.length ? (
+              <section className="space-y-3">
+                <h3 className="text-lg font-semibold text-slate-900">Products</h3>
+                <div className="grid gap-3 sm:grid-cols-2">{nonFeaturedProducts.map(renderProductCard)}</div>
+              </section>
+            ) : null}
 
-        {!visibleProducts.length ? <p className="text-sm text-slate-500">No products yet.</p> : null}
-
-        {visibleProducts.length ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {visibleProducts.map((product) => (
-              <article key={product.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-                {product.primaryImageUrl ? (
-                  <img src={product.primaryImageUrl} alt={product.name} className="mb-3 h-44 w-full rounded-xl border border-slate-200 object-cover" />
-                ) : null}
-                <p className="text-base font-semibold text-slate-900">{product.name}</p>
-                {product.description ? <p className="mt-1 text-sm text-slate-600">{product.description}</p> : null}
-                <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(product.priceCents, product.currency)}</p>
-              </article>
-            ))}
-          </div>
-        ) : null}
+            {!visibleProducts.length ? <p className="text-sm text-slate-500">No products yet.</p> : null}
+          </>
+        )}
       </div>
     )
   }
@@ -1440,6 +1672,15 @@ export default function OrganizationShopClient({
                   ))}
                 </select>
               </label>
+
+              <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={draft.featuredHomepage}
+                  onChange={(event) => updateProductDraft(focusedProduct.id, (current) => ({ ...current, featuredHomepage: event.target.checked }))}
+                />
+                Feature product on shop homepage
+              </label>
             </section>
 
             <section className="surface-card space-y-4 p-4 shadow-subtle">
@@ -1454,14 +1695,15 @@ export default function OrganizationShopClient({
                   checked={taxDraft.collectTax}
                   onChange={(event) =>
                     setTaxDrafts((prev) => {
+                      const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
                       const nextCollectTax = event.target.checked
-                      const nextSelectionKey = taxDraft.selectionKey || 'gst_5'
-                      const nextRates = nextCollectTax ? buildRatesBySelection(nextSelectionKey, taxDraft.ratesByRegion) : taxDraft.ratesByRegion
+                      const nextSelectionKey = current.selectionKey || 'gst_5'
+                      const nextRates = nextCollectTax ? buildRatesBySelection(nextSelectionKey, current.ratesByRegion) : current.ratesByRegion
 
                       return {
                         ...prev,
                         [focusedProduct.id]: {
-                          ...taxDraft,
+                          ...current,
                           collectTax: nextCollectTax,
                           selectionKey: nextSelectionKey,
                           ratesByRegion: nextRates,
@@ -1482,14 +1724,17 @@ export default function OrganizationShopClient({
                       value={taxDraft.selectionKey || 'gst_5'}
                       onChange={(event) => {
                         const selectionKey = String(event.target.value || 'gst_5')
-                        setTaxDrafts((prev) => ({
-                          ...prev,
-                          [focusedProduct.id]: {
-                            ...taxDraft,
-                            selectionKey,
-                            ratesByRegion: buildRatesBySelection(selectionKey, taxDraft.ratesByRegion),
-                          },
-                        }))
+                        setTaxDrafts((prev) => {
+                          const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
+                          return {
+                            ...prev,
+                            [focusedProduct.id]: {
+                              ...current,
+                              selectionKey,
+                              ratesByRegion: buildRatesBySelection(selectionKey, current.ratesByRegion),
+                            },
+                          }
+                        })
                       }}
                       className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
                     >
@@ -1917,41 +2162,40 @@ export default function OrganizationShopClient({
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    const el = document.getElementById('shop-add-catalog')
-                    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                  }}
+                  onClick={() => setShowNewCatalogForm((prev) => !prev)}
                   className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
                 >
-                  Add new
+                  {showNewCatalogForm ? 'Cancel' : 'Add Catalog'}
                 </button>
               </div>
 
-              <div id="shop-add-catalog" className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Add catalog</p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <input
-                    value={newCatalogDraft.title}
-                    onChange={(event) => setNewCatalogDraft((prev) => ({ ...prev, title: event.target.value }))}
-                    placeholder="Catalog title"
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                  />
-                  <input
-                    value={newCatalogDraft.description}
-                    onChange={(event) => setNewCatalogDraft((prev) => ({ ...prev, description: event.target.value }))}
-                    placeholder="Short description"
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                  />
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void createCatalog()}
-                    disabled={saving}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
-                  >
-                    Add catalog
-                  </button>
+              <div className={clsx('mt-4 overflow-hidden transition-all duration-200', showNewCatalogForm ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0')}>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Create catalog</p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={newCatalogDraft.title}
+                      onChange={(event) => setNewCatalogDraft((prev) => ({ ...prev, title: event.target.value }))}
+                      placeholder="Catalog title"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newCatalogDraft.description}
+                      onChange={(event) => setNewCatalogDraft((prev) => ({ ...prev, description: event.target.value }))}
+                      placeholder="Short description"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void createCatalog()}
+                      disabled={saving}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                    >
+                      Create catalog
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2084,6 +2328,117 @@ export default function OrganizationShopClient({
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <p className="text-sm text-slate-700">Orders management will appear here.</p>
           </section>
+        </div>
+      )
+    }
+
+    if (section === 'warehouses') {
+      return (
+        <div className="space-y-5">
+          {renderReturnRow()}
+
+          {canManage ? (
+            <section className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Warehouses</p>
+                  <p className="mt-1 text-xs text-slate-500">Add warehouses so inventory and fulfillment can be managed correctly.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowNewWarehouseForm((prev) => !prev)}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
+                >
+                  {showNewWarehouseForm ? 'Cancel' : 'Add Warehouse'}
+                </button>
+              </div>
+
+              <div className={clsx('mt-4 overflow-hidden transition-all duration-200', showNewWarehouseForm ? 'max-h-[520px] opacity-100' : 'max-h-0 opacity-0')}>
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Create warehouse</p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={newWarehouseName}
+                      onChange={(event) => setNewWarehouseName(event.target.value)}
+                      placeholder="Warehouse name"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newWarehouseLine1}
+                      onChange={(event) => setNewWarehouseLine1(event.target.value)}
+                      placeholder="Address line 1"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newWarehouseLine2}
+                      onChange={(event) => setNewWarehouseLine2(event.target.value)}
+                      placeholder="Address line 2 (optional)"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newWarehouseCity}
+                      onChange={(event) => setNewWarehouseCity(event.target.value)}
+                      placeholder="City"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newWarehouseProvince}
+                      onChange={(event) => setNewWarehouseProvince(event.target.value)}
+                      placeholder="Province"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newWarehousePostalCode}
+                      onChange={(event) => setNewWarehousePostalCode(event.target.value)}
+                      placeholder="Postal code"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                    <input
+                      value={newWarehouseCountry}
+                      onChange={(event) => setNewWarehouseCountry(event.target.value.toUpperCase())}
+                      placeholder="Country (CA)"
+                      maxLength={2}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void createWarehouse()}
+                      disabled={saving}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
+                    >
+                      Create warehouse
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {!warehouses.length ? <p className="mt-3 text-sm text-slate-500">No warehouses yet.</p> : null}
+
+              {warehouses.length ? (
+                <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <div className="divide-y divide-slate-100">
+                    {warehouses.map((warehouse) => (
+                      <article key={warehouse.id} className="flex items-center justify-between gap-4 px-4 py-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-slate-900">{warehouse.name}</div>
+                          {warehouse.address ? <div className="mt-1 truncate text-xs text-slate-600">{warehouse.address}</div> : null}
+                        </div>
+                        {warehouse.isHeadOffice ? (
+                          <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                            Head Office
+                          </span>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          ) : (
+            <p className="text-sm text-slate-500">You don’t have access to manage warehouses.</p>
+          )}
         </div>
       )
     }
