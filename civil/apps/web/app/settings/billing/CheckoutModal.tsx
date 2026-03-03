@@ -112,10 +112,11 @@ function CheckoutForm({ session, token, me, billingProfile, onClose, onComplete 
   const fallbackDetails = useMemo(() => ({ name: me?.name ?? null, email: me?.email ?? null }), [me])
   const billingDetails = useMemo(() => buildBillingDetails(billingProfile, fallbackDetails), [billingProfile, fallbackDetails])
 
-  const title = session.mode === 'premium' ? 'Upgrade to Premium' : `Activate ${session.business?.name ?? 'Business'}`
+  // TODO: If/when we re-surface premium upsell copy, revisit these strings.
+  const title = session.mode === 'premium' ? 'Premium membership' : `Activate ${session.business?.name ?? 'Business'}`
   const description =
     session.mode === 'premium'
-      ? 'Unlock premium features instantly without leaving Civil Citizens.'
+      ? 'Activate premium billing without leaving Civil Citizens.'
       : 'Add billing for this organization directly inside Civil Citizens.'
   const endpoint = session.mode === 'premium' ? '/billing/premium/checkout' : session.business ? `/businesses/${session.business.id}/checkout` : null
 
