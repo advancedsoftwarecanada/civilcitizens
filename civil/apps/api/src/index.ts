@@ -3835,6 +3835,12 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       handle: true,
       name: true,
       bio: true,
+      billingAddress1: true,
+      billingAddress2: true,
+      billingCity: true,
+      billingState: true,
+      billingPostalCode: true,
+      billingCountry: true,
       avatarUrl: true,
       coverUrl: true,
       premiumStatus: true,
@@ -3995,6 +4001,12 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       lastName,
       name: user.name,
       bio: user.bio ? sanitizePlainText(user.bio) : '',
+      billingAddress1: user.billingAddress1 ?? null,
+      billingAddress2: user.billingAddress2 ?? null,
+      billingCity: user.billingCity ?? null,
+      billingState: user.billingState ?? null,
+      billingPostalCode: user.billingPostalCode ?? null,
+      billingCountry: user.billingCountry ?? null,
       avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
       coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
       avatarMediaId: user.avatarMediaId ?? null,
@@ -7174,6 +7186,7 @@ type OrgChatPrefs = {
 }
 
 let organizationShopTablesReady: Promise<void> | null = null
+let citizenMarketplaceTablesReady: Promise<void> | null = null
 
 function ensureOrganizationShopTables() {
   if (organizationShopTablesReady) return organizationShopTablesReady
@@ -7489,6 +7502,67 @@ function ensureOrganizationShopTables() {
     }
   })()
   return organizationShopTablesReady
+}
+
+function ensureCitizenMarketplaceTables() {
+  if (citizenMarketplaceTablesReady) return citizenMarketplaceTablesReady
+  citizenMarketplaceTablesReady = (async () => {
+    try {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS citizen_market_listing (
+          id TEXT PRIMARY KEY,
+          seller_user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT 'Draft Listing',
+          description TEXT,
+          price_cents INTEGER NOT NULL DEFAULT 0,
+          currency TEXT NOT NULL DEFAULT 'CAD',
+          photo_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+          pickup_city TEXT,
+          pickup_province TEXT,
+          pickup_address_line1 TEXT,
+          pickup_address_line2 TEXT,
+          pickup_postal_code TEXT,
+          payment_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+          willing_to_deliver BOOLEAN NOT NULL DEFAULT FALSE,
+          delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb,
+          e_transfer_email TEXT,
+          status TEXT NOT NULL DEFAULT 'draft',
+          selected_buyer_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          sale_expires_at TIMESTAMPTZ,
+          is_draft BOOLEAN NOT NULL DEFAULT TRUE,
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_by TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_seller_idx
+        ON citizen_market_listing (seller_user_id, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_status_idx
+        ON citizen_market_listing (status, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_selected_buyer_idx
+        ON citizen_market_listing (selected_buyer_user_id);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb;
+      `)
+    } catch (err) {
+      citizenMarketplaceTablesReady = null
+      throw err
+    }
+  })()
+
+  return citizenMarketplaceTablesReady
 }
 
 function readOrgChatPrefs(meta: unknown, orgId: string): OrgChatPrefs {
@@ -13085,6 +13159,41 @@ const MarketOrdersQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(20),
 })
 
+const MarketListingsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+})
+
+const MarketListingParams = z.object({
+  listingId: z.string().trim().min(1).max(128),
+})
+
+const MarketDeliveryOptionsSchema = z
+  .object({
+    short50km: z.coerce.number().int().min(0).max(500000000).optional(),
+    medium100km: z.coerce.number().int().min(0).max(500000000).optional(),
+    long250km: z.coerce.number().int().min(0).max(500000000).optional(),
+  })
+  .strict()
+
+const MarketListingUpdateBody = z.object({
+  title: z.string().trim().min(1).max(140).optional(),
+  description: z.string().trim().max(4000).optional().nullable(),
+  priceCents: z.coerce.number().int().min(0).max(500000000).optional(),
+  currency: z.string().trim().min(3).max(3).optional(),
+  photoUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+  pickupCity: z.string().trim().max(120).optional().nullable(),
+  pickupProvince: z.string().trim().max(80).optional().nullable(),
+  pickupAddressLine1: z.string().trim().max(180).optional().nullable(),
+  pickupAddressLine2: z.string().trim().max(180).optional().nullable(),
+  pickupPostalCode: z.string().trim().max(32).optional().nullable(),
+  paymentTypes: z.array(z.enum(['cash_pickup', 'etransfer'])).max(2).optional(),
+  willingToDeliver: z.boolean().optional(),
+  deliveryOptions: MarketDeliveryOptionsSchema.optional().nullable(),
+  eTransferEmail: z.string().trim().email().max(320).optional().nullable(),
+  isDraft: z.boolean().optional(),
+  status: z.enum(['draft', 'active', 'pending_sale', 'sold', 'canceled']).optional(),
+})
+
 function parseMarketCursor(cursor: string | undefined): null | { createdAt: Date; id: string } {
   if (!cursor) return null
   const [createdAtRaw, id] = cursor.split('|')
@@ -13103,6 +13212,38 @@ function readGalleryUrls(raw: unknown): string[] {
     if (typeof entry === 'string') urls.push(entry)
   }
   return urls
+}
+
+function readStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const values: string[] = []
+  for (const entry of raw) {
+    if (typeof entry === 'string') values.push(entry)
+  }
+  return values
+}
+
+type MarketDeliveryOptions = {
+  short50km?: number
+  medium100km?: number
+  long250km?: number
+}
+
+function readDeliveryOptions(raw: unknown): MarketDeliveryOptions {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const typed = raw as Record<string, unknown>
+  const options: MarketDeliveryOptions = {}
+
+  const short50km = typed.short50km
+  if (typeof short50km === 'number' && Number.isFinite(short50km) && short50km >= 0) options.short50km = Math.round(short50km)
+
+  const medium100km = typed.medium100km
+  if (typeof medium100km === 'number' && Number.isFinite(medium100km) && medium100km >= 0) options.medium100km = Math.round(medium100km)
+
+  const long250km = typed.long250km
+  if (typeof long250km === 'number' && Number.isFinite(long250km) && long250km >= 0) options.long250km = Math.round(long250km)
+
+  return options
 }
 
 app.get('/market/products', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -13642,6 +13783,284 @@ app.get('/market/orders/:orderId', async (req: FastifyRequest, reply: FastifyRep
       },
       items,
     })
+  }),
+)
+
+app.post('/market/listings/draft', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    await ensureCitizenMarketplaceTables()
+
+    const listingId = randomUUID()
+    await prisma.$executeRaw`
+      INSERT INTO citizen_market_listing (
+        id,
+        seller_user_id,
+        title,
+        description,
+        price_cents,
+        currency,
+        photo_urls,
+        payment_types,
+        willing_to_deliver,
+        delivery_options,
+        status,
+        is_draft,
+        is_active,
+        created_by
+      )
+      VALUES (
+        ${listingId},
+        ${userId},
+        ${'Draft Listing'},
+        ${null},
+        ${0},
+        ${'CAD'},
+        ${JSON.stringify([])}::jsonb,
+        ${JSON.stringify(['cash_pickup'])}::jsonb,
+        ${false},
+        ${JSON.stringify({})}::jsonb,
+        ${'draft'},
+        ${true},
+        ${true},
+        ${userId}
+      )
+    `
+
+    return reply.code(201).send({ listing: { id: listingId, isDraft: true } })
+  }),
+)
+
+app.get('/market/listings/mine', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const query = MarketListingsQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: 'invalid_query' })
+
+    await ensureCitizenMarketplaceTables()
+
+    type ListingRow = {
+      id: string
+      title: string
+      description: string | null
+      price_cents: number
+      currency: string
+      photo_urls: unknown
+      pickup_city: string | null
+      pickup_province: string | null
+      payment_types: unknown
+      willing_to_deliver: boolean
+      delivery_options: unknown
+      status: string
+      is_draft: boolean
+      updated_at: Date
+      created_at: Date
+    }
+
+    const rows = await prisma.$queryRaw<ListingRow[]>`
+      SELECT
+        id,
+        title,
+        description,
+        price_cents,
+        currency,
+        photo_urls,
+        pickup_city,
+        pickup_province,
+        payment_types,
+        willing_to_deliver,
+        delivery_options,
+        status,
+        is_draft,
+        updated_at,
+        created_at
+      FROM citizen_market_listing
+      WHERE seller_user_id = ${userId}
+        AND is_active = TRUE
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT ${query.data.limit}
+    `
+
+    const items = rows.map((row: ListingRow) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      priceCents: Number(row.price_cents) || 0,
+      currency: row.currency,
+      photoUrls: readGalleryUrls(row.photo_urls),
+      pickupCity: row.pickup_city,
+      pickupProvince: row.pickup_province,
+      paymentTypes: readStringList(row.payment_types),
+      willingToDeliver: Boolean(row.willing_to_deliver),
+      deliveryOptions: readDeliveryOptions(row.delivery_options),
+      status: row.status,
+      isDraft: Boolean(row.is_draft),
+      updatedAt: row.updated_at.toISOString(),
+      createdAt: row.created_at.toISOString(),
+    }))
+
+    return reply.send({ items })
+  }),
+)
+
+app.get('/market/listings/:listingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    await ensureCitizenMarketplaceTables()
+
+    type ListingDetailRow = {
+      id: string
+      title: string
+      description: string | null
+      price_cents: number
+      currency: string
+      photo_urls: unknown
+      pickup_city: string | null
+      pickup_province: string | null
+      pickup_address_line1: string | null
+      pickup_address_line2: string | null
+      pickup_postal_code: string | null
+      payment_types: unknown
+      willing_to_deliver: boolean
+      delivery_options: unknown
+      e_transfer_email: string | null
+      status: string
+      is_draft: boolean
+      updated_at: Date
+      created_at: Date
+    }
+
+    const rows = await prisma.$queryRaw<ListingDetailRow[]>`
+      SELECT
+        id,
+        title,
+        description,
+        price_cents,
+        currency,
+        photo_urls,
+        pickup_city,
+        pickup_province,
+        pickup_address_line1,
+        pickup_address_line2,
+        pickup_postal_code,
+        payment_types,
+        willing_to_deliver,
+        delivery_options,
+        e_transfer_email,
+        status,
+        is_draft,
+        updated_at,
+        created_at
+      FROM citizen_market_listing
+      WHERE id = ${params.data.listingId}
+        AND seller_user_id = ${userId}
+        AND is_active = TRUE
+      LIMIT 1
+    `
+
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'listing_not_found' })
+
+    return reply.send({
+      listing: {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        priceCents: Number(row.price_cents) || 0,
+        currency: row.currency,
+        photoUrls: readGalleryUrls(row.photo_urls),
+        pickupCity: row.pickup_city,
+        pickupProvince: row.pickup_province,
+        pickupAddressLine1: row.pickup_address_line1,
+        pickupAddressLine2: row.pickup_address_line2,
+        pickupPostalCode: row.pickup_postal_code,
+        paymentTypes: readStringList(row.payment_types),
+        willingToDeliver: Boolean(row.willing_to_deliver),
+        deliveryOptions: readDeliveryOptions(row.delivery_options),
+        eTransferEmail: row.e_transfer_email,
+        status: row.status,
+        isDraft: Boolean(row.is_draft),
+        updatedAt: row.updated_at.toISOString(),
+        createdAt: row.created_at.toISOString(),
+      },
+    })
+  }),
+)
+
+app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = MarketListingUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    await ensureCitizenMarketplaceTables()
+
+    const listingRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM citizen_market_listing
+      WHERE id = ${params.data.listingId}
+        AND seller_user_id = ${userId}
+        AND is_active = TRUE
+      LIMIT 1
+    `
+    if (!listingRows[0]) return reply.code(404).send({ error: 'listing_not_found' })
+
+    const nextDescription =
+      'description' in body.data ? (body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null) : null
+
+    const eTransferProvided = Object.prototype.hasOwnProperty.call(body.data, 'eTransferEmail')
+    const nextETransferEmail = eTransferProvided ? (body.data.eTransferEmail?.trim() ? body.data.eTransferEmail.trim() : null) : null
+
+    const hasPaymentTypesUpdate = Object.prototype.hasOwnProperty.call(body.data, 'paymentTypes')
+    const nextPaymentTypes = hasPaymentTypesUpdate ? Array.from(new Set(body.data.paymentTypes ?? [])) : []
+
+    const hasDeliveryOptionsUpdate = Object.prototype.hasOwnProperty.call(body.data, 'deliveryOptions')
+    const nextDeliveryOptions = hasDeliveryOptionsUpdate ? readDeliveryOptions(body.data.deliveryOptions ?? {}) : {}
+
+    const hasStatusUpdate = Object.prototype.hasOwnProperty.call(body.data, 'status')
+    const hasDraftUpdate = Object.prototype.hasOwnProperty.call(body.data, 'isDraft')
+    const nextStatus = hasStatusUpdate ? body.data.status : null
+    const nextIsDraft = hasDraftUpdate ? body.data.isDraft : null
+
+    await prisma.$executeRaw`
+      UPDATE citizen_market_listing
+      SET title = COALESCE(${body.data.title?.trim() ?? null}, title),
+          description = CASE WHEN ${'description' in body.data} THEN ${nextDescription} ELSE description END,
+          price_cents = COALESCE(${body.data.priceCents ?? null}, price_cents),
+          currency = COALESCE(${body.data.currency?.toUpperCase() ?? null}, currency),
+          photo_urls = CASE
+            WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'photoUrls')} THEN ${JSON.stringify(body.data.photoUrls ?? [])}::jsonb
+            ELSE photo_urls
+          END,
+          pickup_city = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupCity')} THEN ${body.data.pickupCity ?? null} ELSE pickup_city END,
+          pickup_province = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupProvince')} THEN ${body.data.pickupProvince ?? null} ELSE pickup_province END,
+          pickup_address_line1 = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupAddressLine1')} THEN ${body.data.pickupAddressLine1 ?? null} ELSE pickup_address_line1 END,
+          pickup_address_line2 = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupAddressLine2')} THEN ${body.data.pickupAddressLine2 ?? null} ELSE pickup_address_line2 END,
+          pickup_postal_code = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupPostalCode')} THEN ${body.data.pickupPostalCode ?? null} ELSE pickup_postal_code END,
+          payment_types = CASE WHEN ${hasPaymentTypesUpdate} THEN ${JSON.stringify(nextPaymentTypes)}::jsonb ELSE payment_types END,
+          willing_to_deliver = COALESCE(${typeof body.data.willingToDeliver === 'boolean' ? body.data.willingToDeliver : null}, willing_to_deliver),
+          delivery_options = CASE WHEN ${hasDeliveryOptionsUpdate} THEN ${JSON.stringify(nextDeliveryOptions)}::jsonb ELSE delivery_options END,
+          e_transfer_email = CASE WHEN ${eTransferProvided} THEN ${nextETransferEmail} ELSE e_transfer_email END,
+          status = CASE WHEN ${hasStatusUpdate} THEN ${nextStatus} ELSE status END,
+          is_draft = CASE WHEN ${hasDraftUpdate} THEN ${nextIsDraft} ELSE is_draft END,
+          updated_at = NOW()
+      WHERE id = ${params.data.listingId}
+    `
+
+    return reply.send({ success: true })
   }),
 )
 
