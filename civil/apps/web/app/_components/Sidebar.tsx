@@ -8,13 +8,13 @@ import {
   HiOutlineHome,
   HiOutlineBuildingOffice2,
   HiOutlineUserCircle,
-  HiOutlineChatBubbleLeftRight,
   HiOutlineBuildingLibrary,
   HiOutlineCalendarDays,
   HiOutlineShoppingBag,
   HiOutlineWallet,
   HiOutlineBriefcase,
   HiOutlineUserGroup,
+  HiOutlineUsers,
   HiOutlineNewspaper,
   HiOutlineMicrophone,
   HiOutlineMusicalNote,
@@ -49,8 +49,8 @@ export type SidebarNavItem = {
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Civic Pulse', href: '/home', icon: HiOutlineHome },
-  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleLeftRight },
-  { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUserGroup },
+  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineUserGroup },
+  { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
   { key: 'network', label: 'Network', href: '/network', icon: HiOutlineBriefcase },
   {
     key: 'communities',

@@ -5,7 +5,14 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineChatBubbleLeftRight, HiOutlineHashtag, HiOutlineShoppingBag } from 'react-icons/hi2'
+import {
+  HiOutlineBell,
+  HiOutlineMagnifyingGlass,
+  HiOutlineChatBubbleOvalLeft,
+  HiOutlineHashtag,
+  HiOutlineShoppingCart,
+  HiOutlineUserGroup,
+} from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
@@ -55,6 +62,7 @@ export default function TopNav() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
+  const [marketChatUnreadCount, setMarketChatUnreadCount] = useState(0)
   const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
   const [marketCartCount, setMarketCartCount] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -133,6 +141,22 @@ export default function TopNav() {
     }
   }, [])
 
+  const fetchMarketChatUnreadCount = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) return
+    try {
+      const res = await fetch(buildApiUrl('/market/chats/unread-count'), {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { count: number }
+        setMarketChatUnreadCount(data.count)
+      }
+    } catch (err) {
+      console.error('Failed to load marketplace chat unread count', err)
+    }
+  }, [])
+
   const fetchOrgChannelUnreadCount = useCallback(async () => {
     const token = getStoredToken()
     if (!token) return
@@ -198,6 +222,7 @@ export default function TopNav() {
           // But it does update the badge.
         }
         void fetchMessageUnreadCount()
+        void fetchMarketChatUnreadCount()
         void fetchOrgChannelUnreadCount()
         return
       }
@@ -247,17 +272,19 @@ export default function TopNav() {
     if (!token) return
     void fetchNotifications()
     void fetchMessageUnreadCount()
+    void fetchMarketChatUnreadCount()
     void fetchOrgChannelUnreadCount()
 
     const handleMessageRead = () => {
       void fetchMessageUnreadCount()
+      void fetchMarketChatUnreadCount()
       void fetchOrgChannelUnreadCount()
     }
     window.addEventListener('message.read', handleMessageRead)
     return () => {
       window.removeEventListener('message.read', handleMessageRead)
     }
-  }, [fetchNotifications, fetchMessageUnreadCount, fetchOrgChannelUnreadCount])
+  }, [fetchNotifications, fetchMessageUnreadCount, fetchMarketChatUnreadCount, fetchOrgChannelUnreadCount])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -529,22 +556,10 @@ export default function TopNav() {
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             aria-label="Cart"
           >
-            <HiOutlineShoppingBag className="text-xl" />
+            <HiOutlineShoppingCart className="text-xl" />
             {marketCartCount > 0 ? (
               <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {marketCartCount > 99 ? '99+' : marketCartCount}
-              </span>
-            ) : null}
-          </Link>
-          <Link
-            href="/messages"
-            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-            aria-label="Messages"
-          >
-            <HiOutlineChatBubbleOvalLeft className="text-xl" />
-            {messageUnreadCount > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
-                {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
               </span>
             ) : null}
           </Link>
@@ -553,7 +568,19 @@ export default function TopNav() {
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             aria-label="Marketplace chats"
           >
-            <HiOutlineChatBubbleLeftRight className="text-xl" />
+            <HiOutlineChatBubbleOvalLeft className="text-xl" />
+            {marketChatUnreadCount > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
+                {marketChatUnreadCount > 9 ? '9+' : marketChatUnreadCount}
+              </span>
+            ) : null}
+          </Link>
+          <Link
+            href="/messages"
+            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+            aria-label="Messages"
+          >
+            <HiOutlineUserGroup className="text-xl" />
             {messageUnreadCount > 0 ? (
               <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
                 {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
