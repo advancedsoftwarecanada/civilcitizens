@@ -1272,6 +1272,22 @@ export default function OrganizationShopClient({
     return base.filter((product) => product.id === focusProductId)
   }, [focusProductId, mode, products])
 
+  useEffect(() => {
+    if (mode !== 'storefront') return
+    if (!focusProductId) return
+
+    const target = visibleProducts.find((product) => product.id === focusProductId)
+    if (!target) {
+      setSelectedProductId(null)
+      return
+    }
+
+    setSelectedProductId(target.id)
+    if (target.catalogId) {
+      setSelectedCatalogId(target.catalogId)
+    }
+  }, [focusProductId, mode, visibleProducts])
+
   const [autoDraftAttempted, setAutoDraftAttempted] = useState(false)
 
   useEffect(() => {

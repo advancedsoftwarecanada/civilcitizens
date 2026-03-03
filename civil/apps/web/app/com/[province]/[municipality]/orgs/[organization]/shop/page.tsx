@@ -9,12 +9,23 @@ type PageProps = {
     municipality: string
     organization: string
   }
+  searchParams?: {
+    product?: string
+  }
 }
 
-export default function OrganizationShopPage({ params }: PageProps) {
+export default function OrganizationShopPage({ params, searchParams }: PageProps) {
+  const focusProductId = typeof searchParams?.product === 'string' && searchParams.product.trim() ? searchParams.product.trim() : undefined
+
   return (
     <OrganizationSection title="Shop">
-      <OrganizationShopClient province={params.province} municipality={params.municipality} slug={params.organization} mode="storefront" />
+      <OrganizationShopClient
+        province={params.province}
+        municipality={params.municipality}
+        slug={params.organization}
+        mode="storefront"
+        focusProductId={focusProductId}
+      />
     </OrganizationSection>
   )
 }
