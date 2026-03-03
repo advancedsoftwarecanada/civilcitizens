@@ -1912,6 +1912,15 @@ const REACTION_HOT_WINDOW_HOURS = 48
 const SCHEMA_MISMATCH_MESSAGE =
   'Database schema is out of date for this API version. Apply the latest Prisma migration (pnpm --filter @civil/db prisma migrate deploy) and restart the API.'
 
+function schemaOutOfDateDetail(err: unknown): { prismaCode?: string; prismaMetaMessage?: string; message?: string } {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    const metaMessage = typeof (err.meta as any)?.message === 'string' ? ((err.meta as any).message as string) : undefined
+    return { prismaCode: err.code, prismaMetaMessage: metaMessage, message: err.message }
+  }
+  const message = typeof (err as any)?.message === 'string' ? ((err as any).message as string) : undefined
+  return { message }
+}
+
 function isSchemaOutOfDateError(err: unknown): boolean {
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2021' || err.code === 'P2022') return true
@@ -2234,7 +2243,11 @@ async function withSchemaGuard<T>(
   } catch (err) {
     if (isSchemaOutOfDateError(err)) {
       req.log.error({ err }, 'database schema out of date for social features')
-      return reply.code(503).send({ error: 'schema_out_of_date', message: SCHEMA_MISMATCH_MESSAGE })
+      const payload: Record<string, unknown> = { error: 'schema_out_of_date', message: SCHEMA_MISMATCH_MESSAGE }
+      if (process.env.NODE_ENV !== 'production') {
+        payload.detail = schemaOutOfDateDetail(err)
+      }
+      return reply.code(503).send(payload)
     }
     throw err
   }
@@ -6401,6 +6414,135 @@ app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
   return reply.send({ items: cities.map((city: CityModel) => formatCitySummary(city)) })
 })
 
+app.get('/tax/canada/sales-rates', async (_req: FastifyRequest, reply: FastifyReply) => {
+  // NOTE: This is a curated “latest known” dataset that we can update over time.
+  // It intentionally avoids calling external services at runtime.
+  reply.header('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800')
+
+  const asOf = '2026-03-02'
+  const regions = [
+    {
+      code: 'AB',
+      name: 'Alberta',
+      defaultRatePct: 5,
+      options: [
+        { label: 'Standard — GST 5%', ratePct: 5 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'BC',
+      name: 'British Columbia',
+      defaultRatePct: 12,
+      options: [
+        { label: 'Standard — GST 5% + PST 7% (12%)', ratePct: 12 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'MB',
+      name: 'Manitoba',
+      defaultRatePct: 12,
+      options: [
+        { label: 'Standard — GST 5% + RST 7% (12%)', ratePct: 12 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'NB',
+      name: 'New Brunswick',
+      defaultRatePct: 15,
+      options: [
+        { label: 'Standard — HST 15%', ratePct: 15 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'NL',
+      name: 'Newfoundland and Labrador',
+      defaultRatePct: 15,
+      options: [
+        { label: 'Standard — HST 15%', ratePct: 15 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'NS',
+      name: 'Nova Scotia',
+      defaultRatePct: 15,
+      options: [
+        { label: 'Standard — HST 15%', ratePct: 15 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'NT',
+      name: 'Northwest Territories',
+      defaultRatePct: 5,
+      options: [
+        { label: 'Standard — GST 5%', ratePct: 5 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'NU',
+      name: 'Nunavut',
+      defaultRatePct: 5,
+      options: [
+        { label: 'Standard — GST 5%', ratePct: 5 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'ON',
+      name: 'Ontario',
+      defaultRatePct: 13,
+      options: [
+        { label: 'Standard — HST 13%', ratePct: 13 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'PE',
+      name: 'Prince Edward Island',
+      defaultRatePct: 15,
+      options: [
+        { label: 'Standard — HST 15%', ratePct: 15 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'QC',
+      name: 'Quebec',
+      defaultRatePct: 14.975,
+      options: [
+        { label: 'Standard — GST 5% + QST 9.975% (14.975%)', ratePct: 14.975 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'SK',
+      name: 'Saskatchewan',
+      defaultRatePct: 11,
+      options: [
+        { label: 'Standard — GST 5% + PST 6% (11%)', ratePct: 11 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+    {
+      code: 'YT',
+      name: 'Yukon',
+      defaultRatePct: 5,
+      options: [
+        { label: 'Standard — GST 5%', ratePct: 5 },
+        { label: 'No tax — 0%', ratePct: 0 },
+      ],
+    },
+  ]
+
+  return reply.send({ asOf, regions })
+})
+
 app.get('/communities/:province/:municipality', async (req: FastifyRequest, reply: FastifyReply) => {
   const params = z
     .object({
@@ -6905,6 +7047,8 @@ const CommunityOrgShopProductCreateBody = z.object({
   sku: z.string().trim().max(80).optional().nullable(),
   primaryImageUrl: z.string().trim().url().max(2048).optional().nullable(),
   galleryImageUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+  fulfillmentType: z.enum(['physical', 'digital']).default('physical'),
+  digitalDeliveryUrl: z.string().trim().url().max(2048).optional().nullable(),
   weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
   shippingPolicy: z.enum(['local_community', 'provincial', 'national']).default('local_community'),
   allowShippingContracts: z.boolean().default(false),
@@ -6919,6 +7063,8 @@ const CommunityOrgShopProductUpdateBody = z.object({
   priceCents: z.coerce.number().int().min(0).max(100_000_000).optional(),
   currency: z.string().trim().min(3).max(3).optional(),
   sku: z.string().trim().max(80).optional().nullable(),
+  fulfillmentType: z.enum(['physical', 'digital']).optional(),
+  digitalDeliveryUrl: z.string().trim().url().max(2048).optional().nullable(),
   trackInventory: z.boolean().optional(),
   weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
   shippingPolicy: z.enum(['local_community', 'provincial', 'national']).optional(),
@@ -7019,18 +7165,19 @@ let organizationShopTablesReady: Promise<void> | null = null
 function ensureOrganizationShopTables() {
   if (organizationShopTablesReady) return organizationShopTablesReady
   organizationShopTablesReady = (async () => {
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS organization_shop_settings (
-        business_id TEXT PRIMARY KEY REFERENCES "Business"(id) ON DELETE CASCADE,
-        head_office_address TEXT,
-        warehouse_same_as_head_office BOOLEAN NOT NULL DEFAULT TRUE,
-        direct_deposit_transit TEXT,
-        direct_deposit_institution TEXT,
-        direct_deposit_account TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-    `)
+    try {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS organization_shop_settings (
+          business_id TEXT PRIMARY KEY REFERENCES "Business"(id) ON DELETE CASCADE,
+          head_office_address TEXT,
+          warehouse_same_as_head_office BOOLEAN NOT NULL DEFAULT TRUE,
+          direct_deposit_transit TEXT,
+          direct_deposit_institution TEXT,
+          direct_deposit_account TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `)
 
     await prisma.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS organization_shop_warehouse (
@@ -7051,11 +7198,15 @@ function ensureOrganizationShopTables() {
         title TEXT NOT NULL,
         description TEXT,
         image_url TEXT,
-        sort_order INTEGER NOT NULL DEFAULT 0,
         enabled BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_catalog
+      ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
     `)
 
     await prisma.$executeRawUnsafe(`
@@ -7093,6 +7244,69 @@ function ensureOrganizationShopTables() {
     `)
 
     await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_order (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL REFERENCES "Business"(id) ON DELETE CASCADE,
+        buyer_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        currency TEXT NOT NULL DEFAULT 'CAD',
+        subtotal_cents INTEGER NOT NULL,
+        fee_cents INTEGER NOT NULL,
+        total_cents INTEGER NOT NULL,
+        shipping_address JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_order
+      ADD COLUMN IF NOT EXISTS buyer_user_id TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'organization_shop_order_buyer_user_id_fkey'
+        ) THEN
+          ALTER TABLE organization_shop_order
+          ADD CONSTRAINT organization_shop_order_buyer_user_id_fkey
+          FOREIGN KEY (buyer_user_id)
+          REFERENCES "User"(id)
+          ON DELETE SET NULL;
+        END IF;
+      END $$;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_order_item (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES organization_shop_order(id) ON DELETE CASCADE,
+        product_id TEXT REFERENCES organization_shop_product(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        price_cents INTEGER NOT NULL,
+        quantity INTEGER NOT NULL,
+        fulfillment_type TEXT NOT NULL DEFAULT 'physical',
+        digital_delivery_url TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS organization_shop_payment (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL REFERENCES organization_shop_order(id) ON DELETE CASCADE,
+        stripe_payment_intent_id TEXT,
+        status TEXT NOT NULL DEFAULT 'requires_payment_method',
+        amount_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'CAD',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `)
+
+    await prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS organization_shop_warehouse_business_id_idx
       ON organization_shop_warehouse (business_id);
     `)
@@ -7110,6 +7324,26 @@ function ensureOrganizationShopTables() {
     await prisma.$executeRawUnsafe(`
       CREATE INDEX IF NOT EXISTS organization_shop_product_business_id_idx
       ON organization_shop_product (business_id, created_at DESC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_order_business_id_idx
+      ON organization_shop_order (business_id, created_at DESC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_order_buyer_id_idx
+      ON organization_shop_order (buyer_user_id, created_at DESC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_order_item_order_id_idx
+      ON organization_shop_order_item (order_id);
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS organization_shop_payment_stripe_pi_id_uniq
+      ON organization_shop_payment (stripe_payment_intent_id);
     `)
 
     await prisma.$executeRawUnsafe(`
@@ -7139,12 +7373,42 @@ function ensureOrganizationShopTables() {
 
     await prisma.$executeRawUnsafe(`
       ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS fulfillment_type TEXT NOT NULL DEFAULT 'physical';
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS digital_delivery_url TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
       ADD COLUMN IF NOT EXISTS is_draft BOOLEAN NOT NULL DEFAULT FALSE;
     `)
 
     await prisma.$executeRawUnsafe(`
       ALTER TABLE organization_shop_product
       ADD COLUMN IF NOT EXISTS catalog_id TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS created_by TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'organization_shop_product_created_by_fkey'
+        ) THEN
+          ALTER TABLE organization_shop_product
+          ADD CONSTRAINT organization_shop_product_created_by_fkey
+          FOREIGN KEY (created_by)
+          REFERENCES "User"(id)
+          ON DELETE SET NULL;
+        END IF;
+      END $$;
     `)
 
     await prisma.$executeRawUnsafe(`
@@ -7187,10 +7451,14 @@ function ensureOrganizationShopTables() {
       ON organization_shop_product (catalog_id);
     `)
 
-    await prisma.$executeRawUnsafe(`
-      CREATE INDEX IF NOT EXISTS organization_shop_inventory_warehouse_id_idx
-      ON organization_shop_inventory (warehouse_id);
-    `)
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS organization_shop_inventory_warehouse_id_idx
+        ON organization_shop_inventory (warehouse_id);
+      `)
+    } catch (err) {
+      organizationShopTablesReady = null
+      throw err
+    }
   })()
   return organizationShopTablesReady
 }
@@ -7234,6 +7502,35 @@ function readOrganizationHeadline(metadata: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed ? trimmed.slice(0, 60) : null
+}
+
+type OrganizationShopPaymentsState = {
+  stripeConnectAccountId: string | null
+}
+
+function readOrganizationShopPaymentsState(metadata: unknown): OrganizationShopPaymentsState {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { stripeConnectAccountId: null }
+  }
+  const shop = (metadata as Record<string, unknown>).shop
+  if (!shop || typeof shop !== 'object' || Array.isArray(shop)) {
+    return { stripeConnectAccountId: null }
+  }
+
+  const raw = (shop as Record<string, unknown>).stripeConnectAccountId
+  return {
+    stripeConnectAccountId: typeof raw === 'string' && raw.trim().length ? raw.trim() : null,
+  }
+}
+
+function mergeOrganizationShopPaymentsStateIntoMetadata(metadata: unknown, next: Partial<OrganizationShopPaymentsState>): Prisma.InputJsonValue {
+  const base = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? ({ ...(metadata as Record<string, unknown>) } as Record<string, unknown>) : {}
+  const existingShop = base.shop && typeof base.shop === 'object' && !Array.isArray(base.shop) ? ({ ...(base.shop as Record<string, unknown>) } as Record<string, unknown>) : {}
+  if (typeof next.stripeConnectAccountId === 'string' || next.stripeConnectAccountId === null) {
+    existingShop.stripeConnectAccountId = next.stripeConnectAccountId
+  }
+  base.shop = existingShop
+  return base as Prisma.InputJsonValue
 }
 
 function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boolean, viewerRole: 'OWNER' | 'MANAGER' | null = null) {
@@ -11549,6 +11846,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
       return reply.code(404).send({ error: 'organization_not_found' })
     }
 
+    const includePrivateShopData = canManage
+
     await ensureOrganizationShopTables()
 
     type ShopSettingsRow = {
@@ -11581,6 +11880,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
       sku: string | null
       primary_image_url: string | null
       gallery_image_urls: unknown
+      fulfillment_type: string
+      digital_delivery_url: string | null
       weight_grams: number | null
       shipping_policy: string
       allow_shipping_contracts: boolean
@@ -11612,57 +11913,99 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
     }
 
     const [settingsRows, warehouseRows, catalogRows, productRows, inventoryRows] = await Promise.all([
-      prisma.$queryRaw<ShopSettingsRow[]>`
-        SELECT business_id, head_office_address, warehouse_same_as_head_office, direct_deposit_transit, direct_deposit_institution, direct_deposit_account
-        FROM organization_shop_settings
-        WHERE business_id = ${org.id}
-        LIMIT 1
-      `,
-      prisma.$queryRaw<ShopWarehouseRow[]>`
-        SELECT id, business_id, name, address, is_head_office, created_at, updated_at
-        FROM organization_shop_warehouse
-        WHERE business_id = ${org.id}
-        ORDER BY is_head_office DESC, created_at ASC
-      `,
+      includePrivateShopData
+        ? prisma.$queryRaw<ShopSettingsRow[]>`
+            SELECT business_id, head_office_address, warehouse_same_as_head_office, direct_deposit_transit, direct_deposit_institution, direct_deposit_account
+            FROM organization_shop_settings
+            WHERE business_id = ${org.id}
+            LIMIT 1
+          `
+        : Promise.resolve([] as ShopSettingsRow[]),
+      includePrivateShopData
+        ? prisma.$queryRaw<ShopWarehouseRow[]>`
+            SELECT id, business_id, name, address, is_head_office, created_at, updated_at
+            FROM organization_shop_warehouse
+            WHERE business_id = ${org.id}
+            ORDER BY is_head_office DESC, created_at ASC
+          `
+        : Promise.resolve([] as ShopWarehouseRow[]),
       prisma.$queryRaw<ShopCatalogRow[]>`
         SELECT id, business_id, title, description, image_url, sort_order, enabled, created_at, updated_at
         FROM organization_shop_catalog
         WHERE business_id = ${org.id}
         ORDER BY sort_order ASC, created_at ASC
       `,
-      prisma.$queryRaw<ShopProductRow[]>`
-        SELECT
-          p.id,
-          p.business_id,
-          p.catalog_id,
-          p.name,
-          p.description,
-          p.price_cents,
-          p.currency,
-          p.sku,
-          p.primary_image_url,
-          p.gallery_image_urls,
-          p.weight_grams,
-          p.shipping_policy,
-          p.allow_shipping_contracts,
-          p.is_draft,
-          p.is_active,
-          p.track_inventory,
-          p.created_at,
-          p.updated_at,
-          COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total
-        FROM organization_shop_product p
-        LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
-        WHERE p.business_id = ${org.id}
-        GROUP BY p.id
-        ORDER BY p.created_at DESC
-      `,
-      prisma.$queryRaw<ShopInventoryRow[]>`
-        SELECT i.product_id, i.warehouse_id, i.quantity, i.updated_at
-        FROM organization_shop_inventory i
-        INNER JOIN organization_shop_product p ON p.id = i.product_id
-        WHERE p.business_id = ${org.id}
-      `,
+      includePrivateShopData
+        ? prisma.$queryRaw<ShopProductRow[]>`
+            SELECT
+              p.id,
+              p.business_id,
+              p.catalog_id,
+              p.name,
+              p.description,
+              p.price_cents,
+              p.currency,
+              p.sku,
+              p.primary_image_url,
+              p.gallery_image_urls,
+              p.fulfillment_type,
+              p.digital_delivery_url,
+              p.weight_grams,
+              p.shipping_policy,
+              p.allow_shipping_contracts,
+              p.is_draft,
+              p.is_active,
+              p.track_inventory,
+              p.created_at,
+              p.updated_at,
+              COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total
+            FROM organization_shop_product p
+            LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
+            WHERE p.business_id = ${org.id}
+            GROUP BY p.id
+            ORDER BY p.created_at DESC
+          `
+        : prisma.$queryRaw<ShopProductRow[]>`
+            SELECT
+              p.id,
+              p.business_id,
+              p.catalog_id,
+              p.name,
+              p.description,
+              p.price_cents,
+              p.currency,
+              p.sku,
+              p.primary_image_url,
+              p.gallery_image_urls,
+              p.fulfillment_type,
+              p.digital_delivery_url,
+              p.weight_grams,
+              p.shipping_policy,
+              p.allow_shipping_contracts,
+              p.is_draft,
+              p.is_active,
+              p.track_inventory,
+              p.created_at,
+              p.updated_at,
+              COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total
+            FROM organization_shop_product p
+            LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
+            LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
+            WHERE p.business_id = ${org.id}
+              AND p.is_active = TRUE
+              AND p.is_draft = FALSE
+              AND (p.catalog_id IS NULL OR c.enabled = TRUE)
+            GROUP BY p.id
+            ORDER BY p.created_at DESC
+          `,
+      includePrivateShopData
+        ? prisma.$queryRaw<ShopInventoryRow[]>`
+            SELECT i.product_id, i.warehouse_id, i.quantity, i.updated_at
+            FROM organization_shop_inventory i
+            INNER JOIN organization_shop_product p ON p.id = i.product_id
+            WHERE p.business_id = ${org.id}
+          `
+        : Promise.resolve([] as ShopInventoryRow[]),
     ])
 
     const settings = settingsRows[0] ?? null
@@ -11671,6 +12014,15 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
       const current = inventoryByProduct.get(row.product_id) ?? []
       current.push({ warehouseId: row.warehouse_id, quantity: Number(row.quantity) || 0, updatedAt: row.updated_at.toISOString() })
       inventoryByProduct.set(row.product_id, current)
+    }
+
+    const publicCatalogs: ShopCatalogRow[] = []
+    if (includePrivateShopData) {
+      publicCatalogs.push(...catalogRows)
+    } else {
+      for (const row of catalogRows) {
+        if (row.enabled) publicCatalogs.push(row)
+      }
     }
 
     return reply.send({
@@ -11682,13 +12034,15 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
         municipality: org.communitySlug ?? null,
       },
       canManage,
-      settings: {
-        headOfficeAddress: settings?.head_office_address ?? null,
-        warehouseSameAsHeadOffice: settings ? Boolean(settings.warehouse_same_as_head_office) : true,
-        directDepositTransit: settings?.direct_deposit_transit ?? null,
-        directDepositInstitution: settings?.direct_deposit_institution ?? null,
-        directDepositAccount: settings?.direct_deposit_account ?? null,
-      },
+      settings: includePrivateShopData
+        ? {
+            headOfficeAddress: settings?.head_office_address ?? null,
+            warehouseSameAsHeadOffice: settings ? Boolean(settings.warehouse_same_as_head_office) : true,
+            directDepositTransit: settings?.direct_deposit_transit ?? null,
+            directDepositInstitution: settings?.direct_deposit_institution ?? null,
+            directDepositAccount: settings?.direct_deposit_account ?? null,
+          }
+        : undefined,
       warehouses: warehouseRows.map((row: ShopWarehouseRow) => ({
         id: row.id,
         name: row.name,
@@ -11697,7 +12051,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
       })),
-      catalogs: catalogRows.map((row: ShopCatalogRow) => ({
+      catalogs: publicCatalogs.map((row: ShopCatalogRow) => ({
         id: row.id,
         title: row.title,
         description: row.description,
@@ -11719,6 +12073,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
         galleryImageUrls: Array.isArray(row.gallery_image_urls)
           ? row.gallery_image_urls.filter((value): value is string => typeof value === 'string')
           : [],
+        fulfillmentType: row.fulfillment_type,
+        digitalDeliveryUrl: includePrivateShopData ? row.digital_delivery_url : undefined,
         weightGrams: row.weight_grams,
         shippingPolicy: row.shipping_policy,
         allowShippingContracts: row.allow_shipping_contracts,
@@ -11726,7 +12082,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
         isActive: row.is_active,
         trackInventory: row.track_inventory,
         inventoryTotal: Number(row.inventory_total ?? 0) || 0,
-        inventoryByWarehouse: inventoryByProduct.get(row.id) ?? [],
+        inventoryByWarehouse: includePrivateShopData ? inventoryByProduct.get(row.id) ?? [] : [],
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
       })),
@@ -11804,6 +12160,167 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/settings', async (
     }
 
     return reply.send({ success: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/shop/connect/account', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, name: true, websiteUrl: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const shopPayments = readOrganizationShopPaymentsState(org.metadata)
+    if (shopPayments.stripeConnectAccountId) {
+      return reply.send({ accountId: shopPayments.stripeConnectAccountId })
+    }
+
+    const stripe = getStripeClient()
+
+    const owner = await prisma.user.findUnique({ where: { id: org.ownerId }, select: { email: true } })
+    const ownerEmail = owner?.email ?? null
+
+    const account = await stripe.accounts.create({
+      type: 'express',
+      country: 'CA',
+      email: ownerEmail ?? undefined,
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+      business_profile: {
+        name: org.name,
+        url: org.websiteUrl ?? undefined,
+      },
+      metadata: {
+        civilBusinessId: org.id,
+        civilCommunity: community.slug,
+        civilProvince: province,
+      },
+    })
+
+    await prisma.business.update({
+      where: { id: org.id },
+      data: { metadata: mergeOrganizationShopPaymentsStateIntoMetadata(org.metadata, { stripeConnectAccountId: account.id }) },
+      select: { id: true },
+    })
+
+    return reply.send({ accountId: account.id })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/shop/connect/onboard', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, slug: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const shopPayments = readOrganizationShopPaymentsState(org.metadata)
+    if (!shopPayments.stripeConnectAccountId) {
+      return reply.code(409).send({ error: 'connect_account_missing' })
+    }
+
+    const stripe = getStripeClient()
+
+    const managePath = `/com/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(community.slug)}/orgs/${encodeURIComponent(
+      org.slug,
+    )}/shop/manage`
+    const refreshUrl = `https://${CIVIL_PUBLIC_HOST}${managePath}?connect=refresh`
+    const returnUrl = `https://${CIVIL_PUBLIC_HOST}${managePath}?connect=return`
+
+    const link = await stripe.accountLinks.create({
+      account: shopPayments.stripeConnectAccountId,
+      refresh_url: refreshUrl,
+      return_url: returnUrl,
+      type: 'account_onboarding',
+    })
+
+    return reply.send({ url: link.url })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/shop/connect/status', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true, metadata: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    const shopPayments = readOrganizationShopPaymentsState(org.metadata)
+    if (!shopPayments.stripeConnectAccountId) {
+      return reply.send({ accountId: null, chargesEnabled: false, payoutsEnabled: false, detailsSubmitted: false })
+    }
+
+    const stripe = getStripeClient()
+    const account = await stripe.accounts.retrieve(shopPayments.stripeConnectAccountId)
+
+    return reply.send({
+      accountId: shopPayments.stripeConnectAccountId,
+      chargesEnabled: Boolean((account as any).charges_enabled),
+      payoutsEnabled: Boolean((account as any).payouts_enabled),
+      detailsSubmitted: Boolean((account as any).details_submitted),
+    })
   }),
 )
 
@@ -12105,12 +12622,29 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     await ensureOrganizationShopTables()
 
-    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM organization_shop_product
+    const productRows = await prisma.$queryRaw<Array<{ id: string; fulfillment_type: string; digital_delivery_url: string | null }>>`
+      SELECT id, fulfillment_type, digital_delivery_url FROM organization_shop_product
       WHERE id = ${params.data.productId} AND business_id = ${org.id}
       LIMIT 1
     `
     if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+
+    const fulfillmentProvided = Object.prototype.hasOwnProperty.call(body.data, 'fulfillmentType')
+    const digitalUrlProvided = Object.prototype.hasOwnProperty.call(body.data, 'digitalDeliveryUrl')
+    const hasDigitalUpdate = fulfillmentProvided || digitalUrlProvided
+
+    const existingFulfillment = String(productRows[0].fulfillment_type || 'physical').toLowerCase()
+    const nextFulfillmentType = fulfillmentProvided ? String(body.data.fulfillmentType || 'physical').toLowerCase() : existingFulfillment
+    let nextDigitalDeliveryUrl = digitalUrlProvided
+      ? (body.data.digitalDeliveryUrl?.trim() ? body.data.digitalDeliveryUrl.trim() : null)
+      : (productRows[0].digital_delivery_url ?? null)
+    if (nextFulfillmentType !== 'digital') nextDigitalDeliveryUrl = null
+
+    if (typeof body.data.isDraft === 'boolean' && body.data.isDraft === false) {
+      if (nextFulfillmentType === 'digital' && !nextDigitalDeliveryUrl) {
+        return reply.code(400).send({ error: 'digital_delivery_url_required' })
+      }
+    }
 
     const nextProductDescription =
       'description' in body.data ? (body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null) : null
@@ -12140,6 +12674,8 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
           price_cents = COALESCE(${body.data.priceCents ?? null}, price_cents),
           currency = COALESCE(${body.data.currency?.toUpperCase() ?? null}, currency),
           sku = CASE WHEN ${'sku' in body.data} THEN ${body.data.sku ?? null} ELSE sku END,
+          fulfillment_type = CASE WHEN ${fulfillmentProvided} THEN ${nextFulfillmentType} ELSE fulfillment_type END,
+          digital_delivery_url = CASE WHEN ${hasDigitalUpdate} THEN ${nextDigitalDeliveryUrl} ELSE digital_delivery_url END,
           track_inventory = COALESCE(${typeof body.data.trackInventory === 'boolean' ? body.data.trackInventory : null}, track_inventory),
           weight_grams = CASE WHEN ${'weightGrams' in body.data} THEN ${body.data.weightGrams ?? null} ELSE weight_grams END,
           shipping_policy = COALESCE(${body.data.shippingPolicy ?? null}, shipping_policy),
@@ -12147,6 +12683,55 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
           is_draft = COALESCE(${typeof body.data.isDraft === 'boolean' ? body.data.isDraft : null}, is_draft),
           updated_at = NOW()
       WHERE id = ${params.data.productId}
+    `
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug/shop/products/:productId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgShopProductParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const province = normalizeProvinceCode(params.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+    const community = findCommunity(province, params.data.municipality.trim().toLowerCase())
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    const org = await prisma.business.findFirst({
+      where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+      select: { id: true, ownerId: true },
+    })
+    if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+
+    const isOwner = org.ownerId === userId
+    const membership = isOwner
+      ? { role: 'OWNER' as const }
+      : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+    if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureOrganizationShopTables()
+
+    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM organization_shop_product
+      WHERE id = ${params.data.productId} AND business_id = ${org.id}
+      LIMIT 1
+    `
+    if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+
+    await prisma.$executeRaw`
+      UPDATE organization_shop_product
+      SET is_active = FALSE,
+          updated_at = NOW()
+      WHERE id = ${params.data.productId}
+        AND business_id = ${org.id}
     `
 
     return reply.send({ success: true })
@@ -12187,6 +12772,11 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
     const productId = randomUUID()
     const priceCents = body.data.priceCents
     const currency = body.data.currency.toUpperCase()
+    const fulfillmentType = body.data.fulfillmentType
+    const digitalDeliveryUrl = body.data.digitalDeliveryUrl?.trim() ? body.data.digitalDeliveryUrl.trim() : null
+    if (fulfillmentType === 'digital' && !digitalDeliveryUrl) {
+      return reply.code(400).send({ error: 'digital_delivery_url_required' })
+    }
     const productDescription = body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null
     const galleryImageUrls = body.data.galleryImageUrls ?? []
     let resolvedCatalogId: string | null = null
@@ -12206,12 +12796,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
       INSERT INTO organization_shop_product (
         id, business_id, catalog_id, name, description, price_cents, currency, sku,
         primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
-        allow_shipping_contracts, is_draft, is_active, track_inventory, created_by
+        allow_shipping_contracts, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
       )
       VALUES (
         ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
         ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
-        ${body.data.allowShippingContracts}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
+        ${body.data.allowShippingContracts}, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
       )
     `
 
@@ -12356,6 +12946,540 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
     `
 
     return reply.send({ success: true })
+  }),
+)
+
+const MarketProductsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional().default(24),
+  cursor: z.string().trim().min(1).max(256).optional(),
+})
+
+const MarketProductParams = z.object({
+  productId: z.string().trim().min(1).max(128),
+})
+
+const MarketCheckoutBody = z.object({
+  items: z
+    .array(
+      z.object({
+        productId: z.string().trim().min(1).max(128),
+        quantity: z.coerce.number().int().min(1).max(99),
+      }),
+    )
+    .min(1)
+    .max(20),
+  shippingAddress: z
+    .object({
+      name: z.string().trim().min(1).max(120).optional(),
+      line1: z.string().trim().min(1).max(120).optional(),
+      line2: z.string().trim().max(120).optional().nullable(),
+      city: z.string().trim().min(1).max(80).optional(),
+      province: z.string().trim().min(1).max(80).optional(),
+      postalCode: z.string().trim().min(1).max(32).optional(),
+      country: z.string().trim().min(2).max(2).optional().default('CA'),
+    })
+    .optional()
+    .nullable(),
+})
+
+const MarketOrderParams = z.object({
+  orderId: z.string().trim().min(1).max(128),
+})
+
+function parseMarketCursor(cursor: string | undefined): null | { createdAt: Date; id: string } {
+  if (!cursor) return null
+  const [createdAtRaw, id] = cursor.split('|')
+  if (!createdAtRaw || !id) return null
+  const createdAt = new Date(createdAtRaw)
+  if (Number.isNaN(createdAt.getTime())) return null
+  const trimmedId = id.trim()
+  if (!trimmedId) return null
+  return { createdAt, id: trimmedId }
+}
+
+function readGalleryUrls(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const urls: string[] = []
+  for (const entry of raw) {
+    if (typeof entry === 'string') urls.push(entry)
+  }
+  return urls
+}
+
+app.get('/market/products', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const query = MarketProductsQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const cursor = parseMarketCursor(query.data.cursor)
+    await ensureOrganizationShopTables()
+
+    type MarketProductRow = {
+      id: string
+      business_id: string
+      business_name: string
+      business_slug: string
+      province_code: string | null
+      community_slug: string | null
+      business_logo_url: string | null
+      business_cover_url: string | null
+      name: string
+      description: string | null
+      price_cents: number
+      currency: string
+      primary_image_url: string | null
+      gallery_image_urls: unknown
+      fulfillment_type: string
+      created_at: Date
+    }
+
+    const rows: MarketProductRow[] = await prisma.$queryRaw<MarketProductRow[]>`
+      SELECT
+        p.id,
+        p.business_id,
+        b.name AS business_name,
+        b.slug AS business_slug,
+        b."provinceCode" AS province_code,
+        b."communitySlug" AS community_slug,
+        b."logoUrl" AS business_logo_url,
+        b."coverUrl" AS business_cover_url,
+        p.name,
+        p.description,
+        p.price_cents,
+        p.currency,
+        p.primary_image_url,
+        p.gallery_image_urls,
+        p.fulfillment_type,
+        p.created_at
+      FROM organization_shop_product p
+      INNER JOIN "Business" b ON b.id = p.business_id
+      LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
+      WHERE p.is_active = TRUE
+        AND p.is_draft = FALSE
+        AND b.status = 'ACTIVE'
+        AND (p.catalog_id IS NULL OR c.enabled = TRUE)
+        AND (
+          ${cursor ? Prisma.sql`(p.created_at < ${cursor.createdAt} OR (p.created_at = ${cursor.createdAt} AND p.id < ${cursor.id}))` : Prisma.sql`TRUE`}
+        )
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT ${query.data.limit + 1}
+    `
+
+    const pageRows: MarketProductRow[] = rows.slice(0, query.data.limit)
+    const nextCursor = rows.length > query.data.limit ? `${pageRows[pageRows.length - 1]!.created_at.toISOString()}|${pageRows[pageRows.length - 1]!.id}` : null
+
+    const items: Array<{
+      id: string
+      name: string
+      description: string | null
+      priceCents: number
+      currency: string
+      primaryImageUrl: string | null
+      galleryImageUrls: string[]
+      fulfillmentType: string
+      createdAt: string
+      organization: {
+        id: string
+        name: string
+        slug: string
+        province: string | null
+        municipality: string | null
+        logoUrl: string | null
+        coverUrl: string | null
+      }
+    }> = []
+
+    for (const row of pageRows) {
+      items.push({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        priceCents: Number(row.price_cents) || 0,
+        currency: row.currency,
+        primaryImageUrl: row.primary_image_url,
+        galleryImageUrls: readGalleryUrls(row.gallery_image_urls),
+        fulfillmentType: row.fulfillment_type,
+        createdAt: row.created_at.toISOString(),
+        organization: {
+          id: row.business_id,
+          name: row.business_name,
+          slug: row.business_slug,
+          province: row.province_code?.toLowerCase() ?? null,
+          municipality: row.community_slug ?? null,
+          logoUrl: normalizeMediaUrl(row.business_logo_url),
+          coverUrl: normalizeMediaUrl(row.business_cover_url),
+        },
+      })
+    }
+
+    return reply.send({ items, nextCursor })
+  }),
+)
+
+app.get('/market/products/:productId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = MarketProductParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    await ensureOrganizationShopTables()
+
+    type MarketProductDetailRow = {
+      id: string
+      business_id: string
+      business_name: string
+      business_slug: string
+      province_code: string | null
+      community_slug: string | null
+      business_logo_url: string | null
+      business_cover_url: string | null
+      name: string
+      description: string | null
+      price_cents: number
+      currency: string
+      sku: string | null
+      primary_image_url: string | null
+      gallery_image_urls: unknown
+      weight_grams: number | null
+      shipping_policy: string
+      allow_shipping_contracts: boolean
+      track_inventory: boolean
+      fulfillment_type: string
+      inventory_total: bigint | number | null
+      created_at: Date
+      updated_at: Date
+    }
+
+    const rows = await prisma.$queryRaw<MarketProductDetailRow[]>`
+      SELECT
+        p.id,
+        p.business_id,
+        b.name AS business_name,
+        b.slug AS business_slug,
+        b."provinceCode" AS province_code,
+        b."communitySlug" AS community_slug,
+        b."logoUrl" AS business_logo_url,
+        b."coverUrl" AS business_cover_url,
+        p.name,
+        p.description,
+        p.price_cents,
+        p.currency,
+        p.sku,
+        p.primary_image_url,
+        p.gallery_image_urls,
+        p.weight_grams,
+        p.shipping_policy,
+        p.allow_shipping_contracts,
+        p.track_inventory,
+        p.fulfillment_type,
+        COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total,
+        p.created_at,
+        p.updated_at
+      FROM organization_shop_product p
+      INNER JOIN "Business" b ON b.id = p.business_id
+      LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
+      LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
+      WHERE p.id = ${params.data.productId}
+        AND p.is_active = TRUE
+        AND p.is_draft = FALSE
+        AND b.status = 'ACTIVE'
+        AND (p.catalog_id IS NULL OR c.enabled = TRUE)
+      GROUP BY p.id, b.id
+      LIMIT 1
+    `
+
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'product_not_found' })
+
+    return reply.send({
+      product: {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        priceCents: Number(row.price_cents) || 0,
+        currency: row.currency,
+        sku: row.sku,
+        primaryImageUrl: row.primary_image_url,
+        galleryImageUrls: readGalleryUrls(row.gallery_image_urls),
+        fulfillmentType: row.fulfillment_type,
+        weightGrams: row.weight_grams,
+        shippingPolicy: row.shipping_policy,
+        allowShippingContracts: row.allow_shipping_contracts,
+        trackInventory: row.track_inventory,
+        inventoryTotal: Number(row.inventory_total ?? 0) || 0,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+      },
+      organization: {
+        id: row.business_id,
+        name: row.business_name,
+        slug: row.business_slug,
+        province: row.province_code?.toLowerCase() ?? null,
+        municipality: row.community_slug ?? null,
+        logoUrl: normalizeMediaUrl(row.business_logo_url),
+        coverUrl: normalizeMediaUrl(row.business_cover_url),
+      },
+    })
+  }),
+)
+
+app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const buyerId = (await resolveUserId(req)) ?? undefined
+    if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
+    if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
+    if (!STRIPE_PUBLISHABLE_KEY) return reply.code(503).send({ error: 'publishable_key_missing' })
+
+    const body = MarketCheckoutBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    await ensureOrganizationShopTables()
+
+    const quantitiesByProductId = new Map<string, number>()
+    for (const item of body.data.items) {
+      quantitiesByProductId.set(item.productId, (quantitiesByProductId.get(item.productId) ?? 0) + item.quantity)
+    }
+    const productIds = Array.from(quantitiesByProductId.keys())
+    if (!productIds.length) return reply.code(400).send({ error: 'empty_cart' })
+
+    type CheckoutProductRow = {
+      id: string
+      business_id: string
+      name: string
+      price_cents: number
+      currency: string
+      track_inventory: boolean
+      inventory_total: bigint | number | null
+      fulfillment_type: string
+      digital_delivery_url: string | null
+    }
+
+    const productRows: CheckoutProductRow[] = await prisma.$queryRaw<CheckoutProductRow[]>`
+      SELECT
+        p.id,
+        p.business_id,
+        p.name,
+        p.price_cents,
+        p.currency,
+        p.track_inventory,
+        COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total,
+        p.fulfillment_type,
+        p.digital_delivery_url
+      FROM organization_shop_product p
+      INNER JOIN "Business" b ON b.id = p.business_id
+      LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
+      LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
+      WHERE p.id IN (${Prisma.join(productIds)})
+        AND p.is_active = TRUE
+        AND p.is_draft = FALSE
+        AND b.status = 'ACTIVE'
+        AND (p.catalog_id IS NULL OR c.enabled = TRUE)
+      GROUP BY p.id, b.id
+    `
+
+    if (productRows.length !== productIds.length) {
+      return reply.code(404).send({ error: 'product_not_found' })
+    }
+
+    const businessId = productRows[0]!.business_id
+    if (!businessId || productRows.some((row) => row.business_id !== businessId)) {
+      return reply.code(400).send({ error: 'single_seller_required' })
+    }
+
+    const currency = productRows[0]!.currency
+    if (!currency || productRows.some((row) => row.currency !== currency)) {
+      return reply.code(400).send({ error: 'single_currency_required' })
+    }
+
+    const requiresShipping = productRows.some((row) => String(row.fulfillment_type || '').toLowerCase() === 'physical')
+    const shippingAddress = body.data.shippingAddress ?? null
+    if (requiresShipping && !shippingAddress) {
+      return reply.code(412).send({ error: 'shipping_address_required' })
+    }
+
+    for (const row of productRows) {
+      if (!row.track_inventory) continue
+      const requested = quantitiesByProductId.get(row.id) ?? 0
+      const available = Number(row.inventory_total ?? 0) || 0
+      if (requested > available) {
+        return reply.code(409).send({ error: 'insufficient_inventory', productId: row.id })
+      }
+    }
+
+    let subtotalCents = 0
+    for (const row of productRows) {
+      const qty = quantitiesByProductId.get(row.id) ?? 0
+      subtotalCents += (Number(row.price_cents) || 0) * qty
+    }
+    if (subtotalCents <= 0) return reply.code(400).send({ error: 'invalid_total' })
+
+    const feeCents = Math.max(0, Math.round(subtotalCents * 0.02))
+    const totalCents = subtotalCents
+
+    const business = await prisma.business.findUnique({ where: { id: businessId }, select: { id: true, name: true, metadata: true } })
+    if (!business) return reply.code(404).send({ error: 'organization_not_found' })
+    const shopPayments = readOrganizationShopPaymentsState(business.metadata)
+    if (!shopPayments.stripeConnectAccountId) {
+      return reply.code(409).send({ error: 'seller_not_configured' })
+    }
+
+    const orderId = randomUUID()
+    const paymentRowId = randomUUID()
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`
+        INSERT INTO organization_shop_order (id, business_id, buyer_user_id, status, currency, subtotal_cents, fee_cents, total_cents, shipping_address, created_at, updated_at)
+        VALUES (${orderId}, ${businessId}, ${buyerId}, ${'pending'}, ${currency}, ${subtotalCents}, ${feeCents}, ${totalCents}, ${shippingAddress ? JSON.stringify(shippingAddress) : null}::jsonb, NOW(), NOW())
+      `
+
+      for (const row of productRows) {
+        const qty = quantitiesByProductId.get(row.id) ?? 0
+        await tx.$executeRaw`
+          INSERT INTO organization_shop_order_item (id, order_id, product_id, name, price_cents, quantity, fulfillment_type, digital_delivery_url, created_at)
+          VALUES (
+            ${randomUUID()},
+            ${orderId},
+            ${row.id},
+            ${row.name},
+            ${Number(row.price_cents) || 0},
+            ${qty},
+            ${row.fulfillment_type || 'physical'},
+            ${String(row.fulfillment_type || '').toLowerCase() === 'digital' ? row.digital_delivery_url ?? null : null},
+            NOW()
+          )
+        `
+      }
+
+      await tx.$executeRaw`
+        INSERT INTO organization_shop_payment (id, order_id, stripe_payment_intent_id, status, amount_cents, currency, created_at, updated_at)
+        VALUES (${paymentRowId}, ${orderId}, ${null}, ${'requires_payment_method'}, ${totalCents}, ${currency}, NOW(), NOW())
+      `
+    })
+
+    const stripe = getStripeClient()
+    let paymentIntent: Stripe.PaymentIntent
+    try {
+      paymentIntent = await stripe.paymentIntents.create({
+        amount: totalCents,
+        currency: currency.toLowerCase() as any,
+        automatic_payment_methods: { enabled: true },
+        application_fee_amount: feeCents,
+        transfer_data: { destination: shopPayments.stripeConnectAccountId },
+        metadata: { kind: 'shop_order', orderId, businessId, buyerId },
+        description: business.name ? `Civil Market order for ${business.name}` : 'Civil Market order',
+      })
+    } catch (error) {
+      await prisma.$executeRaw`
+        UPDATE organization_shop_order
+        SET status = ${'payment_failed'}, updated_at = NOW()
+        WHERE id = ${orderId}
+      `
+      throw error
+    }
+
+    await prisma.$executeRaw`
+      UPDATE organization_shop_payment
+      SET stripe_payment_intent_id = ${paymentIntent.id},
+          status = ${paymentIntent.status},
+          updated_at = NOW()
+      WHERE id = ${paymentRowId}
+    `
+
+    if (!paymentIntent.client_secret) {
+      return reply.code(502).send({ error: 'payment_intent_missing_secret' })
+    }
+
+    return reply.send({
+      orderId,
+      paymentIntentId: paymentIntent.id,
+      clientSecret: paymentIntent.client_secret,
+      publishableKey: STRIPE_PUBLISHABLE_KEY,
+    })
+  }),
+)
+
+app.get('/market/orders/:orderId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const buyerId = (await resolveUserId(req)) ?? undefined
+    if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketOrderParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    await ensureOrganizationShopTables()
+
+    type OrderRow = {
+      id: string
+      business_id: string
+      status: string
+      currency: string
+      subtotal_cents: number
+      fee_cents: number
+      total_cents: number
+      shipping_address: unknown
+      created_at: Date
+    }
+
+    const orderRows = await prisma.$queryRaw<OrderRow[]>`
+      SELECT id, business_id, status, currency, subtotal_cents, fee_cents, total_cents, shipping_address, created_at
+      FROM organization_shop_order
+      WHERE id = ${params.data.orderId} AND buyer_user_id = ${buyerId}
+      LIMIT 1
+    `
+    const order = orderRows[0]
+    if (!order) return reply.code(404).send({ error: 'order_not_found' })
+
+    type OrderItemRow = {
+      id: string
+      name: string
+      price_cents: number
+      quantity: number
+      fulfillment_type: string
+      digital_delivery_url: string | null
+    }
+
+    const itemRows = await prisma.$queryRaw<OrderItemRow[]>`
+      SELECT id, name, price_cents, quantity, fulfillment_type, digital_delivery_url
+      FROM organization_shop_order_item
+      WHERE order_id = ${order.id}
+      ORDER BY created_at ASC
+    `
+
+    const allowDigitalDelivery = order.status === 'paid' || order.status === 'fulfilled'
+
+    const items: Array<{
+      id: string
+      name: string
+      priceCents: number
+      quantity: number
+      fulfillmentType: string
+      digitalDeliveryUrl: string | null
+    }> = []
+
+    for (const item of itemRows) {
+      items.push({
+        id: item.id,
+        name: item.name,
+        priceCents: Number(item.price_cents) || 0,
+        quantity: Number(item.quantity) || 0,
+        fulfillmentType: item.fulfillment_type,
+        digitalDeliveryUrl: allowDigitalDelivery && String(item.fulfillment_type || '').toLowerCase() === 'digital' ? item.digital_delivery_url : null,
+      })
+    }
+
+    return reply.send({
+      order: {
+        id: order.id,
+        businessId: order.business_id,
+        status: order.status,
+        currency: order.currency,
+        subtotalCents: Number(order.subtotal_cents) || 0,
+        feeCents: Number(order.fee_cents) || 0,
+        totalCents: Number(order.total_cents) || 0,
+        shippingAddress: order.shipping_address ?? null,
+        createdAt: order.created_at.toISOString(),
+      },
+      items,
+    })
   }),
 )
 
@@ -15152,8 +16276,143 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   }
 }
 
+async function handleShopPaymentIntentSucceeded(paymentIntent: Stripe.PaymentIntent) {
+  const orderId = paymentIntent.metadata?.orderId
+  if (!orderId) return
+
+  await ensureOrganizationShopTables()
+
+  const orderRows = await prisma.$queryRaw<Array<{ id: string; status: string }>>`
+    SELECT id, status
+    FROM organization_shop_order
+    WHERE id = ${orderId}
+    LIMIT 1
+  `
+  const order = orderRows[0]
+  if (!order) return
+  if (order.status === 'paid' || order.status === 'fulfilled') {
+    await prisma.$executeRaw`
+      UPDATE organization_shop_payment
+      SET status = ${paymentIntent.status}, updated_at = NOW()
+      WHERE order_id = ${orderId}
+    `
+    return
+  }
+
+  await prisma.$executeRaw`
+    UPDATE organization_shop_payment
+    SET stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ${paymentIntent.id}),
+        status = ${paymentIntent.status},
+        updated_at = NOW()
+    WHERE order_id = ${orderId}
+  `
+
+  await prisma.$executeRaw`
+    UPDATE organization_shop_order
+    SET status = ${'paid'}, updated_at = NOW()
+    WHERE id = ${orderId}
+  `
+
+  type PaidItemRow = {
+    product_id: string | null
+    quantity: number
+    track_inventory: boolean | null
+  }
+
+  const itemRows = await prisma.$queryRaw<PaidItemRow[]>`
+    SELECT oi.product_id, oi.quantity, p.track_inventory
+    FROM organization_shop_order_item oi
+    LEFT JOIN organization_shop_product p ON p.id = oi.product_id
+    WHERE oi.order_id = ${orderId}
+  `
+
+  for (const item of itemRows) {
+    if (!item.product_id) continue
+    if (!item.track_inventory) continue
+    let remaining = Number(item.quantity) || 0
+    if (remaining <= 0) continue
+
+    const inventoryRows = await prisma.$queryRaw<Array<{ warehouse_id: string; quantity: number }>>`
+      SELECT warehouse_id, quantity
+      FROM organization_shop_inventory
+      WHERE product_id = ${item.product_id}
+      ORDER BY quantity DESC
+    `
+
+    for (const inv of inventoryRows) {
+      if (remaining <= 0) break
+      const available = Number(inv.quantity) || 0
+      if (available <= 0) continue
+      const take = Math.min(remaining, available)
+      remaining -= take
+      await prisma.$executeRaw`
+        UPDATE organization_shop_inventory
+        SET quantity = GREATEST(quantity - ${take}, 0), updated_at = NOW()
+        WHERE product_id = ${item.product_id} AND warehouse_id = ${inv.warehouse_id}
+      `
+    }
+  }
+}
+
+async function handleShopPaymentIntentFailed(paymentIntent: Stripe.PaymentIntent) {
+  const orderId = paymentIntent.metadata?.orderId
+  if (!orderId) return
+  await ensureOrganizationShopTables()
+  await prisma.$executeRaw`
+    UPDATE organization_shop_payment
+    SET stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ${paymentIntent.id}),
+        status = ${paymentIntent.status},
+        updated_at = NOW()
+    WHERE order_id = ${orderId}
+  `
+  await prisma.$executeRaw`
+    UPDATE organization_shop_order
+    SET status = ${'payment_failed'}, updated_at = NOW()
+    WHERE id = ${orderId} AND status = ${'pending'}
+  `
+}
+
+async function handleShopPaymentIntentCanceled(paymentIntent: Stripe.PaymentIntent) {
+  const orderId = paymentIntent.metadata?.orderId
+  if (!orderId) return
+  await ensureOrganizationShopTables()
+  await prisma.$executeRaw`
+    UPDATE organization_shop_payment
+    SET stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ${paymentIntent.id}),
+        status = ${paymentIntent.status},
+        updated_at = NOW()
+    WHERE order_id = ${orderId}
+  `
+  await prisma.$executeRaw`
+    UPDATE organization_shop_order
+    SET status = ${'canceled'}, updated_at = NOW()
+    WHERE id = ${orderId} AND status = ${'pending'}
+  `
+}
+
 async function processStripeEvent(stripe: Stripe, event: Stripe.Event): Promise<StripeProcessResult> {
   switch (event.type) {
+    case 'payment_intent.succeeded': {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent
+      if (paymentIntent.metadata?.kind === 'shop_order') {
+        await handleShopPaymentIntentSucceeded(paymentIntent)
+      }
+      return { type: 'ignored' }
+    }
+    case 'payment_intent.payment_failed': {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent
+      if (paymentIntent.metadata?.kind === 'shop_order') {
+        await handleShopPaymentIntentFailed(paymentIntent)
+      }
+      return { type: 'ignored' }
+    }
+    case 'payment_intent.canceled': {
+      const paymentIntent = event.data.object as Stripe.PaymentIntent
+      if (paymentIntent.metadata?.kind === 'shop_order') {
+        await handleShopPaymentIntentCanceled(paymentIntent)
+      }
+      return { type: 'ignored' }
+    }
     case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
