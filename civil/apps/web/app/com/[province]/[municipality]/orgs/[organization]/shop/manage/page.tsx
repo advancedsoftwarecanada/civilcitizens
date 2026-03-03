@@ -13,7 +13,7 @@ type PageProps = {
 
 export default function OrganizationShopManagePage({ params }: PageProps) {
   return (
-    <OrganizationSection title="Control Panel" description="Manage products, catalogs, orders, and payouts from one place.">
+    <OrganizationSection title="Control Panel" description="Manage products, catalogs, warehouses, orders, and payouts from one place.">
       <OrganizationShopControlPanelClient province={params.province} municipality={params.municipality} organization={params.organization} />
     </OrganizationSection>
   )

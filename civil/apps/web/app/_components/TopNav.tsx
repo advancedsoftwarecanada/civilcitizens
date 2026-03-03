@@ -5,11 +5,12 @@ import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineHashtag } from 'react-icons/hi2'
+import { HiOutlineBell, HiOutlineMagnifyingGlass, HiOutlineChatBubbleOvalLeft, HiOutlineHashtag, HiOutlineShoppingBag } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { readMarketCart } from '../market/_lib/cart'
 import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
 import {
@@ -55,6 +56,7 @@ export default function TopNav() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
+  const [marketCartCount, setMarketCartCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
@@ -256,6 +258,34 @@ export default function TopNav() {
       window.removeEventListener('message.read', handleMessageRead)
     }
   }, [fetchNotifications, fetchMessageUnreadCount, fetchOrgChannelUnreadCount])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const refreshCount = () => {
+      const total = readMarketCart().reduce((sum, item) => sum + item.quantity, 0)
+      setMarketCartCount(total)
+    }
+
+    refreshCount()
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== 'civil_market_cart') return
+      refreshCount()
+    }
+
+    const handleLocalCartChanged = () => {
+      refreshCount()
+    }
+
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener('civil:market-cart-changed', handleLocalCartChanged)
+
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener('civil:market-cart-changed', handleLocalCartChanged)
+    }
+  }, [])
 
   useEffect(() => {
     if (!dropdownOpen) return undefined
@@ -494,6 +524,18 @@ export default function TopNav() {
         )}
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <Link
+            href="/market/cart"
+            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+            aria-label="Cart"
+          >
+            <HiOutlineShoppingBag className="text-xl" />
+            {marketCartCount > 0 ? (
+              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
+                {marketCartCount > 99 ? '99+' : marketCartCount}
+              </span>
+            ) : null}
+          </Link>
           <Link
             href="/messages"
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"

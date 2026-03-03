@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../../_components/DashboardShell'
 import { buildApiUrl, parseApiResponse } from '../../../_lib/api'
 import { writeMarketCart } from '../../_lib/cart'
@@ -73,12 +73,9 @@ export default function MarketOrderPageClient({ orderId }: { orderId: string }) 
   const [data, setData] = useState<OrderResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [refreshTick, setRefreshTick] = useState(0)
-  const refreshAttemptsRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
-    const attempt = refreshAttemptsRef.current
 
     const run = async () => {
       setLoading(true)
@@ -102,16 +99,7 @@ export default function MarketOrderPageClient({ orderId }: { orderId: string }) 
         const status = (parsed.json.order.status || '').toLowerCase()
         if (status === 'paid' || status === 'fulfilled') {
           writeMarketCart([])
-          refreshAttemptsRef.current = 0
-          return
-        }
-
-        if (status === 'pending' && attempt < 20) {
-          refreshAttemptsRef.current = attempt + 1
-          setTimeout(() => {
-            if (cancelled) return
-            setRefreshTick((t) => t + 1)
-          }, 3000)
+          window.dispatchEvent(new Event('civil:market-cart-changed'))
         }
       } catch {
         if (cancelled) return
@@ -125,7 +113,7 @@ export default function MarketOrderPageClient({ orderId }: { orderId: string }) 
     return () => {
       cancelled = true
     }
-  }, [orderId, refreshTick])
+  }, [orderId])
 
   const shippingLines = useMemo(() => formatShippingAddress(data?.order?.shippingAddress), [data?.order?.shippingAddress])
 

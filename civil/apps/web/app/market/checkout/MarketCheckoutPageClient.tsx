@@ -1,19 +1,17 @@
 'use client'
 
-import { PaymentElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js'
-import { loadStripe, type Stripe } from '@stripe/stripe-js'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
-import { readMarketCart, setMarketCartQuantity, type MarketCartItem, writeMarketCart } from '../_lib/cart'
-import YourOrdersPanel from '../_components/YourOrdersPanel'
+import { readMarketCart, writeMarketCart, type MarketCartItem } from '../_lib/cart'
 
 type Product = {
   id: string
   name: string
-  description: string | null
+  taxCollect?: boolean
+  taxRatesByRegion?: Record<string, string>
   priceCents: number
   currency: string
   primaryImageUrl: string | null
@@ -23,9 +21,6 @@ type Product = {
 type Organization = {
   id: string
   name: string
-  slug: string
-  province: string | null
-  municipality: string | null
 }
 
 type MarketProductDetailResponse = {
@@ -66,82 +61,68 @@ function getAuthHeaders(): Record<string, string> {
   return headers
 }
 
-function CheckoutForm({ orderId, onPaid }: { orderId: string; onPaid: () => void }) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const submit = useCallback(async () => {
-    if (!stripe || !elements) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      const returnUrl = `${window.location.origin}/market/orders/${encodeURIComponent(orderId)}`
-      const result = await stripe.confirmPayment({
-        elements,
-        confirmParams: { return_url: returnUrl },
-        redirect: 'if_required',
-      })
-
-      if (result.error) {
-        setError(result.error.message ?? 'Payment failed')
-        return
-      }
-
-      if (result.paymentIntent?.status === 'succeeded') {
-        onPaid()
-        return
-      }
-
-      // If Stripe handled a redirect, we won't reach this state.
-      // For non-redirect flows, show a generic status message.
-      if (result.paymentIntent?.status) {
-        setError(`Payment status: ${result.paymentIntent.status}`)
-      }
-    } catch {
-      setError('Payment failed')
-    } finally {
-      setSubmitting(false)
-    }
-  }, [elements, onPaid, orderId, stripe])
-
-  return (
-    <div className="space-y-3">
-      <PaymentElement />
-      {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-      <button
-        type="button"
-        onClick={submit}
-        disabled={!stripe || !elements || submitting}
-        className="w-full rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-300 disabled:opacity-60"
-      >
-        {submitting ? 'Processing…' : 'Pay now'}
-      </button>
-    </div>
-  )
+function computeTaxCents(_subtotalCents: number) {
+  return 0
 }
 
-export default function MarketCartPageClient() {
-  const router = useRouter()
+function computeStripeConnectFeeCents(subtotalCents: number) {
+  if (subtotalCents <= 0) return 0
+  return Math.max(0, Math.round(subtotalCents * 0.029) + 30)
+}
 
-  const [cart, setCart] = useState<MarketCartItem[]>([])
+function computeCivilMarketFeeCents(subtotalCents: number) {
+  if (subtotalCents <= 0) return 0
+  return Math.max(0, Math.round(subtotalCents * 0.05))
+}
+
+const CANADA_TAX_REGION_CODES = new Set(['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT'])
+const CANADA_TAX_REGION_NAME_TO_CODE: Record<string, string> = {
+  ALBERTA: 'AB',
+  BRITISHCOLUMBIA: 'BC',
+  MANITOBA: 'MB',
+  NEWBRUNSWICK: 'NB',
+  NEWFOUNDLANDANDLABRADOR: 'NL',
+  NOVASCOTIA: 'NS',
+  NORTHWESTTERRITORIES: 'NT',
+  NUNAVUT: 'NU',
+  ONTARIO: 'ON',
+  PRINCEEDWARDISLAND: 'PE',
+  QUEBEC: 'QC',
+  SASKATCHEWAN: 'SK',
+  YUKON: 'YT',
+}
+
+function parseTaxRatePct(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value)
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return Math.max(0, parsed)
+  }
+  return 0
+}
+
+function resolveTaxRegionCode(value: unknown): string | null {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase()
+  if (!normalized) return null
+  if (CANADA_TAX_REGION_CODES.has(normalized)) return normalized
+  const compact = normalized.replace(/[^A-Z]/g, '')
+  return CANADA_TAX_REGION_NAME_TO_CODE[compact] ?? null
+}
+
+export default function MarketCheckoutPageClient() {
+  const router = useRouter()
+  const placeOrderEnabled = false
+
   const [lines, setLines] = useState<CartLine[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({ country: 'CA' })
   const [rememberShippingAddress, setRememberShippingAddress] = useState(true)
-  const [creatingPayment, setCreatingPayment] = useState(false)
 
-  const [clientSecret, setClientSecret] = useState<string | null>(null)
-  const [publishableKey, setPublishableKey] = useState<string | null>(null)
-  const [orderId, setOrderId] = useState<string | null>(null)
-
-  useEffect(() => {
-    const initial = readMarketCart()
-    setCart(initial)
-  }, [])
+  const [placingOrder, setPlacingOrder] = useState(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -164,12 +145,11 @@ export default function MarketCartPageClient() {
     }
   }, [])
 
-  const loadCartLines = useCallback(async () => {
+  const loadCheckoutLines = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const current = readMarketCart()
-      setCart(current)
 
       if (!current.length) {
         setLines([])
@@ -196,25 +176,32 @@ export default function MarketCartPageClient() {
       }
       setLines(nextLines)
     } catch {
-      setError('Failed to load cart items')
+      setError('Failed to load checkout items')
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void loadCartLines()
-  }, [loadCartLines])
+    let cancelled = false
+    void (async () => {
+      await loadCheckoutLines()
+      if (cancelled) return
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [loadCheckoutLines])
 
   useEffect(() => {
     const onFocus = () => {
-      void loadCartLines()
+      void loadCheckoutLines()
     }
     window.addEventListener('focus', onFocus)
     return () => {
       window.removeEventListener('focus', onFocus)
     }
-  }, [loadCartLines])
+  }, [loadCheckoutLines])
 
   const sellerId = useMemo(() => {
     const ids = new Set(lines.map((l) => l.organization.id))
@@ -241,79 +228,149 @@ export default function MarketCartPageClient() {
     return total
   }, [lines])
 
-  const updateQuantity = useCallback(
-    (productId: string, quantity: number) => {
-      if (clientSecret) return
-      const current = readMarketCart()
-      const next = setMarketCartQuantity(current, productId, quantity)
-      writeMarketCart(next)
-      window.dispatchEvent(new Event('civil:market-cart-changed'))
-      setCart(next)
+  const taxCents = useMemo(() => {
+    const taxRegionCode = resolveTaxRegionCode(shippingAddress.province)
+    if (!taxRegionCode) return computeTaxCents(subtotalCents)
 
-      const nextLines: CartLine[] = []
-      for (const line of lines) {
-        if (line.product.id !== productId) {
-          nextLines.push(line)
-          continue
-        }
-        const updatedItem = next.find((i) => i.productId === productId)
-        if (updatedItem) nextLines.push({ ...line, item: updatedItem })
-      }
-      setLines(nextLines)
-    },
-    [clientSecret, lines],
-  )
+    let total = 0
+    for (const line of lines) {
+      if (!line.product.taxCollect) continue
+      const rates = line.product.taxRatesByRegion
+      if (!rates || typeof rates !== 'object') continue
+      const ratePct = parseTaxRatePct((rates as Record<string, unknown>)[taxRegionCode])
+      if (ratePct <= 0) continue
+      const lineSubtotal = (line.product.priceCents || 0) * (line.item.quantity || 0)
+      total += Math.max(0, Math.round(lineSubtotal * (ratePct / 100)))
+    }
+    return total
+  }, [lines, shippingAddress.province, subtotalCents])
+  const stripeConnectFeeCents = useMemo(() => computeStripeConnectFeeCents(subtotalCents), [subtotalCents])
+  const civilMarketFeeCents = useMemo(() => computeCivilMarketFeeCents(subtotalCents), [subtotalCents])
+  const grandTotalCents = useMemo(() => subtotalCents + taxCents + stripeConnectFeeCents + civilMarketFeeCents, [subtotalCents, taxCents, stripeConnectFeeCents, civilMarketFeeCents])
 
-  const createPayment = useCallback(async () => {
-    setCreatingPayment(true)
+  const placeOrder = useCallback(async () => {
+    setPlacingOrder(true)
     setError(null)
     try {
-      if (needsShipping && rememberShippingAddress && typeof window !== 'undefined') {
-        const shipping = {
-          name: shippingAddress.name?.trim() || '',
-          line1: shippingAddress.line1?.trim() || '',
-          line2: shippingAddress.line2?.trim() || '',
-          city: shippingAddress.city?.trim() || '',
-          province: shippingAddress.province?.trim() || '',
-          postalCode: shippingAddress.postalCode?.trim() || '',
-          country: (shippingAddress.country?.trim() || 'CA').toUpperCase(),
-        }
-        window.localStorage.setItem(MARKET_SHIPPING_ADDRESS_KEY, JSON.stringify(shipping))
+      const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+      if (!token) {
+        setError('Please sign in to checkout.')
+        return
       }
-      router.push('/market/checkout')
-    } catch {
-      setError('Unable to proceed to checkout.')
-    } finally {
-      setCreatingPayment(false)
-    }
-  }, [needsShipping, rememberShippingAddress, router, shippingAddress])
 
-  const stripePromise = useMemo(() => {
-    if (!publishableKey) return null
-    return loadStripe(publishableKey)
-  }, [publishableKey])
+      const items = readMarketCart()
+      if (!items.length) {
+        setError('Your cart is empty')
+        return
+      }
 
-  const onPaid = useCallback(() => {
-    if (typeof window !== 'undefined') {
+      if (!sellerId) {
+        setError('Checkout supports items from a single seller. Remove items to continue.')
+        return
+      }
+
+      if (!currency) {
+        setError('Checkout supports a single currency per order.')
+        return
+      }
+
+      const shipping = needsShipping
+        ? {
+            name: shippingAddress.name?.trim() || undefined,
+            line1: shippingAddress.line1?.trim() || undefined,
+            line2: shippingAddress.line2?.trim() || undefined,
+            city: shippingAddress.city?.trim() || undefined,
+            province: shippingAddress.province?.trim() || undefined,
+            postalCode: shippingAddress.postalCode?.trim() || undefined,
+            country: (shippingAddress.country?.trim() || 'CA').toUpperCase(),
+          }
+        : null
+
+      if (needsShipping) {
+        if (!shipping?.line1 || !shipping?.city || !shipping?.province || !shipping?.postalCode || !shipping?.country) {
+          setError('Shipping address is required for physical items')
+          return
+        }
+
+        if (rememberShippingAddress && typeof window !== 'undefined') {
+          const toPersist: ShippingAddress = {
+            name: shipping.name ?? '',
+            line1: shipping.line1 ?? '',
+            line2: shipping.line2 ?? '',
+            city: shipping.city ?? '',
+            province: shipping.province ?? '',
+            postalCode: shipping.postalCode ?? '',
+            country: shipping.country ?? 'CA',
+          }
+          window.localStorage.setItem(MARKET_SHIPPING_ADDRESS_KEY, JSON.stringify(toPersist))
+        }
+      }
+
+      const response = await fetch(buildApiUrl('/market/checkout'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ items, shippingAddress: shipping }),
+      })
+
+      const parsed = await parseApiResponse<
+        | { orderId: string }
+        | { error: unknown }
+      >(response)
+
+      if (response.status === 401) {
+        setError('Please sign in to checkout.')
+        return
+      }
+
+      if (!response.ok || !parsed.json || typeof (parsed.json as any).orderId !== 'string') {
+        const err = (parsed.json as any)?.error
+        const code = typeof err === 'string' ? err : typeof err?.error === 'string' ? err.error : null
+        const productId = typeof err?.productId === 'string' ? err.productId : null
+
+        if (code === 'single_seller_required') {
+          setError('Checkout supports items from a single seller. Remove items to continue.')
+          return
+        }
+        if (code === 'single_currency_required') {
+          setError('Checkout supports a single currency per order.')
+          return
+        }
+        if (code === 'shipping_address_required') {
+          setError('Shipping address is required for physical items.')
+          return
+        }
+        if (code === 'insufficient_inventory') {
+          setError(productId ? `Not enough inventory for product ${productId}.` : 'Not enough inventory for one of your items.')
+          return
+        }
+        setError('Failed to place order')
+        return
+      }
+
+      const ok = parsed.json as any
       writeMarketCart([])
       window.dispatchEvent(new Event('civil:market-cart-changed'))
+      router.push(`/market/orders/${encodeURIComponent(ok.orderId)}`)
+    } catch {
+      setError('Failed to place order')
+    } finally {
+      setPlacingOrder(false)
     }
-    if (orderId) router.push(`/market/orders/${encodeURIComponent(orderId)}`)
-  }, [orderId, router])
+  }, [currency, needsShipping, rememberShippingAddress, router, sellerId, shippingAddress])
 
   return (
-    <DashboardShell rightRail={<YourOrdersPanel />} showMobileRightRail>
-      <div className="space-y-6">
+    <DashboardShell rightRail={<div aria-hidden="true" />}>
+      <div className="space-y-6 pb-24">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900">Cart</h1>
-            <div className="mt-1 text-sm text-slate-600">Review your items and checkout.</div>
+            <h1 className="text-2xl font-semibold text-slate-900">Checkout</h1>
+            <div className="mt-1 text-sm text-slate-600">Finalize your order and payment.</div>
           </div>
           <Link
-            href="/market"
+            href="/market/cart"
             className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-300"
           >
-            Back to market
+            Back to cart
           </Link>
         </div>
 
@@ -324,6 +381,7 @@ export default function MarketCartPageClient() {
         ) : lines.length ? (
           <div className="space-y-4">
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-900">Items</div>
               <div className="divide-y divide-slate-100">
                 {lines.map((line) => (
                   <div key={line.product.id} className="flex items-center gap-4 p-4">
@@ -337,31 +395,7 @@ export default function MarketCartPageClient() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-slate-900">{line.product.name}</div>
                       <div className="mt-1 text-xs text-slate-600">{line.organization.name}</div>
-                      <div className="mt-1 text-xs text-slate-600">{formatMoney(line.product.priceCents, line.product.currency)} each</div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-600" htmlFor={`qty-${line.product.id}`}>
-                        Qty
-                      </label>
-                      <input
-                        id={`qty-${line.product.id}`}
-                        type="number"
-                        min={0}
-                        max={99}
-                        value={line.item.quantity}
-                        disabled={Boolean(clientSecret)}
-                        onChange={(e) => updateQuantity(line.product.id, Number(e.target.value))}
-                        className="w-16 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => updateQuantity(line.product.id, 0)}
-                        disabled={Boolean(clientSecret)}
-                        className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-                      >
-                        Remove
-                      </button>
+                      <div className="mt-1 text-xs text-slate-600">Qty {line.item.quantity}</div>
                     </div>
 
                     <div className="w-28 text-right text-sm font-semibold text-slate-900">
@@ -373,11 +407,29 @@ export default function MarketCartPageClient() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center justify-between text-sm text-slate-700">
-                <div>Subtotal</div>
-                <div className="font-semibold text-slate-900">{currency ? formatMoney(subtotalCents, currency) : '—'}</div>
+              <div className="space-y-2 text-sm text-slate-700">
+                <div className="flex items-center justify-between">
+                  <div>Subtotal</div>
+                  <div className="font-semibold text-slate-900">{currency ? formatMoney(subtotalCents, currency) : '—'}</div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>Taxes</div>
+                  <div className="font-semibold text-slate-900">{currency ? formatMoney(taxCents, currency) : '—'}</div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>Stripe connect fee(s)</div>
+                  <div className="font-semibold text-slate-900">{currency ? formatMoney(stripeConnectFeeCents, currency) : '—'}</div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>Civil Market Fee (5%)</div>
+                  <div className="font-semibold text-slate-900">{currency ? formatMoney(civilMarketFeeCents, currency) : '—'}</div>
+                </div>
+                <div className="mt-1 border-t border-slate-200 pt-2" />
+                <div className="flex items-center justify-between text-base">
+                  <div className="font-semibold text-slate-900">Grand total</div>
+                  <div className="font-semibold text-slate-900">{currency ? formatMoney(grandTotalCents, currency) : '—'}</div>
+                </div>
               </div>
-              <div className="mt-3 text-xs text-slate-600">Platform fee and taxes (if any) are handled at checkout.</div>
             </div>
 
             {needsShipping ? (
@@ -387,7 +439,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="text"
                     placeholder="Name"
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     value={shippingAddress.name ?? ''}
                     onChange={(e) => setShippingAddress((s) => ({ ...s, name: e.target.value }))}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
@@ -395,7 +447,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="text"
                     placeholder="Postal code"
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     value={shippingAddress.postalCode ?? ''}
                     onChange={(e) => setShippingAddress((s) => ({ ...s, postalCode: e.target.value }))}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
@@ -403,7 +455,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="text"
                     placeholder="Address line 1"
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     value={shippingAddress.line1 ?? ''}
                     onChange={(e) => setShippingAddress((s) => ({ ...s, line1: e.target.value }))}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 sm:col-span-2"
@@ -411,7 +463,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="text"
                     placeholder="Address line 2 (optional)"
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     value={shippingAddress.line2 ?? ''}
                     onChange={(e) => setShippingAddress((s) => ({ ...s, line2: e.target.value }))}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 sm:col-span-2"
@@ -419,7 +471,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="text"
                     placeholder="City"
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     value={shippingAddress.city ?? ''}
                     onChange={(e) => setShippingAddress((s) => ({ ...s, city: e.target.value }))}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
@@ -427,7 +479,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="text"
                     placeholder="Province"
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     value={shippingAddress.province ?? ''}
                     onChange={(e) => setShippingAddress((s) => ({ ...s, province: e.target.value }))}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
@@ -437,7 +489,7 @@ export default function MarketCartPageClient() {
                   <input
                     type="checkbox"
                     checked={rememberShippingAddress}
-                    disabled={Boolean(clientSecret)}
+                    disabled={placingOrder}
                     onChange={(e) => setRememberShippingAddress(e.target.checked)}
                   />
                   Remember this shipping address?
@@ -445,28 +497,15 @@ export default function MarketCartPageClient() {
               </div>
             ) : null}
 
-            {!clientSecret ? (
-              <button
-                type="button"
-                onClick={createPayment}
-                disabled={creatingPayment}
-                className="w-full rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-60"
-              >
-                {creatingPayment ? 'Opening checkout…' : 'Proceed to Checkout'}
-              </button>
-            ) : stripePromise && orderId ? (
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Payment</div>
-                <div className="mt-3">
-                  <Elements
-                    stripe={stripePromise as Promise<Stripe | null>}
-                    options={{ clientSecret }}
-                  >
-                    <CheckoutForm orderId={orderId} onPaid={onPaid} />
-                  </Elements>
-                </div>
-              </div>
-            ) : null}
+            <button
+              type="button"
+              onClick={placeOrder}
+              disabled={!placeOrderEnabled || placingOrder}
+              className="w-full rounded-full bg-slate-300 px-4 py-3 text-sm font-semibold text-slate-600"
+            >
+              {placingOrder ? 'Placing order…' : 'Place Order'}
+            </button>
+            <p className="text-center text-xs text-red-600">- Civil is currently working on this feature, please check back soon</p>
           </div>
         ) : (
           <div className="rounded-2xl border border-slate-200 bg-white p-6">
