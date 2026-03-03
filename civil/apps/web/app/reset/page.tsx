@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useState } from 'react'
+import AppleInstallRedirect from '../_components/AppleInstallRedirect'
 
 export default function ResetPasswordPage() {
   const [token, setToken] = useState('')
@@ -21,14 +22,19 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="mx-auto max-w-md p-8">
-      <h1 className="text-2xl font-bold mb-6">Reset password</h1>
-      <form onSubmit={onSubmit} className="space-y-4">
-        <input className="w-full border rounded p-3" placeholder="Reset token" value={token} onChange={(e) => setToken(e.target.value)} />
-        <input className="w-full border rounded p-3" placeholder="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-  <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400" type="submit" disabled={!token || newPassword.length < 8}>Set new password</button>
-      </form>
-      {status && <div className="mt-4 text-sm">{status}</div>}
-    </div>
+    <>
+      <AppleInstallRedirect source="reset" />
+      <div className="mx-auto max-w-md p-8">
+        <h1 className="mb-6 text-2xl font-bold">Reset password</h1>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <input className="w-full rounded border p-3" placeholder="Reset token" value={token} onChange={(e) => setToken(e.target.value)} />
+          <input className="w-full rounded border p-3" placeholder="New password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+          <button className="w-full rounded bg-[var(--cc-primary)] px-4 py-2 text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400" type="submit" disabled={!token || newPassword.length < 8}>
+            Set new password
+          </button>
+        </form>
+        {status && <div className="mt-4 text-sm">{status}</div>}
+      </div>
+    </>
   )
 }

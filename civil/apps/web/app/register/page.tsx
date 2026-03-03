@@ -8,6 +8,7 @@ import { buildHandleBase } from '@civil/shared'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
 import { setAuthToken } from '../_lib/authSession'
+import AppleInstallRedirect from '../_components/AppleInstallRedirect'
 
 type FieldErrors = Record<string, string[]>
 
@@ -202,58 +203,61 @@ export default function RegisterPage() {
   )
 
   return (
+    <>
+      <AppleInstallRedirect source="register" />
       <AuthScreen
         title="Create your Civil account"
         subtitle="Reserve your handle, pick your home city, and get access to Canada’s civic operating system."
-      footer={footer}
-      hideSidePanel
-      useWallpaper
-    >
-      <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        footer={footer}
+        hideSidePanel
+        useWallpaper
+      >
+        <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-slate-700">
+              First name
+              <input className={`${inputClass('firstName')} mt-2`} placeholder="Jane" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+              {hasFieldError('firstName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('firstName')}</div> : null}
+            </label>
+            <label className="block text-sm font-medium text-slate-700">
+              Last name
+              <input className={`${inputClass('lastName')} mt-2`} placeholder="Citizen" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+              {hasFieldError('lastName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('lastName')}</div> : null}
+            </label>
+          </div>
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            Your Civil handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
+          </div>
           <label className="block text-sm font-medium text-slate-700">
-            First name
-            <input className={`${inputClass('firstName')} mt-2`} placeholder="Jane" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
-            {hasFieldError('firstName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('firstName')}</div> : null}
+            Email
+            <input className={`${inputClass('email')} mt-2`} placeholder="you@civil.ca" value={email} onChange={(event) => setEmail(event.target.value)} />
+            {hasFieldError('email') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('email')}</div> : null}
           </label>
           <label className="block text-sm font-medium text-slate-700">
-            Last name
-            <input className={`${inputClass('lastName')} mt-2`} placeholder="Citizen" value={lastName} onChange={(event) => setLastName(event.target.value)} />
-            {hasFieldError('lastName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('lastName')}</div> : null}
+            Password
+            <input className={`${inputClass('password')} mt-2`} placeholder="At least 8 characters" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
           </label>
-        </div>
-        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          Your Civil handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
-        </div>
-        <label className="block text-sm font-medium text-slate-700">
-          Email
-          <input className={`${inputClass('email')} mt-2`} placeholder="you@civil.ca" value={email} onChange={(event) => setEmail(event.target.value)} />
-          {hasFieldError('email') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('email')}</div> : null}
-        </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Password
-          <input className={`${inputClass('password')} mt-2`} placeholder="At least 8 characters" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
-        </label>
-        <label className="flex items-start gap-3 text-sm text-slate-600">
-          <input type="checkbox" className="mt-1" checked={acceptTerms} onChange={(event) => setAcceptTerms(event.target.checked)} />
-          <span>
-            I agree to the{' '}
-            <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">
-              Terms of Service
-            </a>{' '}
-            and{' '}
-            <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
-              Privacy Policy
-            </a>
-          </span>
-        </label>
-        {hasFieldError('acceptTerms') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div> : null}
-        {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
-        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Creating account…' : 'Create account'}
-        </button>
-      </form>
-    </AuthScreen>
+          <label className="flex items-start gap-3 text-sm text-slate-600">
+            <input type="checkbox" className="mt-1" checked={acceptTerms} onChange={(event) => setAcceptTerms(event.target.checked)} />
+            <span>
+              I agree to the{' '}
+              <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">
+                Terms of Service
+              </a>{' '}
+              and{' '}
+              <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
+                Privacy Policy
+              </a>
+            </span>
+          </label>
+          {hasFieldError('acceptTerms') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div> : null}
+          {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
+          <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Creating account…' : 'Create account'}
+          </button>
+        </form>
+      </AuthScreen>
+    </>
   )
 }
