@@ -26,6 +26,8 @@ import {
   isNativePushOptedOut,
   type PushPermissionState,
 } from '../_lib/nativePush'
+import YourOrdersPanel from '../market/_components/YourOrdersPanel'
+import ShippingAddressesPanel from '../market/_components/ShippingAddressesPanel'
 
 const CARD_LINKS: Array<{
   key: 'profile' | 'communities'
@@ -302,6 +304,15 @@ export default function SettingsPage() {
               Open Admin Dashboard
             </Link>
           ) : null}
+        </div>
+      </section>
+
+      <section className="surface-card px-6 py-5 shadow-subtle">
+        <h2 className="text-base font-semibold text-slate-900">Commerce</h2>
+        <p className="mt-1 text-xs text-slate-600">Your order history and saved shipping details.</p>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <YourOrdersPanel title="Your Orders" limit={10} />
+          <ShippingAddressesPanel title="Shipping Addresses" />
         </div>
       </section>
 

@@ -7042,6 +7042,9 @@ const CommunityOrgShopProductCreateBody = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(5000).optional().nullable(),
   catalogId: z.string().trim().min(1).max(120).optional().nullable(),
+  featuredHomepage: z.boolean().default(false),
+  taxCollect: z.boolean().default(false),
+  taxRatesByRegion: z.record(z.string(), z.string()).default({}),
   priceCents: z.coerce.number().int().min(0).max(100_000_000),
   currency: z.string().trim().min(3).max(3).default('CAD'),
   sku: z.string().trim().max(80).optional().nullable(),
@@ -7060,6 +7063,9 @@ const CommunityOrgShopProductUpdateBody = z.object({
   name: z.string().trim().min(2).max(160).optional(),
   description: z.string().trim().max(5000).optional().nullable(),
   catalogId: z.string().trim().min(1).max(120).optional().nullable(),
+  featuredHomepage: z.boolean().optional(),
+  taxCollect: z.boolean().optional(),
+  taxRatesByRegion: z.record(z.string(), z.string()).optional(),
   priceCents: z.coerce.number().int().min(0).max(100_000_000).optional(),
   currency: z.string().trim().min(3).max(3).optional(),
   sku: z.string().trim().max(80).optional().nullable(),
@@ -7082,7 +7088,14 @@ const CommunityOrgShopSettingsBody = z.object({
 
 const CommunityOrgShopWarehouseCreateBody = z.object({
   name: z.string().trim().min(2).max(120),
-  address: z.string().trim().max(500).optional().nullable(),
+  address: z.object({
+    line1: z.string().trim().min(2).max(120),
+    line2: z.string().trim().max(120).optional().nullable(),
+    city: z.string().trim().min(2).max(80),
+    province: z.string().trim().min(2).max(80),
+    postalCode: z.string().trim().min(2).max(32),
+    country: z.string().trim().min(2).max(2).default('CA'),
+  }),
 })
 
 const CommunityOrgShopCatalogCreateBody = z.object({
@@ -7369,6 +7382,21 @@ function ensureOrganizationShopTables() {
     await prisma.$executeRawUnsafe(`
       ALTER TABLE organization_shop_product
       ADD COLUMN IF NOT EXISTS allow_shipping_contracts BOOLEAN NOT NULL DEFAULT FALSE;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS featured_homepage BOOLEAN NOT NULL DEFAULT FALSE;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS tax_collect BOOLEAN NOT NULL DEFAULT FALSE;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS tax_rates_by_region JSONB NOT NULL DEFAULT '{}'::jsonb;
     `)
 
     await prisma.$executeRawUnsafe(`
@@ -11875,6 +11903,9 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
       catalog_id: string | null
       name: string
       description: string | null
+      featured_homepage: boolean
+      tax_collect: boolean
+      tax_rates_by_region: unknown
       price_cents: number
       currency: string
       sku: string | null
@@ -11943,6 +11974,9 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
               p.catalog_id,
               p.name,
               p.description,
+              p.featured_homepage,
+              p.tax_collect,
+              p.tax_rates_by_region,
               p.price_cents,
               p.currency,
               p.sku,
@@ -11972,6 +12006,9 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
               p.catalog_id,
               p.name,
               p.description,
+              p.featured_homepage,
+              p.tax_collect,
+              p.tax_rates_by_region,
               p.price_cents,
               p.currency,
               p.sku,
@@ -12066,6 +12103,12 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
         catalogId: row.catalog_id,
         name: row.name,
         description: row.description,
+        featuredHomepage: row.featured_homepage,
+        taxCollect: row.tax_collect,
+        taxRatesByRegion:
+          row.tax_rates_by_region && typeof row.tax_rates_by_region === 'object' && !Array.isArray(row.tax_rates_by_region)
+            ? (row.tax_rates_by_region as Record<string, unknown>)
+            : {},
         priceCents: Number(row.price_cents) || 0,
         currency: row.currency,
         sku: row.sku,
@@ -12355,13 +12398,22 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/warehouses', asyn
 
     await ensureOrganizationShopTables()
 
+    const normalizedAddress = [
+      body.data.address.line1.trim(),
+      body.data.address.line2?.trim() || null,
+      `${body.data.address.city.trim()}, ${body.data.address.province.trim()} ${body.data.address.postalCode.trim()}`,
+      body.data.address.country.trim().toUpperCase(),
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join('\n')
+
     const warehouseId = randomUUID()
     await prisma.$executeRaw`
       INSERT INTO organization_shop_warehouse (id, business_id, name, address, is_head_office)
-      VALUES (${warehouseId}, ${org.id}, ${body.data.name.trim()}, ${body.data.address ?? null}, FALSE)
+      VALUES (${warehouseId}, ${org.id}, ${body.data.name.trim()}, ${normalizedAddress}, FALSE)
     `
 
-    return reply.code(201).send({ warehouse: { id: warehouseId, name: body.data.name.trim(), address: body.data.address ?? null, isHeadOffice: false } })
+    return reply.code(201).send({ warehouse: { id: warehouseId, name: body.data.name.trim(), address: normalizedAddress, isHeadOffice: false } })
   }),
 )
 
@@ -12578,12 +12630,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products/draft', 
       INSERT INTO organization_shop_product (
         id, business_id, name, description, price_cents, currency, sku,
         primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
-        allow_shipping_contracts, is_draft, is_active, track_inventory, created_by
+        allow_shipping_contracts, featured_homepage, tax_collect, tax_rates_by_region, is_draft, is_active, track_inventory, created_by
       )
       VALUES (
         ${productId}, ${org.id}, ${'Draft Product'}, ${null}, ${0}, ${'CAD'}, ${null},
         ${null}, ${JSON.stringify([])}::jsonb, ${null}, ${'local_community'},
-        ${false}, ${true}, ${true}, ${true}, ${userId}
+        ${false}, ${false}, ${false}, ${JSON.stringify({})}::jsonb, ${true}, ${true}, ${true}, ${userId}
       )
     `
 
@@ -12671,6 +12723,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
       SET catalog_id = CASE WHEN ${catalogProvided} THEN ${resolvedCatalogId ?? null} ELSE catalog_id END,
           name = COALESCE(${body.data.name?.trim() ?? null}, name),
           description = CASE WHEN ${'description' in body.data} THEN ${nextProductDescription} ELSE description END,
+          featured_homepage = COALESCE(${typeof body.data.featuredHomepage === 'boolean' ? body.data.featuredHomepage : null}, featured_homepage),
+          tax_collect = COALESCE(${typeof body.data.taxCollect === 'boolean' ? body.data.taxCollect : null}, tax_collect),
+          tax_rates_by_region = CASE
+            WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'taxRatesByRegion')} THEN ${JSON.stringify(body.data.taxRatesByRegion ?? {})}::jsonb
+            ELSE tax_rates_by_region
+          END,
           price_cents = COALESCE(${body.data.priceCents ?? null}, price_cents),
           currency = COALESCE(${body.data.currency?.toUpperCase() ?? null}, currency),
           sku = CASE WHEN ${'sku' in body.data} THEN ${body.data.sku ?? null} ELSE sku END,
@@ -12796,12 +12854,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
       INSERT INTO organization_shop_product (
         id, business_id, catalog_id, name, description, price_cents, currency, sku,
         primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
-        allow_shipping_contracts, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
+        allow_shipping_contracts, featured_homepage, tax_collect, tax_rates_by_region, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
       )
       VALUES (
         ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
         ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
-        ${body.data.allowShippingContracts}, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
+        ${body.data.allowShippingContracts}, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(body.data.taxRatesByRegion ?? {})}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
       )
     `
 
@@ -12982,8 +13040,49 @@ const MarketCheckoutBody = z.object({
     .nullable(),
 })
 
+const CANADA_TAX_REGION_CODES = new Set(['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT'])
+const CANADA_TAX_REGION_NAME_TO_CODE: Record<string, string> = {
+  ALBERTA: 'AB',
+  BRITISHCOLUMBIA: 'BC',
+  MANITOBA: 'MB',
+  NEWBRUNSWICK: 'NB',
+  NEWFOUNDLANDANDLABRADOR: 'NL',
+  NOVASCOTIA: 'NS',
+  NORTHWESTTERRITORIES: 'NT',
+  NUNAVUT: 'NU',
+  ONTARIO: 'ON',
+  PRINCEEDWARDISLAND: 'PE',
+  QUEBEC: 'QC',
+  SASKATCHEWAN: 'SK',
+  YUKON: 'YT',
+}
+
+function parseTaxRatePct(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value)
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return Math.max(0, parsed)
+  }
+  return 0
+}
+
+function resolveTaxRegionCode(value: unknown): string | null {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase()
+  if (!normalized) return null
+  if (CANADA_TAX_REGION_CODES.has(normalized)) return normalized
+
+  const compact = normalized.replace(/[^A-Z]/g, '')
+  return CANADA_TAX_REGION_NAME_TO_CODE[compact] ?? null
+}
+
 const MarketOrderParams = z.object({
   orderId: z.string().trim().min(1).max(128),
+})
+
+const MarketOrdersQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
 })
 
 function parseMarketCursor(cursor: string | undefined): null | { createdAt: Date; id: string } {
@@ -13134,6 +13233,8 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
       business_cover_url: string | null
       name: string
       description: string | null
+      tax_collect: boolean
+      tax_rates_by_region: unknown
       price_cents: number
       currency: string
       sku: string | null
@@ -13161,6 +13262,8 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
         b."coverUrl" AS business_cover_url,
         p.name,
         p.description,
+        p.tax_collect,
+        p.tax_rates_by_region,
         p.price_cents,
         p.currency,
         p.sku,
@@ -13195,6 +13298,11 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
         id: row.id,
         name: row.name,
         description: row.description,
+        taxCollect: row.tax_collect,
+        taxRatesByRegion:
+          row.tax_rates_by_region && typeof row.tax_rates_by_region === 'object' && !Array.isArray(row.tax_rates_by_region)
+            ? (row.tax_rates_by_region as Record<string, unknown>)
+            : {},
         priceCents: Number(row.price_cents) || 0,
         currency: row.currency,
         sku: row.sku,
@@ -13226,8 +13334,6 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const buyerId = (await resolveUserId(req)) ?? undefined
     if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
-    if (!isStripeConfigured()) return reply.code(503).send({ error: 'stripe_unconfigured' })
-    if (!STRIPE_PUBLISHABLE_KEY) return reply.code(503).send({ error: 'publishable_key_missing' })
 
     const body = MarketCheckoutBody.safeParse(req.body ?? {})
     if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
@@ -13247,6 +13353,8 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
       name: string
       price_cents: number
       currency: string
+      tax_collect: boolean
+      tax_rates_by_region: unknown
       track_inventory: boolean
       inventory_total: bigint | number | null
       fulfillment_type: string
@@ -13260,6 +13368,8 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
         p.name,
         p.price_cents,
         p.currency,
+        p.tax_collect,
+        p.tax_rates_by_region,
         p.track_inventory,
         COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total,
         p.fulfillment_type,
@@ -13306,24 +13416,34 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     let subtotalCents = 0
+    let taxCents = 0
+
+    const taxRegionCode = resolveTaxRegionCode(shippingAddress?.province)
+
     for (const row of productRows) {
       const qty = quantitiesByProductId.get(row.id) ?? 0
-      subtotalCents += (Number(row.price_cents) || 0) * qty
+      const lineSubtotal = (Number(row.price_cents) || 0) * qty
+      subtotalCents += lineSubtotal
+
+      if (row.tax_collect && taxRegionCode && row.tax_rates_by_region && typeof row.tax_rates_by_region === 'object' && !Array.isArray(row.tax_rates_by_region)) {
+        const ratesMap = row.tax_rates_by_region as Record<string, unknown>
+        const ratePct = parseTaxRatePct(ratesMap[taxRegionCode])
+        if (ratePct > 0) {
+          taxCents += Math.max(0, Math.round(lineSubtotal * (ratePct / 100)))
+        }
+      }
     }
     if (subtotalCents <= 0) return reply.code(400).send({ error: 'invalid_total' })
 
-    const feeCents = Math.max(0, Math.round(subtotalCents * 0.02))
-    const totalCents = subtotalCents
+    const stripeConnectFeeCents = Math.max(0, Math.round(subtotalCents * 0.029) + 30)
+    const civilMarketFeeCents = Math.max(0, Math.round(subtotalCents * 0.05))
+    const feeCents = stripeConnectFeeCents + civilMarketFeeCents
+    const totalCents = subtotalCents + taxCents + feeCents
 
-    const business = await prisma.business.findUnique({ where: { id: businessId }, select: { id: true, name: true, metadata: true } })
+    const business = await prisma.business.findUnique({ where: { id: businessId }, select: { id: true, name: true } })
     if (!business) return reply.code(404).send({ error: 'organization_not_found' })
-    const shopPayments = readOrganizationShopPaymentsState(business.metadata)
-    if (!shopPayments.stripeConnectAccountId) {
-      return reply.code(409).send({ error: 'seller_not_configured' })
-    }
 
     const orderId = randomUUID()
-    const paymentRowId = randomUUID()
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.$executeRaw`
@@ -13348,52 +13468,94 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
           )
         `
       }
-
-      await tx.$executeRaw`
-        INSERT INTO organization_shop_payment (id, order_id, stripe_payment_intent_id, status, amount_cents, currency, created_at, updated_at)
-        VALUES (${paymentRowId}, ${orderId}, ${null}, ${'requires_payment_method'}, ${totalCents}, ${currency}, NOW(), NOW())
-      `
     })
 
-    const stripe = getStripeClient()
-    let paymentIntent: Stripe.PaymentIntent
-    try {
-      paymentIntent = await stripe.paymentIntents.create({
-        amount: totalCents,
-        currency: currency.toLowerCase() as any,
-        automatic_payment_methods: { enabled: true },
-        application_fee_amount: feeCents,
-        transfer_data: { destination: shopPayments.stripeConnectAccountId },
-        metadata: { kind: 'shop_order', orderId, businessId, buyerId },
-        description: business.name ? `Civil Market order for ${business.name}` : 'Civil Market order',
-      })
-    } catch (error) {
-      await prisma.$executeRaw`
-        UPDATE organization_shop_order
-        SET status = ${'payment_failed'}, updated_at = NOW()
-        WHERE id = ${orderId}
-      `
-      throw error
+    return reply.code(201).send({
+      orderId,
+      totals: {
+        subtotalCents,
+        taxCents,
+        stripeConnectFeeCents,
+        civilMarketFeeCents,
+        grandTotalCents: totalCents,
+      },
+    })
+  }),
+)
+
+app.get('/market/orders', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const buyerId = (await resolveUserId(req)) ?? undefined
+    if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const query = MarketOrdersQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: 'invalid_query' })
+
+    await ensureOrganizationShopTables()
+
+    type OrderListRow = {
+      id: string
+      business_id: string
+      business_name: string
+      status: string
+      currency: string
+      subtotal_cents: number
+      fee_cents: number
+      total_cents: number
+      created_at: Date
+      item_count: bigint | number
     }
 
-    await prisma.$executeRaw`
-      UPDATE organization_shop_payment
-      SET stripe_payment_intent_id = ${paymentIntent.id},
-          status = ${paymentIntent.status},
-          updated_at = NOW()
-      WHERE id = ${paymentRowId}
+    const rows = await prisma.$queryRaw<OrderListRow[]>`
+      SELECT
+        o.id,
+        o.business_id,
+        b.name AS business_name,
+        o.status,
+        o.currency,
+        o.subtotal_cents,
+        o.fee_cents,
+        o.total_cents,
+        o.created_at,
+        COALESCE(SUM(oi.quantity), 0)::bigint AS item_count
+      FROM organization_shop_order o
+      INNER JOIN "Business" b ON b.id = o.business_id
+      LEFT JOIN organization_shop_order_item oi ON oi.order_id = o.id
+      WHERE o.buyer_user_id = ${buyerId}
+      GROUP BY o.id, b.id
+      ORDER BY o.created_at DESC
+      LIMIT ${query.data.limit}
     `
 
-    if (!paymentIntent.client_secret) {
-      return reply.code(502).send({ error: 'payment_intent_missing_secret' })
+    const items: Array<{
+      id: string
+      businessId: string
+      businessName: string
+      status: string
+      currency: string
+      subtotalCents: number
+      feeCents: number
+      totalCents: number
+      itemCount: number
+      createdAt: string
+    }> = []
+
+    for (const row of rows as OrderListRow[]) {
+      items.push({
+        id: row.id,
+        businessId: row.business_id,
+        businessName: row.business_name,
+        status: row.status,
+        currency: row.currency,
+        subtotalCents: Number(row.subtotal_cents) || 0,
+        feeCents: Number(row.fee_cents) || 0,
+        totalCents: Number(row.total_cents) || 0,
+        itemCount: Number(row.item_count ?? 0) || 0,
+        createdAt: row.created_at.toISOString(),
+      })
     }
 
-    return reply.send({
-      orderId,
-      paymentIntentId: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret,
-      publishableKey: STRIPE_PUBLISHABLE_KEY,
-    })
+    return reply.send({ items })
   }),
 )
 

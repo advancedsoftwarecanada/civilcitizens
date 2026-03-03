@@ -50,10 +50,11 @@ export default function MarketProductPageClient({
       const current = readMarketCart()
       const next: MarketCartItem[] = addMarketCartItem(current, product.id, 1)
       writeMarketCart(next)
-     } finally {
-       setAdding(false)
-     }
-   }, [product.id])
+      window.dispatchEvent(new Event('civil:market-cart-changed'))
+    } finally {
+      setAdding(false)
+    }
+  }, [product.id])
 
   const orgLocation = [organization.province?.toUpperCase() ?? null, organization.municipality].filter(Boolean).join(' • ')
 
