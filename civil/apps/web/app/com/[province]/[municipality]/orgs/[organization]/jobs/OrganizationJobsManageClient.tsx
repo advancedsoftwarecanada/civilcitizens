@@ -6,6 +6,7 @@ import { buildApiUrl } from '../../../../../../_lib/api'
 import { getStoredToken } from '../../../../../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../../../../../_lib/authModal'
 import { pushToast } from '../../../../../../_components/useToasts'
+import VerifiedAvatar from '../../../../../../_components/VerifiedAvatar'
 
 type JobItem = {
   id: string
@@ -32,6 +33,15 @@ type JobApplicationItem = {
   }
 }
 
+type ApplicantProfileCard = {
+  handle: string
+  name: string | null
+  avatarUrl: string | null
+  coverUrl: string | null
+  isVerified?: boolean
+  isPremium?: boolean
+}
+
 function statusLabel(status: JobItem['status']) {
   if (status === 'draft') return 'Unpublished'
   if (status === 'active') return 'Published'
@@ -53,6 +63,7 @@ export default function OrganizationJobsManageClient({
   const [applicationsByJobId, setApplicationsByJobId] = useState<Record<string, JobApplicationItem[]>>({})
   const [loadingApplicationsFor, setLoadingApplicationsFor] = useState<string | null>(null)
   const [updatingApplicationId, setUpdatingApplicationId] = useState<string | null>(null)
+  const [applicantCardsByHandle, setApplicantCardsByHandle] = useState<Record<string, ApplicantProfileCard>>({})
 
   const manageBaseHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/jobs/manage`
 
@@ -119,15 +130,59 @@ export default function OrganizationJobsManageClient({
           return
         }
         const payload = (await res.json().catch(() => null)) as { items?: JobApplicationItem[] } | null
+        const items = Array.isArray(payload?.items) ? payload.items : []
         setApplicationsByJobId((prev) => ({
           ...prev,
-          [jobId]: Array.isArray(payload?.items) ? payload.items : [],
+          [jobId]: items,
         }))
+
+        const handles = Array.from(
+          new Set(
+            items
+              .map((item) => (item.applicant?.handle ?? '').trim())
+              .filter(Boolean)
+              .map((handle) => handle.toLowerCase()),
+          ),
+        )
+        const missingHandles = handles.filter((handle) => !applicantCardsByHandle[handle])
+        if (missingHandles.length) {
+          await Promise.all(
+            missingHandles.map(async (handle) => {
+              try {
+                const userRes = await fetch(buildApiUrl(`/users/${encodeURIComponent(handle)}/posts?limit=1`), {
+                  headers: { authorization: `Bearer ${token}` },
+                  cache: 'no-store',
+                })
+                if (!userRes.ok) return
+                const data = (await userRes.json().catch(() => null)) as { user?: any } | null
+                const user = data?.user
+                if (!user?.handle) return
+                const key = String(user.handle).toLowerCase()
+                setApplicantCardsByHandle((prev) => {
+                  if (prev[key]) return prev
+                  return {
+                    ...prev,
+                    [key]: {
+                      handle: String(user.handle),
+                      name: typeof user.name === 'string' ? user.name : null,
+                      avatarUrl: typeof user.avatarUrl === 'string' ? user.avatarUrl : null,
+                      coverUrl: typeof user.coverUrl === 'string' ? user.coverUrl : null,
+                      isVerified: Boolean(user.isVerified),
+                      isPremium: Boolean(user.isPremium),
+                    },
+                  }
+                })
+              } catch {
+                /* ignore */
+              }
+            }),
+          )
+        }
       } finally {
         setLoadingApplicationsFor(null)
       }
     },
-    [municipality, province, slug],
+    [applicantCardsByHandle, municipality, province, slug],
   )
 
   const promoteJob = useCallback(
@@ -277,13 +332,43 @@ export default function OrganizationJobsManageClient({
                         </Link>
                         <span className="text-xs text-slate-500">{new Date(application.createdAt).toLocaleDateString()} • {application.status}</span>
                       </div>
+
+                      <Link
+                        href={`/u/${application.applicant.handle}`}
+                        className="mt-2 block overflow-hidden rounded-xl border border-slate-200 bg-slate-700"
+                      >
+                        {(() => {
+                          const handleKey = (application.applicant.handle || '').toLowerCase()
+                          const card = applicantCardsByHandle[handleKey] ?? null
+                          const displayName = (card?.name ?? application.applicant.name ?? application.applicant.handle).trim() || application.applicant.handle
+                          const coverUrl = card?.coverUrl ?? null
+                          const avatarUrl = card?.avatarUrl ?? null
+
+                          return (
+                            <div className="relative px-3 py-2">
+                              {coverUrl ? <img src={coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                              <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                              <div className="relative flex items-center gap-2.5">
+                                <VerifiedAvatar
+                                  src={avatarUrl}
+                                  alt={displayName}
+                                  initials={displayName}
+                                  size={32}
+                                  isVerified={Boolean(card?.isVerified)}
+                                  isBusiness={Boolean(card?.isPremium)}
+                                />
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-white">{displayName}</p>
+                                  <p className="truncate text-xs text-white/85">@{application.applicant.handle}</p>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </Link>
+
                       <div className="prose prose-sm mt-2 max-w-none text-slate-700" dangerouslySetInnerHTML={{ __html: application.motivationHtml }} />
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {application.threadId ? (
-                          <Link href={`/messages?thread=${encodeURIComponent(application.threadId)}`} className="inline-flex rounded-full border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700">
-                            Open thread
-                          </Link>
-                        ) : null}
                         {application.status !== 'hired' ? (
                           <button
                             type="button"
