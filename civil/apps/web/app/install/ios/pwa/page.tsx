@@ -3,21 +3,29 @@
 import Image from 'next/image'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { isIosSafariBrowser, normalizeRelativePath, shouldBlockForAppleInstall } from '../../../_lib/appleInstallGate'
+import { buildIosSwitchToSafariUrl, isIosSafariBrowser, normalizeRelativePath, shouldBlockForAppleInstall } from '../../../_lib/appleInstallGate'
 
 export default function InstallIosPwaPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const nextPath = useMemo(() => normalizeRelativePath(searchParams.get('next'), '/login'), [searchParams])
+  const source = useMemo(() => (searchParams.get('source') || '').trim(), [searchParams])
   const [isSafari, setIsSafari] = useState(true)
   const [isBlocking, setIsBlocking] = useState(true)
 
   useEffect(() => {
-    setIsSafari(isIosSafariBrowser())
+    const safari = isIosSafariBrowser()
+    setIsSafari(safari)
     const blocked = shouldBlockForAppleInstall()
     setIsBlocking(blocked)
-    if (!blocked) router.replace(nextPath)
-  }, [nextPath, router])
+    if (!blocked) {
+      router.replace(nextPath)
+      return
+    }
+    if (!safari) {
+      router.replace(buildIosSwitchToSafariUrl(nextPath, source || undefined))
+    }
+  }, [nextPath, router, source])
 
   if (!isBlocking) {
     return <div className="flex min-h-screen items-center justify-center bg-[var(--cc-page-bg)] text-slate-500">Redirecting…</div>

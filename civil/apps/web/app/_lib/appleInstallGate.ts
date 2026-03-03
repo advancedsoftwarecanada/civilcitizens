@@ -4,6 +4,7 @@ import { isAppleNativeApp } from './nativePush'
 
 type NavigatorWithStandalone = Navigator & { standalone?: boolean }
 export const IOS_PWA_INSTALL_ROUTE = '/install/ios/pwa'
+export const IOS_SWITCH_TO_SAFARI_ROUTE = '/install/ios/switch-to-safari'
 
 export function isAppleMobileOrTablet(): boolean {
   if (typeof navigator === 'undefined') return false
@@ -57,8 +58,21 @@ export function normalizeRelativePath(value: string | null | undefined, fallback
 }
 
 export function buildIosPwaInstallUrl(nextPath: string, source?: string): string {
+  return buildIosInstallUrl(IOS_PWA_INSTALL_ROUTE, nextPath, source)
+}
+
+export function buildIosSwitchToSafariUrl(nextPath: string, source?: string): string {
+  return buildIosInstallUrl(IOS_SWITCH_TO_SAFARI_ROUTE, nextPath, source)
+}
+
+function buildIosInstallUrl(route: string, nextPath: string, source?: string): string {
   const params = new URLSearchParams()
   params.set('next', normalizeRelativePath(nextPath, '/login'))
   if (typeof source === 'string' && source.trim()) params.set('source', source.trim())
-  return `${IOS_PWA_INSTALL_ROUTE}?${params.toString()}`
+  return `${route}?${params.toString()}`
+}
+
+export function buildIosInstallEntryUrl(nextPath: string, source?: string): string {
+  if (isIosSafariBrowser()) return buildIosPwaInstallUrl(nextPath, source)
+  return buildIosSwitchToSafariUrl(nextPath, source)
 }
