@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
+import { redirect } from 'next/navigation'
 import { buildApiUrl } from '../../../_lib/api'
-import MarketProductPageClient from './MarketProductPageClient'
 
 type MarketProductDetailResponse = {
   product?: {
@@ -45,5 +45,12 @@ export default async function MarketProductPage({ params }: { params: Promise<{ 
   const payload = (await res.json().catch(() => null)) as MarketProductDetailResponse | null
   if (!payload?.product || !payload?.organization) return notFound()
 
-  return <MarketProductPageClient product={payload.product} organization={payload.organization} />
+  const province = String(payload.organization.province ?? '').trim().toLowerCase()
+  const municipality = String(payload.organization.municipality ?? '').trim().toLowerCase()
+  const slug = String(payload.organization.slug ?? '').trim()
+
+  if (!province || !municipality || !slug) return notFound()
+
+  const query = new URLSearchParams({ product: payload.product.id })
+  redirect(`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/shop?${query.toString()}`)
 }

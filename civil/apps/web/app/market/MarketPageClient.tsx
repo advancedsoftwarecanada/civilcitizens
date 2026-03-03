@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../_components/DashboardShell'
 import { buildApiUrl } from '../_lib/api'
+import MarketCommunitiesPanel from './_components/MarketCommunitiesPanel'
+import YourOrdersPanel from './_components/YourOrdersPanel'
 
 type MarketProduct = {
   id: string
@@ -50,6 +52,17 @@ function previewText(input: string | null, max = 140): string | null {
   if (!clean) return null
   if (clean.length <= max) return clean
   return `${clean.slice(0, max).trim()}…`
+}
+
+function buildProductHref(product: MarketProduct): string {
+  const province = String(product.organization?.province ?? '').trim().toLowerCase()
+  const municipality = String(product.organization?.municipality ?? '').trim().toLowerCase()
+  const slug = String(product.organization?.slug ?? '').trim()
+  if (province && municipality && slug) {
+    const params = new URLSearchParams({ product: product.id })
+    return `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/shop?${params.toString()}`
+  }
+  return `/market/products/${encodeURIComponent(product.id)}`
 }
 
 export default function MarketPageClient() {
@@ -104,27 +117,37 @@ export default function MarketPageClient() {
   )
 
   return (
-    <DashboardShell>
-      <div className="space-y-6">
+    <DashboardShell
+      rightRail={
+        <div className="space-y-6">
+          <YourOrdersPanel title="Your Orders" limit={8} />
+          <MarketCommunitiesPanel />
+        </div>
+      }
+      showMobileRightRail
+      mainClassName="space-y-5 pb-12"
+    >
+      <div className="space-y-5">
         {header}
 
         {status === 'error' ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700">Unable to load market items.</div>
+          <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Unable to load market items.</div>
         ) : null}
 
         {!hasItems && status === 'loading' ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700">Loading…</div>
+          <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Loading…</div>
         ) : null}
 
         {hasItems ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((product) => {
               const description = previewText(product.description)
               const priceLabel = product.currency?.toUpperCase() === 'CAD' ? money.format((product.priceCents || 0) / 100) : `${(product.priceCents || 0) / 100}`
               return (
                 <Link
                   key={product.id}
-                  href={`/market/products/${encodeURIComponent(product.id)}`}
+                  href={buildProductHref(product)}
                   className="group overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300"
                 >
                   <div className="aspect-[16/10] w-full bg-slate-50">
@@ -146,7 +169,8 @@ export default function MarketPageClient() {
                 </Link>
               )
             })}
-          </div>
+            </div>
+          </section>
         ) : null}
 
         {nextCursor && status === 'ready' ? (
