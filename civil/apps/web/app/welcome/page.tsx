@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { CommunitiesView } from '../communities/CommunitiesView'
 import { hasHomeCommunity } from '../_lib/me'
 import { redirectToAuthModal } from '../_lib/authModal'
-import { buildIosPwaInstallUrl, shouldBlockForAppleInstall } from '../_lib/appleInstallGate'
+import { buildIosInstallEntryUrl, shouldBlockForAppleInstall } from '../_lib/appleInstallGate'
 import { readStoredPostalCode } from '../_lib/postalRequirement'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
@@ -16,7 +16,7 @@ export default function WelcomePage() {
 
   useEffect(() => {
     if (shouldBlockForAppleInstall()) {
-      router.replace(buildIosPwaInstallUrl('/welcome', 'welcome'))
+      router.replace(buildIosInstallEntryUrl('/welcome', 'welcome'))
       return
     }
 
