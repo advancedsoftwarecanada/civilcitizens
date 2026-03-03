@@ -26,6 +26,8 @@
 	<string>We use your location to help you find your local community.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We use your location to help you find your local community.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>We use your camera to take a profile photo.</string>
 	<key>CIVILPushServiceURL</key>
 	<string></string>
 	<key>CIVILPushRegisterSecret</key>

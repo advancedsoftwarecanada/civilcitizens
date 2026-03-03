@@ -7,7 +7,6 @@ import {
   HiOutlineArrowRightOnRectangle,
   HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
-  HiOutlineCreditCard,
   HiOutlineUserCircle,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
@@ -29,7 +28,7 @@ import {
 } from '../_lib/nativePush'
 
 const CARD_LINKS: Array<{
-  key: 'profile' | 'communities' | 'billing'
+  key: 'profile' | 'communities'
   label: string
   description: string
   href: string
@@ -49,13 +48,7 @@ const CARD_LINKS: Array<{
     href: '/communities/settings',
     icon: HiOutlineBuildingOffice2,
   },
-  {
-    key: 'billing',
-    label: 'Billing',
-    description: 'Manage premium, organizations, and payment methods.',
-    href: '/settings/billing',
-    icon: HiOutlineCreditCard,
-  },
+  // TODO: Re-enable Billing card in /settings when premium/billing is ready to surface.
 ]
 
 export default function SettingsPage() {
