@@ -5,9 +5,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   HiOutlineArrowUpOnSquare,
+  HiOutlineChevronDown,
   HiOutlineEllipsisHorizontalCircle,
-  HiOutlineHome,
-  HiOutlineSquares2X2,
+  HiOutlinePlus,
 } from 'react-icons/hi2'
 import { buildIosSwitchToSafariUrl, isIosSafariBrowser, normalizeRelativePath, shouldBlockForAppleInstall } from '../../../_lib/appleInstallGate'
 
@@ -83,13 +83,13 @@ export default function InstallIosPwaPage() {
               </div>
               <div className="flex items-center gap-3 rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-sm text-slate-100">
                 <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-slate-100">
-                  <HiOutlineSquares2X2 className="h-5 w-5" />
+                  <HiOutlineChevronDown className="h-5 w-5" />
                 </span>
                 <span>Tap View More</span>
               </div>
               <div className="flex items-center gap-3 rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-sm text-slate-100">
                 <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-slate-100">
-                  <HiOutlineHome className="h-5 w-5" />
+                  <HiOutlinePlus className="h-5 w-5" />
                 </span>
                 <span>Tap Add To Home Screen</span>
               </div>
