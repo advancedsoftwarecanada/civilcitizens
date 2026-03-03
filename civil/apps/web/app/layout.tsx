@@ -36,6 +36,12 @@ export const metadata: Metadata = {
   description:
     'Civil Citizens is completely free for Canadians to organize their cities, publish civic updates, and launch trusted organizations.',
   applicationName: 'Civil Citizens',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Civil Citizens',
+  },
   keywords: ['civic', 'canada', 'organizing', 'cities', 'civil citizens'],
   icons: {
     icon: '/favicon.png',

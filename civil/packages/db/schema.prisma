@@ -71,6 +71,7 @@ model User {
   jobApplications           JobApplication[]
   jobPromotionsCreated      JobPromotion[]        @relation("JobPromotionCreator")
   jobAnalyticsEvents        JobAnalyticsEvent[]   @relation("JobAnalyticsActor")
+  pushSubscriptions         PushSubscription[]
   communityMeta             Json?
   lastViewedHomeAt          DateTime?
   lastViewedFriendsAt       DateTime?
@@ -201,6 +202,29 @@ model Notification {
   @@index([userId, createdAt])
 }
 
+model PushSubscription {
+  id            String      @id @default(cuid())
+  userId        String
+  endpoint      String      @unique
+  p256dh        String
+  auth          String
+  userAgent     String?
+  platform      PushPlatform @default(unknown)
+  browser       PushBrowser  @default(unknown)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  lastSuccessAt DateTime?
+  lastFailureAt DateTime?
+  failureCount  Int         @default(0)
+  isActive      Boolean     @default(true)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@index([isActive, updatedAt])
+  @@map("PushSubscriptions")
+}
+
 model PageView {
   id        String   @id @default(cuid())
   userId    String?
@@ -302,6 +326,20 @@ enum ConnectionStatus {
   PENDING
   ACCEPTED
   REJECTED
+}
+
+enum PushPlatform {
+  android
+  ios
+  desktop
+  unknown
+}
+
+enum PushBrowser {
+  chrome
+  edge
+  safari
+  unknown
 }
 
 enum ReactionType {
