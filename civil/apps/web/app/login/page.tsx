@@ -7,6 +7,7 @@ import { pushToast } from '../_components/useToasts'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
 import { setAuthToken } from '../_lib/authSession'
+import AppleInstallRedirect from '../_components/AppleInstallRedirect'
 
 type LoginSuccess = {
   token: string
@@ -130,24 +131,27 @@ function LoginPageInner() {
   )
 
   return (
-    <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your city." footer={footer} hideSidePanel useWallpaper>
-      <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
-        <label className="block text-sm font-medium text-slate-700">
-          Email or handle
-          <input className={`${inputClass('emailOrHandle')} mt-2`} placeholder="you@civil.ca or @handle" value={emailOrHandle} onChange={(event) => setId(event.target.value)} />
-          {hasFieldError('emailOrHandle') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div> : null}
-        </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Password
-          <input className={`${inputClass('password')} mt-2`} placeholder="Enter your password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
-        </label>
-        {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
-        <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
-          Sign in
-        </button>
-      </form>
-    </AuthScreen>
+    <>
+      <AppleInstallRedirect source="login" />
+      <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your city." footer={footer} hideSidePanel useWallpaper>
+        <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
+          <label className="block text-sm font-medium text-slate-700">
+            Email or handle
+            <input className={`${inputClass('emailOrHandle')} mt-2`} placeholder="you@civil.ca or @handle" value={emailOrHandle} onChange={(event) => setId(event.target.value)} />
+            {hasFieldError('emailOrHandle') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div> : null}
+          </label>
+          <label className="block text-sm font-medium text-slate-700">
+            Password
+            <input className={`${inputClass('password')} mt-2`} placeholder="Enter your password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
+          </label>
+          {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
+          <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)]" type="submit">
+            Sign in
+          </button>
+        </form>
+      </AuthScreen>
+    </>
   )
 }
 

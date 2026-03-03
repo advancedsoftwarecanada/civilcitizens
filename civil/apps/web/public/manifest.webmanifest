@@ -8,14 +8,10 @@
   "theme_color": "#CA052D",
   "icons": [
     {
-      "src": "/logo.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/logo-lg.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "/PWA-ICON.jpg?v=20260303",
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "any"
     },
     {
       "src": "/favicon.png",
