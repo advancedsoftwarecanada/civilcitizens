@@ -8,15 +8,15 @@ import MarketRightRail from './_components/MarketRightRail'
 
 type MarketProduct = {
   id: string
-  name: string
+  kind: 'organization_product' | 'citizen_listing'
+  title: string
   description: string | null
   priceCents: number
   currency: string
   primaryImageUrl: string | null
   galleryImageUrls: string[]
-  fulfillmentType: string
   createdAt: string
-  organization: {
+  organization?: {
     id: string
     name: string
     slug: string
@@ -24,6 +24,15 @@ type MarketProduct = {
     municipality: string | null
     logoUrl: string | null
     coverUrl: string | null
+  }
+  pickupCity?: string | null
+  pickupProvince?: string | null
+  seller?: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+    coverUrl?: string | null
   }
 }
 
@@ -34,26 +43,15 @@ type MarketProductsResponse = {
 
 const money = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' })
 
-function stripHtml(input: string): string {
-  return input
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function previewText(input: string | null, max = 140): string | null {
-  if (!input) return null
-  const clean = stripHtml(input)
-  if (!clean) return null
-  if (clean.length <= max) return clean
-  return `${clean.slice(0, max).trim()}…`
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {}
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+  if (token) headers.authorization = `Bearer ${token}`
+  return headers
 }
 
 function buildProductHref(product: MarketProduct): string {
+  if (product.kind !== 'organization_product') return '/market'
   const province = String(product.organization?.province ?? '').trim().toLowerCase()
   const municipality = String(product.organization?.municipality ?? '').trim().toLowerCase()
   const slug = String(product.organization?.slug ?? '').trim()
@@ -62,6 +60,11 @@ function buildProductHref(product: MarketProduct): string {
     return `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/shop?${params.toString()}`
   }
   return `/market/products/${encodeURIComponent(product.id)}`
+}
+
+function buildListingHref(product: MarketProduct): string {
+  if (product.kind === 'citizen_listing') return `/market/listings/${encodeURIComponent(product.id)}`
+  return buildProductHref(product)
 }
 
 export default function MarketPageClient() {
@@ -75,7 +78,10 @@ export default function MarketPageClient() {
       params.set('limit', '24')
       if (cursor) params.set('cursor', cursor)
 
-      const res = await fetch(buildApiUrl(`/market/products?${params.toString()}`), { cache: 'no-store' })
+      const res = await fetch(buildApiUrl(`/market/feed?${params.toString()}`), {
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      })
       if (!res.ok) {
         setStatus('error')
         return
@@ -102,7 +108,7 @@ export default function MarketPageClient() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Market</h1>
-          <p className="mt-1 text-sm text-slate-600">Browse items from organizations across Civil.</p>
+          <p className="mt-1 text-sm text-slate-600">Browse listings from organizations and people in your communities.</p>
         </div>
         <Link
           href="/market/cart"
@@ -132,34 +138,43 @@ export default function MarketPageClient() {
           <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Loading…</div>
         ) : null}
 
+        {!hasItems && status === 'ready' ? (
+          <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+            No market listings are available right now.
+          </div>
+        ) : null}
+
         {hasItems ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((product) => {
-              const description = previewText(product.description)
               const priceLabel = product.currency?.toUpperCase() === 'CAD' ? money.format((product.priceCents || 0) / 100) : `${(product.priceCents || 0) / 100}`
-              return (
-                <Link
-                  key={product.id}
-                  href={buildProductHref(product)}
-                  className="group overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300"
-                >
+
+              const cardBody = (
+                <>
                   <div className="aspect-[16/10] w-full bg-slate-50">
                     {product.primaryImageUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={product.primaryImageUrl} alt={product.name} className="h-full w-full object-cover" loading="lazy" />
+                      <img src={product.primaryImageUrl} alt={product.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : null}
                   </div>
                   <div className="space-y-2 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900">{product.name}</div>
-                        <div className="truncate text-xs text-slate-600">{product.organization?.name ?? 'Organization'}</div>
+                        <div className="truncate text-sm font-semibold text-slate-900">{product.title}</div>
                       </div>
                       <div className="shrink-0 text-sm font-semibold text-slate-900">{priceLabel}</div>
                     </div>
-                    {description ? <div className="text-sm text-slate-700">{description}</div> : null}
                   </div>
+                </>
+              )
+              return (
+                <Link
+                  key={`${product.kind}:${product.id}`}
+                  href={buildListingHref(product)}
+                  className="group overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300"
+                >
+                  {cardBody}
                 </Link>
               )
             })}

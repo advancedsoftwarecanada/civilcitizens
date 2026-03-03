@@ -1870,6 +1870,7 @@ async function loadThreadForUser(threadId: string, userId: string) {
   return prisma.messageThread.findFirst({
     where: {
       id: threadId,
+      NOT: { contextType: 'market_listing' },
       participants: {
         some: { userId },
       },
@@ -5765,7 +5766,7 @@ app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const { limit, cursor } = parse.data
     const rows: ThreadSummaryRecord[] = await prisma.messageThread.findMany({
-      where: { participants: { some: { userId } } },
+      where: { participants: { some: { userId } }, NOT: { contextType: 'market_listing' } },
       orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -6135,6 +6136,7 @@ app.get('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fas
           threadId: params.data.id,
           userId,
         },
+        thread: { NOT: { contextType: 'market_listing' } },
       },
       select: { threadId: true },
     })
@@ -6166,6 +6168,7 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
     const thread = await prisma.messageThread.findFirst({
       where: {
         id: params.data.id,
+        NOT: { contextType: 'market_listing' },
         participants: { some: { userId } },
       },
       select: {
@@ -6273,9 +6276,11 @@ app.get('/messages/unread-count', async (req: FastifyRequest, reply: FastifyRepl
       SELECT COUNT(*)::int as count
       FROM "Message" m
       JOIN "MessageParticipant" mp ON m."threadId" = mp."threadId"
+      JOIN "MessageThread" t ON t.id = m."threadId"
       WHERE mp."userId" = ${userId}
       AND m."senderId" != ${userId}
       AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+      AND (t."contextType" IS NULL OR t."contextType" != 'market_listing')
     `
     const count = Number(result[0]?.count || 0)
     return reply.send({ count })
@@ -6296,6 +6301,7 @@ app.post('/messages/threads/:id/read', async (req: FastifyRequest, reply: Fastif
           threadId: params.data.id,
           userId,
         },
+        thread: { NOT: { contextType: 'market_listing' } },
       },
       select: { threadId: true },
     })
@@ -7146,6 +7152,7 @@ const CommunityOrgShopProductPhotosUpdateBody = z.object({
 })
 
 const ORG_CHANNEL_CONTEXT_TYPE = 'organization_channel'
+const MARKET_LISTING_CHAT_CONTEXT_TYPE = 'market_listing'
 
 function slugifyChannelName(name: string) {
   return name
@@ -7177,6 +7184,11 @@ function parseOrgChannelContextId(contextId: string | null | undefined): null | 
     slug,
     name: decodeURIComponent(encodedName),
   }
+}
+
+function buildMarketListingDirectThreadKey(listingId: string, userA: string, userB: string): string {
+  const [a, b] = [userA, userB].sort()
+  return `marketlisting:${listingId}:${a}:${b}`
 }
 
 type OrgChatPrefs = {
@@ -7288,6 +7300,21 @@ function ensureOrganizationShopTables() {
     await prisma.$executeRawUnsafe(`
       ALTER TABLE organization_shop_order
       ADD COLUMN IF NOT EXISTS buyer_user_id TEXT;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_order
+      ADD COLUMN IF NOT EXISTS subtotal_cents INTEGER NOT NULL DEFAULT 0;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_order
+      ADD COLUMN IF NOT EXISTS fee_cents INTEGER NOT NULL DEFAULT 0;
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_order
+      ADD COLUMN IF NOT EXISTS total_cents INTEGER NOT NULL DEFAULT 0;
     `)
 
     await prisma.$executeRawUnsafe(`
@@ -7522,6 +7549,8 @@ function ensureCitizenMarketplaceTables() {
           pickup_address_line1 TEXT,
           pickup_address_line2 TEXT,
           pickup_postal_code TEXT,
+          listing_province_code TEXT,
+          listing_community_slug TEXT,
           payment_types JSONB NOT NULL DEFAULT '[]'::jsonb,
           willing_to_deliver BOOLEAN NOT NULL DEFAULT FALSE,
           delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -7555,6 +7584,36 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_market_listing
         ADD COLUMN IF NOT EXISTS delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS listing_province_code TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS listing_community_slug TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_scope_idx
+        ON citizen_market_listing (listing_province_code, listing_community_slug, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS citizen_market_chat_interest (
+          thread_id TEXT NOT NULL REFERENCES "MessageThread"(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          interested BOOLEAN NOT NULL DEFAULT TRUE,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (thread_id, user_id)
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_chat_interest_user_idx
+        ON citizen_market_chat_interest (user_id, updated_at DESC);
       `)
     } catch (err) {
       citizenMarketplaceTablesReady = null
@@ -13167,6 +13226,22 @@ const MarketListingParams = z.object({
   listingId: z.string().trim().min(1).max(128),
 })
 
+const MarketChatThreadParams = z.object({
+  threadId: z.string().cuid(),
+})
+
+const MarketSelectBuyerBody = z
+  .object({
+    threadId: z.string().cuid(),
+  })
+  .strict()
+
+const MarketRelistBody = z
+  .object({
+    notify: z.boolean().optional().default(true),
+  })
+  .strict()
+
 const MarketDeliveryOptionsSchema = z
   .object({
     short50km: z.coerce.number().int().min(0).max(500000000).optional(),
@@ -13181,6 +13256,8 @@ const MarketListingUpdateBody = z.object({
   priceCents: z.coerce.number().int().min(0).max(500000000).optional(),
   currency: z.string().trim().min(3).max(3).optional(),
   photoUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+  listingProvinceCode: z.string().trim().min(2).max(8).optional().nullable(),
+  listingCommunitySlug: z.string().trim().min(1).max(120).optional().nullable(),
   pickupCity: z.string().trim().max(120).optional().nullable(),
   pickupProvince: z.string().trim().max(80).optional().nullable(),
   pickupAddressLine1: z.string().trim().max(180).optional().nullable(),
@@ -13245,6 +13322,203 @@ function readDeliveryOptions(raw: unknown): MarketDeliveryOptions {
 
   return options
 }
+
+async function readViewerCommunityFollows(userId: string): Promise<Array<{ provinceCode: string; communitySlug: string }>> {
+  const follows = await prisma.communityFollow.findMany({
+    where: { userId },
+    select: { provinceCode: true, communitySlug: true },
+    orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
+  })
+  return follows
+    .filter((entry: { provinceCode: string; communitySlug: string }) => Boolean(entry.provinceCode && entry.communitySlug))
+    .map((entry: { provinceCode: string; communitySlug: string }) => ({
+      provinceCode: String(entry.provinceCode || '').trim().toUpperCase(),
+      communitySlug: String(entry.communitySlug || '').trim().toLowerCase(),
+    }))
+}
+
+app.get('/market/feed', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const query = MarketProductsQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const userId = (await resolveUserId(req)) ?? undefined
+    await Promise.all([ensureOrganizationShopTables(), ensureCitizenMarketplaceTables()])
+
+    const follows = userId ? await readViewerCommunityFollows(userId) : []
+    const useCommunityScope = follows.length > 0
+
+    const provinceCodes = Array.from(new Set(follows.map((entry) => entry.provinceCode)))
+    const communitySlugs = Array.from(new Set(follows.map((entry) => entry.communitySlug)))
+
+    type OrgFeedRow = {
+      id: string
+      business_id: string
+      business_name: string
+      business_slug: string
+      province_code: string | null
+      community_slug: string | null
+      business_logo_url: string | null
+      business_cover_url: string | null
+      name: string
+      description: string | null
+      price_cents: number
+      currency: string
+      primary_image_url: string | null
+      gallery_image_urls: unknown
+      created_at: Date
+    }
+
+    const orgRows: OrgFeedRow[] = await prisma.$queryRaw<OrgFeedRow[]>`
+      SELECT
+        p.id,
+        p.business_id,
+        b.name AS business_name,
+        b.slug AS business_slug,
+        b."provinceCode" AS province_code,
+        b."communitySlug" AS community_slug,
+        b."logoUrl" AS business_logo_url,
+        b."coverUrl" AS business_cover_url,
+        p.name,
+        p.description,
+        p.price_cents,
+        p.currency,
+        p.primary_image_url,
+        p.gallery_image_urls,
+        p.created_at
+      FROM organization_shop_product p
+      INNER JOIN "Business" b ON b.id = p.business_id
+      LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
+      WHERE p.is_active = TRUE
+        AND p.is_draft = FALSE
+        AND b.status = 'ACTIVE'
+        AND (${useCommunityScope ? Prisma.sql`(UPPER(COALESCE(b."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(b."communitySlug", '')) IN (${Prisma.join(communitySlugs)}))` : Prisma.sql`TRUE`})
+        AND (p.catalog_id IS NULL OR c.enabled = TRUE)
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT ${query.data.limit * 2}
+    `
+
+    type CitizenFeedRow = {
+      id: string
+      title: string
+      description: string | null
+      price_cents: number
+      currency: string
+      photo_urls: unknown
+      pickup_city: string | null
+      pickup_province: string | null
+      scoped_province_code: string | null
+      scoped_community_slug: string | null
+      created_at: Date
+      seller_user_id: string
+      seller_handle: string | null
+      seller_name: string | null
+      seller_avatar_url: string | null
+      seller_cover_url: string | null
+    }
+
+    const citizenRows: CitizenFeedRow[] = await prisma.$queryRaw<CitizenFeedRow[]>`
+      SELECT
+        l.id,
+        l.title,
+        l.description,
+        l.price_cents,
+        l.currency,
+        l.photo_urls,
+        l.pickup_city,
+        l.pickup_province,
+        COALESCE(l.listing_province_code, cf_scope."provinceCode") AS scoped_province_code,
+        COALESCE(l.listing_community_slug, cf_scope."communitySlug") AS scoped_community_slug,
+        l.created_at,
+        l.seller_user_id,
+        u.handle AS seller_handle,
+        u.name AS seller_name,
+        u."avatarUrl" AS seller_avatar_url,
+        u."coverUrl" AS seller_cover_url
+      FROM citizen_market_listing l
+      INNER JOIN "User" u ON u.id = l.seller_user_id
+      LEFT JOIN LATERAL (
+        SELECT cf."provinceCode", cf."communitySlug"
+        FROM "CommunityFollow" cf
+        WHERE cf."userId" = l.seller_user_id
+        ORDER BY cf.home DESC, cf."createdAt" DESC
+        LIMIT 1
+      ) cf_scope ON TRUE
+      WHERE l.is_active = TRUE
+        AND l.is_draft = FALSE
+        AND l.status = 'active'
+        AND (${useCommunityScope
+          ? Prisma.sql`((UPPER(COALESCE(l.listing_province_code, cf_scope."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(l.listing_community_slug, cf_scope."communitySlug", '')) IN (${Prisma.join(communitySlugs)})) OR l.seller_user_id = ${userId})`
+          : Prisma.sql`TRUE`})
+      ORDER BY l.created_at DESC, l.id DESC
+      LIMIT ${query.data.limit * 2}
+    `
+
+    const merged = [
+      ...orgRows.map((row) => ({
+        kind: 'organization_product' as const,
+        createdAtMs: row.created_at.getTime(),
+        id: row.id,
+        payload: {
+          id: row.id,
+          kind: 'organization_product' as const,
+          title: row.name,
+          description: row.description,
+          priceCents: Number(row.price_cents) || 0,
+          currency: row.currency,
+          primaryImageUrl: row.primary_image_url,
+          galleryImageUrls: readGalleryUrls(row.gallery_image_urls),
+          createdAt: row.created_at.toISOString(),
+          organization: {
+            id: row.business_id,
+            name: row.business_name,
+            slug: row.business_slug,
+            province: row.province_code?.toLowerCase() ?? null,
+            municipality: row.community_slug ?? null,
+            logoUrl: normalizeMediaUrl(row.business_logo_url),
+            coverUrl: normalizeMediaUrl(row.business_cover_url),
+          },
+        },
+      })),
+      ...citizenRows.map((row) => {
+        const photoUrls = readGalleryUrls(row.photo_urls)
+        return {
+          kind: 'citizen_listing' as const,
+          createdAtMs: row.created_at.getTime(),
+          id: row.id,
+          payload: {
+            id: row.id,
+            kind: 'citizen_listing' as const,
+            title: row.title,
+            description: row.description,
+            priceCents: Number(row.price_cents) || 0,
+            currency: row.currency,
+            primaryImageUrl: photoUrls[0] ?? null,
+            galleryImageUrls: photoUrls,
+            createdAt: row.created_at.toISOString(),
+            pickupCity: row.pickup_city,
+            pickupProvince: row.pickup_province,
+            seller: {
+              id: row.seller_user_id,
+              handle: row.seller_handle,
+              name: row.seller_name,
+              avatarUrl: normalizeMediaUrl(row.seller_avatar_url),
+              coverUrl: normalizeMediaUrl(row.seller_cover_url),
+            },
+          },
+        }
+      }),
+    ]
+      .sort((a, b) => {
+        if (b.createdAtMs !== a.createdAtMs) return b.createdAtMs - a.createdAtMs
+        return b.id.localeCompare(a.id)
+      })
+      .slice(0, query.data.limit)
+      .map((entry) => entry.payload)
+
+    return reply.send({ items: merged, nextCursor: null })
+  }),
+)
 
 app.get('/market/products', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
@@ -13793,6 +14067,9 @@ app.post('/market/listings/draft', async (req: FastifyRequest, reply: FastifyRep
 
     await ensureCitizenMarketplaceTables()
 
+    const userScopeFollows = await readViewerCommunityFollows(userId)
+    const listingScope = userScopeFollows[0] ?? null
+
     const listingId = randomUUID()
     await prisma.$executeRaw`
       INSERT INTO citizen_market_listing (
@@ -13803,6 +14080,8 @@ app.post('/market/listings/draft', async (req: FastifyRequest, reply: FastifyRep
         price_cents,
         currency,
         photo_urls,
+        listing_province_code,
+        listing_community_slug,
         payment_types,
         willing_to_deliver,
         delivery_options,
@@ -13819,6 +14098,8 @@ app.post('/market/listings/draft', async (req: FastifyRequest, reply: FastifyRep
         ${0},
         ${'CAD'},
         ${JSON.stringify([])}::jsonb,
+        ${listingScope?.provinceCode ?? null},
+        ${listingScope?.communitySlug ?? null},
         ${JSON.stringify(['cash_pickup'])}::jsonb,
         ${false},
         ${JSON.stringify({})}::jsonb,
@@ -13850,6 +14131,8 @@ app.get('/market/listings/mine', async (req: FastifyRequest, reply: FastifyReply
       price_cents: number
       currency: string
       photo_urls: unknown
+      listing_province_code: string | null
+      listing_community_slug: string | null
       pickup_city: string | null
       pickup_province: string | null
       payment_types: unknown
@@ -13869,6 +14152,8 @@ app.get('/market/listings/mine', async (req: FastifyRequest, reply: FastifyReply
         price_cents,
         currency,
         photo_urls,
+        listing_province_code,
+        listing_community_slug,
         pickup_city,
         pickup_province,
         payment_types,
@@ -13892,6 +14177,8 @@ app.get('/market/listings/mine', async (req: FastifyRequest, reply: FastifyReply
       priceCents: Number(row.price_cents) || 0,
       currency: row.currency,
       photoUrls: readGalleryUrls(row.photo_urls),
+      listingProvinceCode: row.listing_province_code,
+      listingCommunitySlug: row.listing_community_slug,
       pickupCity: row.pickup_city,
       pickupProvince: row.pickup_province,
       paymentTypes: readStringList(row.payment_types),
@@ -13924,6 +14211,8 @@ app.get('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
       price_cents: number
       currency: string
       photo_urls: unknown
+      listing_province_code: string | null
+      listing_community_slug: string | null
       pickup_city: string | null
       pickup_province: string | null
       pickup_address_line1: string | null
@@ -13947,6 +14236,8 @@ app.get('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
         price_cents,
         currency,
         photo_urls,
+        listing_province_code,
+        listing_community_slug,
         pickup_city,
         pickup_province,
         pickup_address_line1,
@@ -13978,6 +14269,8 @@ app.get('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
         priceCents: Number(row.price_cents) || 0,
         currency: row.currency,
         photoUrls: readGalleryUrls(row.photo_urls),
+        listingProvinceCode: row.listing_province_code,
+        listingCommunitySlug: row.listing_community_slug,
         pickupCity: row.pickup_city,
         pickupProvince: row.pickup_province,
         pickupAddressLine1: row.pickup_address_line1,
@@ -13993,6 +14286,960 @@ app.get('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
         createdAt: row.created_at.toISOString(),
       },
     })
+  }),
+)
+
+app.get('/market/listings/public/:listingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    await ensureCitizenMarketplaceTables()
+
+    type PublicListingRow = {
+      id: string
+      title: string
+      description: string | null
+      price_cents: number
+      currency: string
+      photo_urls: unknown
+      pickup_city: string | null
+      pickup_province: string | null
+      willing_to_deliver: boolean
+      delivery_options: unknown
+      payment_types: unknown
+      created_at: Date
+      seller_user_id: string
+      seller_handle: string | null
+      seller_name: string | null
+      seller_avatar_url: string | null
+      seller_cover_url: string | null
+    }
+
+    const rows = await prisma.$queryRaw<PublicListingRow[]>`
+      SELECT
+        l.id,
+        l.title,
+        l.description,
+        l.price_cents,
+        l.currency,
+        l.photo_urls,
+        l.pickup_city,
+        l.pickup_province,
+        l.willing_to_deliver,
+        l.delivery_options,
+        l.payment_types,
+        l.created_at,
+        l.seller_user_id,
+        u.handle AS seller_handle,
+        u.name AS seller_name,
+        u."avatarUrl" AS seller_avatar_url,
+        u."coverUrl" AS seller_cover_url
+      FROM citizen_market_listing l
+      INNER JOIN "User" u ON u.id = l.seller_user_id
+      WHERE l.id = ${params.data.listingId}
+        AND l.is_active = TRUE
+        AND l.is_draft = FALSE
+        AND l.status = 'active'
+      LIMIT 1
+    `
+
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'listing_not_found' })
+
+    return reply.send({
+      listing: {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        priceCents: Number(row.price_cents) || 0,
+        currency: row.currency,
+        photoUrls: readGalleryUrls(row.photo_urls),
+        pickupCity: row.pickup_city,
+        pickupProvince: row.pickup_province,
+        willingToDeliver: Boolean(row.willing_to_deliver),
+        deliveryOptions: readDeliveryOptions(row.delivery_options),
+        paymentTypes: readStringList(row.payment_types),
+        createdAt: row.created_at.toISOString(),
+        seller: {
+          id: row.seller_user_id,
+          handle: row.seller_handle,
+          name: row.seller_name,
+          avatarUrl: normalizeMediaUrl(row.seller_avatar_url),
+          coverUrl: normalizeMediaUrl(row.seller_cover_url),
+        },
+      },
+    })
+  }),
+)
+
+app.post('/market/chats/listings/:listingId/thread', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    await ensureCitizenMarketplaceTables()
+
+    const listingRows = await prisma.$queryRaw<Array<{ id: string; title: string; status: string; is_draft: boolean; is_active: boolean; seller_user_id: string }>>`
+      SELECT id, title, status, is_draft, is_active, seller_user_id
+      FROM citizen_market_listing
+      WHERE id = ${params.data.listingId}
+      LIMIT 1
+    `
+
+    const listing = listingRows[0]
+    if (!listing || !listing.is_active || listing.is_draft || String(listing.status || '').toLowerCase() !== 'active') {
+      return reply.code(404).send({ error: 'listing_not_found' })
+    }
+
+    if (listing.seller_user_id === userId) {
+      return reply.code(400).send({ error: 'cannot_message_self' })
+    }
+
+    const uniqueKey = buildMarketListingDirectThreadKey(listing.id, listing.seller_user_id, userId)
+    let thread = await prisma.messageThread.findUnique({ where: { uniqueKey }, include: THREAD_SUMMARY_INCLUDE })
+    if (!thread) {
+      const now = new Date()
+      thread = await prisma.messageThread.create({
+        data: {
+          type: MessageThreadType.direct,
+          uniqueKey,
+          contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+          contextId: listing.id,
+          lastMessageAt: now,
+          participants: {
+            create: [
+              { userId, role: MessageParticipantRole.member, lastReadAt: now, lastActivityAt: now },
+              { userId: listing.seller_user_id, role: MessageParticipantRole.member, lastActivityAt: now },
+            ],
+          },
+        },
+        include: THREAD_SUMMARY_INCLUDE,
+      })
+
+      await Promise.all(
+        thread.participants
+          .filter((participant: ThreadParticipantRecord) => participant.userId !== userId)
+          .map((participant: ThreadParticipantRecord) =>
+            dispatchRealtimeEvent(participant.userId, {
+              type: 'thread.created',
+              data: { thread: formatThreadSummaryRecord(thread, participant.userId) },
+            }),
+          ),
+      )
+    }
+
+    return reply.send({
+      thread: formatThreadSummaryRecord(thread, userId),
+      listing: {
+        id: listing.id,
+        title: listing.title,
+        status: listing.status,
+      },
+    })
+  }),
+)
+
+app.get('/market/chats', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    await ensureCitizenMarketplaceTables()
+
+    const threads: ThreadSummaryRecord[] = await prisma.messageThread.findMany({
+      where: {
+        contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+        participants: { some: { userId } },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+    })
+
+    const threadIds = threads.map((thread: ThreadSummaryRecord) => thread.id)
+    const notInterestedByThreadId = new Set<string>()
+    if (threadIds.length) {
+      const interestRows = await prisma.$queryRaw<Array<{ thread_id: string; interested: boolean }>>`
+        SELECT thread_id, interested
+        FROM citizen_market_chat_interest
+        WHERE user_id = ${userId}
+        AND thread_id IN (${Prisma.join(threadIds)})
+      `
+
+      for (const row of interestRows) {
+        if (row && row.thread_id && row.interested === false) {
+          notInterestedByThreadId.add(String(row.thread_id))
+        }
+      }
+    }
+
+    const listingIds = Array.from(
+      new Set(
+        threads
+          .map((thread: ThreadSummaryRecord) => (thread.contextId ? thread.contextId.trim() : ''))
+          .filter(Boolean),
+      ),
+    )
+
+    const listingRows = listingIds.length
+      ? await prisma.$queryRaw<
+          Array<{
+            id: string
+            title: string
+            status: string
+            price_cents: number
+            currency: string
+            photo_urls: unknown
+            pickup_city: string | null
+            pickup_province: string | null
+            seller_user_id: string
+            seller_handle: string | null
+            seller_name: string | null
+            seller_avatar_url: string | null
+            seller_cover_url: string | null
+          }>
+        >`
+          SELECT
+            l.id,
+            l.title,
+            l.status,
+            l.price_cents,
+            l.currency,
+            l.photo_urls,
+            l.pickup_city,
+            l.pickup_province,
+            l.seller_user_id,
+            u.handle AS seller_handle,
+            u.name AS seller_name,
+            u."avatarUrl" AS seller_avatar_url,
+            u."coverUrl" AS seller_cover_url
+          FROM citizen_market_listing l
+          INNER JOIN "User" u ON u.id = l.seller_user_id
+          WHERE l.id IN (${Prisma.join(listingIds)})
+        `
+      : []
+
+    const listingById = new Map<
+      string,
+      {
+        id: string
+        title: string
+        status: string
+        price_cents: number
+        currency: string
+        photo_urls: unknown
+        pickup_city: string | null
+        pickup_province: string | null
+        seller_user_id: string
+        seller_handle: string | null
+        seller_name: string | null
+        seller_avatar_url: string | null
+        seller_cover_url: string | null
+      }
+    >(
+      listingRows.map(
+        (
+          row: {
+            id: string
+            title: string
+            status: string
+            price_cents: number
+            currency: string
+            photo_urls: unknown
+            pickup_city: string | null
+            pickup_province: string | null
+            seller_user_id: string
+            seller_handle: string | null
+            seller_name: string | null
+            seller_avatar_url: string | null
+            seller_cover_url: string | null
+          },
+        ) => [row.id, row],
+      ),
+    )
+
+    const soldStatuses = new Set(['sold', 'canceled'])
+    const yourListingChats: Array<Record<string, unknown>> = []
+    const yourListingsById = new Map<
+      string,
+      {
+        listing: Record<string, unknown>
+        unrespondedThreads: Array<Record<string, unknown>>
+        totalThreads: number
+      }
+    >()
+    const activeItems: Array<Record<string, unknown>> = []
+    const soldItems: Array<Record<string, unknown>> = []
+    const inactiveItems: Array<Record<string, unknown>> = []
+
+    for (const thread of threads) {
+      const listingId = thread.contextId?.trim()
+      if (!listingId) continue
+      const listing = listingById.get(listingId)
+      if (!listing) continue
+
+      const counterpart = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId !== userId)
+      const item = {
+        threadId: thread.id,
+        listingId,
+        listingTitle: listing.title,
+        listingStatus: listing.status,
+        listingPriceCents: Number(listing.price_cents) || 0,
+        listingCurrency: listing.currency,
+        listingPhotoUrl: readGalleryUrls(listing.photo_urls)[0] ?? null,
+        listingPickupCity: listing.pickup_city,
+        listingPickupProvince: listing.pickup_province,
+        seller: {
+          id: listing.seller_user_id,
+          handle: listing.seller_handle,
+          name: listing.seller_name,
+          avatarUrl: listing.seller_avatar_url,
+          coverUrl: listing.seller_cover_url,
+        },
+        lastMessageAt: (thread.lastMessageAt ?? thread.updatedAt).toISOString(),
+        lastMessage: thread.messages[0] ? formatMessage(thread.messages[0], userId) : null,
+        counterpart: counterpart
+          ? {
+              id: counterpart.user.id,
+              handle: counterpart.user.handle,
+              name: counterpart.user.name,
+              avatarUrl: normalizeMediaUrl(counterpart.user.avatarUrl ?? null),
+              coverUrl: normalizeMediaUrl((counterpart.user as { coverUrl?: string | null }).coverUrl ?? null),
+            }
+          : null,
+      }
+
+      if (listing.seller_user_id === userId) {
+        yourListingChats.push(item)
+
+        let group = yourListingsById.get(listingId)
+        if (!group) {
+          group = {
+            listing: {
+              id: listingId,
+              title: listing.title,
+              status: listing.status,
+              priceCents: Number(listing.price_cents) || 0,
+              currency: listing.currency,
+              photoUrl: readGalleryUrls(listing.photo_urls)[0] ?? null,
+              pickupCity: listing.pickup_city,
+              pickupProvince: listing.pickup_province,
+            },
+            unrespondedThreads: [],
+            totalThreads: 0,
+          }
+          yourListingsById.set(listingId, group)
+        }
+
+        group.totalThreads += 1
+
+        const lastMessageRecord = thread.messages[0]
+        const isUnresponded = Boolean(lastMessageRecord && lastMessageRecord.senderId !== userId)
+        if (isUnresponded && group.unrespondedThreads.length < 5) {
+          group.unrespondedThreads.push({
+            threadId: thread.id,
+            counterpart: item.counterpart,
+            lastMessageAt: item.lastMessageAt,
+            lastMessage: item.lastMessage,
+          })
+        }
+
+        continue
+      }
+
+      if (notInterestedByThreadId.has(thread.id)) {
+        inactiveItems.push(item)
+        continue
+      }
+
+      if (soldStatuses.has(String(listing.status || '').toLowerCase())) {
+        soldItems.push(item)
+      } else {
+        activeItems.push(item)
+      }
+    }
+
+    return reply.send({
+      yourListings: Array.from(yourListingsById.values()),
+      yourListingChats,
+      activeItems,
+      inactiveItems,
+      soldItems,
+    })
+  }),
+)
+
+app.get('/market/chats/item/:listingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    await ensureCitizenMarketplaceTables()
+
+    const listingRows = await prisma.$queryRaw<
+      Array<{
+        id: string
+        title: string
+        status: string
+        price_cents: number
+        currency: string
+        photo_urls: unknown
+        pickup_city: string | null
+        pickup_province: string | null
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+      }>
+    >`
+      SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, seller_user_id, selected_buyer_user_id
+      FROM citizen_market_listing
+      WHERE id = ${params.data.listingId}
+      LIMIT 1
+    `
+
+    const listing = listingRows[0]
+    if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
+    if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
+
+    const threads: ThreadSummaryRecord[] = await prisma.messageThread.findMany({
+      where: {
+        contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+        contextId: listing.id,
+        participants: { some: { userId } },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+    })
+
+    const formattedThreads = threads.map((thread: ThreadSummaryRecord) => {
+      const counterpart = thread.participants.find((participant: ThreadParticipantRecord) => participant.userId !== userId)
+      return {
+        threadId: thread.id,
+        lastMessageAt: (thread.lastMessageAt ?? thread.updatedAt).toISOString(),
+        lastMessage: thread.messages[0] ? formatMessage(thread.messages[0], userId) : null,
+        counterpart: counterpart
+          ? {
+              id: counterpart.user.id,
+              handle: counterpart.user.handle,
+              name: counterpart.user.name,
+              avatarUrl: normalizeMediaUrl(counterpart.user.avatarUrl ?? null),
+              coverUrl: normalizeMediaUrl((counterpart.user as { coverUrl?: string | null }).coverUrl ?? null),
+            }
+          : null,
+      }
+    })
+
+    const selectedBuyerUserId = listing.selected_buyer_user_id
+    const selectedThreadId = selectedBuyerUserId
+      ? threads.find((thread: ThreadSummaryRecord) => thread.participants.some((p: ThreadParticipantRecord) => p.userId === selectedBuyerUserId))?.id ?? null
+      : null
+
+    return reply.send({
+      listing: {
+        id: listing.id,
+        title: listing.title,
+        status: listing.status,
+        priceCents: Number(listing.price_cents) || 0,
+        currency: listing.currency,
+        photoUrl: readGalleryUrls(listing.photo_urls)[0] ?? null,
+        pickupCity: listing.pickup_city,
+        pickupProvince: listing.pickup_province,
+      },
+      threads: formattedThreads,
+      selectedBuyerUserId,
+      selectedThreadId,
+    })
+  }),
+)
+
+app.post('/market/chats/:threadId/no-longer-interested', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketChatThreadParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const membership = await prisma.messageParticipant.findFirst({
+      where: {
+        threadId: params.data.threadId,
+        userId,
+        thread: { contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE },
+      },
+      select: { threadId: true },
+    })
+    if (!membership) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+    await ensureCitizenMarketplaceTables()
+
+    await prisma.$executeRaw`
+      INSERT INTO citizen_market_chat_interest (thread_id, user_id, interested, updated_at)
+      VALUES (${params.data.threadId}, ${userId}, FALSE, NOW())
+      ON CONFLICT (thread_id, user_id)
+      DO UPDATE SET interested = FALSE, updated_at = NOW()
+    `
+
+    return reply.send({ success: true, interested: false })
+  }),
+)
+
+app.post('/market/chats/item/:listingId/relist', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const body = MarketRelistBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    await ensureCitizenMarketplaceTables()
+
+    const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; is_active: boolean }>>`
+      SELECT id, seller_user_id, status, is_active
+      FROM citizen_market_listing
+      WHERE id = ${params.data.listingId}
+      LIMIT 1
+    `
+    const listing = listingRows[0]
+    if (!listing || !listing.is_active) return reply.code(404).send({ error: 'listing_not_found' })
+    if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
+
+    await prisma.$executeRaw`
+      UPDATE citizen_market_listing
+      SET status = 'active',
+          selected_buyer_user_id = NULL,
+          updated_at = NOW()
+      WHERE id = ${listing.id}
+        AND seller_user_id = ${userId}
+    `
+
+    if (body.data.notify) {
+      const threads = await prisma.messageThread.findMany({
+        where: {
+          contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+          contextId: listing.id,
+          participants: { some: { userId } },
+        },
+        select: {
+          id: true,
+          participants: { select: { userId: true } },
+        },
+        orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+        take: 200,
+      })
+
+      const bodyText = sanitizePlainText("This item is available again if you're interested.").trim()
+
+      const createdMessages: Array<{
+        threadId: string
+        record: MessageRecord
+        participants: Array<{ userId: string }>
+      }> = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const messageRecords: Array<{ threadId: string; record: MessageRecord; participants: Array<{ userId: string }> }> = []
+        for (const thread of threads) {
+          const created = await tx.message.create({
+            data: {
+              threadId: thread.id,
+              senderId: userId,
+              body: bodyText || null,
+              messageType: MessageType.text,
+            },
+            select: MESSAGE_SELECT,
+          })
+
+          await tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: created.createdAt } })
+          await tx.messageParticipant.update({
+            where: { threadId_userId: { threadId: thread.id, userId } },
+            data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
+          })
+          await tx.messageParticipant.updateMany({
+            where: { threadId: thread.id, userId: { not: userId } },
+            data: { lastActivityAt: created.createdAt },
+          })
+          messageRecords.push({ threadId: thread.id, record: created, participants: thread.participants })
+        }
+        return messageRecords
+      })
+
+      await Promise.all(
+        createdMessages.flatMap((entry: { threadId: string; record: MessageRecord; participants: Array<{ userId: string }> }) =>
+          entry.participants.map((participant: { userId: string }) =>
+            dispatchRealtimeEvent(participant.userId, {
+              type: 'message.created',
+              data: { threadId: entry.threadId, message: formatMessage(entry.record, participant.userId) },
+            }),
+          ),
+        ),
+      )
+    }
+
+    return reply.send({ success: true })
+  }),
+)
+
+app.post('/market/chats/item/:listingId/select-buyer', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketListingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const body = MarketSelectBuyerBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    await ensureCitizenMarketplaceTables()
+
+    const listingRows = await prisma.$queryRaw<
+      Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; is_active: boolean }>
+    >`
+      SELECT id, seller_user_id, status, selected_buyer_user_id, is_active
+      FROM citizen_market_listing
+      WHERE id = ${params.data.listingId}
+      LIMIT 1
+    `
+
+    const listing = listingRows[0]
+    if (!listing || !listing.is_active) return reply.code(404).send({ error: 'listing_not_found' })
+    if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
+    if (listing.selected_buyer_user_id) return reply.code(400).send({ error: 'buyer_already_selected' })
+
+    const selectedThread = await prisma.messageThread.findFirst({
+      where: {
+        id: body.data.threadId,
+        contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+        contextId: listing.id,
+        participants: { some: { userId } },
+      },
+      select: {
+        id: true,
+        participants: { select: { userId: true, mutedUntil: true } },
+      },
+    })
+    if (!selectedThread) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+    const buyerId = selectedThread.participants.find((participant: { userId: string }) => participant.userId !== userId)?.userId
+    if (!buyerId) return reply.code(400).send({ error: 'buyer_not_found' })
+
+    const threads = await prisma.messageThread.findMany({
+      where: {
+        contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+        contextId: listing.id,
+        participants: { some: { userId } },
+      },
+      select: {
+        id: true,
+        participants: { select: { userId: true, mutedUntil: true } },
+      },
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+    })
+
+    const now = new Date()
+    const notifyOthersBody = sanitizePlainText("I have found a potential buyer, but I'll let you know if that deal falls though").trim()
+    const notifySelectedBody = sanitizePlainText('I have selected you as the buyer for this item. Please confirm pickup details.').trim()
+
+    const createdMessages = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`
+        UPDATE citizen_market_listing
+        SET selected_buyer_user_id = ${buyerId},
+            status = 'pending',
+            is_draft = FALSE,
+            updated_at = NOW()
+        WHERE id = ${listing.id}
+          AND seller_user_id = ${userId}
+          AND selected_buyer_user_id IS NULL
+      `
+
+      const messageRecords: Array<{ threadId: string; record: MessageRecord; participants: Array<{ userId: string }> }> = []
+
+      for (const thread of threads) {
+        const messageBody = thread.id === selectedThread.id ? notifySelectedBody : notifyOthersBody
+        const created = await tx.message.create({
+          data: {
+            threadId: thread.id,
+            senderId: userId,
+            body: messageBody || null,
+            messageType: MessageType.text,
+          },
+          select: MESSAGE_SELECT,
+        })
+
+        await tx.messageThread.update({
+          where: { id: thread.id },
+          data: { lastMessageAt: created.createdAt },
+        })
+
+        await tx.messageParticipant.update({
+          where: {
+            threadId_userId: {
+              threadId: thread.id,
+              userId,
+            },
+          },
+          data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
+        })
+
+        await tx.messageParticipant.updateMany({
+          where: {
+            threadId: thread.id,
+            userId: { not: userId },
+          },
+          data: { lastActivityAt: created.createdAt },
+        })
+
+        messageRecords.push({ threadId: thread.id, record: created, participants: thread.participants })
+      }
+
+      return messageRecords
+    })
+
+    await Promise.all(
+      createdMessages.flatMap((entry: { threadId: string; record: MessageRecord; participants: Array<{ userId: string }> }) =>
+        entry.participants.map((participant: { userId: string }) =>
+          dispatchRealtimeEvent(participant.userId, {
+            type: 'message.created',
+            data: {
+              threadId: entry.threadId,
+              message: formatMessage(entry.record, participant.userId),
+            },
+          }),
+        ),
+      ),
+    )
+
+    return reply.send({
+      success: true,
+      selectedBuyerUserId: buyerId,
+      selectedThreadId: selectedThread.id,
+      selectedAt: now.toISOString(),
+    })
+  }),
+)
+
+app.get('/market/chats/:threadId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketChatThreadParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const thread = await prisma.messageThread.findFirst({
+      where: {
+        id: params.data.threadId,
+        contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+        participants: { some: { userId } },
+      },
+      include: THREAD_WITH_PARTICIPANTS_INCLUDE,
+    })
+    if (!thread) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+    const query = MessageListQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const { rows, nextCursor } = await fetchThreadMessages(thread.id, query.data.limit, query.data.cursor)
+
+    return reply.send({
+      thread: formatThreadBase(thread, userId),
+      messages: rows.map((message: MessageRecord) => formatMessage(message, userId)),
+      nextCursor,
+    })
+  }),
+)
+
+app.get('/market/chats/:threadId/messages', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketChatThreadParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const membership = await prisma.messageParticipant.findFirst({
+      where: {
+        threadId: params.data.threadId,
+        userId,
+        thread: { contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE },
+      },
+      select: { threadId: true },
+    })
+    if (!membership) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+    const query = MessageListQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const { rows, nextCursor } = await fetchThreadMessages(params.data.threadId, query.data.limit, query.data.cursor)
+
+    return reply.send({
+      items: rows.map((message: MessageRecord) => formatMessage(message, userId)),
+      nextCursor,
+    })
+  }),
+)
+
+app.get('/market/chats/unread-count', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    await ensureCitizenMarketplaceTables()
+
+    const result = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*)::int as count
+      FROM "Message" m
+      JOIN "MessageParticipant" mp ON m."threadId" = mp."threadId"
+      JOIN "MessageThread" t ON t.id = m."threadId"
+      WHERE mp."userId" = ${userId}
+      AND m."senderId" != ${userId}
+      AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+      AND t."contextType" = 'market_listing'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM citizen_market_chat_interest i
+        WHERE i.thread_id = m."threadId"
+        AND i.user_id = ${userId}
+        AND i.interested = FALSE
+      )
+    `
+
+    const count = Number(result[0]?.count || 0)
+    return reply.send({ count })
+  }),
+)
+
+app.post('/market/chats/:threadId/read', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketChatThreadParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const membership = await prisma.messageParticipant.findFirst({
+      where: {
+        threadId: params.data.threadId,
+        userId,
+        thread: { contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE },
+      },
+      select: { threadId: true },
+    })
+    if (!membership) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+    const parse = ThreadReadInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    let readAt = new Date()
+    if (parse.data.messageId) {
+      const message = await prisma.message.findUnique({
+        where: { id: parse.data.messageId },
+        select: { threadId: true, createdAt: true },
+      })
+      if (!message || message.threadId !== params.data.threadId) {
+        return reply.code(400).send({ error: 'invalid_message' })
+      }
+      readAt = message.createdAt
+    }
+
+    await prisma.messageParticipant.update({
+      where: {
+        threadId_userId: {
+          threadId: params.data.threadId,
+          userId,
+        },
+      },
+      data: { lastReadAt: readAt },
+    })
+
+    return reply.send({ lastReadAt: readAt })
+  }),
+)
+
+app.post('/market/chats/:threadId/messages', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MarketChatThreadParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const parse = SendMessageInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const thread = await prisma.messageThread.findFirst({
+      where: {
+        id: params.data.threadId,
+        contextType: MARKET_LISTING_CHAT_CONTEXT_TYPE,
+        participants: { some: { userId } },
+      },
+      select: {
+        id: true,
+        participants: { select: { userId: true, mutedUntil: true } },
+      },
+    })
+    if (!thread) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+    const messageRecord = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const normalizedBody = parse.data.body?.trim() ? sanitizePlainText(parse.data.body) : ''
+      const created = await tx.message.create({
+        data: {
+          threadId: thread.id,
+          senderId: userId,
+          body: normalizedBody ? normalizedBody : null,
+          attachments: parse.data.attachments ?? undefined,
+          messageType: MessageType.text,
+        },
+        select: MESSAGE_SELECT,
+      })
+
+      await tx.messageThread.update({
+        where: { id: thread.id },
+        data: { lastMessageAt: created.createdAt },
+      })
+
+      await tx.messageParticipant.update({
+        where: {
+          threadId_userId: {
+            threadId: thread.id,
+            userId,
+          },
+        },
+        data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
+      })
+
+      await tx.messageParticipant.updateMany({
+        where: {
+          threadId: thread.id,
+          userId: { not: userId },
+        },
+        data: { lastActivityAt: created.createdAt },
+      })
+
+      return created
+    })
+
+    await Promise.all(
+      thread.participants.map((participant: { userId: string }) =>
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'message.created',
+          data: {
+            threadId: thread.id,
+            message: formatMessage(messageRecord, participant.userId),
+          },
+        }),
+      ),
+    )
+
+    return reply.code(201).send({ message: formatMessage(messageRecord, userId) })
   }),
 )
 
@@ -14030,10 +15277,20 @@ app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
     const hasDeliveryOptionsUpdate = Object.prototype.hasOwnProperty.call(body.data, 'deliveryOptions')
     const nextDeliveryOptions = hasDeliveryOptionsUpdate ? readDeliveryOptions(body.data.deliveryOptions ?? {}) : {}
 
+    const listingProvinceCodeProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingProvinceCode')
+    const listingCommunitySlugProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingCommunitySlug')
+    const nextListingProvinceCode = listingProvinceCodeProvided ? (body.data.listingProvinceCode?.trim() ? body.data.listingProvinceCode.trim().toUpperCase() : null) : null
+    const nextListingCommunitySlug = listingCommunitySlugProvided
+      ? (body.data.listingCommunitySlug?.trim() ? body.data.listingCommunitySlug.trim().toLowerCase() : null)
+      : null
+
     const hasStatusUpdate = Object.prototype.hasOwnProperty.call(body.data, 'status')
     const hasDraftUpdate = Object.prototype.hasOwnProperty.call(body.data, 'isDraft')
     const nextStatus = hasStatusUpdate ? body.data.status : null
     const nextIsDraft = hasDraftUpdate ? body.data.isDraft : null
+
+    const viewerScopeFollows = await readViewerCommunityFollows(userId)
+    const viewerScope = viewerScopeFollows[0] ?? null
 
     await prisma.$executeRaw`
       UPDATE citizen_market_listing
@@ -14050,6 +15307,14 @@ app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
           pickup_address_line1 = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupAddressLine1')} THEN ${body.data.pickupAddressLine1 ?? null} ELSE pickup_address_line1 END,
           pickup_address_line2 = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupAddressLine2')} THEN ${body.data.pickupAddressLine2 ?? null} ELSE pickup_address_line2 END,
           pickup_postal_code = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'pickupPostalCode')} THEN ${body.data.pickupPostalCode ?? null} ELSE pickup_postal_code END,
+          listing_province_code = CASE
+            WHEN ${listingProvinceCodeProvided} THEN ${nextListingProvinceCode}
+            ELSE COALESCE(listing_province_code, ${viewerScope?.provinceCode ?? null})
+          END,
+          listing_community_slug = CASE
+            WHEN ${listingCommunitySlugProvided} THEN ${nextListingCommunitySlug}
+            ELSE COALESCE(listing_community_slug, ${viewerScope?.communitySlug ?? null})
+          END,
           payment_types = CASE WHEN ${hasPaymentTypesUpdate} THEN ${JSON.stringify(nextPaymentTypes)}::jsonb ELSE payment_types END,
           willing_to_deliver = COALESCE(${typeof body.data.willingToDeliver === 'boolean' ? body.data.willingToDeliver : null}, willing_to_deliver),
           delivery_options = CASE WHEN ${hasDeliveryOptionsUpdate} THEN ${JSON.stringify(nextDeliveryOptions)}::jsonb ELSE delivery_options END,
