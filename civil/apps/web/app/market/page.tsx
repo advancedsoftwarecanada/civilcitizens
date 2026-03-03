@@ -1,11 +1,10 @@
-import ComingSoon from '../_components/ComingSoon'
+import type { Metadata } from 'next'
+import MarketPageClient from './MarketPageClient'
+
+export const metadata: Metadata = {
+  title: 'Market',
+}
 
 export default function MarketPage() {
-  return (
-    <ComingSoon
-      activeNavKey="market"
-      title="Market is coming soon"
-      message="The civic marketplace is still in progress. We will share updates as soon as it is ready."
-    />
-  )
+  return <MarketPageClient />
 }
