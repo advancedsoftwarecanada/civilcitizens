@@ -8,12 +8,14 @@ import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuRepeat2, LuShare } fro
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
+import CivilLinkPreviewList from '../../../../../_components/CivilLinkPreviewList'
 import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
 import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
 import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
+import { stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
 import { ensureViewerMe } from '../../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
@@ -198,6 +200,7 @@ export default function ChamberPostPage({ params }: PageProps) {
   const voteScore = post?.votes?.score ?? post?.counts?.score ?? 0
   const viewerVote = post?.viewer?.vote ?? null
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
+  const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
 
   const handleVote = useCallback(
     async (value: -1 | 0 | 1) => {
@@ -591,9 +594,10 @@ export default function ChamberPostPage({ params }: PageProps) {
               ) : null}
               {post.type === 'article' ? (
                 <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
-              ) : (
-                <div className="whitespace-pre-wrap">{post.body}</div>
-              )}
+              ) : postBodyWithoutCivilLinks ? (
+                <div className="whitespace-pre-wrap">{postBodyWithoutCivilLinks}</div>
+              ) : null}
+              <CivilLinkPreviewList body={post.body} className="mt-3 space-y-2" />
             </div>
           </header>
 

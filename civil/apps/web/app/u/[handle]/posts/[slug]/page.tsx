@@ -10,10 +10,12 @@ import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
+import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
 import SharePostModal from '../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../_components/ShareSendModal'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../_lib/shareTarget'
+import { stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
@@ -279,6 +281,7 @@ export default function UserPostPage({ params }: PageProps) {
   const voteScore = post?.votes?.score ?? post?.counts?.score ?? 0
   const viewerVote = post?.viewer?.vote ?? null
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
+  const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
 
   const handleVote = useCallback(
     async (value: -1 | 0 | 1) => {
@@ -523,9 +526,10 @@ export default function UserPostPage({ params }: PageProps) {
                     <div className="mt-4 space-y-4">
                       {post.type === 'article' ? (
                         <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
-                      ) : (
-                        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{post.body}</div>
-                      )}
+                      ) : postBodyWithoutCivilLinks ? (
+                        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{postBodyWithoutCivilLinks}</div>
+                      ) : null}
+                      <CivilLinkPreviewList body={post.body} />
                     </div>
                   </div>
                 </header>

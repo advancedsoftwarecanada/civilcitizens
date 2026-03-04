@@ -2132,8 +2132,9 @@ function formatMarketplacePrice(cents: number, currency: string): string {
   }
 }
 
-async function canViewerAccessPostForPreview(post: { visibility: string; businessId: string | null }, viewerId: string): Promise<boolean> {
+async function canViewerAccessPostForPreview(post: { visibility: string; businessId: string | null }, viewerId: string | null): Promise<boolean> {
   if (post.visibility !== 'members' || !post.businessId) return true
+  if (!viewerId) return false
   const business = await prisma.business.findUnique({
     where: { id: post.businessId },
     select: { ownerId: true },
@@ -2146,7 +2147,7 @@ async function canViewerAccessPostForPreview(post: { visibility: string; busines
   return Boolean(membership)
 }
 
-async function resolvePostLinkPreview(slugOrId: string, viewerId: string): Promise<MessageLinkPreviewRecord | null> {
+async function resolvePostLinkPreview(slugOrId: string, viewerId: string | null): Promise<MessageLinkPreviewRecord | null> {
   const lookup = slugOrId.trim()
   if (!lookup) return null
 
@@ -2185,7 +2186,12 @@ async function resolvePostLinkPreview(slugOrId: string, viewerId: string): Promi
   }
 }
 
-async function resolveOrganizationLinkPreview(provinceParam: string, communityParam: string, slugParam: string, viewerId: string): Promise<MessageLinkPreviewRecord | null> {
+async function resolveOrganizationLinkPreview(
+  provinceParam: string,
+  communityParam: string,
+  slugParam: string,
+  viewerId: string | null,
+): Promise<MessageLinkPreviewRecord | null> {
   const province = normalizeProvinceCode(provinceParam)
   if (!province) return null
   const communitySlug = communityParam.trim().toLowerCase()
@@ -2267,10 +2273,11 @@ function formatEventPreviewDate(value: string | null | undefined): string | null
   })
 }
 
-function canViewerAccessEventForPreview(event: OrganizationEventSnapshot, system: OrganizationSystemSnapshot, viewerId: string): boolean {
+function canViewerAccessEventForPreview(event: OrganizationEventSnapshot, system: OrganizationSystemSnapshot, viewerId: string | null): boolean {
   const status = String(event.status ?? 'PUBLISHED').toUpperCase()
   if (status === 'DRAFT') return false
   if (event.access !== 'RESTRICTED') return true
+  if (!viewerId) return false
 
   const membership = system.members[viewerId]
   if (!membership || membership.status !== 'ACTIVE') return false
@@ -2312,7 +2319,7 @@ async function resolveOrganizationEventLinkPreview(
   communityParam: string,
   slugParam: string,
   eventIdParam: string,
-  viewerId: string,
+  viewerId: string | null,
 ): Promise<MessageLinkPreviewRecord | null> {
   const province = normalizeProvinceCode(provinceParam)
   if (!province) return null
@@ -2365,7 +2372,7 @@ async function resolveOrganizationEventLinkPreview(
 async function resolveOrganizationIdEventLinkPreview(
   organizationIdParam: string,
   eventIdParam: string,
-  viewerId: string,
+  viewerId: string | null,
 ): Promise<MessageLinkPreviewRecord | null> {
   const organizationId = organizationIdParam.trim()
   const eventId = eventIdParam.trim()
@@ -2510,7 +2517,7 @@ function resolveCommunityLinkPreview(provinceParam: string, communityParam: stri
   }
 }
 
-async function resolveMessageLinkPreview(pathWithQuery: string, viewerId: string): Promise<MessageLinkPreviewRecord | null> {
+async function resolveMessageLinkPreview(pathWithQuery: string, viewerId: string | null): Promise<MessageLinkPreviewRecord | null> {
   const [pathname] = pathWithQuery.split('?')
   const path = pathname || '/'
   const segments = path
@@ -6601,6 +6608,28 @@ app.get('/messages/link-preview', async (req: FastifyRequest, reply: FastifyRepl
       return reply.send({ preview: preview ?? null })
     } catch (error) {
       req.log.warn({ err: error, userId, url: query.data.url }, 'message_link_preview_failed')
+      return reply.send({ preview: null })
+    }
+  }),
+)
+
+app.get('/link-preview', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = await resolveUserId(req)
+
+    const query = MessageLinkPreviewQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const normalizedPath = normalizeMessageLinkPath(query.data.url)
+    if (!normalizedPath) {
+      return reply.send({ preview: null })
+    }
+
+    try {
+      const preview = await resolveMessageLinkPreview(normalizedPath, userId)
+      return reply.send({ preview: preview ?? null })
+    } catch (error) {
+      req.log.warn({ err: error, userId: userId ?? null, url: query.data.url }, 'public_link_preview_failed')
       return reply.send({ preview: null })
     }
   }),
