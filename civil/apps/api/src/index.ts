@@ -23,6 +23,7 @@ import {
   MessageType,
   MessageParticipantRole,
   BusinessRole,
+  ReactionType as PrismaReactionType,
 } from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
 import {
@@ -38,6 +39,7 @@ import {
   CursorQuery,
   HandleParam,
   CreateCommentInput,
+  ReactPostInput,
   VoteCommentInput,
   UpdateProfilePhotoInput,
   PostSortEnum,
@@ -2996,23 +2998,54 @@ async function refreshPostAggregates(
 ) {
   const reactionWindowStart = new Date(Date.now() - REACTION_HOT_WINDOW_HOURS * 60 * 60 * 1000)
 
-  const [upvotes, downvotes, recentPositive, commentCount, commentScoreResult] = await Promise.all([
-    tx.vote.count({ where: { postId, value: 1 } }),
-    tx.vote.count({ where: { postId, value: -1 } }),
-    tx.vote.count({
+  const [reactionRows, recentPositive, commentCount, commentScoreResult] = await Promise.all([
+    tx.postReaction.groupBy({
+      by: ['type'],
+      where: { postId },
+      _count: { _all: true },
+    }),
+    tx.postReaction.count({
       where: {
         postId,
-        value: 1,
         createdAt: { gte: reactionWindowStart },
       },
     }),
     tx.comment.count({ where: { postId } }),
     tx.comment.aggregate({ where: { postId }, _sum: { score: true } }),
   ])
-  const positiveReactions = upvotes
-  const supportReactions = 0
+
+  const reactionCounts = {
+    maple: 0,
+    heart: 0,
+    haha: 0,
+    wow: 0,
+    sad: 0,
+    fire: 0,
+  }
+  for (const row of reactionRows) {
+    const count = Number(row?._count?._all ?? 0)
+    if (row.type === PrismaReactionType.maple) reactionCounts.maple = count
+    else if (row.type === PrismaReactionType.heart) reactionCounts.heart = count
+    else if (row.type === PrismaReactionType.haha) reactionCounts.haha = count
+    else if (row.type === PrismaReactionType.wow) reactionCounts.wow = count
+    else if (row.type === PrismaReactionType.sad) reactionCounts.sad = count
+    else if (row.type === PrismaReactionType.fire) reactionCounts.fire = count
+  }
+
+  const reactionTotal =
+    reactionCounts.maple +
+    reactionCounts.heart +
+    reactionCounts.haha +
+    reactionCounts.wow +
+    reactionCounts.sad +
+    reactionCounts.fire
+
+  const upvotes = reactionTotal
+  const downvotes = 0
+  const score = reactionTotal
+  const positiveReactions = reactionTotal
+  const supportReactions = reactionCounts.heart + reactionCounts.wow + reactionCounts.fire
   const commentScore = commentScoreResult?._sum?.score ?? 0
-  const score = upvotes - downvotes
 
   const nextLastActivityAt = options.bumpActivity ? new Date() : times.lastActivityAt
   const hotScore = calculateHotScore({
@@ -3034,6 +3067,13 @@ async function refreshPostAggregates(
       commentCount,
       hotScore,
       recentPositive,
+      reactionMaple: reactionCounts.maple,
+      reactionHeart: reactionCounts.heart,
+      reactionHaha: reactionCounts.haha,
+      reactionWow: reactionCounts.wow,
+      reactionSad: reactionCounts.sad,
+      reactionFire: reactionCounts.fire,
+      reactionTotal,
       lastActivityAt: nextLastActivityAt,
     },
   })
@@ -3045,6 +3085,13 @@ async function refreshPostAggregates(
     commentCount,
     commentScore,
     recentPositive,
+    reactionMaple: reactionCounts.maple,
+    reactionHeart: reactionCounts.heart,
+    reactionHaha: reactionCounts.haha,
+    reactionWow: reactionCounts.wow,
+    reactionSad: reactionCounts.sad,
+    reactionFire: reactionCounts.fire,
+    reactionTotal,
     lastActivityAt: nextLastActivityAt,
   }
 }
@@ -3601,6 +3648,7 @@ type FormattedPost = {
   }>
   counts: {
     commentCount: number
+    reactions: number
     recentPositive: number
     upvotes: number
     downvotes: number
@@ -3611,10 +3659,21 @@ type FormattedPost = {
     downvotes: number
     score: number
   }
+  reactions: {
+    maple: number
+    heart: number
+    haha: number
+    wow: number
+    sad: number
+    fire: number
+    total: number
+    positive: number
+  }
   metrics: {
     hotScore: number
   }
   viewer: {
+    reaction: PrismaReactionType | null
     vote: number | null
   }
 }
@@ -3692,9 +3751,37 @@ async function getRecentCommentsByPostIds(postIds: string[], limitPerPost = 5) {
   return grouped
 }
 
+async function loadViewerReactionsByPostIds(
+  viewerId: string | undefined,
+  postIds: string[],
+): Promise<Record<string, PrismaReactionType>> {
+  if (!viewerId || postIds.length === 0) return {}
+
+  const rows = await prisma.postReaction.findMany({
+    where: {
+      userId: viewerId,
+      postId: { in: postIds },
+    },
+    select: {
+      postId: true,
+      type: true,
+    },
+  })
+
+  const out: Record<string, PrismaReactionType> = {}
+  for (const row of rows) {
+    out[row.postId] = row.type
+  }
+  return out
+}
+
 function formatPost(
   post: PostWithAuthor,
-  options: { viewerVote?: number | null; recentComments?: FormattedPost['recentComments'] } = {},
+  options: {
+    viewerVote?: number | null
+    viewerReaction?: PrismaReactionType | null
+    recentComments?: FormattedPost['recentComments']
+  } = {},
 ): FormattedPost {
   const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
   const provinceName = community ? getProvinceDisplayName(community.province as any) : null
@@ -3744,6 +3831,7 @@ function formatPost(
     recentComments: options.recentComments ?? [],
     counts: {
       commentCount: post.commentCount,
+      reactions: post.reactionTotal ?? 0,
       recentPositive: post.recentPositive ?? 0,
       upvotes: post.upvotes ?? 0,
       downvotes: post.downvotes ?? 0,
@@ -3754,10 +3842,21 @@ function formatPost(
       downvotes: post.downvotes ?? 0,
       score: post.score ?? 0,
     },
+    reactions: {
+      maple: post.reactionMaple ?? 0,
+      heart: post.reactionHeart ?? 0,
+      haha: post.reactionHaha ?? 0,
+      wow: post.reactionWow ?? 0,
+      sad: post.reactionSad ?? 0,
+      fire: post.reactionFire ?? 0,
+      total: post.reactionTotal ?? 0,
+      positive: post.reactionTotal ?? 0,
+    },
     metrics: {
       hotScore: post.hotScore,
     },
     viewer: {
+      reaction: options.viewerReaction ?? null,
       vote: options.viewerVote ?? null,
     },
   }
@@ -4019,18 +4118,7 @@ registerCommunityRoute(
         items = queryResult
       }
 
-      let votesByPost: Record<string, number> = {}
-      if (viewerId && items.length) {
-        const votes = await prisma.vote.findMany({
-          where: { userId: viewerId, postId: { in: items.map((item) => item.id) } },
-          select: { postId: true, value: true },
-        })
-        const voteMap: Record<string, number> = {}
-        for (const vote of votes) {
-          voteMap[vote.postId] = vote.value
-        }
-        votesByPost = voteMap
-      }
+      const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, items.map((item) => item.id))
 
       const recentCommentsByPost = await getRecentCommentsByPostIds(items.map((item) => item.id), 5)
 
@@ -4038,7 +4126,7 @@ registerCommunityRoute(
         community: communityRecord,
         items: items.map((item) =>
           formatPost(item, {
-            viewerVote: votesByPost[item.id] ?? null,
+            viewerReaction: reactionsByPost[item.id] ?? null,
             recentComments: recentCommentsByPost[item.id] ?? [],
           }),
         ),
@@ -5254,16 +5342,27 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
       if (!membership) return reply.code(404).send({ error: 'post_not_found' })
     }
 
+    const mappedReaction: PrismaReactionType | null =
+      value === 1 ? PrismaReactionType.maple : value === -1 ? PrismaReactionType.sad : null
+
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      if (value === 0) {
-        await tx.vote.deleteMany({
+      // Legacy votes are deprecated in favor of reactions.
+      await tx.vote.deleteMany({
+        where: {
+          userId,
+          postId,
+        },
+      })
+
+      if (!mappedReaction) {
+        await tx.postReaction.deleteMany({
           where: {
             userId,
             postId,
           },
         })
       } else {
-        await tx.vote.upsert({
+        await tx.postReaction.upsert({
           where: {
             userId_postId: {
               userId,
@@ -5273,10 +5372,10 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
           create: {
             userId,
             postId,
-            value,
+            type: mappedReaction,
           },
           update: {
-            value,
+            type: mappedReaction,
           },
         })
       }
@@ -5291,7 +5390,104 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
 
-    return reply.send({ post: formatPost(updatedPost, { viewerVote: value === 0 ? null : value }) })
+    return reply.send({ post: formatPost(updatedPost, { viewerReaction: mappedReaction }) })
+  }),
+)
+
+app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = ReactPostInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const { postId, reaction } = parse.data
+
+    const post = await prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
+    })
+    if (!post) return reply.code(404).send({ error: 'post_not_found' })
+
+    if (post.visibility === 'members' && post.businessId) {
+      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const isOwner = business?.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({
+            where: { businessId_userId: { businessId: post.businessId, userId } },
+            select: { role: true },
+          })
+      if (!membership) return reply.code(404).send({ error: 'post_not_found' })
+    }
+
+    const normalizedReaction: PrismaReactionType | null =
+      reaction === null
+        ? null
+        : reaction === 'maple'
+          ? PrismaReactionType.maple
+          : reaction === 'heart'
+            ? PrismaReactionType.heart
+            : reaction === 'haha'
+              ? PrismaReactionType.haha
+              : reaction === 'wow'
+                ? PrismaReactionType.wow
+                : reaction === 'sad'
+                  ? PrismaReactionType.sad
+                  : reaction === 'fire'
+                    ? PrismaReactionType.fire
+                    : null
+
+    if (reaction !== null && !normalizedReaction) {
+      return reply.code(400).send({ error: 'invalid_reaction' })
+    }
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.vote.deleteMany({
+        where: {
+          userId,
+          postId,
+        },
+      })
+
+      if (!normalizedReaction) {
+        await tx.postReaction.deleteMany({
+          where: {
+            userId,
+            postId,
+          },
+        })
+      } else {
+        await tx.postReaction.upsert({
+          where: {
+            userId_postId: {
+              userId,
+              postId,
+            },
+          },
+          create: {
+            userId,
+            postId,
+            type: normalizedReaction,
+          },
+          update: {
+            type: normalizedReaction,
+          },
+        })
+      }
+
+      await refreshPostAggregates(tx, postId, { createdAt: post.createdAt, lastActivityAt: post.updatedAt }, { bumpActivity: false })
+    })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: postId },
+      include: POST_INCLUDE,
+    })
+
+    if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
+
+    return reply.send({ post: formatPost(updatedPost, { viewerReaction: normalizedReaction }) })
   }),
 )
 
@@ -17473,25 +17669,14 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
       posts = queryResult
     }
 
-    let votesByPost: Record<string, number> = {}
-    if (viewerId && posts.length) {
-      const votes = await prisma.vote.findMany({
-        where: { userId: viewerId, postId: { in: posts.map((post) => post.id) } },
-        select: { postId: true, value: true },
-      })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.postId] = vote.value
-      }
-      votesByPost = voteMap
-    }
+    const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, posts.map((post) => post.id))
 
     const recentCommentsByPost = await getRecentCommentsByPostIds(posts.map((post) => post.id), 5)
 
     return reply.send({
       items: posts.map((post) =>
         formatPost(post, {
-          viewerVote: votesByPost[post.id] ?? null,
+          viewerReaction: reactionsByPost[post.id] ?? null,
           recentComments: recentCommentsByPost[post.id] ?? [],
         }),
       ),
@@ -17528,18 +17713,18 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
       if (!membership) return reply.code(404).send({ error: 'not found' })
     }
 
-    let viewerVote: number | null = null
+    let viewerReaction: PrismaReactionType | null = null
     if (viewerId) {
-      const vote = await prisma.vote.findUnique({
+      const reaction = await prisma.postReaction.findUnique({
         where: {
           userId_postId: {
             userId: viewerId,
             postId: post.id,
           },
         },
-        select: { value: true },
+        select: { type: true },
       })
-      viewerVote = vote?.value ?? null
+      viewerReaction = reaction?.type ?? null
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -17574,7 +17759,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     return {
-      post: formatPost(post, { viewerVote }),
+      post: formatPost(post, { viewerReaction }),
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes),
     }
@@ -17606,18 +17791,18 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       if (!membership) return reply.code(404).send({ error: 'not found' })
     }
 
-    let viewerVote: number | null = null
+    let viewerReaction: PrismaReactionType | null = null
     if (viewerId) {
-      const vote = await prisma.vote.findUnique({
+      const reaction = await prisma.postReaction.findUnique({
         where: {
           userId_postId: {
             userId: viewerId,
             postId: post.id,
           },
         },
-        select: { value: true },
+        select: { type: true },
       })
-      viewerVote = vote?.value ?? null
+      viewerReaction = reaction?.type ?? null
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -17652,7 +17837,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     return {
-      post: formatPost(post, { viewerVote }),
+      post: formatPost(post, { viewerReaction }),
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes),
     }
@@ -17903,25 +18088,14 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     }
     items = query
 
-    let votesByPost: Record<string, number> = {}
-    if (viewerId && items.length) {
-      const votes = await prisma.vote.findMany({
-        where: { userId: viewerId, postId: { in: items.map((post) => post.id) } },
-        select: { postId: true, value: true },
-      })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.postId] = vote.value
-      }
-      votesByPost = voteMap
-    }
+    const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, items.map((post) => post.id))
 
     const recentCommentsByPost = await getRecentCommentsByPostIds(items.map((item) => item.id), 5)
 
     return {
       items: items.map((item) =>
         formatPost(item, {
-          viewerVote: votesByPost[item.id] ?? null,
+          viewerReaction: reactionsByPost[item.id] ?? null,
           recentComments: recentCommentsByPost[item.id] ?? [],
         }),
       ),
@@ -18329,18 +18503,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       posts = queryResult
     }
 
-    let votesByPost: Record<string, number> = {}
-    if (viewerId && posts.length) {
-      const votes = await prisma.vote.findMany({
-        where: { userId: viewerId, postId: { in: posts.map((post) => post.id) } },
-        select: { postId: true, value: true },
-      })
-      const voteMap: Record<string, number> = {}
-      for (const vote of votes) {
-        voteMap[vote.postId] = vote.value
-      }
-      votesByPost = voteMap
-    }
+    const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, posts.map((post) => post.id))
 
     const recentCommentsByPost = await getRecentCommentsByPostIds(posts.map((post) => post.id), 5)
 
@@ -18349,7 +18512,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       relationship,
       items: posts.map((post) =>
         formatPost(post, {
-          viewerVote: votesByPost[post.id] ?? null,
+          viewerReaction: reactionsByPost[post.id] ?? null,
           recentComments: recentCommentsByPost[post.id] ?? [],
         }),
       ),
