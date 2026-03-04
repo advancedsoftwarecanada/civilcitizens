@@ -108,6 +108,14 @@ function trimMessagePart(value: string, max = 260): string {
   return `${compact.slice(0, Math.max(1, max - 1)).trimEnd()}…`
 }
 
+export function buildExternalShareText(target: ShareTarget, max = 180): string {
+  return trimMessagePart(target.description || target.title || 'Check this out on Civil', max)
+}
+
+export function buildExternalShareTitle(target: ShareTarget, max = 90): string {
+  return trimMessagePart(target.title || 'Civil', max) || 'Civil'
+}
+
 export function buildDirectShareMessage(target: ShareTarget): string {
   const absoluteUrl = toAbsoluteShareUrl(target.url)
   const intro = trimMessagePart(target.description || target.title || 'Check this out on Civil', 220)
