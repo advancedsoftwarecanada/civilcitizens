@@ -236,7 +236,7 @@ export function RightRail({
   )
 
   const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community' || mode === 'work'
-  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'community' || mode === 'communitiesFeed' || showOrganizations
+  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'community' || showOrganizations
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
   const shouldLoadConnections = mode === 'network'
@@ -619,30 +619,6 @@ export function RightRail({
           )}
         </Block>
 
-        <Block title="Your Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
-          {combinedOrganizations.length ? (
-            <ul className="space-y-3">
-              {combinedOrganizations.slice(0, 8).map((org) => (
-                <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {org.coverUrl ? (
-                    <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link
-                    href={getOrganizationHref(org)}
-                    className="group relative flex items-center gap-2.5 px-3 py-2"
-                  >
-                    <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                    <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">No organizations yet.</p>
-          )}
-        </Block>
-
         {eventRsvps.length ? (
           <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
             <ul className="space-y-3">
@@ -846,30 +822,6 @@ export function RightRail({
               </ul>
             </Block>
           ) : null}
-
-          <Block title="Organizations" action={{ label: 'See all', href: '/organizations/directory' }}>
-            {combinedOrganizations.length ? (
-              <ul className="space-y-3">
-                {combinedOrganizations.slice(0, 8).map((org) => (
-                  <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                    {org.coverUrl ? (
-                      <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                    ) : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                    <Link
-                      href={getOrganizationHref(org)}
-                      className="group relative flex items-center gap-2.5 px-3 py-2"
-                    >
-                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                      <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-sm text-slate-500">No organizations yet.</p>
-            )}
-          </Block>
 
           <Block title="Professionals" action={{ label: 'See all', href: '/network/professionals' }}>
             {connections.length ? (

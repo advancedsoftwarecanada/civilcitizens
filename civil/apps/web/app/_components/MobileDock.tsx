@@ -21,7 +21,6 @@ import { PRIMARY_NAV } from './Sidebar'
 import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
-import FriendsRightRail from './FriendsRightRail'
 import CommunityRightRailClient from './CommunityRightRailClient'
 import { getStoredToken } from '../_lib/tokenStorage'
 import Block from './Block'
@@ -47,12 +46,12 @@ const DRAWER_TRANSITION_MS = 320
 type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
 
 const ORG_DRAWER_LINKS: Array<{ key: string; label: string; segment: string }> = [
-  { key: 'overview', label: 'Overview', segment: '' },
-  { key: 'posts', label: 'Posts', segment: 'posts' },
+  { key: 'posts', label: 'Posts', segment: '' },
+  { key: 'chat', label: 'Chat', segment: 'chat-channels' },
   { key: 'events', label: 'Events', segment: 'events' },
   { key: 'jobs', label: 'Jobs', segment: 'jobs' },
-  { key: 'gigs', label: 'Gigs', segment: 'gigs' },
-  { key: 'discussions', label: 'Discussions', segment: 'discussions' },
+  { key: 'shop', label: 'Shop', segment: 'shop' },
+  { key: 'members', label: 'Members', segment: 'members' },
   { key: 'settings', label: 'Settings', segment: 'settings' },
 ]
 
@@ -392,14 +391,31 @@ export default function MobileDock() {
   const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
 
   const morePanelContent = useMemo(() => {
-    if (pathname?.startsWith('/friends') || pathname?.startsWith('/network')) {
-      if (pathname?.startsWith('/network')) {
-        return <RightRail mode="network" sticky={false} />
-      }
-      return <FriendsRightRail />
+    if (pathname === '/home') {
+      return <RightRail showOrganizations showRsvps sticky={false} />
+    }
+    if (pathname?.startsWith('/friends')) {
+      return <RightRail hideCommunities showPendingFriendRequests sticky={false} />
+    }
+    if (pathname?.startsWith('/network')) {
+      return pathname === '/network'
+        ? <RightRail mode="network" showRsvps sticky={false} />
+        : <RightRail mode="network" sticky={false} />
+    }
+    if (pathname?.startsWith('/events')) {
+      return <RightRail mode="events" showOrganizations sticky={false} />
+    }
+    if (pathname?.startsWith('/work')) {
+      return <RightRail mode="work" organizationLinkTarget="chat" sticky={false} />
+    }
+    if (pathname?.startsWith('/market')) {
+      return <RightRail mode="default" hideContacts hideCommunities sticky={false} />
     }
     if (pathname?.startsWith('/channels')) {
       return <RightRail mode="organizations" organizationLinkTarget="chat" sticky={false} />
+    }
+    if (pathname === '/organizations') {
+      return <RightRail showOrganizations hideContacts hideCommunities sticky={false} />
     }
     if (pathname?.startsWith('/organizations')) {
       return isOrganizationsDirectory ? (
@@ -421,12 +437,7 @@ export default function MobileDock() {
     if (communityRoute) {
       return <CommunityRightRailClient province={communityRoute.province} municipality={communityRoute.municipality} />
     }
-    return (
-      <div className="space-y-6">
-        <OrganizationMoreBlock pathname={pathname} onNavigate={handleCloseMore} />
-        <RightRail sticky={false} />
-      </div>
-    )
+    return <RightRail sticky={false} />
   }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute])
 
   if (!hydrated || !hasSession) {
