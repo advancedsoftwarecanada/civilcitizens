@@ -7,11 +7,10 @@ import { normalizeProvinceCode } from '@civil/shared'
 import {
   HiOutlineArrowRightCircle,
   HiOutlineBell,
-  HiOutlineHashtag,
+  HiOutlineChatBubbleOvalLeft,
   HiOutlineHome,
   HiOutlineMagnifyingGlass,
-  HiOutlineUserGroup,
-  HiOutlineWallet,
+  HiOutlineShoppingCart,
   HiOutlineXMark,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
@@ -23,21 +22,21 @@ import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
 import CommunityRightRailClient from './CommunityRightRailClient'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { readMarketCart } from '../market/_lib/cart'
 import Block from './Block'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { SearchResults } from './search/SearchResults'
 
 const NAV_BUTTONS: Array<{
-  key: 'menu' | 'notifications' | 'messages' | 'channels' | 'wallet' | 'more'
+  key: 'home' | 'cart' | 'messages' | 'notifications' | 'more'
   label: string
   icon: IconType
 }> = [
-  { key: 'menu', label: 'Menu', icon: HiOutlineHome },
-  { key: 'notifications', label: 'Alerts', icon: HiOutlineBell },
-  { key: 'messages', label: 'Messages', icon: HiOutlineUserGroup },
-  { key: 'channels', label: 'Channels', icon: HiOutlineHashtag },
-  { key: 'wallet', label: 'Wallet', icon: HiOutlineWallet },
+  { key: 'home', label: 'Home', icon: HiOutlineHome },
+  { key: 'cart', label: 'Cart', icon: HiOutlineShoppingCart },
+  { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
+  { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
   { key: 'more', label: 'More', icon: HiOutlineArrowRightCircle },
 ] as const
 
@@ -146,6 +145,9 @@ export default function MobileDock() {
   const [unreadCount, setUnreadCount] = useState(0)
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
+  const [marketChatUnreadCount, setMarketChatUnreadCount] = useState(0)
+  const [marketCartCount, setMarketCartCount] = useState(0)
+  const unifiedMessageUnreadCount = messageUnreadCount + orgChannelUnreadCount + marketChatUnreadCount
   const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const [menuSearchFocused, setMenuSearchFocused] = useState(false)
   const menuSearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -195,7 +197,7 @@ export default function MobileDock() {
       if (!token) return
 
       try {
-        const [notifRes, msgRes, orgChannelsRes] = await Promise.all([
+        const [notifRes, msgRes, orgChannelsRes, marketChatsRes] = await Promise.all([
           fetch(buildApiUrl('/notifications?limit=1'), {
             headers: { authorization: `Bearer ${token}` },
           }),
@@ -203,6 +205,9 @@ export default function MobileDock() {
             headers: { authorization: `Bearer ${token}` },
           }),
           fetch(buildApiUrl('/org-channels/unread-count'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+          fetch(buildApiUrl('/market/chats/unread-count'), {
             headers: { authorization: `Bearer ${token}` },
           }),
         ])
@@ -221,6 +226,11 @@ export default function MobileDock() {
           const data = (await orgChannelsRes.json()) as { count: number }
           setOrgChannelUnreadCount(data.count || 0)
         }
+
+        if (marketChatsRes.ok) {
+          const data = (await marketChatsRes.json()) as { count: number }
+          setMarketChatUnreadCount(data.count || 0)
+        }
       } catch (err) {
         console.error('Failed to load notification counts', err)
       }
@@ -237,6 +247,34 @@ export default function MobileDock() {
     return () => {
       clearInterval(interval)
       window.removeEventListener('message.read', handleMessageRead)
+    }
+  }, [hasSession])
+
+  useEffect(() => {
+    if (!hasSession || typeof window === 'undefined') return undefined
+
+    const refreshCount = () => {
+      const total = readMarketCart().reduce((sum, item) => sum + item.quantity, 0)
+      setMarketCartCount(total)
+    }
+
+    refreshCount()
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== 'civil_market_cart') return
+      refreshCount()
+    }
+
+    const handleLocalCartChanged = () => {
+      refreshCount()
+    }
+
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener('civil:market-cart-changed', handleLocalCartChanged)
+
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener('civil:market-cart-changed', handleLocalCartChanged)
     }
   }, [hasSession])
 
@@ -339,8 +377,16 @@ export default function MobileDock() {
 
   const handleButtonPress = useCallback(
     (key: NavButtonKey) => {
-      if (key === 'menu') {
-        handleOpenMenu()
+      if (key === 'home') {
+        if (pathname === '/home') {
+          handleOpenMenu()
+          return
+        }
+        router.push('/home')
+        return
+      }
+      if (key === 'cart') {
+        router.push('/market/cart')
         return
       }
       if (key === 'notifications') {
@@ -351,20 +397,12 @@ export default function MobileDock() {
         router.push('/messages')
         return
       }
-      if (key === 'channels') {
-        router.push('/channels')
-        return
-      }
-      if (key === 'wallet') {
-        router.push('/wallet')
-        return
-      }
       if (key === 'more') {
         handleOpenMore()
         return
       }
     },
-    [handleOpenMenu, handleOpenMore, router],
+    [handleOpenMenu, handleOpenMore, pathname, router],
   )
 
   const navGroups = useMemo(() => [{ title: '', items: PRIMARY_NAV }], [])
@@ -394,7 +432,10 @@ export default function MobileDock() {
     if (pathname === '/home') {
       return <RightRail showOrganizations showRsvps sticky={false} />
     }
-    if (pathname?.startsWith('/friends')) {
+    const isFriendsDirectoryRoute =
+      pathname?.startsWith('/friends') || Boolean(pathname?.match(/^\/u\/[^/]+\/friends(?:\/|$)/))
+
+    if (isFriendsDirectoryRoute) {
       return <RightRail hideCommunities showPendingFriendRequests sticky={false} />
     }
     if (pathname?.startsWith('/network')) {
@@ -455,20 +496,19 @@ export default function MobileDock() {
           {NAV_BUTTONS.map((item) => {
             const Icon = item.icon
             const isActive =
-              (item.key === 'menu' && menuOpen) ||
+              (item.key === 'home' && (pathname === '/home' || pathname?.startsWith('/home') || menuOpen)) ||
+              (item.key === 'cart' && (pathname?.startsWith('/market/cart') || pathname?.startsWith('/market/checkout'))) ||
               (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
-              (item.key === 'messages' && pathname?.startsWith('/messages')) ||
-              (item.key === 'channels' && pathname?.startsWith('/channels')) ||
-              (item.key === 'wallet' && pathname?.startsWith('/wallet')) ||
+              (item.key === 'messages' && (pathname?.startsWith('/messages') || pathname?.startsWith('/channels'))) ||
               (item.key === 'more' && moreOpen)
             
             const count =
-              item.key === 'notifications'
+              item.key === 'cart'
+                ? marketCartCount
+                : item.key === 'notifications'
                 ? unreadCount
                 : item.key === 'messages'
-                  ? messageUnreadCount
-                  : item.key === 'channels'
-                    ? orgChannelUnreadCount
+                  ? unifiedMessageUnreadCount
                     : 0
 
             return (

@@ -1,12 +1,12 @@
 import type { Metadata } from 'next'
-import ChannelsPageClient from './ChannelsPageClient'
+import { redirect } from 'next/navigation'
 
 export const metadata: Metadata = {
-  title: 'Channels',
+  title: 'Messages',
 }
 
 export const dynamic = 'force-dynamic'
 
 export default function ChannelsPage() {
-  return <ChannelsPageClient />
+  redirect('/messages')
 }
