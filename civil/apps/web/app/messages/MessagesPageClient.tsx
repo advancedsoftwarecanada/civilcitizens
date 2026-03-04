@@ -196,6 +196,7 @@ function isMobileMessagesViewport() {
 const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
 const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
 const MOBILE_DOCK_HEIGHT_PX = 70
+const MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_PX = 88
 
 const threadHasUnreadFallback = (thread: ThreadSummary) => {
   const viewer = thread.participants.find((participant) => participant.isViewer)
@@ -332,6 +333,10 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     if (!container) return
     requestAnimationFrame(() => {
       container.scrollTo({ top: container.scrollHeight, behavior })
+      // Run a second frame in case async layout (images/preview cards) shifts height right after render.
+      requestAnimationFrame(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+      })
     })
   }, [])
 
@@ -643,6 +648,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           return next
         })
         if (selectedThreadRef.current === threadId) {
+          forceBottomScrollThreadRef.current = threadId
+          smoothScrollPendingRef.current = true
+          scrollMessagesToBottom('smooth')
           markThreadReadLocally(threadId, message.createdAt)
           void markThreadRead(threadId, message.id)
           // Dispatch event to update TopNav count immediately
@@ -651,7 +659,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         void loadSupplementalUnreadCounts()
       }
     },
-    [loadSupplementalUnreadCounts, markThreadRead, markThreadReadLocally, upsertThread],
+    [loadSupplementalUnreadCounts, markThreadRead, markThreadReadLocally, scrollMessagesToBottom, upsertThread],
   )
 
   useEffect(() => {
@@ -895,11 +903,13 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         }
         const payload = (await response.json()) as { message: MessagePayload }
         smoothScrollPendingRef.current = true
+        forceBottomScrollThreadRef.current = threadId
         setMessagesByThread((prev) => {
           const existing = prev[threadId] ?? []
           if (existing.some((item) => item.id === payload.message.id)) return prev
           return { ...prev, [threadId]: sortMessagesChronologically([...existing, payload.message]) }
         })
+        scrollMessagesToBottom('smooth')
         setComposerText('')
         setAttachments([])
         dismissMobileKeyboard()
@@ -911,7 +921,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         setSending(false)
       }
     },
-    [authedFetch, composerText, attachments, markThreadRead],
+    [authedFetch, composerText, attachments, markThreadRead, scrollMessagesToBottom],
   )
 
   const handleFileSelect = useCallback(
@@ -1164,7 +1174,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     }
 
     if (shouldForceToBottom) {
-      container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+      const behavior: ScrollBehavior = smoothScrollPendingRef.current ? 'smooth' : 'auto'
+      container.scrollTo({ top: container.scrollHeight, behavior })
       forceBottomScrollThreadRef.current = null
       smoothScrollPendingRef.current = false
       return
@@ -1604,6 +1615,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
     const mobileDockOffsetPx = hideGlobalMobileDockInThread ? 0 : MOBILE_DOCK_HEIGHT_PX
+    const mobileComposerBottomSpacer = showMobileDockComposer
+      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_PX}px + env(safe-area-inset-bottom) + ${Math.round(mobileKeyboardInset)}px)`
+      : undefined
 
     const sendActiveThreadMessage = () => {
       if (activeThread) {
@@ -1853,7 +1867,10 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
               </button>
             ) : null}
             <div ref={messagesViewportRef} className="flex-1 overflow-y-auto pr-2">
-              <div className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-3' : 'pb-1')}>
+              <div
+                className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-0' : 'pb-1')}
+                style={mobileComposerBottomSpacer ? { paddingBottom: mobileComposerBottomSpacer } : undefined}
+              >
                 {activeMessages.length === 0 && loadingThreadId === activeThread.id ? (
                   <p className="text-center text-sm text-slate-500">Loading messages…</p>
                 ) : null}
@@ -2046,12 +2063,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       rightRailClassName={keyboardAwareViewportClass}
       mainClassName={keyboardAwareViewportClass}
     >
-      <div className="h-full lg:hidden">
-        {activeThread ? renderMessages() : inboxPanel}
-      </div>
-      <div className="hidden h-full lg:block">
-        {renderMessages()}
-      </div>
+      {isMobileViewport ? (
+        <div className="h-full">{activeThread ? renderMessages() : inboxPanel}</div>
+      ) : (
+        <div className="h-full">{renderMessages()}</div>
+      )}
       {lightboxUrl
         ? createPortal(
             <div
