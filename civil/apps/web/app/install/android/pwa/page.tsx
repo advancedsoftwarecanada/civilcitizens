@@ -11,6 +11,7 @@ import {
   shouldBlockForAppleInstall,
 } from '../../../_lib/appleInstallGate'
 import { trackInstallFlowEvent } from '../../../_lib/installFlowAnalytics'
+import BackgroundVideo from '../../../_components/BackgroundVideo'
 
 export default function InstallAndroidPwaPage() {
   const router = useRouter()
@@ -51,9 +52,11 @@ export default function InstallAndroidPwaPage() {
   }
 
   return (
-    <div className="fixed inset-0 overflow-y-auto overscroll-none bg-slate-950 text-white">
-      <div className="mx-auto w-full max-w-md px-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),1rem)] sm:pt-10 sm:pb-10">
-        <div className="rounded-3xl border border-white/20 bg-slate-900/95 p-6 shadow-[0_30px_90px_rgba(2,6,23,0.65)]">
+    <div className="relative min-h-screen overflow-y-auto overscroll-none text-white">
+      <BackgroundVideo fixed />
+      <div className="fixed inset-0 bg-gradient-to-b from-slate-950/55 via-slate-950/70 to-slate-950/85" aria-hidden="true" />
+      <div className="relative z-10 mx-auto w-full max-w-md px-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),1rem)] sm:pt-10 sm:pb-10">
+        <div className="rounded-3xl border border-white/20 bg-slate-900/80 p-6 shadow-[0_30px_90px_rgba(2,6,23,0.65)] backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <Image
               src="/PWA-ICON.jpg"

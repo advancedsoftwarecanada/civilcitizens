@@ -1,16 +1,19 @@
 "use client"
 
 import Link from 'next/link'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuShare } from 'react-icons/lu'
+import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import Sidebar from '../../../../_components/Sidebar'
 import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
+import SharePostModal from '../../../../_components/SharePostModal'
+import ShareSendModal from '../../../../_components/ShareSendModal'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
+import { buildPostShareTarget } from '../../../../_lib/shareTarget'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
@@ -191,6 +194,8 @@ export default function UserPostPage({ params }: PageProps) {
   const [commentSort, setCommentSort] = useState<'hot' | 'new'>('hot')
   const [appliedCommentSort, setAppliedCommentSort] = useState<'hot' | 'new'>('hot')
   const [pendingVote, setPendingVote] = useState(false)
+  const [repostModalOpen, setRepostModalOpen] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
@@ -273,6 +278,7 @@ export default function UserPostPage({ params }: PageProps) {
   useRegisterPageView(postId)
   const voteScore = post?.votes?.score ?? post?.counts?.score ?? 0
   const viewerVote = post?.viewer?.vote ?? null
+  const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
 
   const handleVote = useCallback(
     async (value: -1 | 0 | 1) => {
@@ -422,23 +428,6 @@ export default function UserPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
-  const handleShare = useCallback(async () => {
-    if (typeof window === 'undefined') return
-    const shareUrl = window.location.href
-    const shareText = post?.title || post?.body || 'Post'
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: shareText, text: shareText, url: shareUrl })
-        return
-      }
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl)
-      }
-    } catch (err) {
-      console.error('Unable to share post', err)
-    }
-  }, [post?.body, post?.title])
-
   const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
   const postOrganization = post?.organization ?? null
   const authorProfileHref = postOrganization?.provinceCode && postOrganization.communitySlug
@@ -586,7 +575,15 @@ export default function UserPostPage({ params }: PageProps) {
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => void handleShare()}
+                      onClick={() => setRepostModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      <LuRepeat2 className="h-4 w-4" />
+                      <span>Repost</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShareModalOpen(true)}
                       className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                     >
                       <LuShare className="h-4 w-4" />
@@ -633,6 +630,20 @@ export default function UserPostPage({ params }: PageProps) {
                     <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
                   </div>
                 </section>
+
+                {repostModalOpen && shareTarget ? (
+                  <SharePostModal
+                    target={shareTarget}
+                    onClose={() => setRepostModalOpen(false)}
+                  />
+                ) : null}
+
+                {shareModalOpen && shareTarget ? (
+                  <ShareSendModal
+                    target={shareTarget}
+                    onClose={() => setShareModalOpen(false)}
+                  />
+                ) : null}
               </article>
             ) : null}
           </main>
