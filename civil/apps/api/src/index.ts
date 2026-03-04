@@ -2021,6 +2021,26 @@ async function usersAreFriends(userId: string, targetUserId: string): Promise<bo
   return Boolean(friendship)
 }
 
+async function usersAreAcceptedConnections(userId: string, targetUserId: string): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "Connection"
+      WHERE "status" = 'ACCEPTED'
+        AND (
+          ("requesterId" = ${userId} AND "addresseeId" = ${targetUserId})
+          OR
+          ("requesterId" = ${targetUserId} AND "addresseeId" = ${userId})
+        )
+      LIMIT 1
+    `
+    return rows.length > 0
+  } catch (error) {
+    if (isConnectionTableMissingError(error)) return false
+    throw error
+  }
+}
+
 async function loadFriendIdSet(userId: string): Promise<Set<string>> {
   const ids = await loadAcceptedFriendIds(userId)
   return new Set(ids)
@@ -2030,13 +2050,343 @@ async function loadThreadForUser(threadId: string, userId: string) {
   return prisma.messageThread.findFirst({
     where: {
       id: threadId,
-      NOT: { contextType: 'market_listing' },
+      OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
       participants: {
         some: { userId },
       },
     },
     include: THREAD_WITH_PARTICIPANTS_INCLUDE,
   })
+}
+
+type MessageLinkPreviewRecord = {
+  kind: 'post' | 'market_listing' | 'organization' | 'community' | 'profile'
+  title: string
+  description: string | null
+  url: string
+  imageUrl: string | null
+  meta: string | null
+}
+
+const MESSAGE_LINK_PREVIEW_HOSTS = new Set([
+  'dev.civilcitizens.ca',
+  'civilcitizens.ca',
+  'www.civilcitizens.ca',
+  'civilvitizens.ca',
+  'www.civilvitizens.ca',
+])
+
+function truncatePreviewText(value: string, max = 180): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  if (!compact) return ''
+  if (compact.length <= max) return compact
+  return `${compact.slice(0, Math.max(1, max - 1)).trimEnd()}…`
+}
+
+function decodePathSegment(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
+function isCivilMessageLinkHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase()
+  if (!host) return false
+  if (MESSAGE_LINK_PREVIEW_HOSTS.has(host)) return true
+  if (host === CIVIL_PUBLIC_HOST.toLowerCase()) return true
+  return host.endsWith('.civilcitizens.ca') || host.endsWith('.civilvitizens.ca')
+}
+
+function normalizeMessageLinkPath(rawUrl: string): string | null {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return null
+
+  if (trimmed.startsWith('/')) {
+    const relative = trimmed.replace(/#.*/, '')
+    return relative.length ? relative : null
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  if (!isCivilMessageLinkHost(parsed.hostname)) return null
+
+  const path = `${parsed.pathname || '/'}${parsed.search || ''}`
+  return path.replace(/#.*/, '')
+}
+
+function formatMarketplacePrice(cents: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('en-CA', {
+      style: 'currency',
+      currency: (currency || 'CAD').toUpperCase(),
+    }).format((cents || 0) / 100)
+  } catch {
+    return `${(cents || 0) / 100}`
+  }
+}
+
+async function canViewerAccessPostForPreview(post: { visibility: string; businessId: string | null }, viewerId: string): Promise<boolean> {
+  if (post.visibility !== 'members' || !post.businessId) return true
+  const business = await prisma.business.findUnique({
+    where: { id: post.businessId },
+    select: { ownerId: true },
+  })
+  if (business?.ownerId === viewerId) return true
+  const membership = await prisma.businessMembership.findUnique({
+    where: { businessId_userId: { businessId: post.businessId, userId: viewerId } },
+    select: { role: true },
+  })
+  return Boolean(membership)
+}
+
+async function resolvePostLinkPreview(slugOrId: string, viewerId: string): Promise<MessageLinkPreviewRecord | null> {
+  const lookup = slugOrId.trim()
+  if (!lookup) return null
+
+  const post = await prisma.post.findFirst({
+    where: {
+      OR: [{ seoSlug: lookup }, { id: lookup }],
+    },
+    include: POST_INCLUDE,
+  })
+  if (!post) return null
+
+  const canView = await canViewerAccessPostForPreview(post, viewerId)
+  if (!canView) return null
+
+  const formatted = formatPost(post, { viewerVote: null, recentComments: [] })
+  const plainBody = stripHtmlToPlainText(formatted.body || '')
+  const title = formatted.title?.trim() || truncatePreviewText(plainBody, 110) || 'Civil post'
+  const descriptionSource = truncatePreviewText(plainBody, 200)
+  const description = descriptionSource && descriptionSource !== title ? descriptionSource : null
+  const imageUrl = formatted.images?.[0] ?? formatted.mediaUrl ?? formatted.organization?.logoUrl ?? formatted.author.avatarUrl ?? null
+  const canonical = getCanonicalPaths(post)
+  const url = canonical.community ?? canonical.user
+
+  const metaParts: string[] = []
+  if (formatted.organization?.name) metaParts.push(formatted.organization.name)
+  if (formatted.communityName) metaParts.push(formatted.communityName)
+  if (!formatted.organization?.name) metaParts.push(`@${formatted.author.handle}`)
+
+  return {
+    kind: 'post',
+    title,
+    description,
+    url,
+    imageUrl,
+    meta: metaParts.filter(Boolean).join(' • ') || null,
+  }
+}
+
+async function resolveOrganizationLinkPreview(provinceParam: string, communityParam: string, slugParam: string, viewerId: string): Promise<MessageLinkPreviewRecord | null> {
+  const province = normalizeProvinceCode(provinceParam)
+  if (!province) return null
+  const communitySlug = communityParam.trim().toLowerCase()
+  const community = findCommunity(province, communitySlug)
+  if (!community) return null
+
+  const slug = slugParam.trim().toLowerCase()
+  if (!slug) return null
+
+  const org = await prisma.business.findFirst({
+    where: {
+      provinceCode: community.province,
+      communitySlug: community.slug,
+      slug,
+    },
+    select: {
+      id: true,
+      ownerId: true,
+      name: true,
+      slug: true,
+      description: true,
+      metadata: true,
+      status: true,
+      logoUrl: true,
+      coverUrl: true,
+    },
+  })
+  if (!org) return null
+
+  if (org.status !== 'ACTIVE') {
+    if (!viewerId) return null
+    const isOwner = org.ownerId === viewerId
+    if (!isOwner) {
+      const membership = await prisma.businessMembership.findUnique({
+        where: {
+          businessId_userId: {
+            businessId: org.id,
+            userId: viewerId,
+          },
+        },
+        select: { role: true },
+      })
+      if (!membership) return null
+    }
+  }
+
+  const headline = readOrganizationHeadline(org.metadata)
+  const description = headline || truncatePreviewText(stripHtmlToPlainText(org.description ?? ''), 200) || null
+  return {
+    kind: 'organization',
+    title: org.name,
+    description,
+    url: `/com/${community.province.toLowerCase()}/${community.slug.toLowerCase()}/orgs/${org.slug}`,
+    imageUrl: normalizeMediaUrl(org.coverUrl ?? org.logoUrl ?? null),
+    meta: `${community.name} • Organization`,
+  }
+}
+
+async function resolveMarketplaceListingLinkPreview(listingId: string): Promise<MessageLinkPreviewRecord | null> {
+  const normalizedId = listingId.trim()
+  if (!normalizedId) return null
+  await ensureCitizenMarketplaceTables()
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: string
+      title: string
+      description: string | null
+      price_cents: number
+      currency: string
+      photo_urls: unknown
+      pickup_city: string | null
+      pickup_province: string | null
+      status: string
+      is_draft: boolean
+      is_active: boolean
+    }>
+  >`
+    SELECT
+      id,
+      title,
+      description,
+      price_cents,
+      currency,
+      photo_urls,
+      pickup_city,
+      pickup_province,
+      status,
+      is_draft,
+      is_active
+    FROM citizen_market_listing
+    WHERE id = ${normalizedId}
+    LIMIT 1
+  `
+  const row = rows[0]
+  if (!row) return null
+  if (!row.is_active || row.is_draft || String(row.status || '').toLowerCase() !== 'active') return null
+
+  const priceLabel = formatMarketplacePrice(Number(row.price_cents) || 0, row.currency || 'CAD')
+  const location = row.pickup_city ? `${row.pickup_city}${row.pickup_province ? `, ${row.pickup_province}` : ''}` : null
+  const descriptionParts = [truncatePreviewText(row.description ?? '', 140), location].filter((value): value is string => Boolean(value && value.trim()))
+  return {
+    kind: 'market_listing',
+    title: row.title || 'Marketplace item',
+    description: descriptionParts.join(' • ') || null,
+    url: `/market/listings/${row.id}`,
+    imageUrl: normalizeMediaUrl(readGalleryUrls(row.photo_urls)[0] ?? null),
+    meta: [priceLabel, location].filter(Boolean).join(' • ') || priceLabel,
+  }
+}
+
+async function resolveProfileLinkPreview(handleParam: string): Promise<MessageLinkPreviewRecord | null> {
+  const handle = handleParam.replace(/^@+/, '').trim().toLowerCase()
+  if (!handle) return null
+
+  const user = await prisma.user.findUnique({
+    where: { handle },
+    select: {
+      handle: true,
+      name: true,
+      bio: true,
+      avatarUrl: true,
+      coverUrl: true,
+    },
+  })
+  if (!user) return null
+
+  const title = (user.name || '').trim() || `@${user.handle}`
+  return {
+    kind: 'profile',
+    title,
+    description: truncatePreviewText(user.bio ?? '', 200) || null,
+    url: `/u/${user.handle}`,
+    imageUrl: normalizeMediaUrl(user.coverUrl ?? user.avatarUrl ?? null),
+    meta: `@${user.handle}`,
+  }
+}
+
+function resolveCommunityLinkPreview(provinceParam: string, communityParam: string): MessageLinkPreviewRecord | null {
+  const province = normalizeProvinceCode(provinceParam)
+  if (!province) return null
+  const communitySlug = communityParam.trim().toLowerCase()
+  const community = findCommunity(province, communitySlug)
+  if (!community) return null
+
+  const provinceName = getProvinceDisplayName(community.province as any)
+  return {
+    kind: 'community',
+    title: community.name,
+    description: `${provinceName} community on Civil`,
+    url: `/${community.province.toLowerCase()}/${community.slug.toLowerCase()}`,
+    imageUrl: null,
+    meta: provinceName,
+  }
+}
+
+async function resolveMessageLinkPreview(pathWithQuery: string, viewerId: string): Promise<MessageLinkPreviewRecord | null> {
+  const [pathname] = pathWithQuery.split('?')
+  const path = pathname || '/'
+  const segments = path
+    .split('/')
+    .filter(Boolean)
+    .map((segment) => decodePathSegment(segment))
+  if (!segments.length) return null
+
+  if (segments[0]?.toLowerCase() === 'u') {
+    if (segments[1] && segments[2]?.toLowerCase() === 'posts' && segments[3]) {
+      return resolvePostLinkPreview(segments[3], viewerId)
+    }
+    if (segments[1]) {
+      return resolveProfileLinkPreview(segments[1])
+    }
+  }
+
+  if (segments[0]?.toLowerCase() === 'post' && segments[1]) {
+    return resolvePostLinkPreview(segments[1], viewerId)
+  }
+
+  if (segments[0]?.toLowerCase() === 'market' && segments[1]?.toLowerCase() === 'listings' && segments[2]) {
+    return resolveMarketplaceListingLinkPreview(segments[2])
+  }
+
+  if (
+    segments[0]?.toLowerCase() === 'com' &&
+    segments[1] &&
+    segments[2] &&
+    segments[3]?.toLowerCase() === 'orgs' &&
+    segments[4]
+  ) {
+    return resolveOrganizationLinkPreview(segments[1], segments[2], segments[4], viewerId)
+  }
+
+  if (segments[0] && segments[1] && segments[2]?.toLowerCase() === 'posts' && segments[3]) {
+    return resolvePostLinkPreview(segments[3], viewerId)
+  }
+
+  if (segments[0] && segments[1]) {
+    return resolveCommunityLinkPreview(segments[0], segments[1])
+  }
+
+  return null
 }
 
 async function fetchThreadMessages(
@@ -2101,6 +2451,9 @@ const FriendshipIdParam = z.object({ id: z.string().cuid() })
 const ConnectionRequestInput = z.object({ userId: z.string().trim().min(1).max(120) })
 const ConnectionIdParam = z.object({ id: z.string().trim().min(1).max(120) })
 const MessageThreadIdParam = z.object({ id: z.string().cuid() })
+const MessageLinkPreviewQuery = z.object({
+  url: z.string().trim().min(1).max(2048),
+})
 const MessageThreadParticipantParams = z.object({
   id: z.string().cuid(),
   userId: z.string().cuid().or(z.string().uuid()),
@@ -4657,10 +5010,6 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         ? sanitizeRichTextHtml(rawBody)
         : sanitizePlainText(rawBody)
 
-    if (sharedPostId && (!normalizedBody || normalizedBody.trim().length === 0)) {
-      return reply.code(400).send({ error: 'Commentary is required when sharing a post.' })
-    }
-
     const slugBase = buildPostSlugBase({ handle: author.handle, title, body: normalizedBody })
     const normalizedJurisdiction: Jurisdiction = jurisdiction ?? (provinceCode ? 'federal' : DEFAULT_JURISDICTION)
     const normalizedAudience = business
@@ -6026,7 +6375,10 @@ app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const { limit, cursor } = parse.data
     const rows: ThreadSummaryRecord[] = await prisma.messageThread.findMany({
-      where: { participants: { some: { userId } }, NOT: { contextType: 'market_listing' } },
+      where: {
+        participants: { some: { userId } },
+        OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
+      },
       orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -6046,6 +6398,29 @@ app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
   }),
 )
 
+app.get('/messages/link-preview', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const query = MessageLinkPreviewQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const normalizedPath = normalizeMessageLinkPath(query.data.url)
+    if (!normalizedPath) {
+      return reply.send({ preview: null })
+    }
+
+    try {
+      const preview = await resolveMessageLinkPreview(normalizedPath, userId)
+      return reply.send({ preview: preview ?? null })
+    } catch (error) {
+      req.log.warn({ err: error, userId, url: query.data.url }, 'message_link_preview_failed')
+      return reply.send({ preview: null })
+    }
+  }),
+)
+
 app.post('/messages/threads/direct', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const userId = (req as any).user?.id
@@ -6062,8 +6437,11 @@ app.post('/messages/threads/direct', async (req: FastifyRequest, reply: FastifyR
     const targetExists = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
     if (!targetExists) return reply.code(404).send({ error: 'user_not_found' })
 
-    const friendStatus = await usersAreFriends(userId, targetUserId)
-    if (!friendStatus) {
+    const [friendStatus, connectionStatus] = await Promise.all([
+      usersAreFriends(userId, targetUserId),
+      usersAreAcceptedConnections(userId, targetUserId),
+    ])
+    if (!friendStatus && !connectionStatus) {
       return reply.code(403).send({ error: 'not_friends' })
     }
 
@@ -6085,6 +6463,37 @@ app.post('/messages/threads/direct', async (req: FastifyRequest, reply: FastifyR
         },
         include: THREAD_SUMMARY_INCLUDE,
       })
+    } else {
+      // Legacy or partially-migrated data can leave direct threads with missing participants.
+      // Repair the participant set so this user can always open/send in the direct thread.
+      const now = new Date()
+      const participantIds = new Set(thread.participants.map((participant: ThreadParticipantRecord) => participant.userId))
+      const missingParticipantIds = [userId, targetUserId].filter((id) => !participantIds.has(id))
+
+      if (missingParticipantIds.length > 0 || thread.type !== MessageThreadType.direct) {
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          if (thread && thread.type !== MessageThreadType.direct) {
+            await tx.messageThread.update({
+              where: { id: thread.id },
+              data: { type: MessageThreadType.direct },
+            })
+          }
+
+          for (const participantUserId of missingParticipantIds) {
+            await tx.messageParticipant.create({
+              data: {
+                threadId: thread.id,
+                userId: participantUserId,
+                role: MessageParticipantRole.member,
+                lastActivityAt: now,
+                ...(participantUserId === userId ? { lastReadAt: now } : {}),
+              },
+            })
+          }
+        })
+
+        thread = await prisma.messageThread.findUnique({ where: { id: thread.id }, include: THREAD_SUMMARY_INCLUDE })
+      }
     }
 
     if (!thread) {
@@ -6396,7 +6805,9 @@ app.get('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fas
           threadId: params.data.id,
           userId,
         },
-        thread: { NOT: { contextType: 'market_listing' } },
+        thread: {
+          OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
+        },
       },
       select: { threadId: true },
     })
@@ -6428,7 +6839,7 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
     const thread = await prisma.messageThread.findFirst({
       where: {
         id: params.data.id,
-        NOT: { contextType: 'market_listing' },
+        OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
         participants: { some: { userId } },
       },
       select: {
@@ -6561,7 +6972,9 @@ app.post('/messages/threads/:id/read', async (req: FastifyRequest, reply: Fastif
           threadId: params.data.id,
           userId,
         },
-        thread: { NOT: { contextType: 'market_listing' } },
+        thread: {
+          OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
+        },
       },
       select: { threadId: true },
     })

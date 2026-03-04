@@ -3,10 +3,14 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+import { LuRepeat2, LuShare } from 'react-icons/lu'
 import DashboardShell from '../../../_components/DashboardShell'
+import SharePostModal from '../../../_components/SharePostModal'
+import ShareSendModal from '../../../_components/ShareSendModal'
 import { pushToast } from '../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import { buildApiUrl } from '../../../_lib/api'
+import { type ShareTarget } from '../../../_lib/shareTarget'
 import { getStoredToken } from '../../../_lib/tokenStorage'
 import MarketRightRail from '../../_components/MarketRightRail'
 
@@ -44,6 +48,8 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
   const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
   const [messageText, setMessageText] = useState("Hello, I'm interested in this item")
   const [sendingMessage, setSendingMessage] = useState(false)
+  const [repostModalOpen, setRepostModalOpen] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -84,6 +90,20 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
   }, [listingId])
 
   const priceLabel = useMemo(() => formatMoney(listing?.priceCents ?? 0, listing?.currency ?? 'CAD'), [listing?.currency, listing?.priceCents])
+  const listingShareTarget = useMemo<ShareTarget | null>(() => {
+    if (!listing) return null
+    const location = listing.pickupCity ? `${listing.pickupCity}${listing.pickupProvince ? `, ${listing.pickupProvince}` : ''}` : null
+    const descriptionParts = [priceLabel, listing.description, location].filter((value) => typeof value === 'string' && value.trim().length > 0)
+    return {
+      kind: 'market_listing',
+      id: listing.id,
+      title: listing.title,
+      description: descriptionParts.join(' • '),
+      url: `/market/listings/${encodeURIComponent(listing.id)}`,
+      imageUrl: listing.photoUrls?.[0] ?? null,
+      meta: location,
+    }
+  }, [listing, priceLabel])
 
   const sendMessageToSeller = async () => {
     const body = messageText.trim()
@@ -164,6 +184,24 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                 <p className="mt-1 text-sm text-slate-600">
                   {listing.pickupCity ? `${listing.pickupCity}${listing.pickupProvince ? `, ${listing.pickupProvince}` : ''}` : 'Location not specified'}
                 </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRepostModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <LuRepeat2 className="h-4 w-4" />
+                    <span>Repost</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShareModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <LuShare className="h-4 w-4" />
+                    <span>Share</span>
+                  </button>
+                </div>
               </div>
               <div className="text-lg font-semibold text-slate-900">{priceLabel}</div>
             </div>
@@ -222,6 +260,20 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
               </button>
             </div>
           </section>
+        ) : null}
+
+        {repostModalOpen && listingShareTarget ? (
+          <SharePostModal
+            target={listingShareTarget}
+            onClose={() => setRepostModalOpen(false)}
+          />
+        ) : null}
+
+        {shareModalOpen && listingShareTarget ? (
+          <ShareSendModal
+            target={listingShareTarget}
+            onClose={() => setShareModalOpen(false)}
+          />
         ) : null}
       </div>
     </DashboardShell>

@@ -100,7 +100,8 @@ export const CreatePostInput = z
       }
     } else {
       const bodyLength = (data.body ?? '').length
-      if (bodyLength < 1) {
+      const isSharedPost = typeof data.sharedPostId === 'string' && data.sharedPostId.trim().length > 0
+      if (!isSharedPost && bodyLength < 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Posts must include some text',
