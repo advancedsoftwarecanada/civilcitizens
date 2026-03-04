@@ -8,7 +8,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { NotificationCard } from '../_components/notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from '../_components/notifications/notificationUtils'
-import { getFriendshipId } from '../_components/notifications/notificationUtils'
+import { getFriendshipId, isChatNotificationType } from '../_components/notifications/notificationUtils'
 import { emitNotificationsMarkedReadEvent, NOTIFICATIONS_MARKED_READ_EVENT, type NotificationsMarkedReadDetail } from '../_components/notifications/notificationEvents'
 import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from '../_components/notifications/notificationStream'
 import { pushToast } from '../_components/useToasts'
@@ -70,6 +70,7 @@ export default function NotificationsClient() {
   const handleRealtimeNotification = useCallback((payload: RealtimePayload) => {
     if (!isNotificationPayload(payload)) return
     const data: NotificationRealtimeData = payload.data
+    if (isChatNotificationType(data.type)) return
     const payloadValue = data.payload
     const normalizedPayload =
       payloadValue && typeof payloadValue === 'object' && !Array.isArray(payloadValue)
@@ -130,7 +131,9 @@ export default function NotificationsClient() {
         }
         const data = (await res.json()) as NotificationResponse
         const items = Array.isArray(data.items) ? data.items : []
-        const normalized = items.map((item) => ({ ...item, actor: item.actor ?? null }))
+        const normalized = items
+          .map((item) => ({ ...item, actor: item.actor ?? null }))
+          .filter((item) => !isChatNotificationType(item.type))
         setNotifications((prev) => (isLoadMore ? [...prev, ...normalized] : normalized))
         setNextCursor(data.nextCursor ?? null)
       } catch (err) {

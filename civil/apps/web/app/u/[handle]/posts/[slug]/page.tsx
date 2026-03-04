@@ -540,39 +540,44 @@ export default function UserPostPage({ params }: PageProps) {
                 </header>
 
                 <footer className="mt-6 space-y-3 text-xs text-slate-500">
-                  <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
-                    <PostReactionBar
-                      reactions={post.reactions}
-                      viewerReaction={viewerReaction}
-                      disabled={pendingVote}
-                      onReact={(reaction) => handleReact(reaction)}
-                    />
-                    {post.counts ? (
-                      <a
-                        href="#comments"
+                  <div className="space-y-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
+                    <div className="flex w-full justify-center sm:justify-start">
+                      <PostReactionBar
+                        className="w-full justify-center sm:w-auto sm:justify-start"
+                        reactions={post.reactions}
+                        viewerReaction={viewerReaction}
+                        disabled={pendingVote}
+                        onReact={(reaction) => handleReact(reaction)}
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
+                      {post.counts ? (
+                        <a
+                          href="#comments"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          aria-label="Open comments"
+                        >
+                          <LuMessageCircle className="h-4 w-4" />
+                          <span>{post.counts.commentCount}</span>
+                        </a>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setRepostModalOpen(true)}
                         className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        aria-label="Open comments"
                       >
-                        <LuMessageCircle className="h-4 w-4" />
-                        <span>{post.counts.commentCount}</span>
-                      </a>
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => setRepostModalOpen(true)}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    >
-                      <LuRepeat2 className="h-4 w-4" />
-                      <span>Repost</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShareModalOpen(true)}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    >
-                      <LuShare className="h-4 w-4" />
-                      <span>Share</span>
-                    </button>
+                        <LuRepeat2 className="h-4 w-4" />
+                        <span>Repost</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShareModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      >
+                        <LuShare className="h-4 w-4" />
+                        <span>Share</span>
+                      </button>
+                    </div>
                   </div>
                   <div className="text-xs text-slate-400">Canonical: {paths?.user ?? buildLegacyPath(post)}</div>
                 </footer>

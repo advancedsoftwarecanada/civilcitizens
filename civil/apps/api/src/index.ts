@@ -1171,7 +1171,13 @@ async function withinPushRateLimit(options: {
 
 function mapNotificationPushType(type: string): PushPayloadType {
   const normalized = type.trim().toLowerCase()
-  if (normalized.startsWith('message_')) return 'message'
+  if (
+    normalized.startsWith('message') ||
+    normalized === COMMENT_NOTIFICATION_TYPES.REPLY ||
+    normalized === COMMENT_NOTIFICATION_TYPES.POST_COMMENT
+  ) {
+    return 'message'
+  }
   if (normalized.includes('market')) return 'marketplace'
   if (normalized.startsWith('org_') || normalized.startsWith('event_')) return 'org'
   return 'system'
@@ -1619,8 +1625,14 @@ const COMMENT_NOTIFICATION_TYPES = {
   POST_COMMENT: 'comment_post',
 } as const
 
-// Message delivery is represented by message unread counters/push, not bell notifications.
-const NOTIFICATION_FEED_EXCLUDED_TYPES = ['message_created', 'message', 'message.created'] as const
+// Chat/message delivery is represented by unread counters + push, not bell notifications.
+const NOTIFICATION_FEED_EXCLUDED_TYPES = [
+  'message_created',
+  'message',
+  'message.created',
+  COMMENT_NOTIFICATION_TYPES.REPLY,
+  COMMENT_NOTIFICATION_TYPES.POST_COMMENT,
+] as const
 
 const EVENT_NOTIFICATION_TYPES = {
   GUEST_SPEAKER_INVITE: 'event_guest_speaker_invite',
@@ -1966,12 +1978,21 @@ function formatThreadBase(thread: ThreadWithParticipants, viewerId: string) {
   }
 }
 
-function formatThreadSummaryRecord(thread: ThreadSummaryRecord, viewerId: string) {
+function formatThreadSummaryRecord(
+  thread: ThreadSummaryRecord,
+  viewerId: string,
+  options?: {
+    unreadCount?: number
+  },
+) {
   const base = formatThreadBase(thread, viewerId)
   const lastMessage = thread.messages[0] ? formatMessage(thread.messages[0], viewerId) : null
+  const unreadCount = Math.max(0, Number(options?.unreadCount ?? 0) || 0)
   return {
     ...base,
     lastMessage,
+    unreadCount,
+    unread: unreadCount > 0,
   }
 }
 
@@ -5389,8 +5410,14 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
+    const recentCommentsByPost = await getRecentCommentsByPostIds([postId], 5)
 
-    return reply.send({ post: formatPost(updatedPost, { viewerReaction: mappedReaction }) })
+    return reply.send({
+      post: formatPost(updatedPost, {
+        viewerReaction: mappedReaction,
+        recentComments: recentCommentsByPost[postId] ?? [],
+      }),
+    })
   }),
 )
 
@@ -5486,8 +5513,14 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
+    const recentCommentsByPost = await getRecentCommentsByPostIds([postId], 5)
 
-    return reply.send({ post: formatPost(updatedPost, { viewerReaction: normalizedReaction }) })
+    return reply.send({
+      post: formatPost(updatedPost, {
+        viewerReaction: normalizedReaction,
+        recentComments: recentCommentsByPost[postId] ?? [],
+      }),
+    })
   }),
 )
 
@@ -6750,8 +6783,29 @@ app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
       nextCursor = next.id
     }
 
+    type ThreadUnreadCountRow = { threadId: string; count: number }
+    const threadIds = rows.map((thread) => thread.id)
+    const unreadRows = threadIds.length
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT m."threadId" as "threadId", COUNT(*)::int as "count"
+          FROM "Message" m
+          JOIN "MessageParticipant" mp ON mp."threadId" = m."threadId"
+          WHERE mp."userId" = ${userId}
+            AND m."threadId" IN (${Prisma.join(threadIds)})
+            AND m."senderId" <> ${userId}
+            AND m."deletedAt" IS NULL
+            AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+          GROUP BY m."threadId"
+        `)) as ThreadUnreadCountRow[])
+      : []
+    const unreadCountByThreadId = new Map(unreadRows.map((row) => [row.threadId, Number(row.count) || 0]))
+
     return reply.send({
-      items: rows.map((thread) => formatThreadSummaryRecord(thread, userId)),
+      items: rows.map((thread) =>
+        formatThreadSummaryRecord(thread, userId, {
+          unreadCount: unreadCountByThreadId.get(thread.id) ?? 0,
+        }),
+      ),
       nextCursor,
     })
   }),

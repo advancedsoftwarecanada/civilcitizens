@@ -20,6 +20,7 @@ import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
 import {
   getFriendshipId,
+  isChatNotificationType,
 } from './notifications/notificationUtils'
 import {
   emitNotificationsMarkedReadEvent,
@@ -70,7 +71,7 @@ export default function TopNav() {
   const [searchFocused, setSearchFocused] = useState(false)
   const trimmedSearchQuery = searchQuery.trim()
   const showSearchResults = searchFocused && trimmedSearchQuery.length >= 2
-  const unifiedMessageUnreadCount = messageUnreadCount + orgChannelUnreadCount + marketChatUnreadCount
+  const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
 
   useEffect(() => () => {
     if (searchBlurTimeout.current) clearTimeout(searchBlurTimeout.current)
@@ -110,8 +111,9 @@ export default function TopNav() {
         ...item,
         actor: item.actor ?? null,
       }))
-      setNotifications(normalizedItems)
-      setUnreadCount(typeof data.unreadCount === 'number' ? data.unreadCount : normalizedItems.filter((n) => n.unread).length)
+      const visibleItems = normalizedItems.filter((item) => !isChatNotificationType(item.type))
+      setNotifications(visibleItems)
+      setUnreadCount(visibleItems.filter((n) => n.unread).length)
       return true
     } catch (err) {
       console.error('Failed to load notifications', err)
@@ -225,6 +227,9 @@ export default function TopNav() {
       }
       if (!isNotificationPayload(payload)) return
       const data: NotificationRealtimeData = payload.data
+      if (isChatNotificationType(data.type)) {
+        return
+      }
       const payloadValue = data.payload
       const normalizedPayload =
         payloadValue && typeof payloadValue === 'object' && !Array.isArray(payloadValue)

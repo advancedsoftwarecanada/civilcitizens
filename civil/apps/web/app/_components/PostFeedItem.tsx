@@ -144,7 +144,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const [replyDraft, setReplyDraft] = useState('')
   const [recentComments, setRecentComments] = useState(post.recentComments ?? [])
   const [hideInlineCommentComposer, setHideInlineCommentComposer] = useState(false)
-  const [commentPreviewSort, setCommentPreviewSort] = useState<'new' | 'hot'>('new')
   const menuRef = useRef<HTMLDivElement>(null)
   const commentCount = post.counts?.commentCount ?? 0
   const viewerReaction = post.viewer?.reaction ?? null
@@ -190,22 +189,10 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       }
     }
 
-    const items = Array.from(deduped.values())
-    if (commentPreviewSort === 'hot') {
-      return items
-        .sort((a, b) => {
-          const scoreA = typeof a.score === 'number' ? a.score : 0
-          const scoreB = typeof b.score === 'number' ? b.score : 0
-          if (scoreB !== scoreA) return scoreB - scoreA
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        })
-        .slice(0, FEED_COMMENT_PREVIEW_LIMIT)
-    }
-
-    return items
+    return Array.from(deduped.values())
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, FEED_COMMENT_PREVIEW_LIMIT)
-  }, [commentPreviewSort, recentComments])
+  }, [recentComments])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -602,50 +589,38 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         ) : null}
       </div>
 
-      <footer className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
-        <PostReactionBar
-          reactions={post.reactions}
-          viewerReaction={viewerReaction}
-          disabled={pending}
-          onReact={(reaction) => handleReact(reaction)}
-        />
-        <Link
-          href={postUrl}
-          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          aria-label="Open comments"
-        >
-          <LuMessageCircle className="h-4 w-4" />
-          <span>{commentCount}</span>
-        </Link>
-        <button
-          onClick={handleRepost}
-          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-        >
-          <LuRepeat2 className="h-4 w-4" />
-          <span>Repost</span>
-        </button>
-        <button
-          onClick={handleShare}
-          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-        >
-          <LuShare className="h-4 w-4" />
-          <span>Share</span>
-        </button>
-        <div className="ml-auto inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold">
-          <button
-            type="button"
-            onClick={() => setCommentPreviewSort('new')}
-            className={clsx(commentPreviewSort === 'new' ? 'text-[var(--cc-primary)]' : 'text-slate-500 hover:text-slate-700')}
+      <footer className="space-y-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
+        <div className="flex w-full justify-center sm:justify-start">
+          <PostReactionBar
+            className="w-full justify-center sm:w-auto sm:justify-start"
+            reactions={post.reactions}
+            viewerReaction={viewerReaction}
+            disabled={pending}
+            onReact={(reaction) => handleReact(reaction)}
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
+          <Link
+            href={postUrl}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Open comments"
           >
-            New
+            <LuMessageCircle className="h-4 w-4" />
+            <span>{commentCount}</span>
+          </Link>
+          <button
+            onClick={handleRepost}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+          >
+            <LuRepeat2 className="h-4 w-4" />
+            <span>Repost</span>
           </button>
-          <span className="px-1 text-slate-300">|</span>
           <button
-            type="button"
-            onClick={() => setCommentPreviewSort('hot')}
-            className={clsx(commentPreviewSort === 'hot' ? 'text-[var(--cc-primary)]' : 'text-slate-500 hover:text-slate-700')}
+            onClick={handleShare}
+            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
           >
-            Hot
+            <LuShare className="h-4 w-4" />
+            <span>Share</span>
           </button>
         </div>
       </footer>
