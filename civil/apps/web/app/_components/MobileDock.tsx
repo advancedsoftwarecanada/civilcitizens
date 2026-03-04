@@ -488,7 +488,8 @@ export default function MobileDock() {
   return (
     <>
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] lg:hidden"
+        data-mobile-dock="true"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 lg:hidden"
         role="navigation"
         aria-label="Mobile navigation"
       >
