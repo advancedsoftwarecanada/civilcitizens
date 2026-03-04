@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuShare } from 'react-icons/lu'
+import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import { HiEllipsisHorizontal, HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ApiPost, CommunityTarget } from './PostComposer'
 import VerifiedAvatar from './VerifiedAvatar'
@@ -14,7 +14,9 @@ import { getStoredToken } from '../_lib/tokenStorage'
 import { pushToast } from './useToasts'
 import Modal from './Modal'
 import SharePostModal from './SharePostModal'
+import ShareSendModal from './ShareSendModal'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { buildPostShareTarget } from '../_lib/shareTarget'
 
 const FEED_COMMENT_PREVIEW_LIMIT = 3
 const FEED_COMMENT_BUFFER_LIMIT = 20
@@ -127,6 +129,7 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
   const [pending, setPending] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
+  const [repostModalOpen, setRepostModalOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [editBody, setEditBody] = useState(post.body)
   const [editTitle, setEditTitle] = useState(post.title ?? '')
@@ -145,6 +148,7 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
   const voteScore = post.votes?.score ?? post.counts?.score ?? 0
   const viewerVote = post.viewer?.vote ?? null
   const postUrl = buildPostUrl(post)
+  const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
   const communityUrl = buildCommunityUrl(post)
   const createdAt = new Date(post.createdAt)
   const organization = post.organization ?? null
@@ -271,6 +275,10 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
     } finally {
       setPending(false)
     }
+  }
+
+  const handleRepost = () => {
+    setRepostModalOpen(true)
   }
 
   const handleShare = () => {
@@ -693,6 +701,13 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
           <span>{commentCount}</span>
         </Link>
         <button
+          onClick={handleRepost}
+          className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+        >
+          <LuRepeat2 className="h-4 w-4" />
+          <span>Repost</span>
+        </button>
+        <button
           onClick={handleShare}
           className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
         >
@@ -882,11 +897,18 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
         ) : null}
       </section>
 
-      {shareModalOpen ? (
+      {repostModalOpen ? (
         <SharePostModal
-          post={post}
-          onClose={() => setShareModalOpen(false)}
+          target={shareTarget}
+          onClose={() => setRepostModalOpen(false)}
           communityOptions={communityOptions}
+        />
+      ) : null}
+
+      {shareModalOpen ? (
+        <ShareSendModal
+          target={shareTarget}
+          onClose={() => setShareModalOpen(false)}
         />
       ) : null}
 

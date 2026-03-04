@@ -99,6 +99,19 @@ type FriendListItem = {
   user: ThreadUser
 }
 
+type MessageLinkPreview = {
+  kind: string
+  title: string
+  description: string | null
+  url: string
+  imageUrl: string | null
+  meta: string | null
+}
+
+type MessageLinkPreviewResponse = {
+  preview?: MessageLinkPreview | null
+}
+
 type MessagesPageClientProps = {
   initialThreadId?: string
 }
@@ -174,6 +187,72 @@ function getPrimaryOtherParticipant(thread: ThreadSummary, viewerId?: string | n
   return getOtherParticipants(thread, viewerId)[0]
 }
 
+const HTTP_URL_REGEX = /https?:\/\/[^\s<>"']+/gi
+const TRAILING_URL_PUNCTUATION = /[)\],.!?:;]+$/
+const CIVIL_LINK_HOSTS = new Set([
+  'dev.civilcitizens.ca',
+  'civilcitizens.ca',
+  'www.civilcitizens.ca',
+  'civilvitizens.ca',
+  'www.civilvitizens.ca',
+])
+
+function trimUrlPunctuation(raw: string): string {
+  let value = raw.trim()
+  while (TRAILING_URL_PUNCTUATION.test(value)) {
+    const next = value.replace(TRAILING_URL_PUNCTUATION, '')
+    if (next === value) break
+    value = next
+  }
+  return value
+}
+
+function normalizeHttpUrl(raw: string): string | null {
+  const trimmed = trimUrlPunctuation(raw)
+  if (!trimmed) return null
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    parsed.hash = ''
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+function isCivilUrl(rawUrl: string): boolean {
+  const normalized = normalizeHttpUrl(rawUrl)
+  if (!normalized) return false
+  try {
+    const parsed = new URL(normalized)
+    const host = parsed.hostname.toLowerCase()
+    if (CIVIL_LINK_HOSTS.has(host)) return true
+    if (host.endsWith('.civilcitizens.ca') || host.endsWith('.civilvitizens.ca')) return true
+    if (typeof window !== 'undefined' && host === window.location.hostname.toLowerCase()) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+function extractUrlsFromMessage(body: string): string[] {
+  const matches = body.match(HTTP_URL_REGEX)
+  if (!matches) return []
+  const urls: string[] = []
+  const seen = new Set<string>()
+  for (const match of matches) {
+    const normalized = normalizeHttpUrl(match)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    urls.push(normalized)
+  }
+  return urls
+}
+
+function extractCivilUrlsFromMessage(body: string): string[] {
+  return extractUrlsFromMessage(body).filter((url) => isCivilUrl(url))
+}
+
 export default function MessagesPageClient({ initialThreadId }: MessagesPageClientProps) {
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -187,6 +266,9 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
   const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
   const forceBottomScrollThreadRef = useRef<string | null>(initialThreadId ?? null)
+  const failedThreadDetailRef = useRef<Set<string>>(new Set())
+  const shownThreadDetailErrorRef = useRef<Set<string>>(new Set())
+  const pendingLinkPreviewUrlsRef = useRef<Set<string>>(new Set())
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [authReady, setAuthReady] = useState(false)
 
@@ -225,6 +307,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(initialThreadId ?? null)
   const [messagesByThread, setMessagesByThread] = useState<Record<string, MessagePayload[]>>({})
   const [messageCursors, setMessageCursors] = useState<Record<string, string | null>>({})
+  const [messageLinkPreviews, setMessageLinkPreviews] = useState<Record<string, MessageLinkPreview | null>>({})
   const [loadingThreadId, setLoadingThreadId] = useState<string | null>(null)
   const [loadingOlderThreadId, setLoadingOlderThreadId] = useState<string | null>(null)
   const [composerText, setComposerText] = useState('')
@@ -501,9 +584,16 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
         if (lastMessage) {
           void markThreadRead(threadId, lastMessage.id)
         }
+        failedThreadDetailRef.current.delete(threadId)
+        shownThreadDetailErrorRef.current.delete(threadId)
       } catch (err) {
         console.error('Failed to load thread detail', err)
-        pushToast('Unable to open that conversation right now.', 'error')
+        failedThreadDetailRef.current.add(threadId)
+        setSelectedThreadId((prev) => (prev === threadId ? null : prev))
+        if (!shownThreadDetailErrorRef.current.has(threadId)) {
+          pushToast('Unable to open that conversation right now.', 'error')
+          shownThreadDetailErrorRef.current.add(threadId)
+        }
       } finally {
         setLoadingThreadId(null)
       }
@@ -555,6 +645,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   useEffect(() => {
     if (!selectedThreadId) return
     if (messagesByThread[selectedThreadId]) return
+    if (failedThreadDetailRef.current.has(selectedThreadId)) return
     if (loadingThreadId === selectedThreadId) return
     void fetchThreadDetail(selectedThreadId)
   }, [selectedThreadId, messagesByThread, loadingThreadId, fetchThreadDetail])
@@ -781,11 +872,157 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     container.scrollTo({ top: container.scrollHeight, behavior })
     smoothScrollPendingRef.current = false
   }, [messagesByThread, selectedThreadId])
-  const activeMessages = selectedThreadId ? messagesByThread[selectedThreadId] ?? [] : []
+  const activeMessages = useMemo(
+    () => (selectedThreadId ? messagesByThread[selectedThreadId] ?? [] : []),
+    [messagesByThread, selectedThreadId],
+  )
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
+
+  useEffect(() => {
+    const candidates = new Set<string>()
+    for (const message of activeMessages) {
+      if (!message.body) continue
+      for (const url of extractCivilUrlsFromMessage(message.body)) {
+        candidates.add(url)
+      }
+    }
+
+    for (const url of candidates) {
+      if (Object.prototype.hasOwnProperty.call(messageLinkPreviews, url)) continue
+      if (pendingLinkPreviewUrlsRef.current.has(url)) continue
+      pendingLinkPreviewUrlsRef.current.add(url)
+
+      void (async () => {
+        try {
+          const response = await authedFetch(`/messages/link-preview?url=${encodeURIComponent(url)}`)
+          if (response.status === 401) {
+            redirectToAuthModal('login')
+            return
+          }
+          if (!response.ok) {
+            setMessageLinkPreviews((prev) =>
+              Object.prototype.hasOwnProperty.call(prev, url) ? prev : { ...prev, [url]: null },
+            )
+            return
+          }
+          const payload = (await response.json().catch(() => null)) as MessageLinkPreviewResponse | null
+          setMessageLinkPreviews((prev) => ({ ...prev, [url]: payload?.preview ?? null }))
+        } catch (error) {
+          console.error('Failed to load message link preview', error)
+          setMessageLinkPreviews((prev) =>
+            Object.prototype.hasOwnProperty.call(prev, url) ? prev : { ...prev, [url]: null },
+          )
+        } finally {
+          pendingLinkPreviewUrlsRef.current.delete(url)
+        }
+      })()
+    }
+  }, [activeMessages, authedFetch, messageLinkPreviews])
+
+  const renderMessageBodyWithLinks = useCallback((body: string, isMine: boolean) => {
+    const parts: Array<string | JSX.Element> = []
+    const regex = new RegExp(HTTP_URL_REGEX.source, 'gi')
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = regex.exec(body)) !== null) {
+      const rawMatch = match[0] ?? ''
+      const matchStart = match.index
+      const matchEnd = matchStart + rawMatch.length
+
+      if (matchStart > lastIndex) {
+        parts.push(body.slice(lastIndex, matchStart))
+      }
+
+      const displayUrl = trimUrlPunctuation(rawMatch)
+      const normalizedUrl = normalizeHttpUrl(displayUrl)
+      const trailing = rawMatch.slice(displayUrl.length)
+
+      if (normalizedUrl) {
+        const internal = isCivilUrl(normalizedUrl)
+        parts.push(
+          <a
+            key={`${normalizedUrl}-${matchStart}`}
+            href={normalizedUrl}
+            target={internal ? undefined : '_blank'}
+            rel={internal ? undefined : 'noopener noreferrer'}
+            className={clsx(
+              'break-all underline underline-offset-2 transition',
+              isMine ? 'text-white/95 hover:text-white' : 'text-[var(--cc-primary)] hover:text-[var(--cc-primary-700)]',
+            )}
+          >
+            {displayUrl}
+          </a>,
+        )
+      } else {
+        parts.push(rawMatch)
+      }
+
+      if (trailing) {
+        parts.push(trailing)
+      }
+
+      lastIndex = matchEnd
+    }
+
+    if (lastIndex < body.length) {
+      parts.push(body.slice(lastIndex))
+    }
+
+    return <p className="whitespace-pre-wrap break-words">{parts}</p>
+  }, [])
+
+  const renderMessageLinkPreviewCard = useCallback(
+    (url: string, isMine: boolean) => {
+      const preview = messageLinkPreviews[url]
+      if (!preview) return null
+      const targetUrl = (preview.url || '').trim() || url
+
+      const cardBody = (
+        <div
+          className={clsx(
+            'mt-2 overflow-hidden rounded-xl border transition',
+            isMine ? 'border-white/25 bg-white/10 hover:bg-white/15' : 'border-slate-200 bg-slate-50 hover:bg-slate-100',
+          )}
+        >
+          <div className="flex items-start gap-3 p-2.5">
+            {preview.imageUrl ? (
+              <div className="h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-slate-200/70 bg-white/80">
+                <img src={preview.imageUrl} alt={preview.title} className="h-full w-full object-cover" loading="lazy" />
+              </div>
+            ) : null}
+            <div className="min-w-0 space-y-0.5">
+              <p className={clsx('line-clamp-1 text-sm font-semibold', isMine ? 'text-white' : 'text-slate-900')}>{preview.title}</p>
+              {preview.description ? (
+                <p className={clsx('line-clamp-2 text-xs', isMine ? 'text-white/85' : 'text-slate-600')}>{preview.description}</p>
+              ) : null}
+              <p className={clsx('truncate text-[11px]', isMine ? 'text-white/70' : 'text-slate-500')}>{preview.meta || targetUrl}</p>
+            </div>
+          </div>
+        </div>
+      )
+
+      if (targetUrl.startsWith('/')) {
+        return (
+          <Link key={`${url}-preview`} href={targetUrl} className="block">
+            {cardBody}
+          </Link>
+        )
+      }
+
+      return (
+        <a key={`${url}-preview`} href={targetUrl} target="_blank" rel="noopener noreferrer" className="block">
+          {cardBody}
+        </a>
+      )
+    },
+    [messageLinkPreviews],
+  )
 
   const handleThreadSelect = useCallback(
     (threadId: string) => {
+      failedThreadDetailRef.current.delete(threadId)
+      shownThreadDetailErrorRef.current.delete(threadId)
       forceBottomScrollThreadRef.current = threadId
       smoothScrollPendingRef.current = false
       setSelectedThreadId(threadId)
@@ -1208,6 +1445,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                 const isMine = message.isMine
                 const senderDisplayName = formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle
                 const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
+                const civilUrls = message.body ? extractCivilUrlsFromMessage(message.body).slice(0, 3) : []
                 const bubbleClasses = clsx(
                   'max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow transition',
                   isMine
@@ -1235,7 +1473,8 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                           <p className="italic text-slate-400">Message removed.</p>
                         ) : (
                           <>
-                            {message.body ? <p className="whitespace-pre-wrap">{message.body}</p> : null}
+                            {message.body ? renderMessageBodyWithLinks(message.body, isMine) : null}
+                            {civilUrls.map((url) => renderMessageLinkPreviewCard(url, isMine))}
                             {message.attachments.length > 0 ? (
                               <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
                                 {message.attachments.map((url, i) => (

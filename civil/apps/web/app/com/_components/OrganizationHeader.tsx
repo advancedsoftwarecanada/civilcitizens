@@ -2,8 +2,12 @@
 
 import clsx from 'clsx'
 import { useEffect, useState } from 'react'
+import { LuRepeat2, LuShare } from 'react-icons/lu'
+import SharePostModal from '../../_components/SharePostModal'
+import ShareSendModal from '../../_components/ShareSendModal'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
+import { type ShareTarget } from '../../_lib/shareTarget'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import OrganizationFollowButton from './OrganizationFollowButton'
 
@@ -29,6 +33,8 @@ export default function OrganizationHeader({
 }) {
   const [resolvedOrg, setResolvedOrg] = useState<CommunityOrganization | null>(org)
   const [memberCount, setMemberCount] = useState<number | null>(null)
+  const [repostModalOpen, setRepostModalOpen] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -79,6 +85,17 @@ export default function OrganizationHeader({
   const name = resolvedOrg?.name ?? fallbackName
   const coverDisplayUrl = resolvedOrg?.coverUrl ?? null
   const createdLabel = formatShortDate(resolvedOrg?.createdAt)
+  const organizationShareTarget: ShareTarget | null = resolvedOrg
+    ? {
+        kind: 'organization',
+        id: resolvedOrg.id,
+        title: resolvedOrg.name,
+        description: resolvedOrg.headline || resolvedOrg.description || `Organization profile on Civil`,
+        url: `/com/${province.toLowerCase()}/${municipality.toLowerCase()}/orgs/${slug.toLowerCase()}`,
+        imageUrl: resolvedOrg.coverUrl ?? resolvedOrg.logoUrl ?? null,
+        meta: `${memberCount ?? '—'} members`,
+      }
+    : null
 
   return (
     <div className={resolvedOrg ? 'space-y-0' : undefined}>
@@ -132,7 +149,23 @@ export default function OrganizationHeader({
           </div>
 
           {resolvedOrg ? (
-            <div className="md:self-start">
+            <div className="flex flex-wrap items-center gap-2 md:self-start">
+              <button
+                type="button"
+                onClick={() => setRepostModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              >
+                <LuRepeat2 className="h-4 w-4" />
+                <span>Repost</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShareModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              >
+                <LuShare className="h-4 w-4" />
+                <span>Share</span>
+              </button>
               <OrganizationFollowButton
                 province={province}
                 municipality={municipality}
@@ -143,6 +176,20 @@ export default function OrganizationHeader({
           ) : null}
         </div>
       </section>
+
+      {repostModalOpen && organizationShareTarget ? (
+        <SharePostModal
+          target={organizationShareTarget}
+          onClose={() => setRepostModalOpen(false)}
+        />
+      ) : null}
+
+      {shareModalOpen && organizationShareTarget ? (
+        <ShareSendModal
+          target={organizationShareTarget}
+          onClose={() => setShareModalOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }
