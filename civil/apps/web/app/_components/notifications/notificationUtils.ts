@@ -117,6 +117,12 @@ export function getFriendshipId(notification: NotificationItem) {
   return typeof raw === 'string' ? raw : null
 }
 
+const CHAT_NOTIFICATION_TYPES = new Set(['message', 'message_created', 'message.created', 'comment_reply', 'comment_post'])
+
+export function isChatNotificationType(type: string): boolean {
+  return CHAT_NOTIFICATION_TYPES.has((type || '').trim().toLowerCase())
+}
+
 export function getFriendRequestStatus(notification: NotificationItem): FriendRequestStatus {
   const basePayload = notification.payload
   if (basePayload && typeof basePayload === 'object' && !Array.isArray(basePayload)) {
