@@ -9,7 +9,7 @@ export default function MarketRightRail() {
     <div className="space-y-6">
       <YourListingsPanel />
       <YourOrdersPanel title="Your Orders" limit={8} />
-      <RightRail mode="default" showOrganizations hideContacts />
+      <RightRail mode="default" hideContacts hideCommunities />
     </div>
   )
 }
