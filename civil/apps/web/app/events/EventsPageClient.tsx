@@ -177,6 +177,13 @@ function getEventOrganizationHref(event: EventFeedItem): string | null {
   return `/com/${encodeURIComponent(event.organization.provinceCode.toLowerCase())}/${encodeURIComponent(event.organization.communitySlug)}/orgs/${encodeURIComponent(event.organization.slug)}/events`
 }
 
+function getEventDetailHref(event: EventFeedItem): string {
+  if (event.organization.provinceCode && event.organization.communitySlug && event.organization.slug) {
+    return `/com/${encodeURIComponent(event.organization.provinceCode.toLowerCase())}/${encodeURIComponent(event.organization.communitySlug)}/orgs/${encodeURIComponent(event.organization.slug)}/events/${encodeURIComponent(event.id)}`
+  }
+  return `/events/${encodeURIComponent(event.organization.id)}/${encodeURIComponent(event.id)}`
+}
+
 export default function EventsPageClient() {
   const router = useRouter()
   const [items, setItems] = useState<EventFeedItem[]>([])
@@ -392,7 +399,7 @@ export default function EventsPageClient() {
         {!loading && !error && filteredItems.length > 0 && displayMode === 'list' ? (
           <ul className="space-y-6">
             {filteredItems.map((event) => {
-              const detailHref = `/events/${encodeURIComponent(event.organization.id)}/${encodeURIComponent(event.id)}`
+              const detailHref = getEventDetailHref(event)
               const organizationHref = getEventOrganizationHref(event)
 
               const startsDateBadge = formatEventDateBadge(event.startsAt)
@@ -538,7 +545,7 @@ export default function EventsPageClient() {
               {selectedDayEvents.length ? (
                 <ul className="space-y-3">
                   {selectedDayEvents.map((event) => {
-                    const detailHref = `/events/${encodeURIComponent(event.organization.id)}/${encodeURIComponent(event.id)}`
+                    const detailHref = getEventDetailHref(event)
                     const organizationHref = getEventOrganizationHref(event)
                     const startsDateBadge = formatEventDateBadge(event.startsAt)
                     const startsTimeBadge = formatEventTimeBadge(event.startsAt)
