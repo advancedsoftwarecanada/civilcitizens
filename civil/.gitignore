@@ -7,10 +7,6 @@ dist
 build
 coverage
 
-# Env
-.env
-.env.*
-
 # Prisma
 prisma/generated
 .prisma
