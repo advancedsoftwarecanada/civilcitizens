@@ -132,6 +132,14 @@ type MessagesPageClientProps = {
   initialInboxSection?: MessagesNavSection
 }
 
+function sortMessagesChronologically(messages: MessagePayload[]): MessagePayload[] {
+  return [...messages].sort((a, b) => {
+    const timeDelta = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    if (timeDelta !== 0) return timeDelta
+    return a.id.localeCompare(b.id)
+  })
+}
+
 function normalizeHeaders(input?: HeadersInit): Record<string, string> {
   if (!input) return {}
   if (input instanceof Headers) {
@@ -182,6 +190,10 @@ function isMobileMessagesViewport() {
   if (typeof window === 'undefined') return false
   return window.matchMedia('(max-width: 1023px)').matches
 }
+
+const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
+const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
+const MOBILE_DOCK_HEIGHT_PX = 70
 
 const threadHasUnread = (thread: ThreadSummary) => {
   const viewer = thread.participants.find((participant) => participant.isViewer)
@@ -346,6 +358,75 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [contactsBucketReady, setContactsBucketReady] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const composerInputRef = useRef<HTMLInputElement | null>(null)
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
+  const [composerFocused, setComposerFocused] = useState(false)
+  const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia('(max-width: 1023px)')
+    const syncMobileViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncMobileViewport()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncMobileViewport)
+    } else {
+      mediaQuery.addListener(syncMobileViewport)
+    }
+    window.addEventListener('resize', syncMobileViewport)
+    window.addEventListener('orientationchange', syncMobileViewport)
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === 'function') {
+        mediaQuery.removeEventListener('change', syncMobileViewport)
+      } else {
+        mediaQuery.removeListener(syncMobileViewport)
+      }
+      window.removeEventListener('resize', syncMobileViewport)
+      window.removeEventListener('orientationchange', syncMobileViewport)
+    }
+  }, [])
+
+  const syncMobileKeyboardState = useCallback(() => {
+    if (typeof window === 'undefined') return
+    if (!isMobileViewport || !composerFocused) {
+      setMobileKeyboardInset(0)
+      return
+    }
+
+    const viewport = window.visualViewport
+    const viewportHeight = viewport?.height ?? window.innerHeight
+    const viewportOffsetTop = viewport?.offsetTop ?? 0
+    const keyboardInset = Math.max(0, window.innerHeight - viewportHeight - viewportOffsetTop)
+    const heightDelta = Math.max(0, window.innerHeight - viewportHeight)
+    const keyboardOpen = keyboardInset > MOBILE_KEYBOARD_OPEN_MIN_INSET || heightDelta > MOBILE_KEYBOARD_OPEN_MIN_DELTA
+
+    setMobileKeyboardInset(keyboardOpen ? keyboardInset : 0)
+  }, [composerFocused, isMobileViewport])
+
+  useEffect(() => {
+    syncMobileKeyboardState()
+  }, [syncMobileKeyboardState])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleViewportChange = () => {
+      syncMobileKeyboardState()
+    }
+    const viewport = window.visualViewport
+    viewport?.addEventListener('resize', handleViewportChange)
+    viewport?.addEventListener('scroll', handleViewportChange)
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('orientationchange', handleViewportChange)
+
+    return () => {
+      viewport?.removeEventListener('resize', handleViewportChange)
+      viewport?.removeEventListener('scroll', handleViewportChange)
+      window.removeEventListener('resize', handleViewportChange)
+      window.removeEventListener('orientationchange', handleViewportChange)
+    }
+  }, [syncMobileKeyboardState])
 
   useEffect(() => {
     if (initialInboxSection && initialInboxSection !== 'market') {
@@ -549,7 +630,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       console.error('Failed to load viewer profile', err)
       pushToast('Unable to load your profile right now.', 'error')
     }
-  }, [authedFetch])
+  }, [])
 
   const loadThreads = useCallback(
     async (cursor?: string, append = false) => {
@@ -644,9 +725,10 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           throw new Error('failed_thread_detail')
         }
         const payload = (await response.json()) as ThreadDetailResponse
-        const lastMessage = payload.messages[payload.messages.length - 1] ?? null
+        const normalizedMessages = sortMessagesChronologically(payload.messages)
+        const lastMessage = normalizedMessages[normalizedMessages.length - 1] ?? null
         upsertThread({ ...payload.thread, lastMessage, lastMessageAt: lastMessage?.createdAt ?? payload.thread.lastMessageAt })
-        setMessagesByThread((prev) => ({ ...prev, [threadId]: payload.messages }))
+        setMessagesByThread((prev) => ({ ...prev, [threadId]: normalizedMessages }))
         setMessageCursors((prev) => ({ ...prev, [threadId]: payload.nextCursor ?? null }))
         if (lastMessage) {
           void markThreadRead(threadId, lastMessage.id)
@@ -696,7 +778,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
 
         setMessagesByThread((prev) => ({
           ...prev,
-          [threadId]: payload.items.concat(prev[threadId] ?? []),
+          [threadId]: sortMessagesChronologically(payload.items.concat(prev[threadId] ?? [])),
         }))
         setMessageCursors((prev) => ({ ...prev, [threadId]: payload.nextCursor ?? null }))
       } catch (err) {
@@ -744,7 +826,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         setMessagesByThread((prev) => {
           const existing = prev[threadId] ?? []
           if (existing.some((item) => item.id === payload.message.id)) return prev
-          return { ...prev, [threadId]: [...existing, payload.message] }
+          return { ...prev, [threadId]: sortMessagesChronologically([...existing, payload.message]) }
         })
         setComposerText('')
         setAttachments([])
@@ -938,6 +1020,20 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     () => filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null,
     [filteredOrderedThreads, selectedThreadId],
   )
+  const hideGlobalMobileDockInThread = isMobileViewport && Boolean(activeThread)
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const root = document.documentElement
+    if (hideGlobalMobileDockInThread) {
+      root.classList.add('cc-messages-thread-context')
+    } else {
+      root.classList.remove('cc-messages-thread-context')
+    }
+    return () => {
+      root.classList.remove('cc-messages-thread-context')
+    }
+  }, [hideGlobalMobileDockInThread])
 
   useEffect(() => {
     if (filteredOrderedThreads.length === 0) {
@@ -979,10 +1075,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     container.scrollTo({ top: container.scrollHeight, behavior })
     smoothScrollPendingRef.current = false
   }, [messagesByThread, selectedThreadId])
-  const activeMessages = useMemo(
-    () => (selectedThreadId ? messagesByThread[selectedThreadId] ?? [] : []),
-    [messagesByThread, selectedThreadId],
-  )
+  const activeMessages = useMemo(() => {
+    if (!selectedThreadId) return []
+    const messages = messagesByThread[selectedThreadId] ?? []
+    return sortMessagesChronologically(messages)
+  }, [messagesByThread, selectedThreadId])
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
 
   useEffect(() => {
@@ -1054,7 +1151,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
             target={internal ? undefined : '_blank'}
             rel={internal ? undefined : 'noopener noreferrer'}
             className={clsx(
-              'break-all underline underline-offset-2 transition',
+              'break-words underline underline-offset-2 transition',
               isMine ? 'text-white/95 hover:text-white' : 'text-[var(--cc-primary)] hover:text-[var(--cc-primary-700)]',
             )}
           >
@@ -1278,7 +1375,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   }, [activeThread, authedFetch, isActiveGroupThread])
 
   const renderThreadList = () => {
-    const mobileViewport = isMobileMessagesViewport()
+    const mobileViewport = isMobileViewport
     if (threadsLoading && filteredOrderedThreads.length === 0) {
       return <p className="text-sm text-slate-500">Loading your conversations…</p>
     }
@@ -1390,6 +1487,165 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const otherUser = otherParticipant?.user
     const title = getThreadTitle(activeThread)
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
+    const showMobileDockComposer = isMobileViewport
+    const mobileDockOffsetPx = hideGlobalMobileDockInThread ? 0 : MOBILE_DOCK_HEIGHT_PX
+
+    const sendActiveThreadMessage = () => {
+      if (activeThread) {
+        void sendMessage(activeThread.id)
+      }
+    }
+
+    const composerNode = showMobileDockComposer ? (
+      <div className="mx-auto flex w-full max-w-screen-2xl items-center gap-2" role="group" aria-label="Message composer">
+        <input
+          type="text"
+          ref={composerInputRef}
+          value={composerText}
+          onChange={(event) => setComposerText(event.target.value)}
+          onFocus={() => {
+            setComposerFocused(true)
+            requestAnimationFrame(() => syncMobileKeyboardState())
+          }}
+          onBlur={() => {
+            setComposerFocused(false)
+            setTimeout(() => syncMobileKeyboardState(), 80)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              sendActiveThreadMessage()
+            }
+          }}
+          placeholder="Write a message"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="sentences"
+          spellCheck={false}
+          enterKeyHint="send"
+          inputMode="text"
+          className="h-11 flex-1 rounded-full border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:ring-1 focus:ring-[var(--cc-primary)]"
+        />
+        <input
+          type="file"
+          ref={fileInputRef}
+          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          accept="image/jpeg,image/png,image/webp,image/heic"
+          onChange={handleFileSelect}
+        />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:opacity-50"
+          title="Add photo"
+        >
+          <HiOutlinePhoto className={clsx('h-5 w-5', isUploading ? 'animate-pulse' : '')} />
+        </button>
+        <button
+          type="button"
+          onClick={sendActiveThreadMessage}
+          disabled={(!composerText.trim() && attachments.length === 0) || sending || isUploading}
+          className={clsx(
+            'inline-flex h-11 w-11 items-center justify-center rounded-full text-white transition',
+            (!composerText.trim() && attachments.length === 0) || sending || isUploading
+              ? 'cursor-not-allowed bg-slate-300'
+              : 'bg-[var(--cc-primary)] hover:bg-[var(--cc-primary-700)]',
+          )}
+        >
+          <HiOutlinePaperAirplane className="h-5 w-5" />
+        </button>
+      </div>
+    ) : (
+      <form
+        className="flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm"
+        onSubmit={(event) => {
+          event.preventDefault()
+          sendActiveThreadMessage()
+        }}
+      >
+        {attachments.length > 0 ? (
+          <div className="flex gap-2 overflow-x-auto px-2 pb-2">
+            {attachments.map((url, i) => (
+              <div key={i} className="relative h-16 w-16 shrink-0">
+                <img src={url} alt="Attachment" className="h-full w-full rounded-lg object-cover" />
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(i)}
+                  className="absolute -right-1 -top-1 rounded-full bg-slate-900 p-0.5 text-white shadow-sm hover:bg-slate-700"
+                >
+                  <HiOutlineXMark className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <textarea
+          ref={composerTextareaRef}
+          value={composerText}
+          onChange={(event) => setComposerText(event.target.value)}
+          onFocus={() => {
+            setComposerFocused(true)
+            requestAnimationFrame(() => syncMobileKeyboardState())
+          }}
+          onBlur={() => {
+            setComposerFocused(false)
+            setTimeout(() => syncMobileKeyboardState(), 80)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              sendActiveThreadMessage()
+            }
+          }}
+          placeholder="Write a message"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="sentences"
+          spellCheck={false}
+          enterKeyHint="send"
+          inputMode="text"
+          className="min-h-[3rem] w-full resize-none border-none bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
+        />
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
+              accept="image/jpeg,image/png,image/webp,image/heic"
+              onChange={handleFileSelect}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-[var(--cc-primary)] disabled:opacity-50"
+              title="Add photo"
+            >
+              <HiOutlinePhoto className={clsx('h-6 w-6', isUploading ? 'animate-pulse' : '')} />
+            </button>
+          </div>
+          <button
+            type="submit"
+            disabled={(!composerText.trim() && attachments.length === 0) || sending || isUploading}
+            className={clsx(
+              'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white transition',
+              (!composerText.trim() && attachments.length === 0) || sending || isUploading
+                ? 'cursor-not-allowed bg-slate-300'
+                : 'bg-[var(--cc-primary)] hover:bg-[var(--cc-primary-dark, #0d5)]',
+            )}
+          >
+            <HiOutlinePaperAirplane className="h-4 w-4" />
+            Send
+          </button>
+        </div>
+      </form>
+    )
 
     return (
       <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
@@ -1481,154 +1737,98 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                 Load previous
               </button>
             ) : null}
-            <div ref={messagesViewportRef} className="flex-1 space-y-4 overflow-y-auto pr-2">
-              {activeMessages.length === 0 && loadingThreadId === activeThread.id ? (
-                <p className="text-center text-sm text-slate-500">Loading messages…</p>
-              ) : null}
-              {activeMessages.map((message) => {
-                const isMine = message.isMine
-                const senderDisplayName = formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle
-                const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
-                const civilUrls = message.body ? extractCivilUrlsFromMessage(message.body).slice(0, 3) : []
-                const bubbleClasses = clsx(
-                  'max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow transition',
-                  isMine
-                    ? 'ml-auto bg-[var(--cc-primary)] text-white'
-                    : 'mr-auto border border-slate-100 bg-white text-slate-800',
-                )
-                return (
-                  <div key={message.id} className={clsx('flex w-full', isMine ? 'justify-end' : 'justify-start')}>
-                    {!isMine ? (
-                      <Link href={`/u/${encodeURIComponent(message.sender.handle)}`} className="mr-2 mt-5 shrink-0">
-                        <VerifiedAvatar
-                          src={message.sender.avatarUrl}
-                          alt={senderDisplayName}
-                          initials={senderDisplayName}
-                          size={30}
-                          isVerified={message.sender.isVerified}
-                          isBusiness={message.sender.isPremium}
-                        />
-                      </Link>
-                    ) : null}
-                    <div className={clsx('flex flex-col', isMine ? 'items-end' : 'items-start')}>
-                      <p className="mb-1 text-xs font-semibold text-slate-500">{isMine ? 'You' : senderDisplayName}</p>
-                      <div className={bubbleClasses}>
-                        {message.deletedAt ? (
-                          <p className="italic text-slate-400">Message removed.</p>
-                        ) : (
-                          <>
-                            {message.body ? renderMessageBodyWithLinks(message.body, isMine) : null}
-                            {civilUrls.map((url) => renderMessageLinkPreviewCard(url, isMine))}
-                            {message.attachments.length > 0 ? (
-                              <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
-                                {message.attachments.map((url, i) => (
-                                  <img
-                                    key={i}
-                                    src={url}
-                                    alt="Attachment"
-                                    className="rounded-lg object-cover max-h-60 w-full cursor-pointer transition hover:opacity-90"
-                                    onClick={() => setLightboxUrl(url)}
-                                  />
-                                ))}
-                              </div>
-                            ) : null}
-                          </>
-                        )}
+            <div ref={messagesViewportRef} className="flex-1 overflow-y-auto pr-2">
+              <div className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-3' : 'pb-1')}>
+                {activeMessages.length === 0 && loadingThreadId === activeThread.id ? (
+                  <p className="text-center text-sm text-slate-500">Loading messages…</p>
+                ) : null}
+                {activeMessages.map((message) => {
+                  const isMine = message.isMine
+                  const senderDisplayName = formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle
+                  const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
+                  const civilUrls = message.body ? extractCivilUrlsFromMessage(message.body).slice(0, 3) : []
+                  const bubbleClasses = clsx(
+                    'w-fit min-w-[5.5rem] max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow transition',
+                    isMine
+                      ? 'ml-auto bg-[var(--cc-primary)] text-white'
+                      : 'mr-auto border border-slate-100 bg-white text-slate-800',
+                  )
+                  return (
+                    <div key={message.id} className={clsx('flex w-full', isMine ? 'justify-end' : 'justify-start')}>
+                      {!isMine ? (
+                        <Link href={`/u/${encodeURIComponent(message.sender.handle)}`} className="mr-2 mt-5 shrink-0">
+                          <VerifiedAvatar
+                            src={message.sender.avatarUrl}
+                            alt={senderDisplayName}
+                            initials={senderDisplayName}
+                            size={30}
+                            isVerified={message.sender.isVerified}
+                            isBusiness={message.sender.isPremium}
+                          />
+                        </Link>
+                      ) : null}
+                      <div className={clsx('flex flex-col', isMine ? 'items-end' : 'items-start')}>
+                        <p className="mb-1 text-xs font-semibold text-slate-500">{isMine ? 'You' : senderDisplayName}</p>
+                        <div className={bubbleClasses}>
+                          {message.deletedAt ? (
+                            <p className="italic text-slate-400">Message removed.</p>
+                          ) : (
+                            <>
+                              {message.body ? renderMessageBodyWithLinks(message.body, isMine) : null}
+                              {civilUrls.map((url) => renderMessageLinkPreviewCard(url, isMine))}
+                              {message.attachments.length > 0 ? (
+                                <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
+                                  {message.attachments.map((url, i) => (
+                                    <img
+                                      key={i}
+                                      src={url}
+                                      alt="Attachment"
+                                      className="max-h-60 w-full cursor-pointer rounded-lg object-cover transition hover:opacity-90"
+                                      onClick={() => setLightboxUrl(url)}
+                                    />
+                                  ))}
+                                </div>
+                              ) : null}
+                            </>
+                          )}
+                        </div>
+                        <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
                       </div>
-                      <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                      {isMine ? (
+                        <Link href={me?.handle ? `/u/${encodeURIComponent(me.handle)}` : '/profile'} className="ml-2 mt-5 shrink-0">
+                          <VerifiedAvatar
+                            src={me?.avatarUrl ?? null}
+                            alt={viewerDisplayName}
+                            initials={viewerDisplayName}
+                            size={30}
+                            isVerified={Boolean(me?.isVerified)}
+                            isBusiness={Boolean(me?.isPremium)}
+                          />
+                        </Link>
+                      ) : null}
                     </div>
-                    {isMine ? (
-                      <Link href={me?.handle ? `/u/${encodeURIComponent(me.handle)}` : '/profile'} className="ml-2 mt-5 shrink-0">
-                        <VerifiedAvatar
-                          src={me?.avatarUrl ?? null}
-                          alt={viewerDisplayName}
-                          initials={viewerDisplayName}
-                          size={30}
-                          isVerified={Boolean(me?.isVerified)}
-                          isBusiness={Boolean(me?.isPremium)}
-                        />
-                      </Link>
-                    ) : null}
-                  </div>
-                )
-              })}
-            </div>
-            <form
-              className="mt-4 flex flex-col gap-2 rounded-3xl border border-slate-200 bg-white p-2 shadow-sm"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (activeThread) {
-                  void sendMessage(activeThread.id)
-                }
-              }}
-            >
-              {attachments.length > 0 ? (
-                <div className="flex gap-2 overflow-x-auto px-2 pb-2">
-                  {attachments.map((url, i) => (
-                    <div key={i} className="relative h-16 w-16 shrink-0">
-                      <img src={url} alt="Attachment" className="h-full w-full rounded-lg object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(i)}
-                        className="absolute -right-1 -top-1 rounded-full bg-slate-900 text-white p-0.5 shadow-sm hover:bg-slate-700"
-                      >
-                        <HiOutlineXMark className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <textarea
-                ref={composerTextareaRef}
-                value={composerText}
-                onChange={(event) => setComposerText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    if (activeThread) {
-                      void sendMessage(activeThread.id)
-                    }
-                  }
-                }}
-                placeholder="Write a message"
-                className="min-h-[3rem] w-full resize-none border-none bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
-              />
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    className="hidden"
-                    accept="image/jpeg,image/png,image/webp,image/heic"
-                    onChange={handleFileSelect}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploading}
-                    className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-[var(--cc-primary)] disabled:opacity-50"
-                    title="Add photo"
-                  >
-                    <HiOutlinePhoto className={clsx('h-6 w-6', isUploading ? 'animate-pulse' : '')} />
-                  </button>
-                </div>
-                <button
-                  type="submit"
-                  disabled={(!composerText.trim() && attachments.length === 0) || sending || isUploading}
-                  className={clsx(
-                    'inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white transition',
-                    (!composerText.trim() && attachments.length === 0) || sending || isUploading
-                      ? 'cursor-not-allowed bg-slate-300'
-                      : 'bg-[var(--cc-primary)] hover:bg-[var(--cc-primary-dark, #0d5)]',
-                  )}
-                >
-                  <HiOutlinePaperAirplane className="h-4 w-4" />
-                  Send
-                </button>
+                  )
+                })}
               </div>
-            </form>
+            </div>
+            {showMobileDockComposer ? null : (
+              <div className="mt-4">{composerNode}</div>
+            )}
           </div>
         </div>
+        {showMobileDockComposer && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                className="fixed inset-x-0 z-[85] border-t border-slate-200 bg-white/95 px-3 pb-[max(0.45rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] lg:hidden"
+                style={{
+                  bottom: `calc(${mobileDockOffsetPx}px + ${Math.round(mobileKeyboardInset)}px)`,
+                }}
+              >
+                {composerNode}
+              </div>,
+              document.body,
+            )
+          : null}
       </div>
     )
   }
@@ -1713,12 +1913,16 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     </div>
   )
 
+  const keyboardAwareViewportClass = hideGlobalMobileDockInThread
+    ? 'sticky top-0 h-[calc(100dvh-4.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-2 md:pb-8'
+    : 'sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8'
+
   return (
     <DashboardShell
       className="!min-h-0"
       rightRail={inboxPanel}
-      rightRailClassName="sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8"
-      mainClassName="sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8"
+      rightRailClassName={keyboardAwareViewportClass}
+      mainClassName={keyboardAwareViewportClass}
     >
       <div className="h-full lg:hidden">
         {activeThread ? renderMessages() : inboxPanel}

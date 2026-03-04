@@ -11,6 +11,7 @@ import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import CivilLinkPreviewList from '../../../../../_components/CivilLinkPreviewList'
 import PostReactionBar from '../../../../../_components/PostReactionBar'
+import ThreadBottomCommentComposer from '../../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
 import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
@@ -664,7 +665,7 @@ export default function ChamberPostPage({ params }: PageProps) {
             </div>
 
             {viewer ? (
-              <CommentComposer className="mt-4" onSubmit={(body) => handleReply(null, body)} />
+              <CommentComposer className="mt-4 hidden lg:block" onSubmit={(body) => handleReply(null, body)} />
             ) : (
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-600">
                 <span>Sign in to join the conversation.</span>
@@ -681,6 +682,7 @@ export default function ChamberPostPage({ params }: PageProps) {
             <div className="mt-6">
               <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
             </div>
+            {viewer ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
           </section>
 
           {repostModalOpen && shareTarget ? (
@@ -696,6 +698,7 @@ export default function ChamberPostPage({ params }: PageProps) {
               onClose={() => setShareModalOpen(false)}
             />
           ) : null}
+          {viewer ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}
         </article>
       ) : null}
     </DashboardShell>

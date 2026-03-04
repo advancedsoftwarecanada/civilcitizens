@@ -24,7 +24,7 @@ const REACTION_OPTIONS: ReactionOption[] = [
   { key: 'heart', emoji: '❤️', label: 'Love' },
   { key: 'haha', emoji: '😂', label: 'Funny' },
   { key: 'sad', emoji: '😢', label: 'Cry' },
-  { key: 'wow', emoji: '💡', label: 'Insightful' },
+  { key: 'wow', emoji: '🧠', label: 'Insightful' },
 ]
 
 function normalizeViewerReaction(value: ReactionType | null | undefined): ReactionOption['key'] | null {
