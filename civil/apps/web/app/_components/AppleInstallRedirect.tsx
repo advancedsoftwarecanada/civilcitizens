@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { buildIosInstallEntryUrl, shouldBlockForAppleInstall } from '../_lib/appleInstallGate'
+import { buildPwaInstallEntryUrl } from '../_lib/appleInstallGate'
 
 type AppleInstallRedirectProps = {
   source: string
@@ -16,10 +16,11 @@ export default function AppleInstallRedirect({ source }: AppleInstallRedirectPro
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!shouldBlockForAppleInstall()) return
 
     const nextPath = `${pathname}${search ? `?${search}` : ''}${window.location.hash || ''}`
-    router.replace(buildIosInstallEntryUrl(nextPath, source))
+    const installUrl = buildPwaInstallEntryUrl(nextPath, source)
+    if (!installUrl) return
+    router.replace(installUrl)
   }, [pathname, router, search, source])
 
   return null
