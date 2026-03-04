@@ -5,10 +5,17 @@ import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
+import MessagesNavBlock from '../_components/MessagesNavBlock'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
+import {
+  DEFAULT_MESSAGES_NAV_SECTION,
+  readStoredMessagesNavSection,
+  writeStoredMessagesNavSection,
+  type MessagesNavSection,
+} from '../_lib/messagesNav'
 import type { MeResponse } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { formatUserDisplayName } from '../_lib/text'
@@ -16,7 +23,6 @@ import { getStoredToken } from '../_lib/tokenStorage'
 import {
   HiOutlineArrowPath,
   HiOutlinePaperAirplane,
-  HiOutlinePlusCircle,
   HiOutlineChevronLeft,
   HiOutlinePhoto,
   HiOutlineXMark,
@@ -96,6 +102,15 @@ type RealtimePayload = {
 
 type FriendListItem = {
   id: string
+  status?: string
+  since?: string | null
+  user: ThreadUser
+}
+
+type ConnectionListItem = {
+  id: string
+  status?: string
+  since?: string | null
   user: ThreadUser
 }
 
@@ -114,6 +129,7 @@ type MessageLinkPreviewResponse = {
 
 type MessagesPageClientProps = {
   initialThreadId?: string
+  initialInboxSection?: MessagesNavSection
 }
 
 function normalizeHeaders(input?: HeadersInit): Record<string, string> {
@@ -253,7 +269,7 @@ function extractCivilUrlsFromMessage(body: string): string[] {
   return extractUrlsFromMessage(body).filter((url) => isCivilUrl(url))
 }
 
-export default function MessagesPageClient({ initialThreadId }: MessagesPageClientProps) {
+export default function MessagesPageClient({ initialThreadId, initialInboxSection }: MessagesPageClientProps) {
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
@@ -315,12 +331,6 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const [streamKey, setStreamKey] = useState(0)
   const [attachments, setAttachments] = useState<string[]>([])
   const [isUploading, setIsUploading] = useState(false)
-  const [groupModalOpen, setGroupModalOpen] = useState(false)
-  const [groupContactsLoading, setGroupContactsLoading] = useState(false)
-  const [groupContacts, setGroupContacts] = useState<ThreadUser[]>([])
-  const [groupContactFilter, setGroupContactFilter] = useState('')
-  const [selectedGroupContactIds, setSelectedGroupContactIds] = useState<string[]>([])
-  const [creatingGroupChat, setCreatingGroupChat] = useState(false)
   const [manageMembersOpen, setManageMembersOpen] = useState(false)
   const [groupCandidatesLoading, setGroupCandidatesLoading] = useState(false)
   const [groupCandidates, setGroupCandidates] = useState<ThreadUser[]>([])
@@ -328,8 +338,33 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
   const [groupMemberFilter, setGroupMemberFilter] = useState('')
   const [memberActionLoadingId, setMemberActionLoadingId] = useState<string | null>(null)
   const [leavingGroup, setLeavingGroup] = useState(false)
+  const [activeInboxSection, setActiveInboxSection] = useState<MessagesNavSection>(
+    initialInboxSection && initialInboxSection !== 'market' ? initialInboxSection : DEFAULT_MESSAGES_NAV_SECTION,
+  )
+  const [friendContactIds, setFriendContactIds] = useState<string[]>([])
+  const [networkContactIds, setNetworkContactIds] = useState<string[]>([])
+  const [contactsBucketReady, setContactsBucketReady] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    if (initialInboxSection && initialInboxSection !== 'market') {
+      setActiveInboxSection(initialInboxSection)
+      writeStoredMessagesNavSection(initialInboxSection)
+      return
+    }
+    if (initialThreadId) {
+      setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
+      writeStoredMessagesNavSection(DEFAULT_MESSAGES_NAV_SECTION)
+      return
+    }
+    const stored = readStoredMessagesNavSection()
+    if (!stored || stored === 'market') {
+      setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
+      return
+    }
+    setActiveInboxSection(stored)
+  }, [initialInboxSection, initialThreadId])
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId
@@ -562,6 +597,38 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     },
     [authedFetch],
   )
+
+  const loadContactBuckets = useCallback(async () => {
+    setContactsBucketReady(false)
+    try {
+      const [friendsRes, connectionsRes] = await Promise.all([authedFetch('/friends'), authedFetch('/connections')])
+      if (friendsRes.status === 401 || connectionsRes.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!friendsRes.ok || !connectionsRes.ok) {
+        throw new Error('failed_contact_buckets')
+      }
+      const friendsPayload = (await friendsRes.json().catch(() => null)) as { items?: FriendListItem[] } | null
+      const connectionsPayload = (await connectionsRes.json().catch(() => null)) as { items?: ConnectionListItem[] } | null
+
+      const friendIds = (Array.isArray(friendsPayload?.items) ? friendsPayload.items : [])
+        .map((entry) => entry.user?.id)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      const networkIds = (Array.isArray(connectionsPayload?.items) ? connectionsPayload.items : [])
+        .map((entry) => entry.user?.id)
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
+
+      setFriendContactIds(Array.from(new Set(friendIds)))
+      setNetworkContactIds(Array.from(new Set(networkIds)))
+    } catch (error) {
+      console.error('Failed to load message contact buckets', error)
+      setFriendContactIds([])
+      setNetworkContactIds([])
+    } finally {
+      setContactsBucketReady(true)
+    }
+  }, [authedFetch])
 
   const fetchThreadDetail = useCallback(
     async (threadId: string) => {
@@ -836,13 +903,53 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     if (!authReady) return
     void loadMe()
     void loadThreads()
-  }, [authReady, loadMe, loadThreads])
+    void loadContactBuckets()
+  }, [authReady, loadMe, loadThreads, loadContactBuckets])
 
-  const activeThread = useMemo(() => threads.find((thread) => thread.id === selectedThreadId) ?? null, [threads, selectedThreadId])
   const orderedThreads = useMemo(
     () => [...threads].sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime()),
     [threads],
   )
+  const friendContactIdSet = useMemo(() => new Set(friendContactIds), [friendContactIds])
+  const networkContactIdSet = useMemo(() => new Set(networkContactIds), [networkContactIds])
+  const filteredOrderedThreads = useMemo(() => {
+    if (activeInboxSection === 'groups') {
+      return orderedThreads.filter((thread) => thread.type === 'group')
+    }
+    const directThreads = orderedThreads.filter((thread) => thread.type !== 'group')
+    if (activeInboxSection === 'market') {
+      return directThreads
+    }
+    if (!contactsBucketReady) {
+      return directThreads
+    }
+    if (activeInboxSection === 'friends') {
+      return directThreads.filter((thread) =>
+        getOtherParticipants(thread, me?.id).some((participant) => friendContactIdSet.has(participant.userId)),
+      )
+    }
+    return directThreads.filter((thread) =>
+      getOtherParticipants(thread, me?.id).some(
+        (participant) => networkContactIdSet.has(participant.userId) && !friendContactIdSet.has(participant.userId),
+      ),
+    )
+  }, [activeInboxSection, contactsBucketReady, friendContactIdSet, me?.id, networkContactIdSet, orderedThreads])
+  const activeThread = useMemo(
+    () => filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null,
+    [filteredOrderedThreads, selectedThreadId],
+  )
+
+  useEffect(() => {
+    if (filteredOrderedThreads.length === 0) {
+      if (threadsLoading || threads.length === 0) return
+      if (selectedThreadId) setSelectedThreadId(null)
+      return
+    }
+    if (selectedThreadId && filteredOrderedThreads.some((thread) => thread.id === selectedThreadId)) {
+      return
+    }
+    setSelectedThreadId(isMobileMessagesViewport() ? null : filteredOrderedThreads[0]?.id ?? null)
+  }, [filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
 
   useEffect(() => {
     if (!selectedThreadId) return
@@ -1039,77 +1146,12 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     [fetchThreadDetail, markThreadRead, messagesByThread],
   )
 
-  const loadGroupContacts = useCallback(async () => {
-    setGroupContactsLoading(true)
-    try {
-      const response = await authedFetch('/friends')
-      if (!response.ok) {
-        throw new Error('failed_friends')
-      }
-      const payload = (await response.json()) as { items?: FriendListItem[] }
-      const contacts = Array.isArray(payload.items) ? payload.items.map((entry) => entry.user).filter(Boolean) : []
-      setGroupContacts(contacts)
-    } catch (err) {
-      console.error('Failed to load friends for group chat', err)
-      pushToast('Unable to load contacts right now.', 'error')
-      setGroupContacts([])
-    } finally {
-      setGroupContactsLoading(false)
-    }
-  }, [authedFetch])
-
-  const openGroupChatModal = useCallback(() => {
-    setGroupModalOpen(true)
-    setGroupContactFilter('')
-    setSelectedGroupContactIds([])
-    void loadGroupContacts()
-  }, [loadGroupContacts])
-
-  const createGroupChat = useCallback(async () => {
-    if (selectedGroupContactIds.length < 2) {
-      pushToast('Select at least 2 contacts for a group chat.', 'info')
-      return
-    }
-    setCreatingGroupChat(true)
-    try {
-      const response = await authedFetch('/messages/threads/group', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ participantIds: selectedGroupContactIds }),
-      })
-      const payload = (await response.json().catch(() => null)) as { thread?: ThreadSummary; error?: string } | null
-      if (!response.ok || !payload?.thread) {
-        pushToast(payload?.error ?? 'Unable to create group chat right now.', 'error')
-        return
-      }
-      upsertThread(payload.thread)
-      setSelectedThreadId(payload.thread.id)
-      setGroupModalOpen(false)
-      setSelectedGroupContactIds([])
-      pushToast('Group chat created.', 'success')
-    } catch (err) {
-      console.error('Failed to create group chat', err)
-      pushToast('Unable to create group chat right now.', 'error')
-    } finally {
-      setCreatingGroupChat(false)
-    }
-  }, [authedFetch, selectedGroupContactIds, upsertThread])
-
   const activeViewerParticipant = useMemo(
     () => activeThread?.participants.find((participant) => participant.isViewer) ?? null,
     [activeThread],
   )
   const isActiveGroupThread = activeThread?.type === 'group'
   const isActiveGroupOwner = isActiveGroupThread && activeViewerParticipant?.role === 'admin'
-
-  const filteredGroupContacts = useMemo(() => {
-    const q = groupContactFilter.trim().toLowerCase()
-    if (!q) return groupContacts
-    return groupContacts.filter((contact) => {
-      const display = (contact.name || contact.handle).toLowerCase()
-      return display.includes(q) || contact.handle.toLowerCase().includes(q)
-    })
-  }, [groupContactFilter, groupContacts])
 
   const filteredGroupCandidates = useMemo(() => {
     const q = groupCandidateFilter.trim().toLowerCase()
@@ -1237,16 +1279,18 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   const renderThreadList = () => {
     const mobileViewport = isMobileMessagesViewport()
-    if (threadsLoading && orderedThreads.length === 0) {
+    if (threadsLoading && filteredOrderedThreads.length === 0) {
       return <p className="text-sm text-slate-500">Loading your conversations…</p>
     }
-    if (threadsError && orderedThreads.length === 0) {
+    if (threadsError && filteredOrderedThreads.length === 0) {
       return <p className="text-sm text-rose-600">{threadsError}</p>
     }
-    if (orderedThreads.length === 0) {
+    if (filteredOrderedThreads.length === 0) {
+      const emptyLabel =
+        activeInboxSection === 'groups' ? 'No group chats yet.' : activeInboxSection === 'network' ? 'No network messages yet.' : 'No friend messages yet.'
       return (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-center text-sm text-slate-500">
-          <p>No messages yet.</p>
+          <p>{emptyLabel}</p>
           <p className="mt-1">
             <Link href="/search?type=people" className="font-semibold text-[var(--cc-primary)]">
               Find friends
@@ -1258,7 +1302,7 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     }
     return (
       <ul className="space-y-2">
-        {orderedThreads.map((thread) => {
+        {filteredOrderedThreads.map((thread) => {
           const title = getThreadTitle(thread)
           const isGroupThread = thread.type === 'group'
           const active = thread.id === selectedThreadId
@@ -1589,6 +1633,34 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
     )
   }
 
+  const contextActions = useMemo(() => {
+    if (activeInboxSection === 'network') {
+      return {
+        messagesHref: '/messages?inbox=network',
+        messagesLabel: 'Network Messages',
+        directoryHref: me?.handle ? `/u/${encodeURIComponent(me.handle)}/connections` : '/network/professionals',
+        directoryLabel: 'All Connections',
+        contextLabel: 'Network Inbox',
+      }
+    }
+    if (activeInboxSection === 'groups') {
+      return {
+        messagesHref: '/messages?inbox=groups',
+        messagesLabel: 'Group Messages',
+        directoryHref: '/messages/groups',
+        directoryLabel: 'All Group Chats',
+        contextLabel: 'Groups Inbox',
+      }
+    }
+    return {
+      messagesHref: '/messages?inbox=friends',
+      messagesLabel: 'Friend Messages',
+      directoryHref: me?.handle ? `/u/${encodeURIComponent(me.handle)}/friends` : '/friends',
+      directoryLabel: 'All Friends',
+      contextLabel: 'Friends Inbox',
+    }
+  }, [activeInboxSection, me?.handle])
+
   const threadsFooter = threadCursor ? (
     <button
       type="button"
@@ -1602,25 +1674,39 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
 
   const inboxPanel = (
     <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
-      <div className="flex items-center justify-end border-b border-slate-100 pb-4">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={openGroupChatModal}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-          >
-            <HiOutlinePlusCircle className="h-4 w-4" />
-            Group Chat
-          </button>
+      <div className="space-y-3 border-b border-slate-100 pb-4">
+        <MessagesNavBlock
+          active={activeInboxSection}
+          onActiveChange={(next) => {
+            if (next === 'market') return
+            setActiveInboxSection(next)
+          }}
+          className="border border-slate-200/90 bg-slate-50/70"
+        />
+        <div className="grid grid-cols-2 gap-2">
           <Link
-            href={me ? `/u/${me.handle}/friends` : '/friends'}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+            href={contextActions.messagesHref}
+            onClick={() => writeStoredMessagesNavSection(activeInboxSection)}
+            className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:brightness-95"
           >
-            All Contacts
+            {contextActions.messagesLabel}
+          </Link>
+          <Link
+            href={contextActions.directoryHref}
+            onClick={() => writeStoredMessagesNavSection(activeInboxSection)}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+          >
+            {contextActions.directoryLabel}
           </Link>
         </div>
       </div>
       <div className="mt-4 flex-1 overflow-y-auto pr-1">
+        <div className="mb-2 flex items-center justify-between px-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{contextActions.contextLabel}</p>
+          <p className="text-[11px] text-slate-400">
+            {filteredOrderedThreads.length} {filteredOrderedThreads.length === 1 ? 'thread' : 'threads'}
+          </p>
+        </div>
         {renderThreadList()}
         {threadsFooter}
       </div>
@@ -1659,93 +1745,6 @@ export default function MessagesPageClient({ initialThreadId }: MessagesPageClie
                 className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               />
-            </div>,
-            document.body,
-          )
-        : null}
-      {groupModalOpen
-        ? createPortal(
-            <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4" onClick={() => setGroupModalOpen(false)}>
-              <div className="flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-semibold text-slate-900">Create Group Chat</h3>
-                    <p className="text-xs text-slate-500">Select friends to start a group conversation.</p>
-                  </div>
-                  <button type="button" className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100" onClick={() => setGroupModalOpen(false)}>
-                    <HiOutlineXMark className="h-5 w-5" />
-                  </button>
-                </div>
-                <div className="sticky top-0 z-10 mb-3 bg-white pb-2">
-                  <input
-                    type="text"
-                    value={groupContactFilter}
-                    onChange={(event) => setGroupContactFilter(event.target.value)}
-                    placeholder="Filter by name or @handle"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-300"
-                  />
-                </div>
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                  {groupContactsLoading ? <p className="text-sm text-slate-500">Loading contacts…</p> : null}
-                  {!groupContactsLoading && filteredGroupContacts.length === 0 ? (
-                    <p className="text-sm text-slate-500">No friends available yet.</p>
-                  ) : null}
-                  {filteredGroupContacts.map((contact) => {
-                    const checked = selectedGroupContactIds.includes(contact.id)
-                    const displayName = formatUserDisplayName(contact.name, contact.handle) || contact.handle
-                    return (
-                      <label
-                        key={contact.id}
-                        className={clsx(
-                          'flex cursor-pointer items-center gap-3 rounded-2xl border px-3 py-2 transition',
-                          checked ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5' : 'border-slate-200 bg-slate-50 hover:border-slate-300',
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4"
-                          checked={checked}
-                          onChange={() => {
-                            setSelectedGroupContactIds((prev) =>
-                              prev.includes(contact.id) ? prev.filter((id) => id !== contact.id) : [...prev, contact.id],
-                            )
-                          }}
-                        />
-                        <div>
-                          <VerifiedAvatar
-                            src={contact.avatarUrl}
-                            alt={displayName}
-                            initials={displayName}
-                            size={42}
-                            isVerified={contact.isVerified}
-                            isBusiness={contact.isPremium}
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
-                          <p className="truncate text-xs text-slate-500">@{contact.handle}</p>
-                        </div>
-                      </label>
-                    )
-                  })}
-                </div>
-                <div className="mt-4 flex items-center justify-between gap-3">
-                  <p className="text-xs text-slate-500">Selected: {selectedGroupContactIds.length}</p>
-                  <button
-                    type="button"
-                    className={clsx(
-                      'rounded-full px-4 py-2 text-sm font-semibold text-white transition',
-                      selectedGroupContactIds.length < 2 || creatingGroupChat
-                        ? 'cursor-not-allowed bg-slate-300'
-                        : 'bg-[var(--cc-primary)] hover:brightness-110',
-                    )}
-                    disabled={selectedGroupContactIds.length < 2 || creatingGroupChat}
-                    onClick={createGroupChat}
-                  >
-                    {creatingGroupChat ? 'Creating…' : 'Create Group Chat'}
-                  </button>
-                </div>
-              </div>
             </div>,
             document.body,
           )

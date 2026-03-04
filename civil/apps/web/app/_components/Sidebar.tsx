@@ -5,15 +5,14 @@ import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
 import {
+  HiOutlineChatBubbleOvalLeft,
   HiOutlineHome,
   HiOutlineBuildingOffice2,
   HiOutlineUserCircle,
   HiOutlineBuildingLibrary,
   HiOutlineCalendarDays,
   HiOutlineShoppingBag,
-  HiOutlineWallet,
   HiOutlineBriefcase,
-  HiOutlineUserGroup,
   HiOutlineUsers,
   HiOutlineNewspaper,
   HiOutlineMicrophone,
@@ -49,7 +48,7 @@ export type SidebarNavItem = {
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Civic Pulse', href: '/home', icon: HiOutlineHome },
-  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineUserGroup },
+  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
   { key: 'network', label: 'Network', href: '/network', icon: HiOutlineBriefcase },
   {
@@ -71,7 +70,6 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: HiOutlineMicrophone },
   { key: 'music', label: 'Music', href: '/music', icon: HiOutlineMusicalNote },
   { key: 'video', label: 'Video', href: '/video', icon: HiOutlineVideoCamera },
-  { key: 'wallet', label: 'Wallet', href: '/wallet', icon: HiOutlineWallet },
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
 ]
 

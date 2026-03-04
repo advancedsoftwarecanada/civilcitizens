@@ -7,11 +7,9 @@ import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
 import {
   HiOutlineBell,
-  HiOutlineMagnifyingGlass,
   HiOutlineChatBubbleOvalLeft,
-  HiOutlineHashtag,
+  HiOutlineMagnifyingGlass,
   HiOutlineShoppingCart,
-  HiOutlineUserGroup,
 } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
@@ -22,8 +20,6 @@ import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
 import {
   getFriendshipId,
-  getNotificationMessage,
-  getActorDisplayName,
 } from './notifications/notificationUtils'
 import {
   emitNotificationsMarkedReadEvent,
@@ -74,6 +70,7 @@ export default function TopNav() {
   const [searchFocused, setSearchFocused] = useState(false)
   const trimmedSearchQuery = searchQuery.trim()
   const showSearchResults = searchFocused && trimmedSearchQuery.length >= 2
+  const unifiedMessageUnreadCount = messageUnreadCount + orgChannelUnreadCount + marketChatUnreadCount
 
   useEffect(() => () => {
     if (searchBlurTimeout.current) clearTimeout(searchBlurTimeout.current)
@@ -264,7 +261,7 @@ export default function TopNav() {
         setUnreadCount((prev) => prev + unreadDelta)
       }
     },
-    [fetchMessageUnreadCount, fetchOrgChannelUnreadCount, pathname],
+    [fetchMarketChatUnreadCount, fetchMessageUnreadCount, fetchOrgChannelUnreadCount, pathname],
   )
 
   useEffect(() => {
@@ -564,38 +561,14 @@ export default function TopNav() {
             ) : null}
           </Link>
           <Link
-            href="/market/chats"
-            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-            aria-label="Marketplace chats"
-          >
-            <HiOutlineChatBubbleOvalLeft className="text-xl" />
-            {marketChatUnreadCount > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
-                {marketChatUnreadCount > 9 ? '9+' : marketChatUnreadCount}
-              </span>
-            ) : null}
-          </Link>
-          <Link
             href="/messages"
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             aria-label="Messages"
           >
-            <HiOutlineUserGroup className="text-xl" />
-            {messageUnreadCount > 0 ? (
+            <HiOutlineChatBubbleOvalLeft className="text-xl" />
+            {unifiedMessageUnreadCount > 0 ? (
               <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
-                {messageUnreadCount > 9 ? '9+' : messageUnreadCount}
-              </span>
-            ) : null}
-          </Link>
-          <Link
-            href="/channels"
-            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-            aria-label="Organization channel activity"
-          >
-            <HiOutlineHashtag className="text-xl" />
-            {orgChannelUnreadCount > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
-                {orgChannelUnreadCount > 9 ? '9+' : orgChannelUnreadCount}
+                {unifiedMessageUnreadCount > 9 ? '9+' : unifiedMessageUnreadCount}
               </span>
             ) : null}
           </Link>
