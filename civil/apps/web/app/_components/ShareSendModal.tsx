@@ -8,7 +8,7 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { formatDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { buildDirectShareMessage, toAbsoluteShareUrl, type ShareTarget } from '../_lib/shareTarget'
+import { buildDirectShareMessage, buildExternalShareText, buildExternalShareTitle, toAbsoluteShareUrl, type ShareTarget } from '../_lib/shareTarget'
 import { pushToast } from './useToasts'
 
 type ShareSendModalProps = {
@@ -76,7 +76,8 @@ export default function ShareSendModal({ target, onClose }: ShareSendModalProps)
   const [peopleError, setPeopleError] = useState<string | null>(null)
 
   const absoluteUrl = useMemo(() => toAbsoluteShareUrl(target.url), [target.url])
-  const shareText = useMemo(() => target.description || target.title || 'Check this out on Civil', [target.description, target.title])
+  const shareTitle = useMemo(() => buildExternalShareTitle(target), [target])
+  const shareText = useMemo(() => buildExternalShareText(target), [target])
 
   const sortedFriends = useMemo(() => {
     const list = [...friends]
@@ -164,7 +165,7 @@ export default function ShareSendModal({ target, onClose }: ShareSendModalProps)
     try {
       if (typeof navigator !== 'undefined' && navigator.share) {
         await navigator.share({
-          title: target.title || 'Civil',
+          title: shareTitle,
           text: shareText,
           url: absoluteUrl,
         })
@@ -181,7 +182,7 @@ export default function ShareSendModal({ target, onClose }: ShareSendModalProps)
       return
     }
     pushToast('Unable to open external share or copy URL', 'error')
-  }, [absoluteUrl, shareText, target.title])
+  }, [absoluteUrl, shareText, shareTitle])
 
   const sendToUser = useCallback(
     async (user: ShareUser) => {
