@@ -24,8 +24,6 @@
   }
 
   html {
-    /* Keep layout width stable when overlays/modals toggle body scrolling. */
-    scrollbar-gutter: stable;
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     overflow-x: hidden;
@@ -41,6 +39,13 @@
     background-size: 1400px 900px, 1400px 900px, 100% 320%;
     background-position: top left, top right, top center;
     color: #0f172a;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html {
+    /* Keep desktop layout width stable when overlays/modals toggle body scrolling. */
+    scrollbar-gutter: stable;
   }
 }
 
