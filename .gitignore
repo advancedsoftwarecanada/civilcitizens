@@ -38,20 +38,6 @@ __pycache__/
 **/coverage/
 **/.nyc_output/
 
-# Env files (keep examples)
-.env
-.env.*
-!.env.*.example
-!.env.*example
-
-**/.env
-**/.env.*
-!**/.env.*.example
-!**/.env.*example
-
-# Generated local Prisma env
-civil/packages/db/.env
-
 # OS/editor misc
 .DS_Store
 Thumbs.db
@@ -84,4 +70,3 @@ _geodata/
 
 # Large SQL exports
 tests/*.sql
-
