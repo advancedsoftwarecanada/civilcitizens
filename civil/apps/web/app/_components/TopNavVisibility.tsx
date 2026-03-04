@@ -8,9 +8,16 @@ const HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 
 export default function TopNavVisibility() {
   const pathname = usePathname()
+  const resolvedPathname = pathname || ''
+  const hasResolvedPathname = resolvedPathname.length > 0
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
-  const isInviteRoute = pathname ? pathname.includes('/invite/') : false
-  const hideNav = pathname ? HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || (isInviteRoute && inviteGuestMode !== false) : false
+  const isInviteRoute = hasResolvedPathname ? resolvedPathname.includes('/invite/') : false
+  const hideNav =
+    !hasResolvedPathname ||
+    HIDDEN_PATHS.has(resolvedPathname) ||
+    resolvedPathname.startsWith('/welcome') ||
+    resolvedPathname.startsWith('/install/') ||
+    (isInviteRoute && inviteGuestMode !== false)
 
   if (hideNav) {
     return null

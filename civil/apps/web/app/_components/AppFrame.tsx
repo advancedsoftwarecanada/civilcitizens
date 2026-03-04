@@ -16,16 +16,15 @@ type AppFrameProps = {
 
 export default function AppFrame({ children, modal }: AppFrameProps) {
   const pathname = usePathname()
+  const resolvedPathname = pathname || ''
+  const hasResolvedPathname = resolvedPathname.length > 0
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
-  const isInviteRoute = pathname ? pathname.includes('/invite/') : false
+  const isInviteRoute = hasResolvedPathname ? resolvedPathname.includes('/invite/') : false
   const hideForInviteGuest = isInviteRoute && inviteGuestMode !== false
 
-  const topNavHidden = pathname
-    ? TOP_NAV_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || pathname.startsWith('/install/') || hideForInviteGuest
-    : false
-  const sidebarHidden = pathname
-    ? SIDEBAR_HIDDEN_PATHS.has(pathname) || pathname.startsWith('/welcome') || pathname.startsWith('/install/') || hideForInviteGuest
-    : false
+  const hideForInstall = hasResolvedPathname && resolvedPathname.startsWith('/install/')
+  const topNavHidden = !hasResolvedPathname || TOP_NAV_HIDDEN_PATHS.has(resolvedPathname) || resolvedPathname.startsWith('/welcome') || hideForInstall || hideForInviteGuest
+  const sidebarHidden = !hasResolvedPathname || SIDEBAR_HIDDEN_PATHS.has(resolvedPathname) || resolvedPathname.startsWith('/welcome') || hideForInstall || hideForInviteGuest
 
   return (
     <div
