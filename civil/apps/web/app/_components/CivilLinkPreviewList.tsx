@@ -81,7 +81,7 @@ export default function CivilLinkPreviewList({ body, className }: CivilLinkPrevi
       const meta = splitPreviewMeta(preview.meta)
 
       const cardBody = (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300 hover:shadow-sm">
+        <div className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300 hover:shadow-sm">
           {preview.imageUrl ? (
             <div className="relative aspect-[16/8] w-full overflow-hidden border-b border-slate-200 bg-slate-100">
               <img src={preview.imageUrl} alt={preview.title} className="h-full w-full object-cover" loading="lazy" />
@@ -95,15 +95,15 @@ export default function CivilLinkPreviewList({ body, className }: CivilLinkPrevi
             {meta.source ? (
               <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">By {meta.source}</p>
             ) : null}
-            <p className="line-clamp-2 text-base font-semibold leading-tight text-slate-900">{preview.title}</p>
-            {preview.description ? <p className="line-clamp-3 text-sm leading-5 text-slate-600">{preview.description}</p> : null}
-            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+            <p className="line-clamp-2 break-words text-base font-semibold leading-tight text-slate-900">{preview.title}</p>
+            {preview.description ? <p className="line-clamp-3 break-words text-sm leading-5 text-slate-600">{preview.description}</p> : null}
+            <div className="flex min-w-0 flex-wrap items-center gap-2 pt-0.5">
               {meta.detail ? (
                 <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
                   {meta.detail}
                 </span>
               ) : null}
-              <span className="truncate text-[11px] text-slate-500">
+              <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500">
                 {targetUrl.startsWith('/') ? `civilcitizens.ca${targetUrl}` : targetUrl}
               </span>
             </div>
@@ -113,14 +113,14 @@ export default function CivilLinkPreviewList({ body, className }: CivilLinkPrevi
 
       if (targetUrl.startsWith('/')) {
         return (
-          <Link key={`${url}-preview`} href={targetUrl} className="block">
+          <Link key={`${url}-preview`} href={targetUrl} className="block w-full min-w-0 max-w-full">
             {cardBody}
           </Link>
         )
       }
 
       return (
-        <a key={`${url}-preview`} href={targetUrl} target="_blank" rel="noopener noreferrer" className="block">
+        <a key={`${url}-preview`} href={targetUrl} target="_blank" rel="noopener noreferrer" className="block w-full min-w-0 max-w-full">
           {cardBody}
         </a>
       )
@@ -129,5 +129,5 @@ export default function CivilLinkPreviewList({ body, className }: CivilLinkPrevi
 
   if (cards.length === 0) return null
 
-  return <div className={className ? className : 'space-y-2'}>{cards}</div>
+  return <div className={className ? className : 'w-full min-w-0 max-w-full space-y-2'}>{cards}</div>
 }

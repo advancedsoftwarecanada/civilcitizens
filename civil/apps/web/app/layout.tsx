@@ -12,6 +12,7 @@ import GoogleAnalytics from './_components/GoogleAnalytics'
 import AppFrame from './_components/AppFrame'
 import NotificationTapRouter from './_components/NotificationTapRouter'
 import IosPwaPushPrompt from './_components/IosPwaPushPrompt'
+import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -100,6 +101,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <ScrollManager />
         </Suspense>
         <IosPwaPushPrompt />
+        <IosOpenInAppBanner />
         <AppFrame modal={modal}>{children}</AppFrame>
         <MobileDockVisibility />
         <Toasts />
