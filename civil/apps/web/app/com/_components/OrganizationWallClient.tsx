@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ReactionType } from '@civil/shared'
 import PostFeedItem from '../../_components/PostFeedItem'
 import PostComposer from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
@@ -187,23 +188,23 @@ export default function OrganizationWallClient({
     setPosts((prev) => [post, ...prev])
   }, [])
 
-  const handleVote = useCallback(async (postId: string, value: -1 | 0 | 1) => {
+  const handleReact = useCallback(async (postId: string, reaction: ReactionType | null) => {
     if (!token) {
       redirectToAuthModal('login')
       return
     }
 
     try {
-      const res = await fetch(buildApiUrl('/posts/vote'), {
+      const res = await fetch(buildApiUrl('/posts/react'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ postId, value }),
+        body: JSON.stringify({ postId, reaction }),
       })
       if (!res.ok) {
-        console.error('Vote request failed', await res.text())
+        console.error('Reaction request failed', await res.text())
         return
       }
       const data = (await res.json().catch(() => null)) as { post?: ApiPost } | null
@@ -227,7 +228,7 @@ export default function OrganizationWallClient({
         )
       }
     } catch (err) {
-      console.error('Unable to vote on post', err)
+      console.error('Unable to react to post', err)
     }
   }, [token])
 
@@ -296,7 +297,7 @@ export default function OrganizationWallClient({
             <PostFeedItem
               key={post.id}
               post={post}
-              onVote={handleVote}
+              onReact={handleReact}
               viewerId={viewerId}
             />
           ))

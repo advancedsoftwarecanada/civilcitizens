@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
+import type { ReactionType } from '@civil/shared'
 import { HiOutlineUserPlus, HiOutlineBriefcase } from 'react-icons/hi2'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
@@ -322,8 +323,8 @@ export default function UserPostsPage({ params }: PageProps) {
     [],
   )
 
-  const handleVote = useCallback(
-    async (postId: string, value: -1 | 0 | 1) => {
+  const handleReact = useCallback(
+    async (postId: string, reaction: ReactionType | null) => {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       if (!token) {
         redirectToAuthModal('login')
@@ -331,16 +332,16 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       try {
-        const res = await fetch(buildApiUrl('/posts/vote'), {
+        const res = await fetch(buildApiUrl('/posts/react'), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ postId, value }),
+          body: JSON.stringify({ postId, reaction }),
         })
         if (!res.ok) {
-          console.error('Vote request failed', await res.text())
+          console.error('Reaction request failed', await res.text())
           return
         }
         const data = await res.json().catch(() => null)
@@ -349,7 +350,7 @@ export default function UserPostsPage({ params }: PageProps) {
           setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
         }
       } catch (err) {
-        console.error('Unable to vote on post', err)
+        console.error('Unable to react to post', err)
       }
     },
     [],
@@ -1390,7 +1391,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <PostFeedItem
                 key={post.id}
                 post={post}
-                onVote={handleVote}
+                onReact={handleReact}
                 viewerId={viewer?.id ?? null}
               />
             ))

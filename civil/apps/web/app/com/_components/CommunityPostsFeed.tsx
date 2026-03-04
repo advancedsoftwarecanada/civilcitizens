@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ReactionType } from '@civil/shared'
 import PostComposer, { type ApiPost } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
 import { buildApiUrl } from '../../_lib/api'
@@ -112,23 +113,23 @@ export default function CommunityPostsFeed() {
     [],
   )
 
-  const handleVote = useCallback(async (postId: string, value: -1 | 0 | 1) => {
+  const handleReact = useCallback(async (postId: string, reaction: ReactionType | null) => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
       return
     }
     try {
-      const res = await fetch(buildApiUrl('/posts/vote'), {
+      const res = await fetch(buildApiUrl('/posts/react'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ postId, value }),
+        body: JSON.stringify({ postId, reaction }),
       })
       if (!res.ok) {
-        console.error('Vote request failed', await res.text())
+        console.error('Reaction request failed', await res.text())
         return
       }
       const data = await res.json().catch(() => null)
@@ -152,7 +153,7 @@ export default function CommunityPostsFeed() {
         )
       }
     } catch (err) {
-      console.error('Unable to vote on community post', err)
+      console.error('Unable to react to community post', err)
     }
   }, [])
 
@@ -205,7 +206,7 @@ export default function CommunityPostsFeed() {
             <PostFeedItem
               key={post.id}
               post={post}
-              onVote={handleVote}
+              onReact={handleReact}
               viewerId={viewerId}
             />
           ))

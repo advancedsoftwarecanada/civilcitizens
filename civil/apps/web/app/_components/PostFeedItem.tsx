@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
+import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import { HiEllipsisHorizontal, HiPencil, HiTrash } from 'react-icons/hi2'
+import type { ReactionType } from '@civil/shared'
 import type { ApiPost, CommunityTarget } from './PostComposer'
 import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
@@ -19,6 +20,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildPostShareTarget } from '../_lib/shareTarget'
 import CivilLinkPreviewList from './CivilLinkPreviewList'
 import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
+import PostReactionBar from './PostReactionBar'
 
 const FEED_COMMENT_PREVIEW_LIMIT = 3
 const FEED_COMMENT_BUFFER_LIMIT = 20
@@ -60,7 +62,7 @@ function formatRelativeTime(iso: string) {
 
 type PostFeedItemProps = {
   post: ApiPost
-  onVote?: (postId: string, value: -1 | 0 | 1) => Promise<void>
+  onReact?: (postId: string, reaction: ReactionType | null) => Promise<void>
   onDelete?: (postId: string) => void
   onUpdate?: (post: ApiPost) => void
   viewerId?: string | null
@@ -126,7 +128,7 @@ function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null
   )
 }
 
-export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerId, communityOptions }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerId, communityOptions }: PostFeedItemProps) {
   const router = useRouter()
   const [pending, setPending] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -140,15 +142,12 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
   const [inlineSubmitting, setInlineSubmitting] = useState(false)
   const [activeReplyParentId, setActiveReplyParentId] = useState<string | null>(null)
   const [replyDraft, setReplyDraft] = useState('')
-  const [pendingCommentVotes, setPendingCommentVotes] = useState<Record<string, boolean>>({})
-  const [commentVoteState, setCommentVoteState] = useState<Record<string, { score: number; viewerVote: -1 | 0 | 1 }>>({})
   const [recentComments, setRecentComments] = useState(post.recentComments ?? [])
   const [hideInlineCommentComposer, setHideInlineCommentComposer] = useState(false)
   const [commentPreviewSort, setCommentPreviewSort] = useState<'new' | 'hot'>('new')
   const menuRef = useRef<HTMLDivElement>(null)
   const commentCount = post.counts?.commentCount ?? 0
-  const voteScore = post.votes?.score ?? post.counts?.score ?? 0
-  const viewerVote = post.viewer?.vote ?? null
+  const viewerReaction = post.viewer?.reaction ?? null
   const postUrl = buildPostUrl(post)
   const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
   const bodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post.body), [post.body])
@@ -183,17 +182,6 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
     setHideInlineCommentComposer(false)
   }, [post.id])
 
-  useEffect(() => {
-    const next: Record<string, { score: number; viewerVote: -1 | 0 | 1 }> = {}
-    for (const comment of recentComments) {
-      next[comment.id] = {
-        score: typeof comment.score === 'number' ? comment.score : 0,
-        viewerVote: 0,
-      }
-    }
-    setCommentVoteState((prev) => ({ ...next, ...prev }))
-  }, [recentComments])
-
   const previewComments = useMemo(() => {
     const deduped = new Map<string, NonNullable<ApiPost['recentComments']>[number]>()
     for (const comment of recentComments) {
@@ -206,8 +194,8 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
     if (commentPreviewSort === 'hot') {
       return items
         .sort((a, b) => {
-          const scoreA = commentVoteState[a.id]?.score ?? (typeof a.score === 'number' ? a.score : 0)
-          const scoreB = commentVoteState[b.id]?.score ?? (typeof b.score === 'number' ? b.score : 0)
+          const scoreA = typeof a.score === 'number' ? a.score : 0
+          const scoreB = typeof b.score === 'number' ? b.score : 0
           if (scoreB !== scoreA) return scoreB - scoreA
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         })
@@ -217,7 +205,7 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
     return items
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, FEED_COMMENT_PREVIEW_LIMIT)
-  }, [commentPreviewSort, commentVoteState, recentComments])
+  }, [commentPreviewSort, recentComments])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -293,11 +281,11 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
     setShareModalOpen(true)
   }
 
-  const handleVote = async (value: -1 | 0 | 1) => {
-    if (!onVote || pending) return
+  const handleReact = async (reaction: ReactionType | null) => {
+    if (!onReact || pending) return
     setPending(true)
     try {
-      await onVote(post.id, value)
+      await onReact(post.id, reaction)
     } finally {
       setPending(false)
     }
@@ -368,69 +356,6 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
       return false
     } finally {
       setInlineSubmitting(false)
-    }
-  }
-
-  const getCommentVoteMeta = (comment: { id: string; score?: number }) => {
-    const local = commentVoteState[comment.id]
-    if (local) return local
-    return {
-      score: typeof comment.score === 'number' ? comment.score : 0,
-      viewerVote: 0 as -1 | 0 | 1,
-    }
-  }
-
-  const handleCommentVote = async (comment: { id: string; score?: number }, direction: -1 | 1) => {
-    if (!viewerId) {
-      redirectToAuthModal('login')
-      return
-    }
-    const token = getStoredToken()
-    if (!token) {
-      redirectToAuthModal('login')
-      return
-    }
-    if (pendingCommentVotes[comment.id]) return
-
-    const current = getCommentVoteMeta(comment)
-    const nextValue: -1 | 0 | 1 = current.viewerVote === direction ? 0 : direction
-
-    setPendingCommentVotes((prev) => ({ ...prev, [comment.id]: true }))
-    try {
-      const res = await fetch(buildApiUrl('/comments/vote'), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ commentId: comment.id, value: nextValue }),
-      })
-      if (!res.ok) {
-        pushToast('Unable to update comment vote right now.', 'error')
-        return
-      }
-      const payload = await res.json().catch(() => null)
-      const updatedComment = payload?.comment ?? null
-      const updatedScore = typeof updatedComment?.score === 'number' ? updatedComment.score : current.score
-      const updatedViewerVote = typeof updatedComment?.viewerVote === 'number'
-        ? (Math.max(-1, Math.min(1, updatedComment.viewerVote)) as -1 | 0 | 1)
-        : nextValue
-
-      setCommentVoteState((prev) => ({
-        ...prev,
-        [comment.id]: {
-          score: updatedScore,
-          viewerVote: updatedViewerVote,
-        },
-      }))
-    } catch {
-      pushToast('Unable to update comment vote right now.', 'error')
-    } finally {
-      setPendingCommentVotes((prev) => {
-        const next = { ...prev }
-        delete next[comment.id]
-        return next
-      })
     }
   }
 
@@ -678,37 +603,12 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
       </div>
 
       <footer className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
-        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 py-1">
-          <button
-            type="button"
-            onClick={() => void handleVote(viewerVote === 1 ? 0 : 1)}
-            className={clsx(
-              'inline-flex items-center rounded-full p-1.5 transition',
-              viewerVote === 1
-                ? 'bg-emerald-50 text-emerald-700'
-                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
-              pending && 'pointer-events-none opacity-60',
-            )}
-            aria-label="Upvote post"
-          >
-            <LuArrowBigUp className="h-4 w-4" />
-          </button>
-          <span className="min-w-[2ch] text-center text-sm font-semibold text-slate-700">{voteScore}</span>
-          <button
-            type="button"
-            onClick={() => void handleVote(viewerVote === -1 ? 0 : -1)}
-            className={clsx(
-              'inline-flex items-center rounded-full p-1.5 transition',
-              viewerVote === -1
-                ? 'bg-rose-50 text-rose-700'
-                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
-              pending && 'pointer-events-none opacity-60',
-            )}
-            aria-label="Downvote post"
-          >
-            <LuArrowBigDown className="h-4 w-4" />
-          </button>
-        </div>
+        <PostReactionBar
+          reactions={post.reactions}
+          viewerReaction={viewerReaction}
+          disabled={pending}
+          onReact={(reaction) => handleReact(reaction)}
+        />
         <Link
           href={postUrl}
           className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -756,8 +656,6 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
           const commentCoverUrl = comment.author.coverUrl ?? null
           const hasCommentCover = Boolean(commentCoverUrl)
           const isReplyTarget = activeReplyParentId === comment.id
-          const commentVoteMeta = getCommentVoteMeta(comment)
-          const isCommentVotePending = Boolean(pendingCommentVotes[comment.id])
           const isNestedReply = Boolean(comment.parentId)
           return (
             <div
@@ -793,39 +691,6 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
                 {isNestedReply ? <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]/80">Reply in thread</p> : null}
                 <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-800">{comment.body}</p>
                 <div className="mt-1.5 flex items-center gap-2">
-                  <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-1 py-0.5 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => void handleCommentVote(comment, 1)}
-                      disabled={isCommentVotePending}
-                      className={clsx(
-                        'inline-flex items-center rounded-full p-1 transition',
-                        commentVoteMeta.viewerVote === 1
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
-                        isCommentVotePending && 'pointer-events-none opacity-60',
-                      )}
-                      aria-label="Upvote comment"
-                    >
-                      <LuArrowBigUp className="h-3.5 w-3.5" />
-                    </button>
-                    <span className="min-w-[1.5ch] text-center text-xs font-semibold text-slate-700">{commentVoteMeta.score}</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleCommentVote(comment, -1)}
-                      disabled={isCommentVotePending}
-                      className={clsx(
-                        'inline-flex items-center rounded-full p-1 transition',
-                        commentVoteMeta.viewerVote === -1
-                          ? 'bg-rose-50 text-rose-700'
-                          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
-                        isCommentVotePending && 'pointer-events-none opacity-60',
-                      )}
-                      aria-label="Downvote comment"
-                    >
-                      <LuArrowBigDown className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
                   <button
                     type="button"
                     onClick={() => {
