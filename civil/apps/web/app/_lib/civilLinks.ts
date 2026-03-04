@@ -1,5 +1,7 @@
 const HTTP_URL_REGEX = /https?:\/\/[^\s<>"']+/gi
 const TRAILING_URL_PUNCTUATION = /[)\],.!?:;]+$/
+const EMPTY_ANCHOR_REGEX = /<a\b([^>]*?)href=(['"])\s*\2([^>]*)>([\s\S]*?)<\/a>/gi
+const EMPTY_PARAGRAPH_REGEX = /<p>(?:\s|&nbsp;|<br\s*\/?>)*<\/p>/gi
 
 const CIVIL_LINK_HOSTS = new Set([
   'dev.civilcitizens.ca',
@@ -78,3 +80,25 @@ export function stripCivilUrlsFromText(body: string | null | undefined): string 
     .trim()
 }
 
+function stripCivilUrlMatches(input: string): string {
+  return input.replace(HTTP_URL_REGEX, (value) => {
+    const normalized = normalizeHttpUrl(value)
+    if (!normalized || !isCivilUrl(normalized)) return value
+    return ''
+  })
+}
+
+export function stripCivilUrlsFromHtml(html: string | null | undefined): string {
+  const raw = html ?? ''
+  if (!raw) return ''
+
+  const stripped = stripCivilUrlMatches(raw)
+    .replace(EMPTY_ANCHOR_REGEX, '$4')
+    .replace(EMPTY_PARAGRAPH_REGEX, '')
+
+  return stripped
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+}
