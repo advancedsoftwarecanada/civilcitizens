@@ -23,6 +23,20 @@ type CivilLinkPreviewListProps = {
   className?: string
 }
 
+function splitPreviewMeta(meta: string | null | undefined): { source: string | null; detail: string | null } {
+  const raw = (meta ?? '').trim()
+  if (!raw) return { source: null, detail: null }
+  const parts = raw
+    .split('•')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length === 0) return { source: null, detail: null }
+  return {
+    source: parts[0] ?? null,
+    detail: parts.slice(1).join(' • ') || null,
+  }
+}
+
 export default function CivilLinkPreviewList({ body, className }: CivilLinkPreviewListProps) {
   const pendingUrlsRef = useRef<Set<string>>(new Set())
   const [previews, setPreviews] = useState<Record<string, LinkPreviewRecord | null>>({})
@@ -64,6 +78,7 @@ export default function CivilLinkPreviewList({ body, className }: CivilLinkPrevi
       const preview = previews[url]
       if (!preview) return null
       const targetUrl = (preview.url || '').trim() || url
+      const meta = splitPreviewMeta(preview.meta)
 
       const cardBody = (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300 hover:shadow-sm">
@@ -77,12 +92,15 @@ export default function CivilLinkPreviewList({ body, className }: CivilLinkPrevi
             </div>
           ) : null}
           <div className="space-y-1.5 p-3">
+            {meta.source ? (
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">By {meta.source}</p>
+            ) : null}
             <p className="line-clamp-2 text-base font-semibold leading-tight text-slate-900">{preview.title}</p>
             {preview.description ? <p className="line-clamp-3 text-sm leading-5 text-slate-600">{preview.description}</p> : null}
             <div className="flex flex-wrap items-center gap-2 pt-0.5">
-              {preview.meta ? (
+              {meta.detail ? (
                 <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                  {preview.meta}
+                  {meta.detail}
                 </span>
               ) : null}
               <span className="truncate text-[11px] text-slate-500">

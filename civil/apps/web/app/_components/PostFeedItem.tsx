@@ -18,7 +18,7 @@ import ShareSendModal from './ShareSendModal'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildPostShareTarget } from '../_lib/shareTarget'
 import CivilLinkPreviewList from './CivilLinkPreviewList'
-import { stripCivilUrlsFromText } from '../_lib/civilLinks'
+import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
 
 const FEED_COMMENT_PREVIEW_LIMIT = 3
 const FEED_COMMENT_BUFFER_LIMIT = 20
@@ -152,6 +152,7 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
   const postUrl = buildPostUrl(post)
   const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
   const bodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post.body), [post.body])
+  const articleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post.body), [post.body])
   const communityUrl = buildCommunityUrl(post)
   const createdAt = new Date(post.createdAt)
   const organization = post.organization ?? null
@@ -585,9 +586,11 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
           </Link>
         ) : null}
         {post.type === 'article' ? (
-          <Link href={postUrl} className="block text-slate-700 hover:text-slate-900">
-            <span dangerouslySetInnerHTML={{ __html: post.body }} />
-          </Link>
+          articleBodyWithoutCivilLinks ? (
+            <Link href={postUrl} className="block text-slate-700 hover:text-slate-900">
+              <span dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }} />
+            </Link>
+          ) : null
         ) : post.type === 'photo' ? (
           bodyWithoutCivilLinks ? (
             <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
