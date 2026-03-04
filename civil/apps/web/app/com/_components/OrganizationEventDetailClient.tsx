@@ -3,7 +3,13 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useRouter } from 'next/navigation'
+import { LuRepeat2, LuShare } from 'react-icons/lu'
+import SharePostModal from '../../_components/SharePostModal'
+import ShareSendModal from '../../_components/ShareSendModal'
+import type { CommunityTarget } from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
+import { buildEventShareTarget, type ShareTarget } from '../../_lib/shareTarget'
 
 type InviteStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED'
 
@@ -133,6 +139,7 @@ export default function OrganizationEventDetailClient({
   organization: string
   eventId: string
 }) {
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [payload, setPayload] = useState<OrganizationEventDetailResponse | null>(null)
@@ -141,8 +148,18 @@ export default function OrganizationEventDetailClient({
   const [selectedTicketId, setSelectedTicketId] = useState<string>('')
   const [joinMessage, setJoinMessage] = useState('')
   const [joining, setJoining] = useState(false)
+  const [repostModalOpen, setRepostModalOpen] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
   const [activeGalleryIndex, setActiveGalleryIndex] = useState<number | null>(null)
   const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null)
+
+  const requireAuthenticatedCta = useCallback((): string | null => {
+    if (typeof window === 'undefined') return null
+    const token = window.localStorage.getItem('token')
+    if (token) return token
+    router.push('/')
+    return null
+  }, [router])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -187,22 +204,46 @@ export default function OrganizationEventDetailClient({
     void load()
   }, [load])
 
-  const baseEventsHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization)}/events`
-  const manageEventsHref = `${baseEventsHref}/manage`
-
   const event = payload?.event
   const org = payload?.organization
+  const resolvedProvince = (org?.provinceCode ?? province).trim().toLowerCase()
+  const resolvedMunicipality = (org?.communitySlug ?? municipality).trim().toLowerCase()
+  const resolvedOrganizationSlug = (org?.slug ?? organization).trim().toLowerCase()
   const invitation = payload?.viewerInvitation ?? null
   const viewerRsvp = payload?.viewerRsvp ?? null
-  const fees = Array.isArray(event?.fees) ? event.fees : []
-  const minimumPaidFee = fees
-    .map((fee) => fee.amountCents)
-    .filter((amount) => Number.isFinite(amount) && amount > 0)
-    .sort((a, b) => a - b)[0] ?? null
+  const fees = useMemo(() => (Array.isArray(event?.fees) ? event.fees : []), [event?.fees])
 
-  const communityHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}`
-  const organizationHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization)}`
+  const communityHref = `/com/${encodeURIComponent(resolvedProvince)}/${encodeURIComponent(resolvedMunicipality)}`
+  const organizationHref = `/com/${encodeURIComponent(resolvedProvince)}/${encodeURIComponent(resolvedMunicipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}`
   const categoryHref = `/events?category=${encodeURIComponent(toCategoryQueryValue(event?.category))}`
+  const shareCommunityOptions = useMemo<CommunityTarget[]>(
+    () =>
+      resolvedProvince && resolvedMunicipality
+        ? [
+            {
+              provinceCode: resolvedProvince.toUpperCase(),
+              communitySlug: resolvedMunicipality,
+              communityName: toTitleCase(resolvedMunicipality),
+            },
+          ]
+        : [],
+    [resolvedMunicipality, resolvedProvince],
+  )
+  const eventShareTarget = useMemo<ShareTarget | null>(() => {
+    if (!event || !resolvedProvince || !resolvedMunicipality || !resolvedOrganizationSlug) return null
+    return buildEventShareTarget({
+      eventId: event.id,
+      title: event.title,
+      description: event.description,
+      startsAt: event.startsAt,
+      primaryPhotoUrl: event.primaryPhotoUrl,
+      galleryPhotoUrls: event.galleryPhotoUrls,
+      organizationName: org?.name ?? toTitleCase(resolvedOrganizationSlug),
+      provinceCode: resolvedProvince,
+      communitySlug: resolvedMunicipality,
+      organizationSlug: resolvedOrganizationSlug,
+    })
+  }, [event, org?.name, resolvedMunicipality, resolvedOrganizationSlug, resolvedProvince])
 
   const guestSpeakerCards = useMemo(() => {
     if (!event) return []
@@ -277,7 +318,7 @@ export default function OrganizationEventDetailClient({
       const notificationId = invitation?.notificationId
       if (!notificationId) return
 
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+      const token = requireAuthenticatedCta()
       if (!token) return
 
       setRespondingAction(action)
@@ -301,12 +342,12 @@ export default function OrganizationEventDetailClient({
         setRespondingAction(null)
       }
     },
-    [invitation?.notificationId, load],
+    [invitation?.notificationId, load, requireAuthenticatedCta],
   )
 
   const submitJoin = useCallback(async () => {
     if (!event) return
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    const token = requireAuthenticatedCta()
     if (!token) return
 
     if (fees.length > 0 && !selectedTicketId) return
@@ -341,7 +382,22 @@ export default function OrganizationEventDetailClient({
     } finally {
       setJoining(false)
     }
-  }, [event, fees.length, joinMessage, load, municipality, organization, province, selectedTicketId])
+  }, [event, fees.length, joinMessage, load, municipality, organization, province, requireAuthenticatedCta, selectedTicketId])
+
+  const handleJoinClick = useCallback(() => {
+    if (!requireAuthenticatedCta()) return
+    setShowJoinModal(true)
+  }, [requireAuthenticatedCta])
+
+  const handleRepostClick = useCallback(() => {
+    if (!requireAuthenticatedCta()) return
+    setRepostModalOpen(true)
+  }, [requireAuthenticatedCta])
+
+  const handleShareClick = useCallback(() => {
+    if (!requireAuthenticatedCta()) return
+    setShareModalOpen(true)
+  }, [requireAuthenticatedCta])
 
   return (
     <div className="space-y-5">
@@ -433,24 +489,44 @@ export default function OrganizationEventDetailClient({
               </p>
               <p className="text-base text-slate-600">
                 <Link href={communityHref} className="font-semibold text-slate-700 hover:underline">
-                  {toTitleCase(municipality)}
+                  {toTitleCase(resolvedMunicipality)}
                 </Link>{' '}
                 ·{' '}
                 <Link
                   href={organizationHref}
                   className="font-semibold text-slate-700 hover:underline"
                 >
-                  {toTitleCase(organization)}
+                  {org?.name || toTitleCase(resolvedOrganizationSlug)}
                 </Link>
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowJoinModal(true)}
+                  onClick={handleJoinClick}
                   className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110"
                 >
                   {viewerRsvp?.status === 'GOING' ? 'Update RSVP' : 'Join'}
                 </button>
+                {eventShareTarget ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleRepostClick}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      <LuRepeat2 className="h-4 w-4" />
+                      <span>Repost</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleShareClick}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    >
+                      <LuShare className="h-4 w-4" />
+                      <span>Share</span>
+                    </button>
+                  </>
+                ) : null}
               </div>
 
               {event.description ? <div className="prose max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: event.description }} /> : null}
@@ -513,7 +589,7 @@ export default function OrganizationEventDetailClient({
                     <div className="min-w-0">
                       <p className={org.coverUrl ? 'truncate text-sm font-semibold text-white' : 'truncate text-sm font-semibold text-slate-900'}>{org.name}</p>
                       <p className={org.coverUrl ? 'truncate text-xs text-white/85' : 'truncate text-xs text-slate-500'}>
-                        /{(org.provinceCode ?? province).toLowerCase()}/{org.communitySlug ?? municipality}
+                        /{resolvedProvince}/{resolvedMunicipality}
                       </p>
                     </div>
                   </div>
@@ -607,15 +683,22 @@ export default function OrganizationEventDetailClient({
             </section>
           ) : null}
 
-          <section className="flex flex-wrap gap-2">
-            <Link href={baseEventsHref} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              Back to events
-            </Link>
-            <Link href={manageEventsHref} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-              Manage events
-            </Link>
-          </section>
         </>
+      ) : null}
+
+      {repostModalOpen && eventShareTarget ? (
+        <SharePostModal
+          target={eventShareTarget}
+          communityOptions={shareCommunityOptions}
+          onClose={() => setRepostModalOpen(false)}
+        />
+      ) : null}
+
+      {shareModalOpen && eventShareTarget ? (
+        <ShareSendModal
+          target={eventShareTarget}
+          onClose={() => setShareModalOpen(false)}
+        />
       ) : null}
 
       {activeGalleryItem && typeof document !== 'undefined'

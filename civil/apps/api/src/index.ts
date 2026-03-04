@@ -2060,7 +2060,7 @@ async function loadThreadForUser(threadId: string, userId: string) {
 }
 
 type MessageLinkPreviewRecord = {
-  kind: 'post' | 'market_listing' | 'organization' | 'community' | 'profile'
+  kind: 'post' | 'event' | 'market_listing' | 'organization' | 'community' | 'profile'
   title: string
   description: string | null
   url: string
@@ -2244,6 +2244,174 @@ async function resolveOrganizationLinkPreview(provinceParam: string, communityPa
   }
 }
 
+type OrganizationSystemSnapshot = ReturnType<typeof readOrganizationSystemState>
+type OrganizationEventSnapshot = OrganizationSystemSnapshot['events'][number]
+
+type EventPreviewOrganization = {
+  name: string
+  slug: string
+  provinceCode: string
+  communitySlug: string
+  logoUrl: string | null
+  coverUrl: string | null
+}
+
+function formatEventPreviewDate(value: string | null | undefined): string | null {
+  if (!value) return null
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  return parsed.toLocaleDateString('en-CA', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+function canViewerAccessEventForPreview(event: OrganizationEventSnapshot, system: OrganizationSystemSnapshot, viewerId: string): boolean {
+  const status = String(event.status ?? 'PUBLISHED').toUpperCase()
+  if (status === 'DRAFT') return false
+  if (event.access !== 'RESTRICTED') return true
+
+  const membership = system.members[viewerId]
+  if (!membership || membership.status !== 'ACTIVE') return false
+
+  const eligibleRankIdsRaw = (event as { eligibleRankIds?: unknown }).eligibleRankIds
+  const eligibleRankIds = Array.isArray(eligibleRankIdsRaw)
+    ? eligibleRankIdsRaw
+      .map((rankId) => (typeof rankId === 'string' ? rankId.trim() : ''))
+      .filter((rankId): rankId is string => Boolean(rankId))
+    : []
+  if (eligibleRankIds.length > 0 && !eligibleRankIds.includes(membership.rankId)) {
+    return false
+  }
+  return true
+}
+
+function buildOrganizationEventLinkPreviewRecord(input: {
+  event: OrganizationEventSnapshot
+  organization: EventPreviewOrganization
+  communityName: string
+}): MessageLinkPreviewRecord {
+  const plainDescription = stripHtmlToPlainText(input.event.description ?? '')
+  const description = truncatePreviewText(plainDescription, 200) || null
+  const startsAtLabel = formatEventPreviewDate(input.event.startsAt)
+  const imageCandidate = input.event.primaryPhotoUrl ?? input.event.galleryPhotoUrls?.[0] ?? input.organization.coverUrl ?? input.organization.logoUrl ?? null
+
+  return {
+    kind: 'event',
+    title: truncatePreviewText(input.event.title || 'Civil event', 120) || 'Civil event',
+    description,
+    url: `/com/${encodeURIComponent(input.organization.provinceCode.toLowerCase())}/${encodeURIComponent(input.organization.communitySlug.toLowerCase())}/orgs/${encodeURIComponent(input.organization.slug)}/events/${encodeURIComponent(input.event.id)}`,
+    imageUrl: normalizeMediaUrl(imageCandidate),
+    meta: [input.organization.name, input.communityName, startsAtLabel].filter(Boolean).join(' • ') || null,
+  }
+}
+
+async function resolveOrganizationEventLinkPreview(
+  provinceParam: string,
+  communityParam: string,
+  slugParam: string,
+  eventIdParam: string,
+  viewerId: string,
+): Promise<MessageLinkPreviewRecord | null> {
+  const province = normalizeProvinceCode(provinceParam)
+  if (!province) return null
+  const communitySlug = communityParam.trim().toLowerCase()
+  const community = findCommunity(province, communitySlug)
+  if (!community) return null
+
+  const slug = slugParam.trim().toLowerCase()
+  const eventId = eventIdParam.trim()
+  if (!slug || !eventId) return null
+
+  const org = await prisma.business.findFirst({
+    where: {
+      provinceCode: community.province,
+      communitySlug: community.slug,
+      slug,
+      status: BusinessStatus.ACTIVE,
+    },
+    select: {
+      name: true,
+      slug: true,
+      provinceCode: true,
+      communitySlug: true,
+      logoUrl: true,
+      coverUrl: true,
+      metadata: true,
+    },
+  })
+  if (!org || !org.provinceCode || !org.communitySlug) return null
+
+  const system = readOrganizationSystemState(org.metadata)
+  const event = system.events.find((item) => item.id === eventId)
+  if (!event) return null
+  if (!canViewerAccessEventForPreview(event, system, viewerId)) return null
+
+  return buildOrganizationEventLinkPreviewRecord({
+    event,
+    organization: {
+      name: org.name,
+      slug: org.slug,
+      provinceCode: org.provinceCode,
+      communitySlug: org.communitySlug,
+      logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+    },
+    communityName: community.name,
+  })
+}
+
+async function resolveOrganizationIdEventLinkPreview(
+  organizationIdParam: string,
+  eventIdParam: string,
+  viewerId: string,
+): Promise<MessageLinkPreviewRecord | null> {
+  const organizationId = organizationIdParam.trim()
+  const eventId = eventIdParam.trim()
+  if (!organizationId || !eventId) return null
+
+  const org = await prisma.business.findFirst({
+    where: {
+      id: organizationId,
+      status: BusinessStatus.ACTIVE,
+    },
+    select: {
+      name: true,
+      slug: true,
+      provinceCode: true,
+      communitySlug: true,
+      logoUrl: true,
+      coverUrl: true,
+      metadata: true,
+    },
+  })
+  if (!org || !org.provinceCode || !org.communitySlug) return null
+
+  const province = normalizeProvinceCode(org.provinceCode)
+  if (!province) return null
+  const community = findCommunity(province, org.communitySlug.trim().toLowerCase())
+  if (!community) return null
+
+  const system = readOrganizationSystemState(org.metadata)
+  const event = system.events.find((item) => item.id === eventId)
+  if (!event) return null
+  if (!canViewerAccessEventForPreview(event, system, viewerId)) return null
+
+  return buildOrganizationEventLinkPreviewRecord({
+    event,
+    organization: {
+      name: org.name,
+      slug: org.slug,
+      provinceCode: org.provinceCode,
+      communitySlug: org.communitySlug,
+      logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+    },
+    communityName: community.name,
+  })
+}
+
 async function resolveMarketplaceListingLinkPreview(listingId: string): Promise<MessageLinkPreviewRecord | null> {
   const normalizedId = listingId.trim()
   if (!normalizedId) return null
@@ -2364,8 +2532,25 @@ async function resolveMessageLinkPreview(pathWithQuery: string, viewerId: string
     return resolvePostLinkPreview(segments[1], viewerId)
   }
 
+  if (segments[0]?.toLowerCase() === 'events' && segments[1] && segments[2]) {
+    return resolveOrganizationIdEventLinkPreview(segments[1], segments[2], viewerId)
+  }
+
   if (segments[0]?.toLowerCase() === 'market' && segments[1]?.toLowerCase() === 'listings' && segments[2]) {
     return resolveMarketplaceListingLinkPreview(segments[2])
+  }
+
+  if (
+    segments[0]?.toLowerCase() === 'com' &&
+    segments[1] &&
+    segments[2] &&
+    segments[3]?.toLowerCase() === 'orgs' &&
+    segments[4] &&
+    segments[5]?.toLowerCase() === 'events' &&
+    segments[6] &&
+    segments[6]?.toLowerCase() !== 'manage'
+  ) {
+    return resolveOrganizationEventLinkPreview(segments[1], segments[2], segments[4], segments[6], viewerId)
   }
 
   if (
