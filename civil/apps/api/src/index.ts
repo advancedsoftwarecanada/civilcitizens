@@ -1617,9 +1617,8 @@ const COMMENT_NOTIFICATION_TYPES = {
   POST_COMMENT: 'comment_post',
 } as const
 
-const MESSAGE_NOTIFICATION_TYPES = {
-  CREATED: 'message_created',
-} as const
+// Message delivery is represented by message unread counters/push, not bell notifications.
+const NOTIFICATION_FEED_EXCLUDED_TYPES = ['message_created', 'message', 'message.created'] as const
 
 const EVENT_NOTIFICATION_TYPES = {
   GUEST_SPEAKER_INVITE: 'event_guest_speaker_invite',
@@ -1631,34 +1630,6 @@ const EVENT_NOTIFICATION_TYPES = {
 const ORG_NOTIFICATION_TYPES = {
   USER_INVITE: 'org_user_invite',
 } as const
-
-const MESSAGE_NOTIFICATION_DEDUPE_WINDOW_MS = 45_000
-
-async function hasRecentUnreadMessageNotification(args: {
-  userId: string
-  actorId: string
-  threadId: string
-  since: Date
-}): Promise<boolean> {
-  try {
-    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT "id"
-      FROM "Notification"
-      WHERE "userId" = ${args.userId}
-        AND "actorId" = ${args.actorId}
-        AND "type" = ${MESSAGE_NOTIFICATION_TYPES.CREATED}
-        AND "readAt" IS NULL
-        AND "createdAt" >= ${args.since}
-        AND COALESCE("payload"->>'threadId', '') = ${args.threadId}
-      ORDER BY "createdAt" DESC
-      LIMIT 1
-    `
-    return rows.length > 0
-  } catch (err) {
-    console.error('message_notification_dedupe_failed', err)
-    return false
-  }
-}
 
 async function notifyFriendRequest(friendshipId: string, requesterId: string, addresseeId: string) {
   await createNotificationRecord({
@@ -7119,34 +7090,6 @@ app.post('/messages/threads/:id/messages', async (req: FastifyRequest, reply: Fa
       message: messageRecord,
       participants: thread.participants,
     })
-
-    const bodyPreview = truncatePushBody((messageRecord.body || '').trim(), 90)
-    const dedupeSince = new Date(Date.now() - MESSAGE_NOTIFICATION_DEDUPE_WINDOW_MS)
-    await Promise.all(
-      thread.participants
-        .filter((participant: { userId: string }) => participant.userId !== userId)
-        .map(async (participant: { userId: string }) => {
-          const alreadyNotified = await hasRecentUnreadMessageNotification({
-            userId: participant.userId,
-            actorId: userId,
-            threadId: thread.id,
-            since: dedupeSince,
-          })
-          if (alreadyNotified) return null
-
-          return createNotificationRecord({
-            userId: participant.userId,
-            actorId: userId,
-            type: MESSAGE_NOTIFICATION_TYPES.CREATED,
-            payload: {
-              threadId: thread.id,
-              url: `/messages?thread=${encodeURIComponent(thread.id)}`,
-              bodyPreview,
-            },
-            suppressMobilePush: true,
-          })
-        }),
-    )
 
     return reply.code(201).send({ message: formatMessage(messageRecord, userId) })
   }),
@@ -20167,7 +20110,10 @@ app.get('/notifications', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
     const { limit, cursor } = parse.data
-    const baseWhere: Prisma.NotificationWhereInput = { userId }
+    const baseWhere: Prisma.NotificationWhereInput = {
+      userId,
+      type: { notIn: [...NOTIFICATION_FEED_EXCLUDED_TYPES] },
+    }
 
     const [rows, unreadCount] = await Promise.all<[NotificationRecord[], number]>([
       prisma.notification.findMany({
@@ -20177,7 +20123,13 @@ app.get('/notifications', async (req: FastifyRequest, reply: FastifyReply) =>
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
         select: NOTIFICATION_SELECT,
       }),
-      prisma.notification.count({ where: { userId, readAt: null } }),
+      prisma.notification.count({
+        where: {
+          userId,
+          readAt: null,
+          type: { notIn: [...NOTIFICATION_FEED_EXCLUDED_TYPES] },
+        },
+      }),
     ])
 
     const actorIds = Array.from(new Set(rows.map((row) => row.actorId).filter((id): id is string => Boolean(id))))
