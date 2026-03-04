@@ -147,7 +147,12 @@ export default function CommunityPostsFeed() {
                 ...((incoming.author ?? {}) as Partial<ApiPost['author']>),
               },
               organization: incoming.organization === undefined ? p.organization : incoming.organization,
-              recentComments: Array.isArray(incoming.recentComments) ? incoming.recentComments : p.recentComments,
+              recentComments:
+                Array.isArray(incoming.recentComments) && incoming.recentComments.length === 0 && (p.recentComments?.length ?? 0) > 0
+                  ? p.recentComments
+                  : Array.isArray(incoming.recentComments)
+                    ? incoming.recentComments
+                    : p.recentComments,
             }
           }),
         )

@@ -77,6 +77,8 @@ type ThreadSummary = {
   lastMessageAt: string
   participants: ThreadParticipant[]
   lastMessage: MessagePayload | null
+  unreadCount?: number
+  unread?: boolean
 }
 
 type ThreadListResponse = {
@@ -195,10 +197,35 @@ const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
 const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
 const MOBILE_DOCK_HEIGHT_PX = 70
 
-const threadHasUnread = (thread: ThreadSummary) => {
+const threadHasUnreadFallback = (thread: ThreadSummary) => {
   const viewer = thread.participants.find((participant) => participant.isViewer)
   if (!viewer?.lastReadAt || !thread.lastMessage) return Boolean(thread.lastMessage)
   return new Date(thread.lastMessage.createdAt).getTime() > new Date(viewer.lastReadAt).getTime()
+}
+
+const threadHasUnread = (thread: ThreadSummary) => {
+  if (typeof thread.unread === 'boolean') return thread.unread
+  if (typeof thread.unreadCount === 'number' && Number.isFinite(thread.unreadCount)) return thread.unreadCount > 0
+  return threadHasUnreadFallback(thread)
+}
+
+const threadUnreadCount = (thread: ThreadSummary) => {
+  if (typeof thread.unreadCount === 'number' && Number.isFinite(thread.unreadCount)) {
+    return Math.max(0, Math.floor(thread.unreadCount))
+  }
+  return threadHasUnread(thread) ? 1 : 0
+}
+
+function sortThreadsForInbox(threads: ThreadSummary[]) {
+  return [...threads].sort((a, b) => {
+    const unreadDelta = Number(threadHasUnread(b)) - Number(threadHasUnread(a))
+    if (unreadDelta !== 0) return unreadDelta
+    return new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime()
+  })
+}
+
+function countUnreadInThreads(threads: ThreadSummary[]) {
+  return threads.reduce((total, thread) => total + threadUnreadCount(thread), 0)
 }
 
 function getOtherParticipants(thread: ThreadSummary, viewerId?: string | null) {
@@ -355,6 +382,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
   const [friendContactIds, setFriendContactIds] = useState<string[]>([])
   const [networkContactIds, setNetworkContactIds] = useState<string[]>([])
+  const [marketUnreadCount, setMarketUnreadCount] = useState(0)
   const [contactsBucketReady, setContactsBucketReady] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -507,6 +535,23 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     [authedFetch],
   )
 
+  const loadSupplementalUnreadCounts = useCallback(async () => {
+    try {
+      const marketRes = await authedFetch('/market/chats/unread-count')
+      if (marketRes.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (marketRes.ok) {
+        const payload = (await marketRes.json().catch(() => null)) as { count?: number } | null
+        setMarketUnreadCount(Number(payload?.count) || 0)
+      }
+    } catch (error) {
+      console.error('Failed to load supplemental message unread counts', error)
+      setMarketUnreadCount(0)
+    }
+  }, [authedFetch])
+
   const upsertThread = useCallback((incoming: ThreadSummary) => {
     setThreads((prev) => {
       const next = [...prev]
@@ -519,6 +564,22 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       next.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime())
       return next
     })
+  }, [])
+
+  const markThreadReadLocally = useCallback((threadId: string, readAtIso: string) => {
+    setThreads((prev) =>
+      prev.map((thread) => {
+        if (thread.id !== threadId) return thread
+        return {
+          ...thread,
+          unread: false,
+          unreadCount: 0,
+          participants: thread.participants.map((participant) =>
+            participant.isViewer ? { ...participant, lastReadAt: readAtIso } : participant,
+          ),
+        }
+      }),
+    )
   }, [])
 
   const handleRealtime = useCallback(
@@ -565,22 +626,32 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           if (index === -1) return prev
           const existing = next[index]
           if (!existing) return prev
+          const isActiveThread = selectedThreadRef.current === threadId
+          const shouldMarkRead = isActiveThread || message.isMine
+          const nextUnreadCount = shouldMarkRead ? 0 : threadUnreadCount(existing) + 1
           next[index] = {
             ...existing,
             lastMessage: message,
             lastMessageAt: message.createdAt,
+            unread: nextUnreadCount > 0,
+            unreadCount: nextUnreadCount,
+            participants: existing.participants.map((participant) =>
+              participant.isViewer && shouldMarkRead ? { ...participant, lastReadAt: message.createdAt } : participant,
+            ),
           }
           next.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime())
           return next
         })
         if (selectedThreadRef.current === threadId) {
+          markThreadReadLocally(threadId, message.createdAt)
           void markThreadRead(threadId, message.id)
           // Dispatch event to update TopNav count immediately
           window.dispatchEvent(new CustomEvent('message.read'))
         }
+        void loadSupplementalUnreadCounts()
       }
     },
-    [markThreadRead, upsertThread],
+    [loadSupplementalUnreadCounts, markThreadRead, markThreadReadLocally, upsertThread],
   )
 
   useEffect(() => {
@@ -731,6 +802,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         setMessagesByThread((prev) => ({ ...prev, [threadId]: normalizedMessages }))
         setMessageCursors((prev) => ({ ...prev, [threadId]: payload.nextCursor ?? null }))
         if (lastMessage) {
+          markThreadReadLocally(threadId, lastMessage.createdAt)
           void markThreadRead(threadId, lastMessage.id)
         }
         failedThreadDetailRef.current.delete(threadId)
@@ -747,7 +819,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         setLoadingThreadId(null)
       }
     },
-    [authedFetch, markThreadRead, upsertThread],
+    [authedFetch, markThreadRead, markThreadReadLocally, upsertThread],
   )
 
   const loadOlderMessages = useCallback(
@@ -986,36 +1058,63 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     void loadMe()
     void loadThreads()
     void loadContactBuckets()
-  }, [authReady, loadMe, loadThreads, loadContactBuckets])
+    void loadSupplementalUnreadCounts()
+  }, [authReady, loadMe, loadThreads, loadContactBuckets, loadSupplementalUnreadCounts])
 
-  const orderedThreads = useMemo(
-    () => [...threads].sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime()),
-    [threads],
-  )
+  useEffect(() => {
+    if (!authReady || typeof window === 'undefined') return undefined
+    const refresh = () => {
+      void loadSupplementalUnreadCounts()
+    }
+    const interval = window.setInterval(refresh, 30000)
+    window.addEventListener('message.read', refresh)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('message.read', refresh)
+    }
+  }, [authReady, loadSupplementalUnreadCounts])
+
+  const orderedThreads = useMemo(() => sortThreadsForInbox(threads), [threads])
   const friendContactIdSet = useMemo(() => new Set(friendContactIds), [friendContactIds])
   const networkContactIdSet = useMemo(() => new Set(networkContactIds), [networkContactIds])
-  const filteredOrderedThreads = useMemo(() => {
-    if (activeInboxSection === 'groups') {
-      return orderedThreads.filter((thread) => thread.type === 'group')
-    }
+  const categorizedThreads = useMemo(() => {
+    const groups = sortThreadsForInbox(orderedThreads.filter((thread) => thread.type === 'group'))
     const directThreads = orderedThreads.filter((thread) => thread.type !== 'group')
-    if (activeInboxSection === 'market') {
-      return directThreads
-    }
     if (!contactsBucketReady) {
-      return directThreads
+      return {
+        friends: sortThreadsForInbox(directThreads),
+        network: [] as ThreadSummary[],
+        groups,
+      }
     }
-    if (activeInboxSection === 'friends') {
-      return directThreads.filter((thread) =>
-        getOtherParticipants(thread, me?.id).some((participant) => friendContactIdSet.has(participant.userId)),
-      )
-    }
-    return directThreads.filter((thread) =>
+    const friends = directThreads.filter((thread) =>
+      getOtherParticipants(thread, me?.id).some((participant) => friendContactIdSet.has(participant.userId)),
+    )
+    const network = directThreads.filter((thread) =>
       getOtherParticipants(thread, me?.id).some(
         (participant) => networkContactIdSet.has(participant.userId) && !friendContactIdSet.has(participant.userId),
       ),
     )
-  }, [activeInboxSection, contactsBucketReady, friendContactIdSet, me?.id, networkContactIdSet, orderedThreads])
+    return {
+      friends: sortThreadsForInbox(friends),
+      network: sortThreadsForInbox(network),
+      groups,
+    }
+  }, [contactsBucketReady, friendContactIdSet, me?.id, networkContactIdSet, orderedThreads])
+  const messagesNavUnreadCounts = useMemo(
+    () => ({
+      friends: countUnreadInThreads(categorizedThreads.friends),
+      network: countUnreadInThreads(categorizedThreads.network),
+      groups: countUnreadInThreads(categorizedThreads.groups),
+      market: Math.max(0, marketUnreadCount),
+    }),
+    [categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadCount],
+  )
+  const filteredOrderedThreads = useMemo(() => {
+    if (activeInboxSection === 'network') return categorizedThreads.network
+    if (activeInboxSection === 'groups') return categorizedThreads.groups
+    return categorizedThreads.friends
+  }, [activeInboxSection, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network])
   const activeThread = useMemo(
     () => filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null,
     [filteredOrderedThreads, selectedThreadId],
@@ -1236,11 +1335,12 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       } else {
         const lastMessage = threadMessages[threadMessages.length - 1]
         if (lastMessage) {
+          markThreadReadLocally(threadId, lastMessage.createdAt)
           void markThreadRead(threadId, lastMessage.id)
         }
       }
     },
-    [fetchThreadDetail, markThreadRead, messagesByThread],
+    [fetchThreadDetail, markThreadRead, markThreadReadLocally, messagesByThread],
   )
 
   const activeViewerParticipant = useMemo(
@@ -1404,7 +1504,15 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           const isGroupThread = thread.type === 'group'
           const active = thread.id === selectedThreadId
           const unread = threadHasUnread(thread)
-          const lastSnippet = thread.lastMessage?.body?.trim() || (thread.lastMessage?.attachments.length ? 'Attachment' : 'Say hello!')
+          const unreadCount = threadUnreadCount(thread)
+          const lastMessage = thread.lastMessage
+          const lastSnippetBody = lastMessage?.body?.trim() || (lastMessage?.attachments.length ? 'Attachment' : 'Say hello!')
+          const senderLabel = lastMessage
+            ? lastMessage.isMine
+              ? 'You'
+              : formatUserDisplayName(lastMessage.sender.name, lastMessage.sender.handle) || lastMessage.sender.handle
+            : null
+          const lastSnippet = senderLabel ? `${senderLabel}: ${lastSnippetBody}` : lastSnippetBody
           const primaryParticipant = getPrimaryOtherParticipant(thread, me?.id)
           const threadCoverUrl = isGroupThread ? null : primaryParticipant?.user.coverUrl ?? null
           const groupParticipants = getOtherParticipants(thread, me?.id).slice(0, 4)
@@ -1416,7 +1524,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                   'relative w-full overflow-hidden rounded-2xl border px-4 py-3 text-left transition',
                   active
                     ? 'border-[var(--cc-primary)] shadow-lg shadow-[var(--cc-primary)]/20'
-                    : unread && mobileViewport
+                    : unread
                       ? 'border-red-300 bg-red-50/70 shadow-md shadow-red-100 hover:border-red-400'
                     : 'border-slate-200 bg-white/70 hover:border-slate-300',
                 )}
@@ -1455,12 +1563,19 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                         isBusiness={Boolean(primaryParticipant?.user.isPremium)}
                       />
                     )}
-                    {unread ? <span className={clsx('absolute -right-1 -top-1 inline-flex h-2 w-2 rounded-full', mobileViewport ? 'bg-red-500' : 'bg-[var(--cc-primary)]')} /> : null}
+                    {unread ? <span className={clsx('absolute -right-1 -top-1 inline-flex h-2.5 w-2.5 rounded-full', mobileViewport ? 'bg-red-500' : 'bg-[var(--cc-primary)]')} /> : null}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <p className={clsx('truncate text-sm font-semibold', threadCoverUrl ? 'text-white' : 'text-slate-900')}>{title}</p>
-                      <span className={clsx('text-xs', threadCoverUrl ? 'text-white/80' : 'text-slate-400')}>{formatTimestamp(thread.lastMessageAt)}</span>
+                      <div className="flex items-center gap-2">
+                        {unreadCount > 0 ? (
+                          <span className={clsx('inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold', threadCoverUrl ? 'bg-rose-500/90 text-white' : 'bg-rose-500 text-white')}>
+                            {unreadCount > 99 ? '99+' : unreadCount}
+                          </span>
+                        ) : null}
+                        <span className={clsx('text-xs', threadCoverUrl ? 'text-white/80' : 'text-slate-400')}>{formatTimestamp(thread.lastMessageAt)}</span>
+                      </div>
                     </div>
                     <p className={clsx('mt-1 line-clamp-2 text-xs', threadCoverUrl ? 'text-white/80' : 'text-slate-500')}>{lastSnippet}</p>
                   </div>
@@ -1860,6 +1975,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       contextLabel: 'Friends Inbox',
     }
   }, [activeInboxSection, me?.handle])
+  const activeContextUnreadCount = activeInboxSection === 'network'
+    ? messagesNavUnreadCounts.network
+    : activeInboxSection === 'groups'
+      ? messagesNavUnreadCounts.groups
+      : messagesNavUnreadCounts.friends
 
   const threadsFooter = threadCursor ? (
     <button
@@ -1881,6 +2001,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
             if (next === 'market') return
             setActiveInboxSection(next)
           }}
+          unreadCounts={messagesNavUnreadCounts}
           className="border border-slate-200/90 bg-slate-50/70"
         />
         <div className="grid grid-cols-2 gap-2">
@@ -1904,7 +2025,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         <div className="mb-2 flex items-center justify-between px-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{contextActions.contextLabel}</p>
           <p className="text-[11px] text-slate-400">
-            {filteredOrderedThreads.length} {filteredOrderedThreads.length === 1 ? 'thread' : 'threads'}
+            {activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'} · {filteredOrderedThreads.length}{' '}
+            {filteredOrderedThreads.length === 1 ? 'thread' : 'threads'}
           </p>
         </div>
         {renderThreadList()}

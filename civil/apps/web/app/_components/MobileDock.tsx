@@ -147,7 +147,7 @@ export default function MobileDock() {
   const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
   const [marketChatUnreadCount, setMarketChatUnreadCount] = useState(0)
   const [marketCartCount, setMarketCartCount] = useState(0)
-  const unifiedMessageUnreadCount = messageUnreadCount + orgChannelUnreadCount + marketChatUnreadCount
+  const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
   const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const [menuSearchFocused, setMenuSearchFocused] = useState(false)
   const menuSearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
