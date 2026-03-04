@@ -15,7 +15,7 @@ import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
 import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
-import { stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
+import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
 import { ensureViewerMe } from '../../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
@@ -201,6 +201,7 @@ export default function ChamberPostPage({ params }: PageProps) {
   const viewerVote = post?.viewer?.vote ?? null
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
   const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
+  const postArticleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post?.body), [post?.body])
 
   const handleVote = useCallback(
     async (value: -1 | 0 | 1) => {
@@ -593,7 +594,9 @@ export default function ChamberPostPage({ params }: PageProps) {
                 <h1 className="text-2xl font-semibold text-gray-900">{post.title}</h1>
               ) : null}
               {post.type === 'article' ? (
-                <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
+                postArticleBodyWithoutCivilLinks ? (
+                  <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
+                ) : null
               ) : postBodyWithoutCivilLinks ? (
                 <div className="whitespace-pre-wrap">{postBodyWithoutCivilLinks}</div>
               ) : null}

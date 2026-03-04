@@ -15,7 +15,7 @@ import SharePostModal from '../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../_components/ShareSendModal'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../_lib/shareTarget'
-import { stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
+import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
@@ -282,6 +282,7 @@ export default function UserPostPage({ params }: PageProps) {
   const viewerVote = post?.viewer?.vote ?? null
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
   const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
+  const postArticleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post?.body), [post?.body])
 
   const handleVote = useCallback(
     async (value: -1 | 0 | 1) => {
@@ -525,7 +526,9 @@ export default function UserPostPage({ params }: PageProps) {
                     ) : null}
                     <div className="mt-4 space-y-4">
                       {post.type === 'article' ? (
-                        <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: post.body }} />
+                        postArticleBodyWithoutCivilLinks ? (
+                          <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
+                        ) : null
                       ) : postBodyWithoutCivilLinks ? (
                         <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{postBodyWithoutCivilLinks}</div>
                       ) : null}
