@@ -5,11 +5,11 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { normalizeProvinceCode } from '@civil/shared'
 import {
-  HiOutlineBars3,
+  HiOutlineArrowRightCircle,
   HiOutlineBell,
   HiOutlineHashtag,
+  HiOutlineHome,
   HiOutlineMagnifyingGlass,
-  HiOutlineSquares2X2,
   HiOutlineUserGroup,
   HiOutlineWallet,
   HiOutlineXMark,
@@ -34,18 +34,15 @@ const NAV_BUTTONS: Array<{
   label: string
   icon: IconType
 }> = [
-  { key: 'menu', label: 'Menu', icon: HiOutlineBars3 },
+  { key: 'menu', label: 'Menu', icon: HiOutlineHome },
   { key: 'notifications', label: 'Alerts', icon: HiOutlineBell },
   { key: 'messages', label: 'Messages', icon: HiOutlineUserGroup },
   { key: 'channels', label: 'Channels', icon: HiOutlineHashtag },
   { key: 'wallet', label: 'Wallet', icon: HiOutlineWallet },
-  { key: 'more', label: 'More', icon: HiOutlineSquares2X2 },
+  { key: 'more', label: 'More', icon: HiOutlineArrowRightCircle },
 ] as const
 
 const DRAWER_TRANSITION_MS = 320
-const EDGE_SWIPE_THRESHOLD = 36
-const SWIPE_DISTANCE_THRESHOLD = 60
-const MAX_SWIPE_VERTICAL_DELTA = 80
 
 type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
 
@@ -431,47 +428,6 @@ export default function MobileDock() {
       </div>
     )
   }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute])
-
-  useEffect(() => {
-    if (!hydrated || !hasSession) return undefined
-    let tracking = false
-    let startX = 0
-    let startY = 0
-
-    const handleTouchStart = (event: TouchEvent) => {
-      if (event.touches.length !== 1) return
-      const touch = event.touches.item(0)
-      if (!touch) return
-      startX = touch.clientX
-      startY = touch.clientY
-      tracking = true
-    }
-
-    const handleTouchEnd = (event: TouchEvent) => {
-      if (!tracking) return
-      tracking = false
-      if (event.changedTouches.length === 0) return
-      const touch = event.changedTouches.item(0)
-      if (!touch) return
-      const deltaX = touch.clientX - startX
-      const deltaY = touch.clientY - startY
-      if (Math.abs(deltaY) > MAX_SWIPE_VERTICAL_DELTA) return
-      if (startX <= EDGE_SWIPE_THRESHOLD && deltaX > SWIPE_DISTANCE_THRESHOLD) {
-        handleOpenMenu()
-        return
-      }
-      if (typeof window !== 'undefined' && startX >= window.innerWidth - EDGE_SWIPE_THRESHOLD && deltaX < -SWIPE_DISTANCE_THRESHOLD) {
-        handleOpenMore()
-      }
-    }
-
-    window.addEventListener('touchstart', handleTouchStart)
-    window.addEventListener('touchend', handleTouchEnd)
-    return () => {
-      window.removeEventListener('touchstart', handleTouchStart)
-      window.removeEventListener('touchend', handleTouchEnd)
-    }
-  }, [hasSession, hydrated, handleOpenMenu, handleOpenMore])
 
   if (!hydrated || !hasSession) {
     return null

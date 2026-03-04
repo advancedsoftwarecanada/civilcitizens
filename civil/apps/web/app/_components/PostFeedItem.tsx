@@ -153,6 +153,10 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
   const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
   const bodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post.body), [post.body])
   const articleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post.body), [post.body])
+  const sharedPostBodyWithoutCivilLinks = useMemo(
+    () => (post.sharedPost ? stripCivilUrlsFromText(post.sharedPost.body) : ''),
+    [post.sharedPost],
+  )
   const communityUrl = buildCommunityUrl(post)
   const createdAt = new Date(post.createdAt)
   const organization = post.organization ?? null
@@ -464,7 +468,7 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
 
   return (
     <article
-      className="surface-card space-y-4 px-6 py-5 shadow-subtle cursor-pointer"
+      className="surface-card min-w-0 space-y-4 px-6 py-5 shadow-subtle cursor-pointer"
       onClick={handleCardClick}
     >
       <header>
@@ -608,58 +612,61 @@ export default function PostFeedItem({ post, onVote, onDelete, onUpdate, viewerI
         <CivilLinkPreviewList body={post.body} />
 
         {post.sharedPost ? (
-          <Link href={buildPostUrl(post.sharedPost)} className="block mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 hover:bg-slate-100 transition-colors">
+          <Link
+            href={buildPostUrl(post.sharedPost)}
+            className="mt-3 block w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-4 transition-colors hover:bg-slate-100"
+          >
             {(() => {
               const sharedCover = post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ?? null
               const sharedHasCover = Boolean(sharedCover)
               return (
-            <div className="relative mb-2 flex items-center gap-2 overflow-hidden rounded-lg border border-slate-200 px-2 py-1.5">
-              {sharedCover ? (
-                <img
-                  src={sharedCover}
-                  alt=""
-                  className="absolute inset-0 h-full w-full object-cover"
-                  loading="lazy"
-                />
-              ) : null}
-              <div
-                className={clsx(
-                  'absolute inset-0',
-                  sharedHasCover ? 'bg-slate-900/50' : 'bg-slate-50',
-                )}
-              />
-              <VerifiedAvatar
-                src={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
-                alt={
-                  post.sharedPost.organization?.name
-                    ? formatDisplayName(post.sharedPost.organization.name)
-                    : post.sharedPost.author.name || post.sharedPost.author.handle
-                }
-                initials={
-                  post.sharedPost.organization?.name
-                    ? formatDisplayName(post.sharedPost.organization.name)
-                    : post.sharedPost.author.name || post.sharedPost.author.handle
-                }
-                size={24}
-                isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
-                isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
-                className="relative z-[1]"
-              />
-              <div className="relative z-[1] min-w-0">
-                <div className={clsx('text-sm font-semibold', sharedHasCover ? 'text-white' : 'text-slate-900')}>
-                  {post.sharedPost.organization?.name
-                    ? formatDisplayName(post.sharedPost.organization.name)
-                    : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
+                <div className="relative mb-2 flex items-center gap-2 overflow-hidden rounded-lg border border-slate-200 px-2 py-1.5">
+                  {sharedCover ? (
+                    <img
+                      src={sharedCover}
+                      alt=""
+                      className="absolute inset-0 h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : null}
+                  <div
+                    className={clsx(
+                      'absolute inset-0',
+                      sharedHasCover ? 'bg-slate-900/50' : 'bg-slate-50',
+                    )}
+                  />
+                  <VerifiedAvatar
+                    src={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
+                    alt={
+                      post.sharedPost.organization?.name
+                        ? formatDisplayName(post.sharedPost.organization.name)
+                        : post.sharedPost.author.name || post.sharedPost.author.handle
+                    }
+                    initials={
+                      post.sharedPost.organization?.name
+                        ? formatDisplayName(post.sharedPost.organization.name)
+                        : post.sharedPost.author.name || post.sharedPost.author.handle
+                    }
+                    size={24}
+                    isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
+                    isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
+                    className="relative z-[1]"
+                  />
+                  <div className="relative z-[1] min-w-0">
+                    <div className={clsx('text-sm font-semibold', sharedHasCover ? 'text-white' : 'text-slate-900')}>
+                      {post.sharedPost.organization?.name
+                        ? formatDisplayName(post.sharedPost.organization.name)
+                        : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
+                    </div>
+                    <div className={clsx('text-xs', sharedHasCover ? 'text-white/80' : 'text-slate-500')}>
+                      {new Date(post.sharedPost.createdAt).toLocaleDateString()}
+                    </div>
+                  </div>
                 </div>
-                <div className={clsx('text-xs', sharedHasCover ? 'text-white/80' : 'text-slate-500')}>
-                  {new Date(post.sharedPost.createdAt).toLocaleDateString()}
-                </div>
-              </div>
-            </div>
               )
             })()}
-            <div className="text-sm text-slate-800">
-              {post.sharedPost.body}
+            <div className="text-sm text-slate-800 [overflow-wrap:anywhere] break-words">
+              {sharedPostBodyWithoutCivilLinks ? <div className="whitespace-pre-wrap">{sharedPostBodyWithoutCivilLinks}</div> : null}
               {post.sharedPost.images && post.sharedPost.images.length > 0 ? (
                 <div className="mt-2">
                   <PostImageGrid images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />

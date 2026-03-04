@@ -477,8 +477,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const resolvedRightRail = rightRail ?? <RightRail />
 
   return (
-    <DashboardShell rightRail={resolvedRightRail} mainClassName="space-y-6">
-      <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+    <DashboardShell rightRail={resolvedRightRail} mainClassName="min-w-0 space-y-6">
+      <section className="surface-card min-w-0 space-y-4 px-6 py-5 shadow-subtle">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           {scope !== 'organizations' ? (
             <div>
@@ -536,7 +536,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         </div>
       </section>
 
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         {visiblePosts.length === 0 ? (
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
             {loading ? 'Loading the latest updates…' : emptyLabel}
@@ -555,7 +555,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
               const prevPost = visiblePosts[i - 1]
               const isFirstSeen = lastViewedAt && p.createdAt <= lastViewedAt && (i === 0 || (prevPost && prevPost.createdAt > lastViewedAt))
               return (
-                <div key={p.id}>
+                <div key={p.id} className="min-w-0">
                   {isFirstSeen ? (
                     <div className="relative my-6 flex items-center justify-center">
                       <div className="absolute inset-0 flex items-center">
