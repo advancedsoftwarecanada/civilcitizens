@@ -5,6 +5,7 @@ import { isAppleNativeApp } from './nativePush'
 type NavigatorWithStandalone = Navigator & { standalone?: boolean }
 export const IOS_PWA_INSTALL_ROUTE = '/install/ios/pwa'
 export const IOS_SWITCH_TO_SAFARI_ROUTE = '/install/ios/switch-to-safari'
+export const ANDROID_PWA_INSTALL_ROUTE = '/install/android/pwa'
 
 export function isAppleMobileOrTablet(): boolean {
   if (typeof navigator === 'undefined') return false
@@ -37,6 +38,12 @@ export function isIosSafariBrowser(): boolean {
   return looksSafari && !isExcluded
 }
 
+export function isAndroidMobileOrTablet(): boolean {
+  if (typeof navigator === 'undefined') return false
+  const ua = (navigator.userAgent || '').toLowerCase()
+  return ua.includes('android')
+}
+
 export function shouldBlockForAppleInstall(): boolean {
   if (!isAppleMobileOrTablet()) return false
   if (isAppleNativeApp()) return false
@@ -44,9 +51,20 @@ export function shouldBlockForAppleInstall(): boolean {
   return true
 }
 
+export function shouldBlockForAndroidInstall(): boolean {
+  if (!isAndroidMobileOrTablet()) return false
+  if (isInstalledPwaDisplayMode()) return false
+  return true
+}
+
 export function isIosInstalledPwaContext(): boolean {
   if (!isAppleMobileOrTablet()) return false
   if (isAppleNativeApp()) return false
+  return isInstalledPwaDisplayMode()
+}
+
+export function isAndroidInstalledPwaContext(): boolean {
+  if (!isAndroidMobileOrTablet()) return false
   return isInstalledPwaDisplayMode()
 }
 
@@ -65,6 +83,10 @@ export function buildIosSwitchToSafariUrl(nextPath: string, source?: string): st
   return buildIosInstallUrl(IOS_SWITCH_TO_SAFARI_ROUTE, nextPath, source)
 }
 
+export function buildAndroidPwaInstallUrl(nextPath: string, source?: string): string {
+  return buildIosInstallUrl(ANDROID_PWA_INSTALL_ROUTE, nextPath, source)
+}
+
 function buildIosInstallUrl(route: string, nextPath: string, source?: string): string {
   const params = new URLSearchParams()
   params.set('next', normalizeRelativePath(nextPath, '/login'))
@@ -75,4 +97,10 @@ function buildIosInstallUrl(route: string, nextPath: string, source?: string): s
 export function buildIosInstallEntryUrl(nextPath: string, source?: string): string {
   if (isIosSafariBrowser()) return buildIosPwaInstallUrl(nextPath, source)
   return buildIosSwitchToSafariUrl(nextPath, source)
+}
+
+export function buildPwaInstallEntryUrl(nextPath: string, source?: string): string | null {
+  if (shouldBlockForAppleInstall()) return buildIosInstallEntryUrl(nextPath, source)
+  if (shouldBlockForAndroidInstall()) return buildAndroidPwaInstallUrl(nextPath, source)
+  return null
 }
