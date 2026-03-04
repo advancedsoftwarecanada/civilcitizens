@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { IOS_PWA_INSTALL_ROUTE, isIosInstalledPwaContext } from '../_lib/appleInstallGate'
+import { ANDROID_PWA_INSTALL_ROUTE, IOS_PWA_INSTALL_ROUTE, isAndroidInstalledPwaContext, isIosInstalledPwaContext } from '../_lib/appleInstallGate'
 import { canEnablePush as canEnableWebPush, enablePush as enableWebPush, isPushEnabled as isWebPushEnabled } from '../_lib/pushClient'
 import {
   clearIosPwaPushPromptCompleted,
@@ -100,10 +100,10 @@ export default function IosPwaPushPrompt() {
     if (typeof window === 'undefined') return
     if (openCheckTick <= 0) return
     if (!pathname) return
-    if (!isIosInstalledPwaContext()) return
+    if (!isIosInstalledPwaContext() && !isAndroidInstalledPwaContext()) return
     if (!hasAuthToken()) return
     if (!canEnableWebPush()) return
-    if (pathname.startsWith(IOS_PWA_INSTALL_ROUTE)) return
+    if (pathname.startsWith(IOS_PWA_INSTALL_ROUTE) || pathname.startsWith(ANDROID_PWA_INSTALL_ROUTE)) return
     const pendingNextOpenAt = getIosPwaPushPromptPendingNextOpenAt()
 
     if (pathname.startsWith('/welcome')) {
