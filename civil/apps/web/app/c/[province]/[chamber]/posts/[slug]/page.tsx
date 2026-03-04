@@ -4,11 +4,13 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
-import { LuArrowBigDown, LuArrowBigUp, LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
+import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
+import type { ReactionType } from '@civil/shared'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import CivilLinkPreviewList from '../../../../../_components/CivilLinkPreviewList'
+import PostReactionBar from '../../../../../_components/PostReactionBar'
 import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
 import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
@@ -197,14 +199,13 @@ export default function ChamberPostPage({ params }: PageProps) {
 
   const postId = post?.id
   useRegisterPageView(postId)
-  const voteScore = post?.votes?.score ?? post?.counts?.score ?? 0
-  const viewerVote = post?.viewer?.vote ?? null
+  const viewerReaction = post?.viewer?.reaction ?? null
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
   const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
   const postArticleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post?.body), [post?.body])
 
-  const handleVote = useCallback(
-    async (value: -1 | 0 | 1) => {
+  const handleReact = useCallback(
+    async (reaction: ReactionType | null) => {
       if (!post?.id || pendingVote) return
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       if (!token) {
@@ -213,16 +214,16 @@ export default function ChamberPostPage({ params }: PageProps) {
       }
       setPendingVote(true)
       try {
-        const response = await fetch('/api/posts/vote', {
+        const response = await fetch('/api/posts/react', {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ postId: post.id, value }),
+          body: JSON.stringify({ postId: post.id, reaction }),
         })
         if (!response.ok) {
-          console.error('Vote request failed', await response.text())
+          console.error('Reaction request failed', await response.text())
           return
         }
         const data = await response.json().catch(() => null)
@@ -231,7 +232,7 @@ export default function ChamberPostPage({ params }: PageProps) {
           setPost(updated)
         }
       } catch (err) {
-        console.error('Unable to vote on post', err)
+        console.error('Unable to react to post', err)
       } finally {
         setPendingVote(false)
       }
@@ -606,37 +607,12 @@ export default function ChamberPostPage({ params }: PageProps) {
 
           <footer className="mt-6 space-y-3 text-xs text-gray-500">
             <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
-              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-1.5 py-1">
-                <button
-                  type="button"
-                  onClick={() => void handleVote(viewerVote === 1 ? 0 : 1)}
-                  className={clsx(
-                    'inline-flex items-center rounded-full p-1.5 transition',
-                    viewerVote === 1
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
-                    pendingVote && 'pointer-events-none opacity-60',
-                  )}
-                  aria-label="Upvote post"
-                >
-                  <LuArrowBigUp className="h-4 w-4" />
-                </button>
-                <span className="min-w-[2ch] text-center text-sm font-semibold text-gray-700">{voteScore}</span>
-                <button
-                  type="button"
-                  onClick={() => void handleVote(viewerVote === -1 ? 0 : -1)}
-                  className={clsx(
-                    'inline-flex items-center rounded-full p-1.5 transition',
-                    viewerVote === -1
-                      ? 'bg-rose-50 text-rose-700'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800',
-                    pendingVote && 'pointer-events-none opacity-60',
-                  )}
-                  aria-label="Downvote post"
-                >
-                  <LuArrowBigDown className="h-4 w-4" />
-                </button>
-              </div>
+              <PostReactionBar
+                reactions={post.reactions}
+                viewerReaction={viewerReaction}
+                disabled={pendingVote}
+                onReact={(reaction) => handleReact(reaction)}
+              />
               {post.counts ? (
                 <a
                   href="#comments"
