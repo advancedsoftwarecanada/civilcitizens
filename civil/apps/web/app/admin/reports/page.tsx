@@ -50,6 +50,102 @@ type SeriesPanelProps = {
 const DAY_MS = 24 * 60 * 60 * 1000
 const defaultStart = new Date(Date.now() - 29 * DAY_MS)
 const defaultEnd = new Date()
+const EMPTY_METRIC_SERIES: MetricSeries = { total: 0, today: 0, series: [] }
+
+function toSeriesPoints(value: unknown): SeriesPoint[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((point) => {
+      if (!point || typeof point !== 'object') return null
+      const date = typeof (point as { date?: unknown }).date === 'string' ? (point as { date: string }).date : ''
+      const countRaw = (point as { count?: unknown }).count
+      const count = typeof countRaw === 'number' ? countRaw : Number(countRaw ?? 0)
+      if (!date) return null
+      return { date, count: Number.isFinite(count) ? count : 0 }
+    })
+    .filter((point): point is SeriesPoint => Boolean(point))
+}
+
+function toMetricSeries(value: unknown): MetricSeries {
+  if (!value || typeof value !== 'object') return EMPTY_METRIC_SERIES
+  const source = value as { total?: unknown; today?: unknown; series?: unknown }
+  const total = typeof source.total === 'number' ? source.total : Number(source.total ?? 0)
+  const today = typeof source.today === 'number' ? source.today : Number(source.today ?? 0)
+  return {
+    total: Number.isFinite(total) ? total : 0,
+    today: Number.isFinite(today) ? today : 0,
+    series: toSeriesPoints(source.series),
+  }
+}
+
+function normalizeReportSummary(payload: unknown): ReportSummary | null {
+  if (!payload || typeof payload !== 'object') return null
+  const source = payload as Record<string, unknown>
+  const jobsSource = source.jobs && typeof source.jobs === 'object' ? (source.jobs as Record<string, unknown>) : {}
+  const applicationsViewedSource =
+    jobsSource.applicationsViewed && typeof jobsSource.applicationsViewed === 'object'
+      ? (jobsSource.applicationsViewed as Record<string, unknown>)
+      : {}
+  const orgSource =
+    applicationsViewedSource.organizations && typeof applicationsViewedSource.organizations === 'object'
+      ? (applicationsViewedSource.organizations as Record<string, unknown>)
+      : {}
+  const pageViewsSource = source.pageViews && typeof source.pageViews === 'object' ? (source.pageViews as Record<string, unknown>) : {}
+  const trafficSource = source.traffic && typeof source.traffic === 'object' ? (source.traffic as Record<string, unknown>) : {}
+
+  return {
+    generatedAt: typeof source.generatedAt === 'string' ? source.generatedAt : new Date().toISOString(),
+    users: toMetricSeries(source.users),
+    posts: toMetricSeries(source.posts),
+    comments: toMetricSeries(source.comments),
+    reactions: toMetricSeries(source.reactions),
+    follows: toMetricSeries(source.follows),
+    jobs: {
+      added: toMetricSeries(jobsSource.added),
+      applicants: toMetricSeries(jobsSource.applicants),
+      applicationsViewed: {
+        views: toMetricSeries(applicationsViewedSource.views),
+        organizations: {
+          total: Number.isFinite(Number(orgSource.total ?? 0)) ? Number(orgSource.total ?? 0) : 0,
+          today: Number.isFinite(Number(orgSource.today ?? 0)) ? Number(orgSource.today ?? 0) : 0,
+        },
+      },
+      hired: toMetricSeries(jobsSource.hired),
+    },
+    pageViews: {
+      series: toSeriesPoints(pageViewsSource.series),
+    },
+    traffic: {
+      routes: Array.isArray(trafficSource.routes)
+        ? trafficSource.routes
+            .map((row) => {
+              if (!row || typeof row !== 'object') return null
+              const path = typeof (row as { path?: unknown }).path === 'string' ? (row as { path: string }).path : ''
+              const views = Number((row as { views?: unknown }).views ?? 0)
+              if (!path) return null
+              return { path, views: Number.isFinite(views) ? views : 0 }
+            })
+            .filter((row): row is { path: string; views: number } => Boolean(row))
+        : [],
+      posts: Array.isArray(trafficSource.posts)
+        ? trafficSource.posts
+            .map((row) => {
+              if (!row || typeof row !== 'object') return null
+              const postId = typeof (row as { postId?: unknown }).postId === 'string' ? (row as { postId: string }).postId : ''
+              const titleRaw = (row as { title?: unknown }).title
+              const views = Number((row as { views?: unknown }).views ?? 0)
+              if (!postId) return null
+              return {
+                postId,
+                title: typeof titleRaw === 'string' ? titleRaw : null,
+                views: Number.isFinite(views) ? views : 0,
+              }
+            })
+            .filter((row): row is { postId: string; title: string | null; views: number } => Boolean(row))
+        : [],
+    },
+  }
+}
 
 function toDateInputValue(value: Date) {
   return value.toISOString().slice(0, 10)
@@ -221,7 +317,11 @@ export default function AdminReportsPage() {
           setStatus('error')
           return
         }
-        const data = (await res.json()) as ReportSummary
+        const data = normalizeReportSummary(await res.json().catch(() => null))
+        if (!data) {
+          setStatus('error')
+          return
+        }
         setSummary(data)
         setStatus('ready')
       } catch (err) {
