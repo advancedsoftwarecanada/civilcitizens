@@ -95,6 +95,24 @@ async function queryDailyCounts(kind: keyof typeof METRIC_TABLES, range: DateRan
   return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
 }
 
+async function queryFollowSeries(range: DateRange): Promise<DailyCount[]> {
+  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
+    select date_trunc('day', created_at) as date, count(*)::bigint as count
+    from (
+      select "createdAt" as created_at
+      from "CommunityFollow"
+      where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
+      union all
+      select "createdAt" as created_at
+      from "BusinessFollow"
+      where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
+    ) follows
+    group by 1
+    order by 1 asc
+  `
+  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
+}
+
 async function queryPageViewSeries(range: DateRange): Promise<DailyCount[]> {
   const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
     select date_trunc('day', "createdAt") as date, count(*)::bigint as count
@@ -20562,10 +20580,15 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     commentsToday,
     totalReactions,
     reactionsToday,
+    totalCommunityFollows,
+    totalBusinessFollows,
+    communityFollowsToday,
+    businessFollowsToday,
     userSeries,
     postSeries,
     commentSeries,
     reactionSeries,
+    followSeries,
     pageViewSeries,
     jobsAddedSeries,
     applicantsSeries,
@@ -20592,10 +20615,15 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
     prisma.comment.count({ where: { createdAt: { gte: today } } }),
     prisma.postReaction.count(),
     prisma.postReaction.count({ where: { createdAt: { gte: today } } }),
+    prisma.communityFollow.count(),
+    prisma.businessFollow.count(),
+    prisma.communityFollow.count({ where: { createdAt: { gte: today } } }),
+    prisma.businessFollow.count({ where: { createdAt: { gte: today } } }),
     queryDailyCounts('users', range),
     queryDailyCounts('posts', range),
     queryDailyCounts('comments', range),
     queryDailyCounts('reactions', range),
+    queryFollowSeries(range),
     queryPageViewSeries(range),
     queryJobAnalyticsSeries('job_added', range),
     queryJobAnalyticsSeries('applicant_submitted', range),
@@ -20677,6 +20705,8 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
 
   const jobsAddedTotalCount = Number(totalJobsAdded[0]?.count ?? 0)
   const jobsAddedTodayCount = Number(jobsAddedToday[0]?.count ?? 0)
+  const followsTotalCount = totalCommunityFollows + totalBusinessFollows
+  const followsTodayCount = communityFollowsToday + businessFollowsToday
   const applicantsTotalCount = Number(totalApplicants[0]?.count ?? 0)
   const applicantsTodayCount = Number(applicantsToday[0]?.count ?? 0)
   const applicationsViewedTotalCount = Number(totalApplicationsViewed[0]?.count ?? 0)
@@ -20707,6 +20737,11 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
       total: totalReactions,
       today: reactionsToday,
       series: reactionSeries,
+    },
+    follows: {
+      total: followsTotalCount,
+      today: followsTodayCount,
+      series: followSeries,
     },
     jobs: {
       added: {
