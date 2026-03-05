@@ -309,6 +309,39 @@ function extractCivilUrlsFromMessage(body: string): string[] {
   return extractUrlsFromMessage(body).filter((url) => isCivilUrl(url))
 }
 
+function stripSuppressedUrlsFromBody(body: string, suppressedUrls: Set<string>): string {
+  if (!body || suppressedUrls.size === 0) return body
+
+  let output = ''
+  const regex = new RegExp(HTTP_URL_REGEX.source, 'gi')
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = regex.exec(body)) !== null) {
+    const rawMatch = match[0] ?? ''
+    const matchStart = match.index
+    const matchEnd = matchStart + rawMatch.length
+    const displayUrl = trimUrlPunctuation(rawMatch)
+    const normalizedUrl = normalizeHttpUrl(displayUrl)
+
+    if (matchStart > lastIndex) {
+      output += body.slice(lastIndex, matchStart)
+    }
+
+    if (!normalizedUrl || !suppressedUrls.has(normalizedUrl)) {
+      output += rawMatch
+    }
+
+    lastIndex = matchEnd
+  }
+
+  if (lastIndex < body.length) {
+    output += body.slice(lastIndex)
+  }
+
+  return output.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 export default function MessagesPageClient({ initialThreadId, initialInboxSection }: MessagesPageClientProps) {
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -1233,19 +1266,22 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     }
   }, [activeMessages, authedFetch, messageLinkPreviews])
 
-  const renderMessageBodyWithLinks = useCallback((body: string, isMine: boolean) => {
+  const renderMessageBodyWithLinks = useCallback((body: string, isMine: boolean, suppressedUrls?: Set<string>) => {
+    const bodyForDisplay = stripSuppressedUrlsFromBody(body, suppressedUrls ?? new Set<string>())
+    if (!bodyForDisplay) return null
+
     const parts: Array<string | JSX.Element> = []
     const regex = new RegExp(HTTP_URL_REGEX.source, 'gi')
     let lastIndex = 0
     let match: RegExpExecArray | null
 
-    while ((match = regex.exec(body)) !== null) {
+    while ((match = regex.exec(bodyForDisplay)) !== null) {
       const rawMatch = match[0] ?? ''
       const matchStart = match.index
       const matchEnd = matchStart + rawMatch.length
 
       if (matchStart > lastIndex) {
-        parts.push(body.slice(lastIndex, matchStart))
+        parts.push(bodyForDisplay.slice(lastIndex, matchStart))
       }
 
       const displayUrl = trimUrlPunctuation(rawMatch)
@@ -1279,8 +1315,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       lastIndex = matchEnd
     }
 
-    if (lastIndex < body.length) {
-      parts.push(body.slice(lastIndex))
+    if (lastIndex < bodyForDisplay.length) {
+      parts.push(bodyForDisplay.slice(lastIndex))
     }
 
     return <p className="whitespace-pre-wrap break-words">{parts}</p>
@@ -1879,6 +1915,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                   const senderDisplayName = formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle
                   const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
                   const civilUrls = message.body ? extractCivilUrlsFromMessage(message.body).slice(0, 3) : []
+                  const civilUrlsWithPreview = civilUrls.filter((url) => Boolean(messageLinkPreviews[url]))
+                  const suppressedUrls = civilUrlsWithPreview.length ? new Set(civilUrlsWithPreview) : undefined
                   const bubbleClasses = clsx(
                     'w-fit min-w-[5.5rem] max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow transition',
                     isMine
@@ -1906,7 +1944,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                             <p className="italic text-slate-400">Message removed.</p>
                           ) : (
                             <>
-                              {message.body ? renderMessageBodyWithLinks(message.body, isMine) : null}
+                              {message.body ? renderMessageBodyWithLinks(message.body, isMine, suppressedUrls) : null}
                               {civilUrls.map((url) => renderMessageLinkPreviewCard(url, isMine))}
                               {message.attachments.length > 0 ? (
                                 <div className={clsx('mt-2 grid gap-2', message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
