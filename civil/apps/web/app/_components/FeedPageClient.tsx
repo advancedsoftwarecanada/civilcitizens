@@ -120,6 +120,11 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null)
+  const feedItemsContainerRef = useRef<HTMLDivElement>(null)
+  const seenPostIdsRef = useRef<Set<string>>(new Set())
+  const pendingImpressionIdsRef = useRef<Set<string>>(new Set())
+  const impressionTimersRef = useRef<Map<string, number>>(new Map())
+  const flushImpressionsTimerRef = useRef<number | null>(null)
 
   const filterQuery = useMemo(() => {
     const params = new URLSearchParams()
@@ -182,11 +187,65 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
   }, [filterQuery])
 
+  const flushPostImpressions = useCallback(async () => {
+    if (flushImpressionsTimerRef.current) {
+      window.clearTimeout(flushImpressionsTimerRef.current)
+      flushImpressionsTimerRef.current = null
+    }
+
+    const postIds = Array.from(pendingImpressionIdsRef.current)
+    if (!postIds.length) return
+    pendingImpressionIdsRef.current.clear()
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) return
+
+    try {
+      const response = await fetch(buildApiUrl('/posts/impressions'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ postIds }),
+      })
+      if (!response.ok) {
+        for (const postId of postIds) {
+          pendingImpressionIdsRef.current.add(postId)
+        }
+      }
+    } catch {
+      for (const postId of postIds) {
+        pendingImpressionIdsRef.current.add(postId)
+      }
+    }
+  }, [])
+
+  const schedulePostImpressionFlush = useCallback(() => {
+    if (flushImpressionsTimerRef.current) return
+    flushImpressionsTimerRef.current = window.setTimeout(() => {
+      void flushPostImpressions()
+    }, 600)
+  }, [flushPostImpressions])
+
   useEffect(() => {
     loadPosts().catch(() => {
       /* noop */
     })
   }, [loadPosts])
+
+  useEffect(() => {
+    seenPostIdsRef.current.clear()
+    pendingImpressionIdsRef.current.clear()
+    for (const timer of impressionTimersRef.current.values()) {
+      window.clearTimeout(timer)
+    }
+    impressionTimersRef.current.clear()
+    if (flushImpressionsTimerRef.current) {
+      window.clearTimeout(flushImpressionsTimerRef.current)
+      flushImpressionsTimerRef.current = null
+    }
+  }, [filterQuery])
 
   const handleLoadMore = useCallback(() => {
     if (nextCursor && !loading) {
@@ -212,6 +271,64 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
     return () => observer.disconnect()
   }, [hasMore, loading, handleLoadMore])
+
+  useEffect(() => {
+    const host = feedItemsContainerRef.current
+    if (!host) return
+
+    const nodes = Array.from(host.querySelectorAll<HTMLElement>('[data-feed-post-id]'))
+    if (!nodes.length) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const element = entry.target as HTMLElement
+          const postId = element.dataset.feedPostId?.trim()
+          if (!postId) continue
+
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+            if (seenPostIdsRef.current.has(postId) || impressionTimersRef.current.has(postId)) continue
+
+            const timerId = window.setTimeout(() => {
+              impressionTimersRef.current.delete(postId)
+              if (seenPostIdsRef.current.has(postId)) return
+              seenPostIdsRef.current.add(postId)
+              pendingImpressionIdsRef.current.add(postId)
+              schedulePostImpressionFlush()
+            }, 1000)
+
+            impressionTimersRef.current.set(postId, timerId)
+          } else {
+            const timerId = impressionTimersRef.current.get(postId)
+            if (timerId !== undefined) {
+              window.clearTimeout(timerId)
+              impressionTimersRef.current.delete(postId)
+            }
+          }
+        }
+      },
+      { threshold: [0.5] },
+    )
+
+    nodes.forEach((node) => observer.observe(node))
+
+    return () => {
+      observer.disconnect()
+      for (const timer of impressionTimersRef.current.values()) {
+        window.clearTimeout(timer)
+      }
+      impressionTimersRef.current.clear()
+    }
+  }, [schedulePostImpressionFlush, posts, scope, me?.handle])
+
+  useEffect(() => {
+    return () => {
+      if (flushImpressionsTimerRef.current) {
+        window.clearTimeout(flushImpressionsTimerRef.current)
+      }
+      void flushPostImpressions()
+    }
+  }, [flushPostImpressions])
 
   useEffect(() => {
     const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
@@ -541,7 +658,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         </div>
       </section>
 
-      <div className="min-w-0 space-y-4">
+      <div ref={feedItemsContainerRef} className="min-w-0 space-y-4">
         {visiblePosts.length === 0 ? (
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
             {loading ? 'Loading the latest updates…' : emptyLabel}
@@ -560,7 +677,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
               const prevPost = visiblePosts[i - 1]
               const isFirstSeen = lastViewedAt && p.createdAt <= lastViewedAt && (i === 0 || (prevPost && prevPost.createdAt > lastViewedAt))
               return (
-                <div key={p.id} className="min-w-0">
+                <div key={p.id} data-feed-post-id={p.id} className="min-w-0">
                   {isFirstSeen ? (
                     <div className="relative my-6 flex items-center justify-center">
                       <div className="absolute inset-0 flex items-center">
