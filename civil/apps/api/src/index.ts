@@ -319,6 +319,12 @@ const WebPushUnsubscribeRouteInput = z
 
 const WebPushTestRouteInput = z.object({}).strict()
 
+const PostImpressionTrackInput = z
+  .object({
+    postIds: z.array(z.string().trim().min(1).max(64)).min(1).max(50),
+  })
+  .strict()
+
 let pushDeviceRegistryReady: Promise<void> | null = null
 
 function normalizePushToken(rawToken: string): string | null {
@@ -373,6 +379,86 @@ function ensurePushDeviceRegistryTable(): Promise<void> {
   })
 
   return pushDeviceRegistryReady
+}
+
+let postImpressionTableReady: Promise<void> | null = null
+
+type UserPostImpressionRow = {
+  post_id: string
+  first_seen_at: Date
+  last_seen_at: Date
+  impression_count: number
+}
+
+function ensureUserPostImpressionsTable(): Promise<void> {
+  if (postImpressionTableReady) return postImpressionTableReady
+
+  postImpressionTableReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS user_post_impressions (
+        user_id TEXT NOT NULL,
+        post_id TEXT NOT NULL,
+        first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        impression_count INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (user_id, post_id)
+      );
+    `)
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS user_post_impressions_user_last_seen_idx ON user_post_impressions (user_id, last_seen_at DESC);',
+    )
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS user_post_impressions_post_idx ON user_post_impressions (post_id);',
+    )
+  })().catch((err) => {
+    postImpressionTableReady = null
+    throw err
+  })
+
+  return postImpressionTableReady
+}
+
+async function loadUserPostImpressionMap(userId: string, postIds: string[]) {
+  const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
+  const map = new Map<string, { firstSeenAt: Date; lastSeenAt: Date; impressionCount: number }>()
+  if (!uniquePostIds.length) return map
+
+  await ensureUserPostImpressionsTable()
+  const rows = (await prisma.$queryRaw(Prisma.sql`
+    SELECT post_id, first_seen_at, last_seen_at, impression_count
+    FROM user_post_impressions
+    WHERE user_id = ${userId}
+      AND post_id IN (${Prisma.join(uniquePostIds)})
+  `)) as UserPostImpressionRow[]
+  for (const row of rows) {
+    map.set(row.post_id, {
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      impressionCount: Number(row.impression_count) || 0,
+    })
+  }
+  return map
+}
+
+async function recordUserPostImpressions(userId: string, postIds: string[]) {
+  const uniquePostIds = Array.from(new Set(postIds.map((postId) => postId.trim()).filter(Boolean)))
+  if (!uniquePostIds.length) return 0
+
+  await ensureUserPostImpressionsTable()
+  await prisma.$transaction(
+    uniquePostIds.map((postId) =>
+      prisma.$executeRaw(Prisma.sql`
+        INSERT INTO user_post_impressions (user_id, post_id, first_seen_at, last_seen_at, impression_count)
+        VALUES (${userId}, ${postId}, NOW(), NOW(), 1)
+        ON CONFLICT (user_id, post_id)
+        DO UPDATE
+        SET
+          last_seen_at = NOW(),
+          impression_count = user_post_impressions.impression_count + 1
+      `),
+    ),
+  )
+  return uniquePostIds.length
 }
 
 type CitySummaryType = z.infer<typeof CitySummarySchema>
@@ -3890,6 +3976,398 @@ function getCanonicalPaths(post: PostWithAuthor) {
     community: post.provinceCode && post.communitySlug ? `/${post.provinceCode}/${post.communitySlug}/posts/${slug}` : null,
     legacy: `/post/${post.id}`,
   }
+}
+
+type FeedCategory = 'friends' | 'network' | 'community' | 'organizations' | 'events' | 'marketplace' | 'other'
+
+type ViewerFeedContext = {
+  viewerId: string
+  friendIds: Set<string>
+  connectionIds: Set<string>
+  followedBusinessIds: Set<string>
+  memberBusinessIds: Set<string>
+  homeCommunityKey: string | null
+  nearbyCommunityKeys: Set<string>
+  regionalCommunityKeys: Set<string>
+  followedCommunityKeys: Set<string>
+}
+
+type FeedRankingPostRecord = {
+  id: string
+  authorId: string
+  businessId: string | null
+  type: string
+  createdAt: Date
+  updatedAt: Date
+  lastActivityAt: Date
+  provinceCode: string | null
+  communitySlug: string | null
+  reactionTotal: number
+  commentCount: number
+  recentPositive: number
+  hotScore: number
+}
+
+type RankedFeedCandidate = {
+  postId: string
+  score: number
+  createdAtMs: number
+  category: FeedCategory
+}
+
+const HOME_FEED_CATEGORY_WEIGHTS: Record<FeedCategory, number> = {
+  friends: 30,
+  network: 20,
+  community: 20,
+  organizations: 15,
+  events: 10,
+  marketplace: 5,
+  other: 5,
+}
+
+const FEED_RANK_CURSOR_PREFIX = 'rank:'
+
+function toCommunityKey(provinceCode: string | null | undefined, communitySlug: string | null | undefined): string | null {
+  if (!provinceCode || !communitySlug) return null
+  return `${provinceCode.toUpperCase()}:${communitySlug.toLowerCase()}`
+}
+
+function parseFeedRankCursor(cursor?: string): number {
+  if (!cursor) return 0
+  const trimmed = cursor.trim()
+  if (!trimmed.startsWith(FEED_RANK_CURSOR_PREFIX)) return 0
+  const raw = trimmed.slice(FEED_RANK_CURSOR_PREFIX.length)
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function buildFeedRankCursor(offset: number): string {
+  const normalized = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0
+  return `${FEED_RANK_CURSOR_PREFIX}${normalized}`
+}
+
+async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContext> {
+  const [friendIds, connectionIds, communityFollows, businessFollows, businessMemberships, ownedBusinesses, userRecord] =
+    await Promise.all([
+      loadAcceptedFriendIds(viewerId),
+      loadAcceptedConnectionIds(viewerId),
+      prisma.communityFollow.findMany({
+        where: { userId: viewerId },
+        select: { provinceCode: true, communitySlug: true, home: true, createdAt: true },
+      }),
+      prisma.businessFollow.findMany({
+        where: { userId: viewerId },
+        select: { businessId: true },
+      }) as Promise<Array<{ businessId: string }>>,
+      prisma.businessMembership.findMany({
+        where: { userId: viewerId },
+        select: { businessId: true },
+      }) as Promise<Array<{ businessId: string }>>,
+      prisma.business.findMany({
+        where: { ownerId: viewerId },
+        select: { id: true },
+      }) as Promise<Array<{ id: string }>>,
+      prisma.user.findUnique({
+        where: { id: viewerId },
+        select: { communityMeta: true },
+      }),
+    ])
+
+  const followedCommunityKeys = new Set<string>()
+  let homeCommunityKey: string | null = null
+  const sortedFollows = [...communityFollows].sort((a, b) => {
+    if (a.home !== b.home) return a.home ? -1 : 1
+    return a.createdAt.getTime() - b.createdAt.getTime()
+  })
+  for (const follow of sortedFollows) {
+    const key = toCommunityKey(follow.provinceCode, follow.communitySlug)
+    if (!key) continue
+    followedCommunityKeys.add(key)
+    if (follow.home && !homeCommunityKey) {
+      homeCommunityKey = key
+    }
+  }
+  if (!homeCommunityKey) {
+    homeCommunityKey = sortedFollows.length ? toCommunityKey(sortedFollows[0]?.provinceCode, sortedFollows[0]?.communitySlug) : null
+  }
+
+  const communityMeta = parseCommunityMeta(userRecord?.communityMeta ?? null)
+  const nearbyCommunityKeys = new Set<string>()
+  if (communityMeta?.nearbyCommunities?.length) {
+    for (const entry of communityMeta.nearbyCommunities) {
+      const key = toCommunityKey(entry.provinceCode, entry.communitySlug)
+      if (!key || key === homeCommunityKey) continue
+      nearbyCommunityKeys.add(key)
+      if (nearbyCommunityKeys.size >= 20) break
+    }
+  }
+
+  const regionalCommunityKeys = new Set<string>()
+  for (const key of followedCommunityKeys) {
+    if (key === homeCommunityKey) continue
+    if (nearbyCommunityKeys.has(key)) continue
+    regionalCommunityKeys.add(key)
+  }
+
+  return {
+    viewerId,
+    friendIds: new Set(friendIds),
+    connectionIds: new Set(connectionIds),
+    followedBusinessIds: new Set(businessFollows.map((row) => row.businessId)),
+    memberBusinessIds: new Set([...businessMemberships.map((row) => row.businessId), ...ownedBusinesses.map((row) => row.id)]),
+    homeCommunityKey,
+    nearbyCommunityKeys,
+    regionalCommunityKeys,
+    followedCommunityKeys,
+  }
+}
+
+function resolveGeoLevel(post: FeedRankingPostRecord, context: ViewerFeedContext | null): 1 | 2 | 3 | 4 {
+  if (!context) return 4
+  const key = toCommunityKey(post.provinceCode, post.communitySlug)
+  if (!key) return 4
+  if (context.homeCommunityKey && key === context.homeCommunityKey) return 1
+  if (context.nearbyCommunityKeys.has(key)) return 2
+  if (context.regionalCommunityKeys.has(key) || context.followedCommunityKeys.has(key)) return 3
+  return 4
+}
+
+function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations', context: ViewerFeedContext | null): FeedCategory {
+  if (scope === 'friends') return 'friends'
+  if (scope === 'network') return 'network'
+  if (scope === 'communities') return 'community'
+  if (scope === 'organizations') return 'organizations'
+
+  const normalizedType = (post.type || '').trim().toLowerCase()
+  if (normalizedType.includes('event')) return 'events'
+  if (normalizedType.includes('market')) return 'marketplace'
+
+  if (context) {
+    if (context.friendIds.has(post.authorId) || post.authorId === context.viewerId) return 'friends'
+    if (context.connectionIds.has(post.authorId)) return 'network'
+    if (post.businessId && (context.followedBusinessIds.has(post.businessId) || context.memberBusinessIds.has(post.businessId))) {
+      return 'organizations'
+    }
+  }
+
+  if (post.businessId) return 'organizations'
+  if (post.provinceCode && post.communitySlug) return 'community'
+  return 'other'
+}
+
+function scoreFeedCandidate(args: {
+  post: FeedRankingPostRecord
+  scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+  context: ViewerFeedContext | null
+  impression?: { lastSeenAt: Date; impressionCount: number }
+  hasReaction: boolean
+  hasCommented: boolean
+  nowMs: number
+}): number {
+  const ageMs = Math.max(0, args.nowMs - args.post.createdAt.getTime())
+  const ageHours = ageMs / (1000 * 60 * 60)
+  const freshnessScore = Math.exp(-ageHours / 40) * 180
+
+  const engagementRaw =
+    Math.max(0, args.post.reactionTotal || 0) +
+    Math.max(0, args.post.commentCount || 0) * 1.6 +
+    Math.max(0, args.post.recentPositive || 0) * 1.4 +
+    Math.max(0, args.post.hotScore || 0) * 0.35
+  const engagementScore = Math.log1p(engagementRaw) * 14
+
+  const seen = Boolean(args.impression)
+  const impressionCount = Math.max(0, args.impression?.impressionCount ?? 0)
+  const unseenBoost = seen ? 0 : 900
+  const seenPenalty = impressionCount * 24
+
+  const geoLevel = resolveGeoLevel(args.post, args.context)
+  const geoBoostByScope = args.scope === 'communities' || args.scope === 'all'
+    ? ({ 1: 220, 2: 130, 3: 70, 4: 18 } as const)
+    : ({ 1: 60, 2: 36, 3: 18, 4: 0 } as const)
+  const geoBoost = geoBoostByScope[geoLevel]
+
+  let interactionBoost = 0
+  if (args.hasReaction) interactionBoost += 55
+  if (args.hasCommented) interactionBoost += 70
+  if (args.impression) {
+    const seenAgeHours = Math.max(0, args.nowMs - args.impression.lastSeenAt.getTime()) / (1000 * 60 * 60)
+    if (seenAgeHours <= 72) interactionBoost += 35
+  }
+
+  return unseenBoost + freshnessScore + engagementScore + geoBoost + interactionBoost - seenPenalty
+}
+
+function mixHomeFeedCandidates(candidates: RankedFeedCandidate[]): RankedFeedCandidate[] {
+  if (candidates.length <= 1) return candidates
+
+  const buckets = new Map<FeedCategory, RankedFeedCandidate[]>()
+  for (const candidate of candidates) {
+    const bucket = buckets.get(candidate.category) ?? []
+    bucket.push(candidate)
+    buckets.set(candidate.category, bucket)
+  }
+
+  const availableCategories = Array.from(buckets.keys())
+  if (availableCategories.length <= 1) return candidates
+
+  const baseWeightTotal = availableCategories.reduce((sum, category) => sum + (HOME_FEED_CATEGORY_WEIGHTS[category] ?? 0), 0)
+  if (baseWeightTotal <= 0) return candidates
+
+  const normalizedWeights = new Map<FeedCategory, number>()
+  for (const category of availableCategories) {
+    normalizedWeights.set(category, (HOME_FEED_CATEGORY_WEIGHTS[category] ?? 0) / baseWeightTotal)
+  }
+
+  const consumed = new Map<FeedCategory, number>()
+  for (const category of availableCategories) consumed.set(category, 0)
+
+  const mixed: RankedFeedCandidate[] = []
+  while (mixed.length < candidates.length) {
+    let bestCategory: FeedCategory | null = null
+    let bestDeficit = Number.NEGATIVE_INFINITY
+    let bestNextScore = Number.NEGATIVE_INFINITY
+
+    for (const category of availableCategories) {
+      const queue = buckets.get(category)
+      if (!queue?.length) continue
+      const expected = (mixed.length + 1) * (normalizedWeights.get(category) ?? 0)
+      const actual = consumed.get(category) ?? 0
+      const deficit = expected - actual
+      const nextScore = queue[0]?.score ?? Number.NEGATIVE_INFINITY
+      if (deficit > bestDeficit || (deficit === bestDeficit && nextScore > bestNextScore)) {
+        bestDeficit = deficit
+        bestNextScore = nextScore
+        bestCategory = category
+      }
+    }
+
+    if (!bestCategory) break
+    const queue = buckets.get(bestCategory)
+    const next = queue?.shift()
+    if (!next) continue
+    mixed.push(next)
+    consumed.set(bestCategory, (consumed.get(bestCategory) ?? 0) + 1)
+  }
+
+  if (mixed.length < candidates.length) {
+    const leftovers = availableCategories.flatMap((category) => buckets.get(category) ?? [])
+    leftovers.sort((a, b) => (b.score !== a.score ? b.score - a.score : b.createdAtMs - a.createdAtMs))
+    mixed.push(...leftovers)
+  }
+
+  return mixed
+}
+
+type FeedScopeMode = 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+
+async function loadViewerInteractionSignalsByPostIds(viewerId: string, postIds: string[]) {
+  const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
+  const reactedPostIds = new Set<string>()
+  const commentedPostIds = new Set<string>()
+  if (!uniquePostIds.length) return { reactedPostIds, commentedPostIds }
+
+  const [reactions, comments] = await Promise.all([
+    prisma.postReaction.findMany({
+      where: { userId: viewerId, postId: { in: uniquePostIds } },
+      select: { postId: true },
+    }),
+    prisma.comment.findMany({
+      where: { userId: viewerId, postId: { in: uniquePostIds } },
+      select: { postId: true },
+      distinct: ['postId'],
+    }),
+  ])
+
+  for (const row of reactions) {
+    if (row.postId) reactedPostIds.add(row.postId)
+  }
+  for (const row of comments) {
+    if (row.postId) commentedPostIds.add(row.postId)
+  }
+
+  return { reactedPostIds, commentedPostIds }
+}
+
+async function rankFeedPosts(args: {
+  posts: PostWithAuthor[]
+  viewerId: string | null
+  scope: FeedScopeMode
+  sortMode: 'new' | 'hot'
+  cursor?: string
+  context: ViewerFeedContext | null
+  limit: number
+}) {
+  const offset = parseFeedRankCursor(args.cursor)
+  if (!args.posts.length) {
+    return { items: [] as PostWithAuthor[], nextCursor: undefined as string | undefined }
+  }
+
+  const postIds = args.posts.map((post) => post.id)
+  const [impressionMap, interactionSignals] = await Promise.all([
+    args.viewerId ? loadUserPostImpressionMap(args.viewerId, postIds) : Promise.resolve(new Map<string, { firstSeenAt: Date; lastSeenAt: Date; impressionCount: number }>()),
+    args.viewerId
+      ? loadViewerInteractionSignalsByPostIds(args.viewerId, postIds)
+      : Promise.resolve({ reactedPostIds: new Set<string>(), commentedPostIds: new Set<string>() }),
+  ])
+
+  const nowMs = Date.now()
+  const rankedCandidates = args.posts.map((post): RankedFeedCandidate => {
+    const rankingPost: FeedRankingPostRecord = {
+      id: post.id,
+      authorId: post.authorId,
+      businessId: post.businessId ?? null,
+      type: post.type,
+      createdAt: post.createdAt,
+      updatedAt: post.updatedAt,
+      lastActivityAt: post.lastActivityAt,
+      provinceCode: post.provinceCode ?? null,
+      communitySlug: post.communitySlug ?? null,
+      reactionTotal: post.reactionTotal ?? 0,
+      commentCount: post.commentCount ?? 0,
+      recentPositive: post.recentPositive ?? 0,
+      hotScore: post.hotScore ?? 0,
+    }
+
+    const baseScore = scoreFeedCandidate({
+      post: rankingPost,
+      scope: args.scope,
+      context: args.context,
+      impression: impressionMap.get(post.id),
+      hasReaction: interactionSignals.reactedPostIds.has(post.id),
+      hasCommented: interactionSignals.commentedPostIds.has(post.id),
+      nowMs,
+    })
+    const hotPreferenceBoost =
+      args.sortMode === 'hot'
+        ? Math.log1p(Math.max(0, rankingPost.hotScore)) * 24 +
+          Math.log1p(Math.max(0, rankingPost.commentCount)) * 14 +
+          Math.log1p(Math.max(0, rankingPost.reactionTotal)) * 10
+        : 0
+
+    return {
+      postId: post.id,
+      score: baseScore + hotPreferenceBoost,
+      createdAtMs: rankingPost.createdAt.getTime(),
+      category: resolveFeedCategory(rankingPost, args.scope, args.context),
+    }
+  })
+
+  rankedCandidates.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    if (b.createdAtMs !== a.createdAtMs) return b.createdAtMs - a.createdAtMs
+    return b.postId.localeCompare(a.postId)
+  })
+
+  const orderedCandidates = args.scope === 'all' ? mixHomeFeedCandidates(rankedCandidates) : rankedCandidates
+  const postById = new Map(args.posts.map((post) => [post.id, post] as const))
+  const rankedPosts = orderedCandidates
+    .map((candidate) => postById.get(candidate.postId))
+    .filter((post): post is PostWithAuthor => Boolean(post))
+
+  const pagedItems = rankedPosts.slice(offset, offset + args.limit)
+  const nextOffset = offset + args.limit
+  const nextCursor = nextOffset < rankedPosts.length ? buildFeedRankCursor(nextOffset) : undefined
+  return { items: pagedItems, nextCursor }
 }
 
 app.get('/health', async () => ({ ok: true }))
@@ -17914,13 +18392,6 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       .safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
     const { cursor, limit, jurisdiction, sort, scope = 'all', province, community } = parse.data
-    const authorSelect = {
-      id: true,
-      handle: true,
-      name: true,
-      avatarUrl: true,
-      premiumStatus: true,
-    }
     const where: Prisma.PostWhereInput = {}
     if (jurisdiction) {
       where.jurisdiction = jurisdiction
@@ -17945,6 +18416,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     // - Anonymous home feed is public.
     // - Logged-in home feed includes members-only only when user is a business member/owner.
     let memberBusinessIds: string[] = []
+    let viewerFeedContext: ViewerFeedContext | null = null
     if (province && community) {
       where.visibility = 'public'
     } else if (!viewerId) {
@@ -17956,13 +18428,8 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     if (viewerId && !province && !community) {
-      const [ownedBusinesses, memberships] = await Promise.all([
-        prisma.business.findMany({ where: { ownerId: viewerId }, select: { id: true } }) as Promise<Array<{ id: string }>>,
-        prisma.businessMembership.findMany({ where: { userId: viewerId }, select: { businessId: true } }) as Promise<
-          Array<{ businessId: string }>
-        >,
-      ])
-      memberBusinessIds = Array.from(new Set([...ownedBusinesses.map((row) => row.id), ...memberships.map((row) => row.businessId)]))
+      viewerFeedContext = await loadViewerFeedContext(viewerId)
+      memberBusinessIds = [...viewerFeedContext.memberBusinessIds]
 
       const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
       where.AND = [
@@ -17985,33 +18452,9 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
       const accessibleFilters: Prisma.PostWhereInput[] = []
 
-      const [friendIds, connectionIds, communityFollows, businessFollows] = await Promise.all([
-        includeFriends ? loadAcceptedFriendIds(viewerId) : Promise.resolve([] as string[]),
-        includeNetwork ? loadAcceptedConnectionIds(viewerId) : Promise.resolve([] as string[]),
-        includeCommunities
-          ? prisma.communityFollow.findMany({
-              where: { userId: viewerId },
-              select: { provinceCode: true, communitySlug: true },
-            })
-          : Promise.resolve([] as Array<{ provinceCode: string; communitySlug: string }>),
-        includeOrganizations
-          ? (prisma.businessFollow.findMany({
-              where: { userId: viewerId },
-              select: { businessId: true },
-            }) as Promise<Array<{ businessId: string }>>)
-          : Promise.resolve([] as Array<{ businessId: string }>),
-      ])
-
       if (includeFriends) {
-        const allowedAuthorIds = new Set<string>([viewerId, ...friendIds])
+        const allowedAuthorIds = new Set<string>([viewerId, ...viewerFeedContext.friendIds])
         if (allowedAuthorIds.size) {
-          // If scope is strictly 'friends', we only want posts that are NOT targeted at a community
-          // unless the user specifically wants to see everything their friends posted.
-          // The requirement is: "When viewing /friends we should only see posts with the context of the post subtype of friend; not a community post."
-          // This implies we should filter out posts that have a communitySlug set, OR we should only include posts where audience is 'friends' or 'public' but not community-specific.
-          // However, the current schema might not have an explicit 'audience' field that distinguishes this easily other than provinceCode/communitySlug being null.
-          // Let's check if we can filter by provinceCode: null.
-
           accessibleFilters.push({
             authorId: { in: [...allowedAuthorIds] },
             communitySlug: null,
@@ -18023,7 +18466,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
 
       if (includeNetwork) {
-        const allowedAuthorIds = new Set<string>([viewerId, ...connectionIds])
+        const allowedAuthorIds = new Set<string>([viewerId, ...viewerFeedContext.connectionIds])
         if (allowedAuthorIds.size) {
           accessibleFilters.push({
             authorId: { in: [...allowedAuthorIds] },
@@ -18036,19 +18479,35 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
 
       if (includeCommunities) {
-        const seenKeys = new Set<string>()
-        for (const follow of communityFollows) {
-          if (!follow.provinceCode || !follow.communitySlug) continue
-          const key = `${follow.provinceCode}:${follow.communitySlug}`
-          if (seenKeys.has(key)) continue
-          seenKeys.add(key)
-          accessibleFilters.push({ provinceCode: follow.provinceCode, communitySlug: follow.communitySlug })
+        const prioritizedCommunityKeys = Array.from(
+          new Set(
+            [
+              viewerFeedContext.homeCommunityKey,
+              ...viewerFeedContext.nearbyCommunityKeys,
+              ...viewerFeedContext.regionalCommunityKeys,
+              ...viewerFeedContext.followedCommunityKeys,
+            ].filter((key): key is string => Boolean(key)),
+          ),
+        )
+
+        if (prioritizedCommunityKeys.length) {
+          for (const key of prioritizedCommunityKeys) {
+            const [provinceCode, communitySlug] = key.split(':')
+            if (!provinceCode || !communitySlug) continue
+            accessibleFilters.push({ provinceCode, communitySlug })
+          }
+        } else {
+          // Cold-start fallback: show nationally available community posts when local follows are empty.
+          accessibleFilters.push({
+            provinceCode: { not: null },
+            communitySlug: { not: null },
+          })
         }
       }
 
       if (includeOrganizations) {
         const businessIds = Array.from(
-          new Set([...businessFollows.map((follow) => follow.businessId), ...memberBusinessIds]),
+          new Set([...viewerFeedContext.followedBusinessIds, ...viewerFeedContext.memberBusinessIds]),
         )
         if (businessIds.length) {
           accessibleFilters.push({ businessId: { in: businessIds } })
@@ -18129,18 +18588,26 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
     }
 
-    const query = await prisma.post.findMany({
+    const rankOffset = parseFeedRankCursor(cursor)
+    const candidateTake = Math.min(1500, Math.max(limit * 10, rankOffset + limit + 180, scope === 'all' ? 260 : 200))
+    const candidates = await prisma.post.findMany({
       where,
-      take: limit + 1,
-      orderBy: { createdAt: 'desc' },
+      take: candidateTake,
+      orderBy: sortMode === 'hot' ? [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }] : [{ createdAt: 'desc' }],
       include: POST_INCLUDE,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     })
-    if (query.length > limit) {
-      const next = query.pop()!
-      nextCursor = next.id
-    }
-    items = query
+
+    const ranked = await rankFeedPosts({
+      posts: candidates,
+      viewerId: viewerId ?? null,
+      scope,
+      sortMode,
+      cursor,
+      context: viewerFeedContext,
+      limit,
+    })
+    items = ranked.items
+    nextCursor = ranked.nextCursor
 
     const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, items.map((post) => post.id))
 
@@ -18156,6 +18623,19 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       nextCursor,
       lastViewedAt,
     }
+  }),
+)
+
+app.post('/posts/impressions', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const viewerId = (req as any).user?.id as string | undefined
+    if (!viewerId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parsed = PostImpressionTrackInput.safeParse(req.body ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() })
+
+    const tracked = await recordUserPostImpressions(viewerId, parsed.data.postIds)
+    return reply.send({ ok: true, tracked })
   }),
 )
 
