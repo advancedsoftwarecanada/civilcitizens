@@ -23,6 +23,7 @@ import {
   MessageType,
   MessageParticipantRole,
   BusinessRole,
+  PollResultsVisibility as PrismaPollResultsVisibility,
   ReactionType as PrismaReactionType,
 } from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
@@ -41,6 +42,8 @@ import {
   CreateCommentInput,
   ReactPostInput,
   VoteCommentInput,
+  VotePollInput,
+  AddPollOptionInput,
   UpdateProfilePhotoInput,
   PostSortEnum,
   CommentSortEnum,
@@ -1427,6 +1430,16 @@ function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof for
       message: `${actorLabel} invited you to join ${organizationName}.`,
     }
   }
+  if (record.type === POLL_NOTIFICATION_TYPES.RESULTS_AVAILABLE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const questionPreview = typeof payload?.questionPreview === 'string' ? payload.questionPreview.trim() : ''
+    return {
+      title: 'Poll results available',
+      message: questionPreview ? `${actorLabel}'s poll is ready: ${questionPreview}` : `${actorLabel}'s poll results are now available.`,
+    }
+  }
   return {
     title: 'Civil Citizens',
     message: `${actorLabel} sent you a notification.`,
@@ -1441,6 +1454,13 @@ function getNotificationDeepLink(record: NotificationRecord): string | null {
   const candidates = record.type === COMMENT_NOTIFICATION_TYPES.REPLY
     ? [payload?.replyUrl, payload?.url, payload?.sourceUrl]
     : [payload?.url, payload?.sourceUrl, payload?.replyUrl]
+
+  if (record.type === POLL_NOTIFICATION_TYPES.RESULTS_AVAILABLE) {
+    const pollUrl = typeof payload?.url === 'string' ? payload.url.trim() : ''
+    if (pollUrl.startsWith('/')) {
+      return pollUrl
+    }
+  }
 
   for (const raw of candidates) {
     const url = typeof raw === 'string' ? raw.trim() : ''
@@ -1713,6 +1733,114 @@ async function createNotificationRecord(data: {
   return notification
 }
 
+let pollResultNotificationSweepPromise: Promise<void> | null = null
+
+async function dispatchDuePollResultNotifications() {
+  if (pollResultNotificationSweepPromise) return pollResultNotificationSweepPromise
+
+  pollResultNotificationSweepPromise = (async () => {
+    try {
+      const now = new Date()
+      const duePolls = await prisma.poll.findMany({
+        where: {
+          resultsVisibility: {
+            in: [
+              PrismaPollResultsVisibility.AFTER_6_HOURS,
+              PrismaPollResultsVisibility.AFTER_12_HOURS,
+              PrismaPollResultsVisibility.AFTER_24_HOURS,
+              PrismaPollResultsVisibility.AFTER_48_HOURS,
+            ],
+          },
+          resultsAvailableAt: { lte: now },
+          votes: {
+            some: {
+              resultNotificationSentAt: null,
+            },
+          },
+        },
+        select: {
+          id: true,
+          postId: true,
+          resultsAvailableAt: true,
+          post: {
+            select: {
+              id: true,
+              authorId: true,
+              seoSlug: true,
+              provinceCode: true,
+              communitySlug: true,
+              body: true,
+              author: {
+                select: {
+                  handle: true,
+                },
+              },
+            },
+          },
+        },
+      })
+
+      for (const poll of duePolls) {
+        const resultsAvailableAt = poll.resultsAvailableAt
+        if (!resultsAvailableAt) continue
+
+        const slug = poll.post.seoSlug ?? poll.post.id
+        const url = poll.post.provinceCode && poll.post.communitySlug
+          ? `/${poll.post.provinceCode.toLowerCase()}/${poll.post.communitySlug.toLowerCase()}/posts/${slug}`
+          : `/u/${poll.post.author.handle}/posts/${slug}`
+        const questionPreview = truncatePushBody(sanitizePlainText(poll.post.body), 90)
+
+        const candidateVotes = await prisma.pollVote.findMany({
+          where: {
+            pollId: poll.id,
+            resultNotificationSentAt: null,
+            createdAt: {
+              lte: resultsAvailableAt,
+            },
+          },
+          select: {
+            userId: true,
+          },
+        })
+
+        for (const vote of candidateVotes) {
+          const marked = await prisma.pollVote.updateMany({
+            where: {
+              pollId: poll.id,
+              userId: vote.userId,
+              resultNotificationSentAt: null,
+            },
+            data: {
+              resultNotificationSentAt: now,
+            },
+          })
+
+          if (!marked.count) continue
+
+          await createNotificationRecord({
+            userId: vote.userId,
+            actorId: poll.post.authorId,
+            type: POLL_NOTIFICATION_TYPES.RESULTS_AVAILABLE,
+            postId: poll.postId,
+            payload: {
+              pollId: poll.id,
+              questionPreview,
+              resultsAvailableAt: resultsAvailableAt.toISOString(),
+              url,
+            },
+          })
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, 'poll_result_notification_sweep_failed')
+    } finally {
+      pollResultNotificationSweepPromise = null
+    }
+  })()
+
+  return pollResultNotificationSweepPromise
+}
+
 async function resolveStreamUserId(req: FastifyRequest): Promise<string | null> {
   if (!(req as any).user?.id) {
     try {
@@ -1770,6 +1898,10 @@ const EVENT_NOTIFICATION_TYPES = {
 
 const ORG_NOTIFICATION_TYPES = {
   USER_INVITE: 'org_user_invite',
+} as const
+
+const POLL_NOTIFICATION_TYPES = {
+  RESULTS_AVAILABLE: 'poll_results_available',
 } as const
 
 async function notifyFriendRequest(friendshipId: string, requesterId: string, addresseeId: string) {
@@ -4291,6 +4423,29 @@ async function createOrganizationEventAnnouncementPost(args: {
   })
 }
 
+const MAX_POLL_OPTIONS = 10
+type PollResultsVisibilityValue = 'after_vote' | 'after_6_hours' | 'after_12_hours' | 'after_24_hours' | 'after_48_hours'
+
+const POLL_INCLUDE = {
+  include: {
+    options: {
+      orderBy: { sortOrder: 'asc' },
+      include: {
+        _count: {
+          select: {
+            votes: true,
+          },
+        },
+      },
+    },
+    _count: {
+      select: {
+        votes: true,
+      },
+    },
+  },
+} as const
+
 const POST_INCLUDE = {
   author: {
     select: {
@@ -4314,6 +4469,7 @@ const POST_INCLUDE = {
       communitySlug: true,
     },
   },
+  poll: POLL_INCLUDE,
   sharedPost: {
     include: {
       author: {
@@ -4338,6 +4494,7 @@ const POST_INCLUDE = {
           communitySlug: true,
         },
       },
+      poll: POLL_INCLUDE,
     },
   },
 } as const
@@ -4368,6 +4525,30 @@ type FormattedPost = {
     coverUrl: string | null
     provinceCode: string | null
     communitySlug: string | null
+  } | null
+  poll: {
+    id: string
+    resultsVisibility: PollResultsVisibilityValue
+    resultsAvailableAt: Date | null
+    firstVoteAt: Date | null
+    endedAt: Date | null
+    totalVotes: number | null
+    maxOptions: number
+    options: Array<{
+      id: string
+      label: string
+      sortOrder: number
+      voteCount: number | null
+      percentage: number | null
+    }>
+    viewer: {
+      hasVoted: boolean
+      optionId: string | null
+      canSeeResults: boolean
+      canVote: boolean
+    }
+    authorCanAddOptions: boolean
+    authorCanEndPoll: boolean
   } | null
   sharedPost: FormattedPost | null
   author: {
@@ -4526,16 +4707,182 @@ async function loadViewerReactionsByPostIds(
   return out
 }
 
+async function loadViewerPollSelectionsByPostIds(
+  viewerId: string | undefined,
+  postIds: string[],
+): Promise<Record<string, string>> {
+  const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
+  if (!viewerId || uniquePostIds.length === 0) return {}
+
+  const rows = await prisma.pollVote.findMany({
+    where: {
+      userId: viewerId,
+      poll: {
+        postId: { in: uniquePostIds },
+      },
+    },
+    select: {
+      optionId: true,
+      poll: {
+        select: {
+          postId: true,
+        },
+      },
+    },
+  })
+
+  const out: Record<string, string> = {}
+  for (const row of rows) {
+    out[row.poll.postId] = row.optionId
+  }
+  return out
+}
+
+async function loadViewerPostFormattingContext(
+  viewerId: string | undefined,
+  postIds: string[],
+  recentCommentLimit = 5,
+): Promise<{
+  reactionsByPost: Record<string, PrismaReactionType>
+  pollSelectionsByPost: Record<string, string>
+  recentCommentsByPost: Record<string, FormattedPost['recentComments']>
+}> {
+  const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
+  if (!uniquePostIds.length) {
+    return {
+      reactionsByPost: {},
+      pollSelectionsByPost: {},
+      recentCommentsByPost: {},
+    }
+  }
+
+  const [reactionsByPost, pollSelectionsByPost, recentCommentsByPost] = await Promise.all([
+    loadViewerReactionsByPostIds(viewerId, uniquePostIds),
+    loadViewerPollSelectionsByPostIds(viewerId, uniquePostIds),
+    getRecentCommentsByPostIds(uniquePostIds, recentCommentLimit),
+  ])
+
+  return {
+    reactionsByPost,
+    pollSelectionsByPost,
+    recentCommentsByPost,
+  }
+}
+
+function formatPollResultsVisibility(value: PrismaPollResultsVisibility): PollResultsVisibilityValue {
+  switch (value) {
+    case PrismaPollResultsVisibility.AFTER_6_HOURS:
+      return 'after_6_hours'
+    case PrismaPollResultsVisibility.AFTER_12_HOURS:
+      return 'after_12_hours'
+    case PrismaPollResultsVisibility.AFTER_24_HOURS:
+      return 'after_24_hours'
+    case PrismaPollResultsVisibility.AFTER_48_HOURS:
+      return 'after_48_hours'
+    case PrismaPollResultsVisibility.AFTER_VOTE:
+    default:
+      return 'after_vote'
+  }
+}
+
+function mapPollResultsVisibilityToDb(value: PollResultsVisibilityValue): PrismaPollResultsVisibility {
+  switch (value) {
+    case 'after_6_hours':
+      return PrismaPollResultsVisibility.AFTER_6_HOURS
+    case 'after_12_hours':
+      return PrismaPollResultsVisibility.AFTER_12_HOURS
+    case 'after_24_hours':
+      return PrismaPollResultsVisibility.AFTER_24_HOURS
+    case 'after_48_hours':
+      return PrismaPollResultsVisibility.AFTER_48_HOURS
+    case 'after_vote':
+    default:
+      return PrismaPollResultsVisibility.AFTER_VOTE
+  }
+}
+
+function getPollResultsAvailableAt(visibility: PollResultsVisibilityValue, baseTime: Date): Date | null {
+  const delayHours =
+    visibility === 'after_6_hours'
+      ? 6
+      : visibility === 'after_12_hours'
+        ? 12
+        : visibility === 'after_24_hours'
+          ? 24
+          : visibility === 'after_48_hours'
+            ? 48
+            : 0
+
+  if (!delayHours) return null
+  return new Date(baseTime.getTime() + delayHours * 60 * 60 * 1000)
+}
+
+function formatPollForViewer(
+  post: PostWithAuthor,
+  viewerId: string | null | undefined,
+  viewerPollOptionId: string | null | undefined,
+  now: Date,
+): FormattedPost['poll'] {
+  if (!post.poll) return null
+
+  const hasVoted = Boolean(viewerPollOptionId)
+  const isEnded = Boolean(post.poll.endedAt)
+  const isAuthor = Boolean(viewerId && viewerId === post.authorId)
+  const resultsAvailableAt = post.poll.resultsAvailableAt ?? null
+  const resultsVisibleByTime = Boolean(resultsAvailableAt && resultsAvailableAt.getTime() <= now.getTime())
+  const canSeeResults =
+    post.poll.resultsVisibility === PrismaPollResultsVisibility.AFTER_VOTE
+      ? hasVoted || isEnded
+      : resultsVisibleByTime
+  const totalVotes = canSeeResults ? post.poll._count.votes : null
+  const safeTotalVotes = post.poll._count.votes || 0
+
+  return {
+    id: post.poll.id,
+    resultsVisibility: formatPollResultsVisibility(post.poll.resultsVisibility),
+    resultsAvailableAt,
+    firstVoteAt: post.poll.firstVoteAt ?? null,
+    endedAt: post.poll.endedAt ?? null,
+    totalVotes,
+    maxOptions: MAX_POLL_OPTIONS,
+    options: post.poll.options.map((option) => {
+      const voteCount = canSeeResults ? option._count.votes : null
+      const percentage =
+        canSeeResults && safeTotalVotes > 0 ? Math.round((option._count.votes / safeTotalVotes) * 100) : canSeeResults ? 0 : null
+
+      return {
+        id: option.id,
+        label: option.label,
+        sortOrder: option.sortOrder,
+        voteCount,
+        percentage,
+      }
+    }),
+    viewer: {
+      hasVoted,
+      optionId: viewerPollOptionId ?? null,
+      canSeeResults,
+      canVote: !isEnded,
+    },
+    authorCanAddOptions: isAuthor && !isEnded && post.poll.options.length < MAX_POLL_OPTIONS,
+    authorCanEndPoll: isAuthor && !isEnded,
+  }
+}
+
 function formatPost(
   post: PostWithAuthor,
   options: {
     viewerVote?: number | null
     viewerReaction?: PrismaReactionType | null
     recentComments?: FormattedPost['recentComments']
+    viewerId?: string | null
+    viewerPollOptionId?: string | null
+    now?: Date
   } = {},
 ): FormattedPost {
   const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
   const provinceName = community ? getProvinceDisplayName(community.province as any) : null
+  const now = options.now ?? new Date()
 
   let sharedPost: FormattedPost | null = null
   if (post.sharedPost) {
@@ -4569,6 +4916,7 @@ function formatPost(
           communitySlug: post.business.communitySlug ?? null,
         }
       : null,
+    poll: formatPollForViewer(post, options.viewerId, options.viewerPollOptionId, now),
     sharedPost,
     author: {
       id: post.author.id,
@@ -4838,7 +5186,16 @@ function scoreFeedCandidate(args: {
     if (seenAgeHours <= 72) interactionBoost += 35
   }
 
-  return unseenBoost + freshnessScore + engagementScore + geoBoost + interactionBoost - seenPenalty
+  const isViewerPost = Boolean(args.context && args.post.authorId === args.context.viewerId)
+  // Keep freshly published viewer posts visible on reload instead of only through the optimistic client insert.
+  const viewerAuthorBoost =
+    isViewerPost && args.scope === 'all'
+      ? Math.exp(-ageHours / 18) * 420
+      : isViewerPost
+        ? Math.exp(-ageHours / 24) * 180
+        : 0
+
+  return unseenBoost + freshnessScore + engagementScore + geoBoost + interactionBoost + viewerAuthorBoost - seenPenalty
 }
 
 function mixHomeFeedCandidates(candidates: RankedFeedCandidate[]): RankedFeedCandidate[] {
@@ -5261,15 +5618,19 @@ registerCommunityRoute(
         items = queryResult
       }
 
-      const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, items.map((item) => item.id))
-
-      const recentCommentsByPost = await getRecentCommentsByPostIds(items.map((item) => item.id), 5)
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(
+        viewerId,
+        items.map((item) => item.id),
+        5,
+      )
 
       return {
         community: communityRecord,
         items: items.map((item) =>
           formatPost(item, {
+            viewerId,
             viewerReaction: reactionsByPost[item.id] ?? null,
+            viewerPollOptionId: pollSelectionsByPost[item.id] ?? null,
             recentComments: recentCommentsByPost[item.id] ?? [],
           }),
         ),
@@ -6395,7 +6756,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
-    const { body: rawBody, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience } = parse.data
+    const { body: rawBody, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
 
     const isArticle = type === 'article'
     const normalizedBody = sharedPostId
@@ -6434,8 +6795,23 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
           jurisdiction: normalizedJurisdiction,
           sharedPostId,
         },
-        include: POST_INCLUDE,
       })
+
+      if (type === 'poll' && pollInput) {
+        await tx.poll.create({
+          data: {
+            postId: post.id,
+            resultsVisibility: mapPollResultsVisibilityToDb(pollInput.resultsVisibility),
+            resultsAvailableAt: getPollResultsAvailableAt(pollInput.resultsVisibility, post.createdAt),
+            options: {
+              create: pollInput.options.map((label: string, index: number) => ({
+                label,
+                sortOrder: index,
+              })),
+            },
+          },
+        })
+      }
 
       if (hashtags?.length) {
         const tags = [...new Set(hashtags.map((t: string) => t.replace(/^#/, '')))] as string[]
@@ -6445,10 +6821,205 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         }
       }
 
-      return post
+      return tx.post.findUnique({
+        where: { id: post.id },
+        include: POST_INCLUDE,
+      })
     })
 
-    return reply.code(201).send(formatPost(created))
+    if (!created) return reply.code(500).send({ error: 'post_create_failed' })
+
+    return reply.code(201).send(formatPost(created, { viewerId: userId }))
+  }),
+)
+
+app.post('/posts/:id/poll/vote', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
+
+    const parse = VotePollInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      include: POST_INCLUDE,
+    })
+    if (!post || post.type !== 'poll' || !post.poll) return reply.code(404).send({ error: 'poll_not_found' })
+
+    const canView = await canViewerAccessPostForPreview(post, userId)
+    if (!canView) return reply.code(404).send({ error: 'poll_not_found' })
+    if (post.poll.endedAt) return reply.code(409).send({ error: 'poll_closed' })
+
+    const option = post.poll.options.find((item: { id: string }) => item.id === parse.data.optionId)
+    if (!option) return reply.code(404).send({ error: 'poll_option_not_found' })
+
+    const now = new Date()
+    const markResultsDelivered = Boolean(post.poll.resultsAvailableAt && post.poll.resultsAvailableAt.getTime() <= now.getTime())
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existingVote = await tx.pollVote.findUnique({
+        where: {
+          pollId_userId: {
+            pollId: post.poll!.id,
+            userId,
+          },
+        },
+        select: {
+          resultNotificationSentAt: true,
+        },
+      })
+
+      if (existingVote) {
+        await tx.pollVote.update({
+          where: {
+            pollId_userId: {
+              pollId: post.poll!.id,
+              userId,
+            },
+          },
+          data: {
+            optionId: option.id,
+            ...(markResultsDelivered && !existingVote.resultNotificationSentAt ? { resultNotificationSentAt: now } : {}),
+          },
+        })
+      } else {
+        await tx.pollVote.create({
+          data: {
+            pollId: post.poll!.id,
+            userId,
+            optionId: option.id,
+            ...(markResultsDelivered ? { resultNotificationSentAt: now } : {}),
+          },
+        })
+      }
+
+      await tx.poll.updateMany({
+        where: {
+          id: post.poll!.id,
+          firstVoteAt: null,
+        },
+        data: {
+          firstVoteAt: now,
+        },
+      })
+    })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      include: POST_INCLUDE,
+    })
+    if (!updatedPost) return reply.code(404).send({ error: 'poll_not_found' })
+
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
+
+    return reply.send({
+      post: formatPost(updatedPost, {
+        viewerId: userId,
+        viewerReaction: reactionsByPost[updatedPost.id] ?? null,
+        viewerPollOptionId: pollSelectionsByPost[updatedPost.id] ?? null,
+        recentComments: recentCommentsByPost[updatedPost.id] ?? [],
+      }),
+    })
+  }),
+)
+
+app.post('/posts/:id/poll/options', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
+
+    const parse = AddPollOptionInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      include: POST_INCLUDE,
+    })
+    if (!post || post.type !== 'poll' || !post.poll) return reply.code(404).send({ error: 'poll_not_found' })
+    if (post.authorId !== userId) return reply.code(403).send({ error: 'forbidden' })
+    if (post.poll.endedAt) return reply.code(409).send({ error: 'poll_closed' })
+    if (post.poll.options.length >= MAX_POLL_OPTIONS) {
+      return reply.code(400).send({ error: 'poll_option_limit_reached' })
+    }
+
+    const normalizedLabel = parse.data.label.trim().toLowerCase()
+    const hasDuplicate = post.poll.options.some((option: { label: string }) => option.label.trim().toLowerCase() === normalizedLabel)
+    if (hasDuplicate) {
+      return reply.code(409).send({ error: 'poll_option_duplicate' })
+    }
+
+    await prisma.pollOption.create({
+      data: {
+        pollId: post.poll.id,
+        label: parse.data.label,
+        sortOrder: post.poll.options.length,
+      },
+    })
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      include: POST_INCLUDE,
+    })
+    if (!updatedPost) return reply.code(404).send({ error: 'poll_not_found' })
+
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
+
+    return reply.send({
+      post: formatPost(updatedPost, {
+        viewerId: userId,
+        viewerReaction: reactionsByPost[updatedPost.id] ?? null,
+        viewerPollOptionId: pollSelectionsByPost[updatedPost.id] ?? null,
+        recentComments: recentCommentsByPost[updatedPost.id] ?? [],
+      }),
+    })
+  }),
+)
+
+app.post('/posts/:id/poll/end', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
+
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      include: POST_INCLUDE,
+    })
+    if (!post || post.type !== 'poll' || !post.poll) return reply.code(404).send({ error: 'poll_not_found' })
+    if (post.authorId !== userId) return reply.code(403).send({ error: 'forbidden' })
+
+    if (!post.poll.endedAt) {
+      await prisma.poll.update({
+        where: { id: post.poll.id },
+        data: { endedAt: new Date() },
+      })
+    }
+
+    const updatedPost = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      include: POST_INCLUDE,
+    })
+    if (!updatedPost) return reply.code(404).send({ error: 'poll_not_found' })
+
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
+
+    return reply.send({
+      post: formatPost(updatedPost, {
+        viewerId: userId,
+        viewerReaction: reactionsByPost[updatedPost.id] ?? null,
+        viewerPollOptionId: pollSelectionsByPost[updatedPost.id] ?? null,
+        recentComments: recentCommentsByPost[updatedPost.id] ?? [],
+      }),
+    })
   }),
 )
 
@@ -6532,11 +7103,13 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
-    const recentCommentsByPost = await getRecentCommentsByPostIds([postId], 5)
+    const { pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [postId], 5)
 
     return reply.send({
       post: formatPost(updatedPost, {
+        viewerId: userId,
         viewerReaction: mappedReaction,
+        viewerPollOptionId: pollSelectionsByPost[postId] ?? null,
         recentComments: recentCommentsByPost[postId] ?? [],
       }),
     })
@@ -6635,11 +7208,13 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
-    const recentCommentsByPost = await getRecentCommentsByPostIds([postId], 5)
+    const { pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [postId], 5)
 
     return reply.send({
       post: formatPost(updatedPost, {
+        viewerId: userId,
         viewerReaction: normalizedReaction,
+        viewerPollOptionId: pollSelectionsByPost[postId] ?? null,
         recentComments: recentCommentsByPost[postId] ?? [],
       }),
     })
@@ -6828,13 +7403,22 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
       })
     }
 
+    const formattingContext = updatedPost ? await loadViewerPostFormattingContext(userId, [updatedPost.id], 5) : null
+
     return reply.code(201).send({
       comment: {
         ...mapComment(created, 0),
         createdAt: created.createdAt.toISOString(),
         updatedAt: created.updatedAt.toISOString(),
       },
-      post: updatedPost ? formatPost(updatedPost) : null,
+      post: updatedPost
+        ? formatPost(updatedPost, {
+            viewerId: userId,
+            viewerReaction: formattingContext?.reactionsByPost[updatedPost.id] ?? null,
+            viewerPollOptionId: formattingContext?.pollSelectionsByPost[updatedPost.id] ?? null,
+            recentComments: formattingContext?.recentCommentsByPost[updatedPost.id] ?? [],
+          })
+        : null,
     })
   }),
 )
@@ -6979,7 +7563,23 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     const parse = UpdatePostInput.safeParse(req.body)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true } })
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      select: {
+        authorId: true,
+        type: true,
+        poll: {
+          select: {
+            endedAt: true,
+            _count: {
+              select: {
+                votes: true,
+              },
+            },
+          },
+        },
+      },
+    })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
     if (post.authorId !== userId) {
@@ -6987,27 +7587,34 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     const { title, body: rawBody, mediaUrl, hashtags } = parse.data
-    const body = post.type === 'article' ? sanitizeRichTextHtml(rawBody) : sanitizePlainText(rawBody)
+    if (post.type === 'poll') {
+      if (post.poll?.endedAt) {
+        return reply.code(409).send({ error: 'poll_closed' })
+      }
+      if ((post.poll?._count.votes ?? 0) > 0 && rawBody !== undefined) {
+        return reply.code(409).send({ error: 'poll_locked' })
+      }
+      if (title !== undefined || mediaUrl !== undefined) {
+        return reply.code(400).send({ error: 'poll_update_not_supported' })
+      }
+    }
 
     const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const postData: Prisma.PostUpdateInput = {}
+      if (title !== undefined) {
+        postData.title = title
+      }
+      if (rawBody !== undefined) {
+        postData.body = post.type === 'article' ? sanitizeRichTextHtml(rawBody) : sanitizePlainText(rawBody)
+      }
+      if (mediaUrl !== undefined) {
+        postData.mediaUrl = mediaUrl
+      }
+
       const updatedPost = await tx.post.update({
         where: { id: params.data.id },
-        data: {
-          title,
-          body,
-          mediaUrl,
-        },
-        include: {
-          author: {
-            select: {
-              id: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              premiumStatus: true,
-            },
-          },
-        },
+        data: postData,
+        include: POST_INCLUDE,
       })
 
       if (hashtags) {
@@ -7024,7 +7631,16 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       return updatedPost
     })
 
-    return reply.send(formatPost(updated))
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [params.data.id], 5)
+
+    return reply.send(
+      formatPost(updated, {
+        viewerId: userId,
+        viewerReaction: reactionsByPost[params.data.id] ?? null,
+        viewerPollOptionId: pollSelectionsByPost[params.data.id] ?? null,
+        recentComments: recentCommentsByPost[params.data.id] ?? [],
+      }),
+    )
   }),
 )
 
@@ -20315,14 +20931,18 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
       posts = queryResult
     }
 
-    const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, posts.map((post) => post.id))
-
-    const recentCommentsByPost = await getRecentCommentsByPostIds(posts.map((post) => post.id), 5)
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(
+      viewerId,
+      posts.map((post) => post.id),
+      5,
+    )
 
     return reply.send({
       items: posts.map((post) =>
         formatPost(post, {
+          viewerId,
           viewerReaction: reactionsByPost[post.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
           recentComments: recentCommentsByPost[post.id] ?? [],
         }),
       ),
@@ -20360,17 +20980,22 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     let viewerReaction: PrismaReactionType | null = null
+    let viewerPollOptionId: string | null = null
     if (viewerId) {
-      const reaction = await prisma.postReaction.findUnique({
-        where: {
-          userId_postId: {
-            userId: viewerId,
-            postId: post.id,
+      const [reaction, pollSelectionsByPost] = await Promise.all([
+        prisma.postReaction.findUnique({
+          where: {
+            userId_postId: {
+              userId: viewerId,
+              postId: post.id,
+            },
           },
-        },
-        select: { type: true },
-      })
+          select: { type: true },
+        }),
+        loadViewerPollSelectionsByPostIds(viewerId, [post.id]),
+      ])
       viewerReaction = reaction?.type ?? null
+      viewerPollOptionId = pollSelectionsByPost[post.id] ?? null
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -20405,7 +21030,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     return {
-      post: formatPost(post, { viewerReaction }),
+      post: formatPost(post, { viewerId, viewerReaction, viewerPollOptionId }),
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes),
     }
@@ -20438,17 +21063,22 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     let viewerReaction: PrismaReactionType | null = null
+    let viewerPollOptionId: string | null = null
     if (viewerId) {
-      const reaction = await prisma.postReaction.findUnique({
-        where: {
-          userId_postId: {
-            userId: viewerId,
-            postId: post.id,
+      const [reaction, pollSelectionsByPost] = await Promise.all([
+        prisma.postReaction.findUnique({
+          where: {
+            userId_postId: {
+              userId: viewerId,
+              postId: post.id,
+            },
           },
-        },
-        select: { type: true },
-      })
+          select: { type: true },
+        }),
+        loadViewerPollSelectionsByPostIds(viewerId, [post.id]),
+      ])
       viewerReaction = reaction?.type ?? null
+      viewerPollOptionId = pollSelectionsByPost[post.id] ?? null
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
@@ -20483,7 +21113,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     return {
-      post: formatPost(post, { viewerReaction }),
+      post: formatPost(post, { viewerId, viewerReaction, viewerPollOptionId }),
       paths: getCanonicalPaths(post),
       comments: buildCommentTree(commentRows, viewerCommentVotes),
     }
@@ -20570,11 +21200,22 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         const allowedAuthorIds = new Set<string>([viewerId, ...viewerFeedContext.friendIds])
         if (allowedAuthorIds.size) {
           accessibleFilters.push({
-            authorId: { in: [...allowedAuthorIds] },
-            communitySlug: null,
-            ...(scope === 'friends'
-              ? ({ audience: 'friends' } as any)
-              : ({ audience: { in: ['friends'] } } as any)),
+            OR: [
+              {
+                authorId: { in: [...allowedAuthorIds] },
+                communitySlug: null,
+                ...(scope === 'friends'
+                  ? ({ audience: 'friends' } as any)
+                  : ({ audience: { in: ['friends'] } } as any)),
+              },
+              {
+                authorId: { in: [...allowedAuthorIds] },
+                businessId: { not: null },
+                ...(scope === 'friends'
+                  ? ({ audience: 'organization' } as any)
+                  : ({ audience: { in: ['organization'] } } as any)),
+              },
+            ],
           })
         }
       }
@@ -20583,11 +21224,22 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         const allowedAuthorIds = new Set<string>([viewerId, ...viewerFeedContext.connectionIds])
         if (allowedAuthorIds.size) {
           accessibleFilters.push({
-            authorId: { in: [...allowedAuthorIds] },
-            communitySlug: null,
-            ...(scope === 'network'
-              ? ({ audience: 'network' } as any)
-              : ({ audience: { in: ['network'] } } as any)),
+            OR: [
+              {
+                authorId: { in: [...allowedAuthorIds] },
+                communitySlug: null,
+                ...(scope === 'network'
+                  ? ({ audience: 'network' } as any)
+                  : ({ audience: { in: ['network'] } } as any)),
+              },
+              {
+                authorId: { in: [...allowedAuthorIds] },
+                businessId: { not: null },
+                ...(scope === 'network'
+                  ? ({ audience: 'organization' } as any)
+                  : ({ audience: { in: ['organization'] } } as any)),
+              },
+            ],
           })
         }
       }
@@ -20702,35 +21354,54 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       }
     }
 
-    const rankOffset = parseFeedRankCursor(cursor)
-    const candidateTake = Math.min(1500, Math.max(limit * 10, rankOffset + limit + 180, scope === 'all' ? 260 : 200))
-    const candidates = await prisma.post.findMany({
-      where,
-      take: candidateTake,
-      orderBy: sortMode === 'hot' ? [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }] : [{ createdAt: 'desc' }],
-      include: POST_INCLUDE,
-    })
+    if (sortMode === 'hot') {
+      const rankOffset = parseFeedRankCursor(cursor)
+      const candidateTake = Math.min(1500, Math.max(limit * 10, rankOffset + limit + 180, scope === 'all' ? 260 : 200))
+      const candidates = await prisma.post.findMany({
+        where,
+        take: candidateTake,
+        orderBy: [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }],
+        include: POST_INCLUDE,
+      })
 
-    const ranked = await rankFeedPosts({
-      posts: candidates,
-      viewerId: viewerId ?? null,
-      scope,
-      sortMode,
-      cursor,
-      context: viewerFeedContext,
-      limit,
-    })
-    items = ranked.items
-    nextCursor = ranked.nextCursor
+      const ranked = await rankFeedPosts({
+        posts: candidates,
+        viewerId: viewerId ?? null,
+        scope,
+        sortMode,
+        cursor,
+        context: viewerFeedContext,
+        limit,
+      })
+      items = ranked.items
+      nextCursor = ranked.nextCursor
+    } else {
+      const queryResult = await prisma.post.findMany({
+        where,
+        take: limit + 1,
+        orderBy: { createdAt: 'desc' },
+        include: POST_INCLUDE,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      })
+      if (queryResult.length > limit) {
+        const next = queryResult.pop()!
+        nextCursor = next.id
+      }
+      items = queryResult
+    }
 
-    const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, items.map((post) => post.id))
-
-    const recentCommentsByPost = await getRecentCommentsByPostIds(items.map((item) => item.id), 5)
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(
+      viewerId,
+      items.map((item) => item.id),
+      5,
+    )
 
     return {
       items: items.map((item) =>
         formatPost(item, {
+          viewerId,
           viewerReaction: reactionsByPost[item.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[item.id] ?? null,
           recentComments: recentCommentsByPost[item.id] ?? [],
         }),
       ),
@@ -21055,10 +21726,22 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         ? {
             OR: [
               { communitySlug: { not: null } },
+              {
+                audience: 'organization',
+                businessId: { not: null },
+              },
               ({ audience: { in: allowedAudiences } } as any),
             ],
           }
-        : { communitySlug: { not: null } }
+        : {
+            OR: [
+              { communitySlug: { not: null } },
+              {
+                audience: 'organization',
+                businessId: { not: null },
+              },
+            ],
+          }
 
       const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
       where.AND = [...existingAnd, audienceGate]
@@ -21151,16 +21834,20 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       posts = queryResult
     }
 
-    const reactionsByPost = await loadViewerReactionsByPostIds(viewerId, posts.map((post) => post.id))
-
-    const recentCommentsByPost = await getRecentCommentsByPostIds(posts.map((post) => post.id), 5)
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(
+      viewerId,
+      posts.map((post) => post.id),
+      5,
+    )
 
     return {
       user,
       relationship,
       items: posts.map((post) =>
         formatPost(post, {
+          viewerId,
           viewerReaction: reactionsByPost[post.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
           recentComments: recentCommentsByPost[post.id] ?? [],
         }),
       ),
@@ -25115,6 +25802,11 @@ const start = async () => {
   try {
     validatePushEnvironment(app.log)
     await app.listen({ port: PORT, host: '0.0.0.0' })
+    const pollResultsInterval = setInterval(() => {
+      void dispatchDuePollResultNotifications()
+    }, 60_000)
+    pollResultsInterval.unref?.()
+    void dispatchDuePollResultNotifications()
     console.log(`Server listening on port ${PORT}`)
   } catch (err) {
     app.log.error(err)

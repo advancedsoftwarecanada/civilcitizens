@@ -193,6 +193,10 @@ export function getNotificationMessage(notification: NotificationItem) {
       const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
       return status === 'accepted' ? 'accepted your sponsor invite' : status === 'declined' ? 'declined your sponsor invite' : 'responded to your sponsor invite'
     }
+    case 'poll_results_available': {
+      const questionPreview = typeof notification.payload?.questionPreview === 'string' ? notification.payload.questionPreview.trim() : ''
+      return questionPreview ? `poll results are ready: "${questionPreview}"` : 'poll results are now available'
+    }
     default:
       return 'shared an update'
   }

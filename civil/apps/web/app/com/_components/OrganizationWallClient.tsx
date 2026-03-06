@@ -106,8 +106,9 @@ export default function OrganizationWallClient({
               headers: {
                 authorization: `Bearer ${token}`,
               },
+              cache: 'no-store',
             }
-          : undefined,
+          : { cache: 'no-store' },
       )
 
       if (res.status === 401) {

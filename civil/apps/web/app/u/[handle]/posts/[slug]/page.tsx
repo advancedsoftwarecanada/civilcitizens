@@ -13,6 +13,7 @@ import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
 import PostReactionBar from '../../../../_components/PostReactionBar'
+import PollCard from '../../../../_components/PollCard'
 import ThreadBottomCommentComposer from '../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../_components/ShareSendModal'
@@ -535,6 +536,14 @@ export default function UserPostPage({ params }: PageProps) {
                         <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{postBodyWithoutCivilLinks}</div>
                       ) : null}
                       <CivilLinkPreviewList body={post.body} />
+                      {post.type === 'poll' && post.poll ? (
+                        <PollCard
+                          post={post}
+                          viewerId={viewer?.id ?? null}
+                          onPostUpdate={setPost}
+                          variant="detail"
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </header>

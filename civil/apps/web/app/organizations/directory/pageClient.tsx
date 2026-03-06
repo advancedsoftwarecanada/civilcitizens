@@ -1,10 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
 import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl } from '../../_lib/api'
 import { RightRail } from '../../_components/RightRail'
+import CivilCard from '../../_components/CivilCard'
 
 type OrgDirectoryItem = {
   id: string
@@ -149,50 +149,43 @@ export default function OrganizationDirectoryPageClient() {
         {items.length ? (
           <ul className="space-y-3">
             {items.map((org) => (
-              <li key={org.id} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-800 p-4">
-                {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
-                <div className="relative flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/40 bg-white/20">
-                      {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
+              <li key={org.id}>
+                <CivilCard
+                  size="lg"
+                  name={org.name}
+                  avatarAlt={org.name}
+                  avatarInitials={org.name}
+                  avatarSrc={org.logoUrl ?? null}
+                  avatarHref={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                  titleHref={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
+                  coverUrl={org.coverUrl ?? null}
+                  subtitle={`${formatTypeLabel(org.type)} · ${org.provinceCode.toUpperCase()} · ${org.communitySlug}`}
+                  details={
+                    <div className="space-y-1">
+                      {org.phone ? <p className="truncate">{org.phone}</p> : null}
+                      {org.websiteUrl ? (
+                        <p className="truncate">
+                          <a
+                            href={toWebsiteHref(org.websiteUrl)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="hover:underline"
+                          >
+                            {org.websiteUrl}
+                          </a>
+                        </p>
+                      ) : null}
+                      {org.address ? <p className="truncate">{org.address}</p> : null}
+                      {org.schedule ? <p className="truncate">{org.schedule}</p> : null}
                     </div>
-
-                    <div className="min-w-0">
-                      <Link
-                        href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                        className="block truncate text-base font-semibold text-white hover:underline"
-                      >
-                        {org.name}
-                      </Link>
-                      <p className="mt-1 text-xs text-white/85">
-                        {formatTypeLabel(org.type)} · {org.provinceCode.toUpperCase()} · {org.communitySlug}
-                      </p>
-
-                      <div className="mt-2 space-y-1 text-xs text-white/80">
-                        {org.phone ? <p className="truncate">{org.phone}</p> : null}
-                        {org.websiteUrl ? (
-                          <p className="truncate">
-                            <a
-                              href={toWebsiteHref(org.websiteUrl)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="hover:underline"
-                            >
-                              {org.websiteUrl}
-                            </a>
-                          </p>
-                        ) : null}
-                        {org.address ? <p className="truncate">{org.address}</p> : null}
-                        {org.schedule ? <p className="truncate">{org.schedule}</p> : null}
-                      </div>
-                    </div>
-                  </div>
-
-                  {org.isVerified ? (
-                    <span className="shrink-0 rounded-full border border-white/40 bg-white/10 px-2 py-1 text-xs font-semibold text-white">Verified</span>
-                  ) : null}
-                </div>
+                  }
+                  isVerified={org.isVerified}
+                  trailing={
+                    org.isVerified ? (
+                      <span className="shrink-0 rounded-full border border-white/40 bg-white/10 px-2 py-1 text-xs font-semibold text-white">Verified</span>
+                    ) : null
+                  }
+                />
               </li>
             ))}
           </ul>

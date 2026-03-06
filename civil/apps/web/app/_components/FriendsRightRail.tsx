@@ -2,12 +2,12 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import VerifiedAvatar from './VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { pushToast } from './useToasts'
 import { formatDisplayName } from '../_lib/text'
 import Block from './Block'
+import CivilCard from './CivilCard'
 
 export type FriendListEntry = {
   id: string
@@ -126,34 +126,18 @@ export default function FriendsRightRail() {
         {sortedFriends.map((friend) => {
           const displayName = formatDisplayName(friend.user.name ?? friend.user.handle) || friend.user.handle
           return (
-            <li key={friend.id} className="flex items-center justify-between">
-              <Link
+            <li key={friend.id}>
+              <CivilCard
                 href={`/u/${friend.user.handle}`}
-                className="group relative flex min-h-[56px] items-center overflow-hidden rounded-xl border border-slate-200 bg-slate-700 px-3 py-2"
-              >
-                {friend.user.coverUrl ? (
-                  <img
-                    src={friend.user.coverUrl}
-                    alt=""
-                    className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    loading="lazy"
-                  />
-                ) : null}
-                <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                <div className="relative flex items-center gap-2.5">
-                  <VerifiedAvatar
-                    src={friend.user.avatarUrl}
-                    alt={displayName}
-                    initials={displayName}
-                    size={32}
-                    isVerified={friend.user.isVerified}
-                    isBusiness={friend.user.isPremium}
-                  />
-                  <span className="max-w-[135px] truncate text-sm font-semibold text-white">
-                    {displayName}
-                  </span>
-                </div>
-              </Link>
+                size="md"
+                name={displayName}
+                avatarAlt={displayName}
+                avatarInitials={displayName}
+                avatarSrc={friend.user.avatarUrl}
+                coverUrl={friend.user.coverUrl ?? null}
+                isVerified={friend.user.isVerified}
+                isBusiness={friend.user.isPremium}
+              />
             </li>
           )
         })}

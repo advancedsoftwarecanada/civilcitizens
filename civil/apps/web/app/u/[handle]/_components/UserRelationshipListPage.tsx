@@ -6,12 +6,12 @@ import { useRouter } from 'next/navigation'
 import { RightRail } from '../../../_components/RightRail'
 import { buildApiUrl } from '../../../_lib/api'
 import DashboardShell from '../../../_components/DashboardShell'
-import VerifiedAvatar from '../../../_components/VerifiedAvatar'
 import { formatDisplayName } from '../../../_lib/text'
 import MessagesNavBlock from '../../../_components/MessagesNavBlock'
 import { getStoredToken } from '../../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import { pushToast } from '../../../_components/useToasts'
+import CivilCard from '../../../_components/CivilCard'
 
 type UserListItem = {
   id: string
@@ -171,43 +171,40 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
               if ('handle' in entry) {
                 const displayName = formatDisplayName(entry.name) || formatDisplayName(entry.handle) || entry.handle
                 return (
-                  <div key={`user-${entry.id}`} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm">
-                    {entry.coverUrl ? <img src={entry.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-
-                    <div className="relative flex min-h-[96px] items-center justify-between gap-4">
-                      <div className="flex min-w-0 items-center gap-4">
-                        <Link href={`/u/${entry.handle}`}>
-                          <VerifiedAvatar src={entry.avatarUrl} alt={displayName} initials={displayName} size={64} />
-                        </Link>
-                        <div className="min-w-0">
-                          <Link href={`/u/${entry.handle}`} className="block truncate text-2xl font-semibold text-white hover:underline">
-                            {displayName}
-                          </Link>
-                          <div className="mt-1 truncate text-sm text-white/80">@{entry.handle}</div>
-                        </div>
-                      </div>
-                      {kind === 'friends' ? (
-                        <div className="flex shrink-0 items-center gap-2">
-                          <Link
-                            href={`/u/${entry.handle}`}
-                            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/40 bg-white/10 px-3 text-sm font-semibold text-white transition hover:border-white/60 hover:bg-white/20"
-                          >
-                            View Profile
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              void handleStartDirectMessage(entry)
-                            }}
-                            disabled={messageLoadingUserId === entry.id || Boolean(messageLoadingUserId)}
-                            className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/50 bg-white px-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-                          >
-                            {messageLoadingUserId === entry.id ? 'Opening...' : 'Message'}
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
+                  <div key={`user-${entry.id}`}>
+                    <CivilCard
+                      size="lg"
+                      name={displayName}
+                      avatarAlt={displayName}
+                      avatarInitials={displayName}
+                      avatarSrc={entry.avatarUrl}
+                      avatarHref={`/u/${entry.handle}`}
+                      titleHref={`/u/${entry.handle}`}
+                      coverUrl={entry.coverUrl}
+                      subtitle={`@${entry.handle}`}
+                      trailing={
+                        kind === 'friends' ? (
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Link
+                              href={`/u/${entry.handle}`}
+                              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/40 bg-white/10 px-3 text-sm font-semibold text-white transition hover:border-white/60 hover:bg-white/20"
+                            >
+                              View Profile
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleStartDirectMessage(entry)
+                              }}
+                              disabled={messageLoadingUserId === entry.id || Boolean(messageLoadingUserId)}
+                              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/50 bg-white px-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {messageLoadingUserId === entry.id ? 'Opening...' : 'Message'}
+                            </button>
+                          </div>
+                        ) : null
+                      }
+                    />
                   </div>
                 )
               }
@@ -219,38 +216,30 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
                     : '/organizations'
 
                 return (
-                  <Link key={`org-${entry.id}`} href={organizationHref} className="relative block overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm transition hover:brightness-105">
-                    {entry.coverUrl ? <img src={entry.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                    <div className="relative flex min-h-[96px] items-center gap-4">
-                      <VerifiedAvatar src={entry.logoUrl} alt={entry.name} initials={entry.name} size={64} />
-                      <div className="min-w-0">
-                        <p className="truncate text-2xl font-semibold text-white">{entry.name}</p>
-                        <p className="mt-1 truncate text-sm text-white/80">Organization</p>
-                      </div>
-                    </div>
-                  </Link>
+                  <CivilCard
+                    key={`org-${entry.id}`}
+                    href={organizationHref}
+                    size="lg"
+                    name={entry.name}
+                    avatarAlt={entry.name}
+                    avatarInitials={entry.name}
+                    avatarSrc={entry.logoUrl}
+                    coverUrl={entry.coverUrl}
+                    subtitle="Organization"
+                  />
                 )
               }
 
               return (
-                <Link
+                <CivilCard
                   key={`community-${entry.id}`}
                   href={`/${encodeURIComponent(entry.provinceCode.toLowerCase())}/${encodeURIComponent(entry.communitySlug.toLowerCase())}`}
-                  className="relative block overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm transition hover:brightness-105"
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-slate-700 via-slate-800 to-slate-900" aria-hidden="true" />
-                  <span className="absolute inset-0 bg-slate-900/35" aria-hidden="true" />
-                  <div className="relative flex min-h-[96px] items-center gap-4">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/40 bg-white/10 text-sm font-semibold uppercase text-white">
-                      {entry.provinceCode}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-2xl font-semibold text-white">{entry.name}</p>
-                      <p className="mt-1 truncate text-sm text-white/80">{entry.provinceCode.toUpperCase()} · {entry.communitySlug}</p>
-                    </div>
-                  </div>
-                </Link>
+                  size="lg"
+                  name={entry.name}
+                  avatarAlt={entry.name}
+                  avatarInitials={entry.provinceCode.toUpperCase()}
+                  subtitle={`${entry.provinceCode.toUpperCase()} · ${entry.communitySlug}`}
+                />
               )
             })}
           </div>

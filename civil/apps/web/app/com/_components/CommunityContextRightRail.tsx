@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Block from '../../_components/Block'
-import VerifiedAvatar from '../../_components/VerifiedAvatar'
+import CivilCard from '../../_components/CivilCard'
 import { buildApiUrl } from '../../_lib/api'
 import { fetchCommunityOrganizations, type CommunityOrganization } from '../../_lib/organizations'
 
@@ -109,21 +109,22 @@ export default async function CommunityContextRightRail({
               const provinceCode = (org.provinceCode ?? province).toLowerCase()
               const communitySlug = (org.communitySlug ?? municipality).toLowerCase()
               return (
-                <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link
+                <li key={org.id}>
+                  <CivilCard
                     href={`/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(org.slug)}`}
-                    className="group relative flex items-center justify-between gap-2.5 px-3 py-2"
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                      <span className="max-w-[145px] truncate text-sm font-semibold text-white">{org.name}</span>
-                    </span>
-                    {badge ? (
-                      <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">{badge}</span>
-                    ) : null}
-                  </Link>
+                    size="md"
+                    name={org.name}
+                    avatarAlt={org.name}
+                    avatarInitials={org.name}
+                    avatarSrc={org.logoUrl ?? null}
+                    coverUrl={org.coverUrl}
+                    isVerified={Boolean(org.isVerified)}
+                    trailing={
+                      badge ? (
+                        <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">{badge}</span>
+                      ) : null
+                    }
+                  />
                 </li>
               )
             })}

@@ -21,6 +21,7 @@ import { buildPostShareTarget } from '../_lib/shareTarget'
 import CivilLinkPreviewList from './CivilLinkPreviewList'
 import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
 import PostReactionBar from './PostReactionBar'
+import PollCard from './PollCard'
 
 const FEED_COMMENT_PREVIEW_LIMIT = 3
 const FEED_COMMENT_BUFFER_LIMIT = 20
@@ -444,7 +445,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                       : 'border border-slate-200 text-slate-500',
                   )}
                 >
-                  {post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : 'Post'}
+                  {post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : 'Post'}
                 </span>
               </div>
             </div>
@@ -522,6 +523,14 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         )}
 
         <CivilLinkPreviewList body={post.body} />
+
+        {post.type === 'poll' && post.poll ? (
+          <PollCard
+            post={post}
+            viewerId={viewerId}
+            onPostUpdate={onUpdate}
+          />
+        ) : null}
 
         {post.sharedPost ? (
           <Link

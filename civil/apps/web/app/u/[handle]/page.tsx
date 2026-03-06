@@ -250,8 +250,9 @@ export default function UserPostsPage({ params }: PageProps) {
                 headers: {
                   authorization: `Bearer ${token}`,
                 },
+                cache: 'no-store',
               }
-            : undefined,
+            : { cache: 'no-store' },
         )
         if (res.status === 404) {
           setProfile(null)
@@ -914,6 +915,7 @@ export default function UserPostsPage({ params }: PageProps) {
       try {
         const res = await fetch(buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/posts?limit=1`), {
           headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
         })
         if (!res.ok) return localId
         const data = (await res.json().catch(() => null)) as { user?: { id?: string } | null }
@@ -991,8 +993,9 @@ export default function UserPostsPage({ params }: PageProps) {
                 headers: {
                   authorization: `Bearer ${token}`,
                 },
+                cache: 'no-store',
               }
-            : undefined,
+            : { cache: 'no-store' },
         )
         if (!res.ok) return
         const data = (await res.json().catch(() => null)) as { items?: ApiPost[] } | null
@@ -1316,7 +1319,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   <span role="img" aria-label="Article">📄</span>
                   Article
                 </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Poll')}>
+                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('poll')}>
                   <span role="img" aria-label="Poll">📊</span>
                   Poll
                 </button>

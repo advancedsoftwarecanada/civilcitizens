@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { useViewerStore } from "../../_lib/viewerStore";
 
 import Modal from "../../_components/Modal";
 import { buildApiUrl } from "../../_lib/api";
+import CivilCard from "../../_components/CivilCard";
 
 type OrganizationMember = {
   userId: string;
@@ -210,12 +211,12 @@ export default function OrganizationMembersClient({
     return pathname.includes("/settings/members");
   }, [canModerate, pathname]);
 
-  const getAuthHeaders = () => {
+  const getAuthHeaders = useCallback(() => {
     const headers: Record<string, string> = {};
     const token = typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
     if (token) headers.authorization = `Bearer ${token}`;
     return headers;
-  };
+  }, []);
 
   useEffect(() => {
     if (currentUserIdFromStore) return;
@@ -247,7 +248,7 @@ export default function OrganizationMembersClient({
     return () => {
       cancelled = true;
     };
-  }, [currentUserIdFromStore]);
+  }, [currentUserIdFromStore, getAuthHeaders]);
 
   useEffect(() => {
     const trimmed = searchQuery.trim();
@@ -305,9 +306,9 @@ export default function OrganizationMembersClient({
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [searchQuery, inviteUsersOpen, members]);
+  }, [searchQuery, inviteUsersOpen, members, getAuthHeaders]);
 
-  async function refreshMembers() {
+  const refreshMembers = useCallback(async () => {
     if (!resolvedOrganizationSlug) {
       throw new Error("Organization slug is required.");
     }
@@ -326,9 +327,9 @@ export default function OrganizationMembersClient({
     setMembers(normalized.members);
     setProfiles(normalized.profiles);
     setLoadedFromApi(true);
-  }
+  }, [getAuthHeaders, municipality, province, resolvedOrganizationSlug]);
 
-  async function refreshMyInviteLinks() {
+  const refreshMyInviteLinks = useCallback(async () => {
     if (!resolvedOrganizationSlug || !currentUserId) {
       setMyInviteLinks([]);
       return;
@@ -375,7 +376,7 @@ export default function OrganizationMembersClient({
     } finally {
       setInviteLinksLoading(false);
     }
-  }
+  }, [currentUserId, getAuthHeaders, municipality, province, resolvedOrganizationSlug]);
 
   useEffect(() => {
     if (loadedFromApi) return;
@@ -395,7 +396,7 @@ export default function OrganizationMembersClient({
     return () => {
       cancelled = true;
     };
-  }, [loadedFromApi, province, municipality, resolvedOrganizationSlug]);
+  }, [loadedFromApi, refreshMembers]);
 
   useEffect(() => {
     if (!showManagerTools || !currentUserId) {
@@ -403,7 +404,7 @@ export default function OrganizationMembersClient({
       return;
     }
     void refreshMyInviteLinks();
-  }, [showManagerTools, currentUserId, province, municipality, resolvedOrganizationSlug]);
+  }, [showManagerTools, currentUserId, refreshMyInviteLinks]);
 
   async function removeMember(targetUserId: string) {
     setError(null);
@@ -661,60 +662,37 @@ export default function OrganizationMembersClient({
           const profileHref = profile?.handle ? `/u/${encodeURIComponent(profile.handle)}` : null;
 
           return (
-            <div key={`${member.userId}-${member.role}-${member.status}`} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-800 p-5 shadow-sm">
-              {profile?.coverUrl ? <img src={profile.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-              <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-
-              <div className="relative flex min-h-[108px] items-center justify-between gap-4">
-                <div className="flex min-w-0 items-center gap-4">
-                  {profileHref ? (
-                    <a href={profileHref}>
-                      <div className="h-16 w-16 overflow-hidden rounded-full border border-white/50 bg-slate-200">
-                        {profile?.image ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={profile.image} alt={getDisplayName(profile)} className="h-full w-full object-cover" />
-                        ) : null}
-                      </div>
-                    </a>
-                  ) : (
-                    <div className="h-16 w-16 overflow-hidden rounded-full border border-white/50 bg-slate-200">
-                      {profile?.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={profile.image} alt={getDisplayName(profile)} className="h-full w-full object-cover" />
-                      ) : null}
-                    </div>
-                  )}
-
-                  <div className="min-w-0">
-                    {profileHref ? (
-                      <a href={profileHref} className="block truncate text-2xl font-semibold text-white hover:underline">
-                        {getDisplayName(profile)}
-                      </a>
-                    ) : (
-                      <p className="truncate text-2xl font-semibold text-white">{getDisplayName(profile)}</p>
-                    )}
-                    <p className="mt-1 truncate text-sm text-white/80">{profile?.handle ? `@${profile.handle}` : member.userId.slice(0, 8)}</p>
-                    <p className="mt-1 truncate text-sm font-medium text-white/90">{member.jobTitle || "No job title set for this organization"}</p>
-                    {member.jobDescription ? <p className="mt-2 line-clamp-2 text-sm text-white/85">{member.jobDescription}</p> : null}
-                  </div>
-                </div>
-
-                {showManagerTools ? (
-                  <div className="relative z-10 flex shrink-0 items-center gap-2">
-                    {canManageTarget ? (
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => removeMember(member.userId)}
-                        className="rounded-lg border border-red-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-red-600 backdrop-blur disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-            </div>
+            <CivilCard
+              key={`${member.userId}-${member.role}-${member.status}`}
+              size="lg"
+              name={getDisplayName(profile)}
+              avatarAlt={getDisplayName(profile)}
+              avatarInitials={getDisplayName(profile)}
+              avatarSrc={profile?.image ?? null}
+              avatarHref={profileHref ?? undefined}
+              titleHref={profileHref ?? undefined}
+              coverUrl={profile?.coverUrl ?? null}
+              subtitle={profile?.handle ? `@${profile.handle}` : member.userId.slice(0, 8)}
+              align="start"
+              details={
+                <>
+                  <p className="truncate text-sm font-medium text-white/90">{member.jobTitle || "No job title set for this organization"}</p>
+                  {member.jobDescription ? <p className="mt-2 line-clamp-2 text-sm text-white/85">{member.jobDescription}</p> : null}
+                </>
+              }
+              trailing={
+                showManagerTools && canManageTarget ? (
+                  <button
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => removeMember(member.userId)}
+                    className="rounded-lg border border-red-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-red-600 backdrop-blur disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                ) : null
+              }
+            />
           );
         })}
       </div>
@@ -768,7 +746,6 @@ export default function OrganizationMembersClient({
                   >
                     <div className="h-8 w-8 overflow-hidden rounded-full bg-neutral-200">
                       {user.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={user.image} alt={getDisplayName(user)} className="h-full w-full object-cover" />
                       ) : null}
                     </div>
