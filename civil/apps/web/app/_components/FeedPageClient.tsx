@@ -20,6 +20,7 @@ import { formatDisplayName } from '../_lib/text'
 
 
 export type FeedScope = 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+type FeedSortMode = 'new' | 'hot'
 
 export type FeedPageClientProps = {
   scope: FeedScope
@@ -31,6 +32,8 @@ export type FeedPageClientProps = {
   rightRail?: ReactNode
   province?: string
   community?: string
+  defaultSort?: FeedSortMode
+  sortOptions?: Array<{ value: FeedSortMode; label: string; description?: string }>
 }
 
 type CommunityFollowRow = {
@@ -98,7 +101,18 @@ const mapFollowToCommunityTarget = (follow: CommunityFollowRow): CommunityTarget
 }
 
 export default function FeedPageClient(props: FeedPageClientProps) {
-  const { scope, title, description, emptyState, emptyStateCta, rightRail, province, community } = props
+  const {
+    scope,
+    title,
+    description,
+    emptyState,
+    emptyStateCta,
+    rightRail,
+    province,
+    community,
+    defaultSort = 'new',
+    sortOptions = [],
+  } = props
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
   const [me, setMe] = useState<MeResponse | null>(null)
@@ -117,6 +131,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
+  const [sortMode, setSortMode] = useState<FeedSortMode>(defaultSort)
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
   const [lastViewedAt, setLastViewedAt] = useState<string | null>(null)
@@ -129,11 +144,16 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const filterQuery = useMemo(() => {
     const params = new URLSearchParams()
     params.set('scope', scope)
+    params.set('sort', sortMode)
     if (province) params.set('province', province)
     if (community) params.set('community', community)
     const qs = params.toString()
     return qs ? `?${qs}` : ''
-  }, [scope, province, community])
+  }, [community, province, scope, sortMode])
+
+  useEffect(() => {
+    setSortMode(defaultSort)
+  }, [defaultSort])
 
   const loadPosts = useCallback(async (cursor?: string) => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -156,6 +176,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         headers: {
           authorization: `Bearer ${token}`,
         },
+        cache: 'no-store',
       })
       if (response.status === 401) {
         setPosts([])
@@ -597,6 +618,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     scope === 'communities' ? 'community' : scope === 'network' ? 'network' : 'friends'
 
   const resolvedRightRail = rightRail ?? <RightRail />
+  const activeSortOption = useMemo(
+    () => sortOptions.find((option) => option.value === sortMode) ?? null,
+    [sortMode, sortOptions],
+  )
 
   return (
     <DashboardShell rightRail={resolvedRightRail} mainClassName="min-w-0 space-y-6">
@@ -606,6 +631,24 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
               {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+            </div>
+          ) : null}
+          {sortOptions.length > 1 ? (
+            <div className="space-y-2">
+              <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+                {sortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`rounded-full px-4 py-1.5 transition ${sortMode === option.value ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500 hover:text-slate-700'}`}
+                    onClick={() => setSortMode(option.value)}
+                    disabled={loading && sortMode === option.value}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {activeSortOption?.description ? <p className="text-right text-xs text-slate-500">{activeSortOption.description}</p> : null}
             </div>
           ) : null}
         </div>
@@ -639,7 +682,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             <span role="img" aria-label="Article">📄</span>
             Article
           </button>
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Poll')}>
+          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('poll')}>
             <span role="img" aria-label="Poll">📊</span>
             Poll
           </button>
@@ -675,7 +718,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           <>
             {visiblePosts.map((p, i) => {
               const prevPost = visiblePosts[i - 1]
-              const isFirstSeen = lastViewedAt && p.createdAt <= lastViewedAt && (i === 0 || (prevPost && prevPost.createdAt > lastViewedAt))
+              const isChronological = sortMode === 'new'
+              const isFirstSeen = isChronological && lastViewedAt && p.createdAt <= lastViewedAt && (i === 0 || (prevPost && prevPost.createdAt > lastViewedAt))
               return (
                 <div key={p.id} data-feed-post-id={p.id} className="min-w-0">
                   {isFirstSeen ? (

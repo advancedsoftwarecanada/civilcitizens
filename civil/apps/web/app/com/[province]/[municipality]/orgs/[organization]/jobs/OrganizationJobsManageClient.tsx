@@ -6,7 +6,7 @@ import { buildApiUrl } from '../../../../../../_lib/api'
 import { getStoredToken } from '../../../../../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../../../../../_lib/authModal'
 import { pushToast } from '../../../../../../_components/useToasts'
-import VerifiedAvatar from '../../../../../../_components/VerifiedAvatar'
+import CivilCard from '../../../../../../_components/CivilCard'
 
 type JobItem = {
   id: string
@@ -335,7 +335,7 @@ export default function OrganizationJobsManageClient({
 
                       <Link
                         href={`/u/${application.applicant.handle}`}
-                        className="mt-2 block overflow-hidden rounded-xl border border-slate-200 bg-slate-700"
+                        className="mt-2 block"
                       >
                         {(() => {
                           const handleKey = (application.applicant.handle || '').toLowerCase()
@@ -345,24 +345,17 @@ export default function OrganizationJobsManageClient({
                           const avatarUrl = card?.avatarUrl ?? null
 
                           return (
-                            <div className="relative px-3 py-2">
-                              {coverUrl ? <img src={coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                              <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                              <div className="relative flex items-center gap-2.5">
-                                <VerifiedAvatar
-                                  src={avatarUrl}
-                                  alt={displayName}
-                                  initials={displayName}
-                                  size={32}
-                                  isVerified={Boolean(card?.isVerified)}
-                                  isBusiness={Boolean(card?.isPremium)}
-                                />
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-white">{displayName}</p>
-                                  <p className="truncate text-xs text-white/85">@{application.applicant.handle}</p>
-                                </div>
-                              </div>
-                            </div>
+                            <CivilCard
+                              size="md"
+                              name={displayName}
+                              avatarAlt={displayName}
+                              avatarInitials={displayName}
+                              avatarSrc={avatarUrl}
+                              coverUrl={coverUrl}
+                              subtitle={`@${application.applicant.handle}`}
+                              isVerified={Boolean(card?.isVerified)}
+                              isBusiness={Boolean(card?.isPremium)}
+                            />
                           )
                         })()}
                       </Link>

@@ -1,14 +1,13 @@
 "use client"
 
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { IconType } from 'react-icons'
-import { LuArrowBigDown, LuArrowBigUp, LuDot, LuMessageSquare } from 'react-icons/lu'
+import { LuArrowBigDown, LuArrowBigUp, LuMessageSquare } from 'react-icons/lu'
 import CommentComposer from './CommentComposer'
 import { pushToast } from './useToasts'
 import { formatUserDisplayName } from '../_lib/text'
-import VerifiedAvatar from './VerifiedAvatar'
+import CivilCard from './CivilCard'
 
 export type ApiComment = {
   id: string
@@ -268,31 +267,21 @@ function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, cu
         )}
       >
         <div className="min-w-0 space-y-3">
-            <div className={clsx('relative inline-flex max-w-full items-center gap-2 overflow-hidden rounded-lg border px-2 py-1.5', hasAuthorCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
-              {authorCoverUrl ? <img src={authorCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-              <div className={clsx('absolute inset-0', hasAuthorCover ? 'bg-slate-900/50' : 'bg-transparent')} />
-              <div className="relative z-[1] flex items-center gap-2 min-w-0">
-                <VerifiedAvatar
-                  src={comment.author.avatarUrl}
-                  alt={authorDisplayName}
-                  initials={authorDisplayName}
-                  size={30}
-                  isVerified={Boolean(comment.author.isVerified)}
-                  isBusiness={Boolean(comment.author.isPremium)}
-                  className="shrink-0"
-                  href={`/u/${comment.author.handle}`}
-                />
-                <div className={clsx('min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs', hasAuthorCover ? 'text-white/80' : 'text-slate-500')}>
-                  <Link href={`/u/${comment.author.handle}`} className={clsx('truncate max-w-[10rem] font-semibold hover:underline', hasAuthorCover ? 'text-white' : 'text-slate-900')}>
-                    {authorDisplayName}
-                  </Link>
-                  <span className={clsx('inline-flex items-center gap-1 text-[11px]', hasAuthorCover ? 'text-white/80' : 'text-slate-400')}>
-                    <LuDot className="h-3 w-3" />@{comment.author.handle}
-                  </span>
-                  <span className={hasAuthorCover ? 'text-white/80' : 'text-slate-400'}>• {createdLabel}</span>
-                </div>
-              </div>
-            </div>
+          <div className="max-w-full">
+            <CivilCard
+              href={`/u/${comment.author.handle}`}
+              size="sm"
+              name={authorDisplayName}
+              avatarAlt={authorDisplayName}
+              avatarInitials={authorDisplayName}
+              avatarSrc={comment.author.avatarUrl}
+              coverUrl={authorCoverUrl}
+              isVerified={Boolean(comment.author.isVerified)}
+              isBusiness={Boolean(comment.author.isPremium)}
+              titleSuffix={createdLabel ? `• ${createdLabel}` : undefined}
+              className={clsx('w-fit max-w-full', !hasAuthorCover && 'border-slate-200')}
+            />
+          </div>
             {collapsed ? (
               <div className="text-xs text-slate-400">
                 Thread collapsed{hasReplies ? ` • ${comment.replies.length} repl${comment.replies.length === 1 ? 'y' : 'ies'}` : ''}

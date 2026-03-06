@@ -1,13 +1,12 @@
 'use client'
 
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import Modal from '../../_components/Modal'
-import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { pushToast } from '../../_components/useToasts'
 import { buildApiUrl } from '../../_lib/api'
 import { formatUserDisplayName } from '../../_lib/text'
+import CivilCard from '../../_components/CivilCard'
 
 type OrgRank = {
   id: string
@@ -279,41 +278,23 @@ export default function OrganizationMembersAdminClient({
               const rankName = rankById.get(rankId)?.name ?? 'Member'
               const isOwner = item.membershipRole === 'OWNER'
               const displayName = formatUserDisplayName(item.user?.name, item.user?.handle) || item.user?.handle || item.userId
-              const profileHref = item.user?.handle ? `/u/${encodeURIComponent(item.user.handle)}` : '#'
+              const profileHref = item.user?.handle ? `/u/${encodeURIComponent(item.user.handle)}` : undefined
 
               return (
                 <div key={item.userId} className="grid grid-cols-12 items-center gap-2 px-4 py-3">
                   <div className="col-span-5 min-w-0">
-                    <Link
+                    <CivilCard
                       href={profileHref}
-                      className="group relative flex min-h-[56px] items-center overflow-hidden rounded-xl border border-slate-200 bg-slate-700 px-2.5 py-2"
-                    >
-                      {item.user?.coverUrl ? (
-                        <img
-                          src={item.user.coverUrl}
-                          alt=""
-                          className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                          loading="lazy"
-                        />
-                      ) : null}
-                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                      <div className="relative flex min-w-0 items-center gap-2.5">
-                        <VerifiedAvatar
-                          src={item.user?.avatarUrl ?? null}
-                          alt={displayName}
-                          initials={displayName}
-                          size={32}
-                          isVerified={Boolean(item.user?.isVerified)}
-                          isBusiness={Boolean(item.user?.isPremium)}
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-white">{displayName}</p>
-                          <p className="truncate text-xs text-white/85">
-                            {item.user?.handle ? `@${item.user.handle}` : item.userId} · {item.membershipRole || 'MEMBER'}
-                          </p>
-                        </div>
-                      </div>
-                    </Link>
+                      size="md"
+                      name={displayName}
+                      avatarAlt={displayName}
+                      avatarInitials={displayName}
+                      avatarSrc={item.user?.avatarUrl ?? null}
+                      coverUrl={item.user?.coverUrl ?? null}
+                      subtitle={`${item.user?.handle ? `@${item.user.handle}` : item.userId} · ${item.membershipRole || 'MEMBER'}`}
+                      isVerified={Boolean(item.user?.isVerified)}
+                      isBusiness={Boolean(item.user?.isPremium)}
+                    />
                   </div>
 
                   <div className="col-span-2">

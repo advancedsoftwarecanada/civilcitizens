@@ -4,9 +4,9 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import DashboardShell from '../../../_components/DashboardShell'
 import { RightRail } from '../../../_components/RightRail'
-import VerifiedAvatar from '../../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../../_lib/api'
 import { pushToast } from '../../../_components/useToasts'
+import CivilCard from '../../../_components/CivilCard'
 
 type RequestUser = {
   id: string
@@ -119,42 +119,40 @@ export default function PendingConnectionRequestsPage() {
               const isRejecting = pendingAction?.id === request.id && pendingAction.action === 'reject'
               const isActing = pendingAction?.id === request.id
               return (
-                <li key={request.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {request.user.coverUrl ? (
-                    <img src={request.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <div className="relative px-3 py-3">
-                    <Link href={`/u/${request.user.handle}`} className="group flex items-center gap-2.5">
-                      <VerifiedAvatar
-                        src={request.user.avatarUrl}
-                        alt={displayName}
-                        initials={displayName}
-                        size={36}
-                        isVerified={request.user.isVerified}
-                        isBusiness={request.user.isPremium}
-                      />
-                      <span className="max-w-[280px] truncate text-sm font-semibold text-white">{displayName}</span>
-                    </Link>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-900 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => void handleAction(request, 'accept')}
-                        disabled={isActing}
-                      >
-                        {isAccepting ? 'Accepting…' : 'Accept'}
-                      </button>
-                      <button
-                        type="button"
-                        className="inline-flex items-center justify-center rounded-full border border-white/40 bg-white/10 px-4 py-2 text-xs font-semibold text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => void handleAction(request, 'reject')}
-                        disabled={isActing}
-                      >
-                        {isRejecting ? 'Declining…' : 'Decline'}
-                      </button>
-                    </div>
-                  </div>
+                <li key={request.id}>
+                  <CivilCard
+                    size="md"
+                    name={displayName}
+                    avatarAlt={displayName}
+                    avatarInitials={displayName}
+                    avatarSrc={request.user.avatarUrl}
+                    avatarHref={`/u/${request.user.handle}`}
+                    titleHref={`/u/${request.user.handle}`}
+                    coverUrl={request.user.coverUrl ?? null}
+                    isVerified={request.user.isVerified}
+                    isBusiness={request.user.isPremium}
+                    align="start"
+                    details={
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-900 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void handleAction(request, 'accept')}
+                          disabled={isActing}
+                        >
+                          {isAccepting ? 'Accepting…' : 'Accept'}
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center justify-center rounded-full border border-white/40 bg-white/10 px-4 py-2 text-xs font-semibold text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void handleAction(request, 'reject')}
+                          disabled={isActing}
+                        >
+                          {isRejecting ? 'Declining…' : 'Decline'}
+                        </button>
+                      </div>
+                    }
+                  />
                 </li>
               )
             })}
@@ -171,25 +169,23 @@ export default function PendingConnectionRequestsPage() {
             {outgoing.map((request) => {
               const displayName = request.user.name || request.user.handle
               return (
-                <li key={request.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {request.user.coverUrl ? <img src={request.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link href={`/u/${request.user.handle}`} className="group relative flex items-center justify-between gap-2.5 px-3 py-2">
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <VerifiedAvatar
-                        src={request.user.avatarUrl}
-                        alt={displayName}
-                        initials={displayName}
-                        size={32}
-                        isVerified={request.user.isVerified}
-                        isBusiness={request.user.isPremium}
-                      />
-                      <span className="max-w-[240px] truncate text-sm font-semibold text-white">{displayName}</span>
-                    </span>
-                    <span className="shrink-0 rounded-full border border-white/35 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
-                      Pending
-                    </span>
-                  </Link>
+                <li key={request.id}>
+                  <CivilCard
+                    href={`/u/${request.user.handle}`}
+                    size="md"
+                    name={displayName}
+                    avatarAlt={displayName}
+                    avatarInitials={displayName}
+                    avatarSrc={request.user.avatarUrl}
+                    coverUrl={request.user.coverUrl ?? null}
+                    isVerified={request.user.isVerified}
+                    isBusiness={request.user.isPremium}
+                    trailing={
+                      <span className="shrink-0 rounded-full border border-white/35 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                        Pending
+                      </span>
+                    }
+                  />
                 </li>
               )
             })}

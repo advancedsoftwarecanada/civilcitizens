@@ -8,6 +8,7 @@ import { formatUserDisplayName } from '../_lib/text'
 import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
+import CivilCard from './CivilCard'
 
 type RightRailData = {
   userHandle?: string
@@ -654,22 +655,18 @@ export function RightRail({
             {pendingFriendRequests.slice(0, 5).map((request) => {
               const displayName = formatUserDisplayName(request.user.name, request.user.handle) || request.user.handle
               return (
-                <li key={request.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {request.user.coverUrl ? (
-                    <img src={request.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link href={`/u/${request.user.handle}`} className="group relative flex items-center gap-2.5 px-3 py-2">
-                    <VerifiedAvatar
-                      src={request.user.avatarUrl}
-                      alt={displayName}
-                      initials={displayName}
-                      size={32}
-                      isVerified={request.user.isVerified}
-                      isBusiness={request.user.isPremium}
-                    />
-                    <span className="max-w-[160px] truncate text-sm font-semibold text-white">{displayName}</span>
-                  </Link>
+                <li key={request.id}>
+                  <CivilCard
+                    href={`/u/${request.user.handle}`}
+                    size="md"
+                    name={displayName}
+                    avatarAlt={displayName}
+                    avatarInitials={displayName}
+                    avatarSrc={request.user.avatarUrl}
+                    coverUrl={request.user.coverUrl ?? null}
+                    isVerified={request.user.isVerified}
+                    isBusiness={request.user.isPremium}
+                  />
                 </li>
               )
             })}
@@ -687,20 +684,17 @@ export function RightRail({
             {subscribedOrganizations.length ? (
               <ul className="space-y-3">
                 {subscribedOrganizations.slice(0, 10).map((org) => (
-                  <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                    {org.coverUrl ? (
-                      <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                    ) : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                    <Link
+                  <li key={org.id}>
+                    <CivilCard
                       href={getOrganizationHref(org)}
-                      className="group relative flex items-center gap-2.5 px-3 py-2"
-                    >
-                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                      <span className="max-w-[160px] truncate text-sm font-semibold text-white">
-                        {org.name}
-                      </span>
-                    </Link>
+                      size="md"
+                      name={org.name}
+                      avatarAlt={org.name}
+                      avatarInitials={org.name}
+                      avatarSrc={org.logoUrl ?? null}
+                      coverUrl={org.coverUrl ?? null}
+                      isVerified={Boolean(org.isVerified)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -713,20 +707,17 @@ export function RightRail({
             {partOfOrganizations.length ? (
               <ul className="space-y-3">
                 {partOfOrganizations.slice(0, 10).map((org) => (
-                  <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                    {org.coverUrl ? (
-                      <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                    ) : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                    <Link
+                  <li key={org.id}>
+                    <CivilCard
                       href={getOrganizationHref(org)}
-                      className="group relative flex items-center gap-2.5 px-3 py-2"
-                    >
-                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                      <span className="max-w-[160px] truncate text-sm font-semibold text-white">
-                        {org.name}
-                      </span>
-                    </Link>
+                      size="md"
+                      name={org.name}
+                      avatarAlt={org.name}
+                      avatarInitials={org.name}
+                      avatarSrc={org.logoUrl ?? null}
+                      coverUrl={org.coverUrl ?? null}
+                      isVerified={Boolean(org.isVerified)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -746,20 +737,17 @@ export function RightRail({
           {combinedOrganizations.length ? (
             <ul className="space-y-3">
               {combinedOrganizations.slice(0, 10).map((org) => (
-                <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {org.coverUrl ? (
-                    <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link
+                <li key={org.id}>
+                  <CivilCard
                     href={getOrganizationHref(org)}
-                    className="group relative flex items-center gap-2.5 px-3 py-2"
-                  >
-                    <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                    <span className="max-w-[160px] truncate text-sm font-semibold text-white">
-                      {org.name}
-                    </span>
-                  </Link>
+                    size="md"
+                    name={org.name}
+                    avatarAlt={org.name}
+                    avatarInitials={org.name}
+                    avatarSrc={org.logoUrl ?? null}
+                    coverUrl={org.coverUrl ?? null}
+                    isVerified={Boolean(org.isVerified)}
+                  />
                 </li>
               ))}
             </ul>
@@ -780,42 +768,40 @@ export function RightRail({
                   const isRejecting = pendingConnectionAction?.id === request.id && pendingConnectionAction.action === 'reject'
                   const isActing = pendingConnectionAction?.id === request.id
                   return (
-                    <li key={request.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                      {request.user.coverUrl ? (
-                        <img src={request.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                      ) : null}
-                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                      <div className="relative px-3 py-2">
-                        <Link href={`/u/${request.user.handle}`} className="group flex items-center gap-2.5">
-                          <VerifiedAvatar
-                            src={request.user.avatarUrl}
-                            alt={displayName}
-                            initials={displayName}
-                            size={32}
-                            isVerified={request.user.isVerified}
-                            isBusiness={request.user.isPremium}
-                          />
-                          <span className="max-w-[160px] truncate text-sm font-semibold text-white">{displayName}</span>
-                        </Link>
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            type="button"
-                            className="inline-flex flex-1 items-center justify-center rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => void handlePendingConnectionRequestAction(request, 'accept')}
-                            disabled={isActing}
-                          >
-                            {isAccepting ? 'Accepting…' : 'Accept'}
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex flex-1 items-center justify-center rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => void handlePendingConnectionRequestAction(request, 'reject')}
-                            disabled={isActing}
-                          >
-                            {isRejecting ? 'Declining…' : 'Decline'}
-                          </button>
-                        </div>
-                      </div>
+                    <li key={request.id}>
+                      <CivilCard
+                        size="md"
+                        name={displayName}
+                        avatarAlt={displayName}
+                        avatarInitials={displayName}
+                        avatarSrc={request.user.avatarUrl}
+                        avatarHref={`/u/${request.user.handle}`}
+                        titleHref={`/u/${request.user.handle}`}
+                        coverUrl={request.user.coverUrl ?? null}
+                        isVerified={request.user.isVerified}
+                        isBusiness={request.user.isPremium}
+                        align="start"
+                        details={
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              className="inline-flex flex-1 items-center justify-center rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => void handlePendingConnectionRequestAction(request, 'accept')}
+                              disabled={isActing}
+                            >
+                              {isAccepting ? 'Accepting…' : 'Accept'}
+                            </button>
+                            <button
+                              type="button"
+                              className="inline-flex flex-1 items-center justify-center rounded-full border border-white/40 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+                              onClick={() => void handlePendingConnectionRequestAction(request, 'reject')}
+                              disabled={isActing}
+                            >
+                              {isRejecting ? 'Declining…' : 'Decline'}
+                            </button>
+                          </div>
+                        }
+                      />
                     </li>
                   )
                 })}
@@ -829,22 +815,18 @@ export function RightRail({
                 {connections.slice(0, 8).map((connection) => {
                   const displayName = formatUserDisplayName(connection.user.name, connection.user.handle) || connection.user.handle
                   return (
-                    <li key={connection.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                      {connection.user.coverUrl ? (
-                        <img src={connection.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                      ) : null}
-                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                      <Link href={`/u/${connection.user.handle}`} className="group relative flex items-center gap-2.5 px-3 py-2">
-                        <VerifiedAvatar
-                          src={connection.user.avatarUrl}
-                          alt={displayName}
-                          initials={displayName}
-                          size={32}
-                          isVerified={connection.user.isVerified}
-                          isBusiness={connection.user.isPremium}
-                        />
-                        <span className="max-w-[160px] truncate text-sm font-semibold text-white">{displayName}</span>
-                      </Link>
+                    <li key={connection.id}>
+                      <CivilCard
+                        href={`/u/${connection.user.handle}`}
+                        size="md"
+                        name={displayName}
+                        avatarAlt={displayName}
+                        avatarInitials={displayName}
+                        avatarSrc={connection.user.avatarUrl}
+                        coverUrl={connection.user.coverUrl ?? null}
+                        isVerified={connection.user.isVerified}
+                        isBusiness={connection.user.isPremium}
+                      />
                     </li>
                   )
                 })}
@@ -862,18 +844,17 @@ export function RightRail({
             {combinedOrganizations.length ? (
               <ul className="space-y-3">
                 {combinedOrganizations.slice(0, 8).map((org) => (
-                  <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                    {org.coverUrl ? (
-                      <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                    ) : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                    <Link
+                  <li key={org.id}>
+                    <CivilCard
                       href={getOrganizationHref(org)}
-                      className="group relative flex items-center gap-2.5 px-3 py-2"
-                    >
-                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                      <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
-                    </Link>
+                      size="md"
+                      name={org.name}
+                      avatarAlt={org.name}
+                      avatarInitials={org.name}
+                      avatarSrc={org.logoUrl ?? null}
+                      coverUrl={org.coverUrl ?? null}
+                      isVerified={Boolean(org.isVerified)}
+                    />
                   </li>
                 ))}
               </ul>
@@ -946,13 +927,17 @@ export function RightRail({
                       : '/organizations/manager'
 
                   return (
-                    <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                      {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                      <Link href={href} className="group relative flex items-center gap-2.5 px-3 py-2">
-                        <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                        <span className="max-w-[160px] truncate text-sm font-semibold text-white">{org.name}</span>
-                      </Link>
+                    <li key={org.id}>
+                      <CivilCard
+                        href={href}
+                        size="md"
+                        name={org.name}
+                        avatarAlt={org.name}
+                        avatarInitials={org.name}
+                        avatarSrc={org.logoUrl ?? null}
+                        coverUrl={org.coverUrl ?? null}
+                        isVerified={Boolean(org.isVerified)}
+                      />
                     </li>
                   )
                 })}
@@ -1009,35 +994,24 @@ export function RightRail({
             {data.friends.map((friend) => {
               const displayName = formatUserDisplayName(friend.name, friend.handle) || friend.handle
               return (
-              <li key={friend.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                {friend.coverUrl ? (
-                  <img
-                    src={friend.coverUrl}
-                    alt=""
-                    className="absolute inset-0 h-full w-full object-cover"
-                    loading="lazy"
-                  />
-                ) : null}
-                <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                <div className="relative flex items-center justify-between px-3 py-2">
-                  <Link href={`/u/${friend.handle}`} className="group flex min-w-0 items-center gap-2.5">
-                    <VerifiedAvatar
-                      src={friend.avatarUrl}
-                      alt={displayName}
-                      initials={displayName}
-                      size={32}
-                    />
-                    <span className="max-w-[130px] truncate text-sm font-semibold text-white">
-                      {displayName}
-                    </span>
-                  </Link>
-                  {friend.newPosts > 0 && (
-                    <Link href={`/u/${friend.handle}`} className="ml-2 flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white">
-                      <HiOutlineBell className="h-4 w-4" />
-                      ({friend.newPosts})
-                    </Link>
-                  )}
-                </div>
+              <li key={friend.id}>
+                <CivilCard
+                  href={`/u/${friend.handle}`}
+                  size="md"
+                  name={displayName}
+                  avatarAlt={displayName}
+                  avatarInitials={displayName}
+                  avatarSrc={friend.avatarUrl}
+                  coverUrl={friend.coverUrl ?? null}
+                  trailing={
+                    friend.newPosts > 0 ? (
+                      <span className="flex items-center gap-1 text-xs font-semibold text-white/90">
+                        <HiOutlineBell className="h-4 w-4" />
+                        ({friend.newPosts})
+                      </span>
+                    ) : null
+                  }
+                />
               </li>
               )
             })}
@@ -1053,20 +1027,17 @@ export function RightRail({
           {combinedOrganizations.length ? (
             <ul className="space-y-3">
               {combinedOrganizations.slice(0, 8).map((org) => (
-                <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {org.coverUrl ? (
-                    <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link
+                <li key={org.id}>
+                  <CivilCard
                     href={getOrganizationHref(org)}
-                    className="group relative flex items-center gap-2.5 px-3 py-2"
-                  >
-                    <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} isVerified={Boolean(org.isVerified)} />
-                    <span className="max-w-[160px] truncate text-sm font-semibold text-white">
-                      {org.name}
-                    </span>
-                  </Link>
+                    size="md"
+                    name={org.name}
+                    avatarAlt={org.name}
+                    avatarInitials={org.name}
+                    avatarSrc={org.logoUrl ?? null}
+                    coverUrl={org.coverUrl ?? null}
+                    isVerified={Boolean(org.isVerified)}
+                  />
                 </li>
               ))}
             </ul>

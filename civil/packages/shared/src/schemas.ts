@@ -1,7 +1,15 @@
 import { z } from 'zod'
 import { normalizeProvinceCode } from './chambers.js'
 
-export const PostTypeEnum = z.enum(['post', 'article', 'photo'])
+export const PostTypeEnum = z.enum(['post', 'article', 'photo', 'poll'])
+export const PollResultsVisibilityEnum = z.enum([
+  'after_vote',
+  'after_6_hours',
+  'after_12_hours',
+  'after_24_hours',
+  'after_48_hours',
+])
+export type PollResultsVisibility = z.infer<typeof PollResultsVisibilityEnum>
 
 export const PostVisibilityEnum = z.enum(['public', 'members'])
 export type PostVisibility = z.infer<typeof PostVisibilityEnum>
@@ -11,6 +19,30 @@ export type PostAudience = z.infer<typeof PostAudienceEnum>
 
 export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])
 export type Jurisdiction = z.infer<typeof JurisdictionEnum>
+
+const PollOptionLabelSchema = z
+  .string()
+  .trim()
+  .min(1, { message: 'Poll options cannot be empty' })
+  .max(160, { message: 'Poll options must be 160 characters or fewer' })
+
+export const CreatePollInput = z
+  .object({
+    resultsVisibility: PollResultsVisibilityEnum.default('after_vote'),
+    options: z.array(PollOptionLabelSchema).min(2, { message: 'Polls need at least two options' }).max(10, { message: 'Polls can have at most 10 options' }),
+  })
+  .superRefine((data, ctx) => {
+    const normalized = data.options.map((option) => option.trim().toLowerCase())
+    const unique = new Set(normalized)
+    if (unique.size !== normalized.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Poll options must be unique',
+        path: ['options'],
+      })
+    }
+  })
+export type CreatePollInput = z.infer<typeof CreatePollInput>
 
 export const CreatePostInput = z
   .object({
@@ -32,6 +64,7 @@ export const CreatePostInput = z
     communitySlug: z.string().trim().min(1).max(160).optional(),
     jurisdiction: JurisdictionEnum.optional(),
     sharedPostId: z.string().cuid().optional(),
+    poll: CreatePollInput.optional(),
   })
   .superRefine((data, ctx) => {
     const hasBusinessId = typeof data.businessId === 'string' && data.businessId.trim().length > 0
@@ -98,6 +131,50 @@ export const CreatePostInput = z
           path: ['body'],
         })
       }
+    } else if (data.type === 'poll') {
+      if (!data.poll) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Poll configuration is required',
+          path: ['poll'],
+        })
+      }
+      if (data.title) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Poll posts do not use article titles',
+          path: ['title'],
+        })
+      }
+      if (data.mediaUrl || (data.images && data.images.length > 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Poll posts cannot include images',
+          path: ['mediaUrl'],
+        })
+      }
+      if (data.sharedPostId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Poll posts cannot share another post',
+          path: ['sharedPostId'],
+        })
+      }
+      const bodyLength = (data.body ?? '').trim().length
+      if (bodyLength < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Polls need a question',
+          path: ['body'],
+        })
+      }
+      if (bodyLength > 5000) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Poll questions must be 5000 characters or less',
+          path: ['body'],
+        })
+      }
     } else {
       const bodyLength = (data.body ?? '').length
       const isSharedPost = typeof data.sharedPostId === 'string' && data.sharedPostId.trim().length > 0
@@ -121,6 +198,16 @@ export const CreatePostInput = z
 export type CreatePostInput = z.infer<typeof CreatePostInput>
 
 export type PostType = z.infer<typeof PostTypeEnum>
+
+export const VotePollInput = z.object({
+  optionId: z.string().cuid(),
+})
+export type VotePollInput = z.infer<typeof VotePollInput>
+
+export const AddPollOptionInput = z.object({
+  label: PollOptionLabelSchema,
+})
+export type AddPollOptionInput = z.infer<typeof AddPollOptionInput>
 
 export const ReactionTypeEnum = z.enum(['maple', 'heart', 'haha', 'wow', 'sad', 'fire'])
 export type ReactionType = z.infer<typeof ReactionTypeEnum>

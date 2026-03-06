@@ -3,18 +3,18 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
-import type { Jurisdiction, ReactionType } from '@civil/shared'
+import type { Jurisdiction, PollResultsVisibility, ReactionType } from '@civil/shared'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { pushToast } from './useToasts'
 
-export type PostType = 'post' | 'article' | 'photo'
+export type PostType = 'post' | 'article' | 'photo' | 'poll'
 export type PostVisibility = 'public' | 'members'
 
-const POST_TYPE_CHOICES: Array<{ type: PostType | 'poll' | 'link' | 'video'; label: string; icon: string; comingSoon?: boolean }> = [
+const POST_TYPE_CHOICES: Array<{ type: PostType | 'link' | 'video'; label: string; icon: string; comingSoon?: boolean }> = [
   { type: 'post', label: 'Post', icon: '📝' },
   { type: 'article', label: 'Article', icon: '📄' },
-  { type: 'poll', label: 'Poll', icon: '📊', comingSoon: true },
+  { type: 'poll', label: 'Poll', icon: '📊' },
   { type: 'link', label: 'Link', icon: '🔗', comingSoon: true },
   { type: 'video', label: 'Video', icon: '🎥', comingSoon: true },
   { type: 'photo', label: 'Photos', icon: '📷' },
@@ -44,6 +44,30 @@ export type ApiPost = {
     coverUrl?: string | null
     provinceCode: string | null
     communitySlug: string | null
+  } | null
+  poll?: {
+    id: string
+    resultsVisibility: PollResultsVisibility
+    resultsAvailableAt: string | null
+    firstVoteAt: string | null
+    endedAt: string | null
+    totalVotes: number | null
+    maxOptions: number
+    options: Array<{
+      id: string
+      label: string
+      sortOrder: number
+      voteCount: number | null
+      percentage: number | null
+    }>
+    viewer: {
+      hasVoted: boolean
+      optionId: string | null
+      canSeeResults: boolean
+      canVote: boolean
+    }
+    authorCanAddOptions: boolean
+    authorCanEndPoll: boolean
   } | null
   author: {
     id: string
@@ -135,6 +159,8 @@ type PostComposerProps = {
 const MAX_POST_LENGTH = 5000
 const MIN_ARTICLE_TITLE_LENGTH = 3
 const MIN_ARTICLE_BODY_LENGTH = 100
+const MIN_POLL_OPTIONS = 2
+const MAX_POLL_OPTIONS = 10
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
@@ -145,6 +171,13 @@ const BUSINESS_VALUE = 'business'
 const COMMUNITY_PREFIX = 'community:'
 const COMMUNITY_PROMPT_VALUE = `${COMMUNITY_PREFIX}__prompt`
 const ORGANIZATION_PREFIX = 'organization:'
+const POLL_RESULT_VISIBILITY_OPTIONS: Array<{ value: PollResultsVisibility; label: string; description: string }> = [
+  { value: 'after_vote', label: 'After voting', description: 'Hide results until someone votes, then allow vote changes until the poll ends.' },
+  { value: 'after_6_hours', label: 'After 6 hours', description: 'Keep results hidden for 6 hours, then notify voters when they unlock.' },
+  { value: 'after_12_hours', label: 'After 12 hours', description: 'Keep results hidden for 12 hours, then notify voters when they unlock.' },
+  { value: 'after_24_hours', label: 'After 24 hours', description: 'Keep results hidden for 24 hours, then notify voters when they unlock.' },
+  { value: 'after_48_hours', label: 'After 48 hours', description: 'Keep results hidden for 48 hours, then notify voters when they unlock.' },
+]
 
 const buildCommunityKey = (target: CommunityTarget) => `${target.provinceCode}:${target.communitySlug}`
 const buildCommunityValue = (target: CommunityTarget) => `${COMMUNITY_PREFIX}${buildCommunityKey(target)}`
@@ -189,6 +222,10 @@ export const JURISDICTION_LABELS: Record<Jurisdiction, string> = {
 
 function stripHtml(html: string) {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function createInitialPollOptions() {
+  return ['', '']
 }
 
 const pickPhotoVariantUrl = (variants?: Record<string, { url?: string | null } | null>) => {
@@ -254,6 +291,8 @@ export default function PostComposer({
   const [draft, setDraft] = useState('')
   const [articleTitle, setArticleTitle] = useState('')
   const [articleBody, setArticleBody] = useState('<p></p>')
+  const [pollOptions, setPollOptions] = useState<string[]>(() => createInitialPollOptions())
+  const [pollResultsVisibility, setPollResultsVisibility] = useState<PollResultsVisibility>('after_vote')
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -272,6 +311,10 @@ export default function PostComposer({
   )
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
+  const normalizedPollOptions = useMemo(
+    () => pollOptions.map((option) => option.trim()).filter((option) => option.length > 0),
+    [pollOptions],
+  )
 
   const selectedOrganizationOption = useMemo(() => {
     if (businessTarget?.businessId) return null
@@ -488,20 +531,34 @@ export default function PostComposer({
       const photosOk = photos.length > 0 && photos.every((p) => p.status === 'ready')
       return photosOk && captionOk && !submitting
     }
+    if (postType === 'poll') {
+      const questionLength = draft.trim().length
+      const uniqueOptionCount = new Set(normalizedPollOptions.map((option) => option.toLowerCase())).size
+      return (
+        questionLength > 0 &&
+        questionLength <= MAX_POST_LENGTH &&
+        normalizedPollOptions.length >= MIN_POLL_OPTIONS &&
+        normalizedPollOptions.length <= MAX_POLL_OPTIONS &&
+        normalizedPollOptions.length === uniqueOptionCount &&
+        !submitting
+      )
+    }
     if (postType === 'post') {
       const trimmed = draft.trim()
-      return trimmed.length > 0 && trimmed.length <= MAX_POST_LENGTH
+      return trimmed.length > 0 && trimmed.length <= MAX_POST_LENGTH && !submitting
     }
 
     const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
     const bodyOk = articleBodyPlain.length >= MIN_ARTICLE_BODY_LENGTH
-    return titleOk && bodyOk
-  }, [articleBodyPlain, articleTitle, draft, photos, postType, submitting])
+    return titleOk && bodyOk && !submitting
+  }, [articleBodyPlain, articleTitle, draft, normalizedPollOptions, photos, postType, submitting])
 
   const resetComposer = useCallback(() => {
     setDraft('')
     setArticleTitle('')
     setArticleBody('<p></p>')
+    setPollOptions(createInitialPollOptions())
+    setPollResultsVisibility('after_vote')
     setPostType(defaultPostType)
     setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions, businessTarget))
     setVisibility('public')
@@ -533,6 +590,16 @@ export default function PostComposer({
           const images = photos.map((p) => p.mediaUrl).filter(Boolean)
           return { type: 'photo', body: draft.trim(), mediaUrl, images }
         }
+        if (postType === 'poll') {
+          return {
+            type: 'poll',
+            body: draft.trim(),
+            poll: {
+              resultsVisibility: pollResultsVisibility,
+              options: normalizedPollOptions,
+            },
+          }
+        }
         if (postType === 'post') {
           return { type: 'post', body: draft }
         }
@@ -544,7 +611,7 @@ export default function PostComposer({
         payload.communityProvince = targetCommunity.provinceCode
         payload.communitySlug = targetCommunity.communitySlug
       }
-      payload.audience = businessTarget?.businessId
+      payload.audience = activeBusinessTarget?.businessId
         ? 'organization'
         : targetCommunity
           ? 'community'
@@ -596,7 +663,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, onPostCreated, photos, postType, resetComposer, submitting, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, normalizedPollOptions, onPostCreated, photos, pollResultsVisibility, postType, resetComposer, submitting, visibility])
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -931,6 +998,106 @@ export default function PostComposer({
               </div>
             </div>
           </div>
+        ) : postType === 'poll' ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold text-slate-600" htmlFor="poll-question">
+                Question
+              </label>
+              <textarea
+                id="poll-question"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
+                placeholder="Ask the community something specific"
+                rows={3}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                maxLength={MAX_POST_LENGTH}
+                disabled={submitting}
+              />
+              <div className="flex items-center justify-end text-xs text-slate-500">
+                <span>
+                  {draft.trim().length}/{MAX_POST_LENGTH}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">Options</p>
+                  <p className="text-xs text-slate-500">Add between 2 and 10 answer choices. You can add more later, but existing ones lock once voting starts.</p>
+                </div>
+                <span className="text-xs font-semibold text-slate-500">
+                  {normalizedPollOptions.length}/{MAX_POLL_OPTIONS}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {pollOptions.map((option, index) => (
+                  <div key={`poll-option-${index}`} className="flex items-center gap-2">
+                    <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-sm font-semibold text-slate-500">
+                      {index + 1}
+                    </span>
+                    <input
+                      type="text"
+                      className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none"
+                      placeholder={`Option ${index + 1}`}
+                      value={option}
+                      onChange={(event) =>
+                        setPollOptions((prev) => prev.map((item, itemIndex) => (itemIndex === index ? event.target.value : item)))
+                      }
+                      maxLength={160}
+                      disabled={submitting}
+                    />
+                    {pollOptions.length > MIN_POLL_OPTIONS ? (
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                        onClick={() => setPollOptions((prev) => prev.filter((_, itemIndex) => itemIndex !== index))}
+                        disabled={submitting}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+
+              {pollOptions.length < MAX_POLL_OPTIONS ? (
+                <button
+                  type="button"
+                  className="rounded-full border border-dashed border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-800"
+                  onClick={() => setPollOptions((prev) => [...prev, ''])}
+                  disabled={submitting}
+                >
+                  Add option
+                </button>
+              ) : null}
+            </div>
+
+            <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
+              <label className="block text-sm font-semibold text-slate-700" htmlFor="poll-results-visibility">
+                Results visible
+              </label>
+              <select
+                id="poll-results-visibility"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
+                value={pollResultsVisibility}
+                onChange={(event) => setPollResultsVisibility(event.target.value as PollResultsVisibility)}
+                disabled={submitting}
+              >
+                {POLL_RESULT_VISIBILITY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">
+                {POLL_RESULT_VISIBILITY_OPTIONS.find((option) => option.value === pollResultsVisibility)?.description}
+              </p>
+              <p className="text-xs text-slate-500">Votes can be changed until you end the poll.</p>
+            </div>
+          </div>
         ) : (
           <div className="space-y-3">
             <div className="space-y-2">
@@ -953,7 +1120,6 @@ export default function PostComposer({
                       key={photo.id}
                       className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={photo.mediaUrl ?? photo.previewUrl}
                         alt="Post upload"
