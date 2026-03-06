@@ -26,6 +26,8 @@ import Block from './Block'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { SearchResults } from './search/SearchResults'
+import MessagesNavBlock from './MessagesNavBlock'
+import OrganizationRailCard from '../com/_components/OrganizationRailCard'
 
 const NAV_BUTTONS: Array<{
   key: 'home' | 'cart' | 'messages' | 'notifications' | 'more'
@@ -43,18 +45,21 @@ const DRAWER_TRANSITION_MS = 320
 
 type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
 
-const ORG_DRAWER_LINKS: Array<{ key: string; label: string; segment: string }> = [
-  { key: 'posts', label: 'Posts', segment: '' },
-  { key: 'chat', label: 'Chat', segment: 'chat-channels' },
-  { key: 'events', label: 'Events', segment: 'events' },
-  { key: 'jobs', label: 'Jobs', segment: 'jobs' },
-  { key: 'shop', label: 'Shop', segment: 'shop' },
-  { key: 'members', label: 'Members', segment: 'members' },
-  { key: 'settings', label: 'Settings', segment: 'settings' },
-]
+type UserRelationshipRoute = {
+  handle: string
+  kind: 'friends' | 'connections' | 'communities' | 'organizations'
+}
+
+function toPathLabel(slug: string) {
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+}
 
 function getOrgRouteFromPathname(pathname: string | null | undefined):
-  | { basePath: string; activePath: string }
+  | { basePath: string; activePath: string; province: string; municipality: string; organization: string }
   | null {
   if (!pathname) return null
   const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
@@ -66,7 +71,7 @@ function getOrgRouteFromPathname(pathname: string | null | undefined):
   const organization = parts[4]
   if (!province || !municipality || !organization) return null
   const basePath = `/com/${province}/${municipality}/orgs/${organization}`
-  return { basePath, activePath: pathname }
+  return { basePath, activePath: pathname, province, municipality, organization }
 }
 
 function getCommunityRouteFromPathname(pathname: string | null | undefined):
@@ -92,41 +97,17 @@ function getCommunityRouteFromPathname(pathname: string | null | undefined):
   return { province, municipality }
 }
 
-function OrganizationMoreBlock({
-  pathname,
-  onNavigate,
-}: {
-  pathname: string | null | undefined
-  onNavigate: () => void
-}) {
-  const orgInfo = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
-  if (!orgInfo) return null
-
-  return (
-    <Block title="Organization" className="p-0">
-      <div className="divide-y divide-slate-100">
-        {ORG_DRAWER_LINKS.map((link) => {
-          const href = link.segment ? `${orgInfo.basePath}/${link.segment}` : orgInfo.basePath
-          const active = orgInfo.activePath === href || (link.segment && orgInfo.activePath?.startsWith(`${href}`))
-          return (
-            <Link
-              key={link.key}
-              href={href}
-              onClick={onNavigate}
-              className={clsx(
-                'flex items-center justify-between px-5 py-3 text-sm font-semibold transition-colors',
-                active
-                  ? 'bg-slate-50 text-[var(--cc-primary)]'
-                  : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900',
-              )}
-            >
-              <span>{link.label}</span>
-            </Link>
-          )
-        })}
-      </div>
-    </Block>
-  )
+function getUserRelationshipRouteFromPathname(pathname: string | null | undefined): UserRelationshipRoute | null {
+  if (!pathname) return null
+  const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
+  if (parts.length !== 3 || parts[0] !== 'u') return null
+  const handle = parts[1]
+  const kind = parts[2]
+  if (!handle) return null
+  if (kind === 'friends' || kind === 'connections' || kind === 'communities' || kind === 'organizations') {
+    return { handle, kind }
+  }
+  return null
 }
 
 export default function MobileDock() {
@@ -422,6 +403,7 @@ export default function MobileDock() {
 
   const orgRoute = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
   const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
+  const userRelationshipRoute = useMemo(() => getUserRelationshipRouteFromPathname(pathname), [pathname])
 
   const morePanelContent = useMemo(() => {
     if (pathname === '/home') {
@@ -460,11 +442,32 @@ export default function MobileDock() {
         <RightRail mode="organizations" sticky={false} />
       )
     }
+    if (userRelationshipRoute) {
+      if (userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'connections') {
+        return (
+          <div className="space-y-4">
+            <MessagesNavBlock active={userRelationshipRoute.kind === 'friends' ? 'friends' : 'network'} />
+            <RightRail
+              hideContacts
+              hideCommunities={userRelationshipRoute.kind === 'friends'}
+              sticky={false}
+            />
+          </div>
+        )
+      }
+      return <RightRail hideContacts sticky={false} />
+    }
     if (orgRoute) {
       return (
-        <div className="space-y-6">
-          <OrganizationMoreBlock pathname={pathname} onNavigate={handleCloseMore} />
-        </div>
+        <OrganizationRailCard
+          pathname={pathname}
+          basePath={orgRoute.basePath}
+          province={orgRoute.province}
+          municipality={orgRoute.municipality}
+          organizationSlug={orgRoute.organization}
+          organizationName={toPathLabel(orgRoute.organization)}
+          onNavigate={handleCloseMore}
+        />
       )
     }
     if (pathname?.startsWith('/communities')) {
@@ -474,7 +477,7 @@ export default function MobileDock() {
       return <CommunityRightRailClient province={communityRoute.province} municipality={communityRoute.municipality} />
     }
     return <RightRail sticky={false} />
-  }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute])
+  }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute, userRelationshipRoute])
 
   if (!hydrated || !hasSession) {
     return null

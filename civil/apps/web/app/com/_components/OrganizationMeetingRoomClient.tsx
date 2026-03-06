@@ -955,21 +955,23 @@ export default function OrganizationMeetingRoomClient({
 
   if (status === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#020b23] px-4 text-slate-200">
-        <div className="rounded-2xl border border-slate-800 bg-[#071336] px-6 py-5 text-sm">Loading meeting room…</div>
+      <div className="flex min-h-screen items-center justify-center px-4 text-slate-700">
+        <div className="rounded-2xl border border-slate-200 bg-white/90 px-6 py-5 text-sm shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur">
+          Loading meeting room…
+        </div>
       </div>
     )
   }
 
   if (status === 'error' || !meeting) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#020b23] px-4 text-slate-200">
-        <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#071336] p-6">
-          <p className="text-base font-semibold">Unable to load this meeting.</p>
-          <p className="mt-2 text-sm text-slate-300">Please go back and try again.</p>
+      <div className="flex min-h-screen items-center justify-center px-4 text-slate-700">
+        <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white/90 p-6 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur">
+          <p className="text-base font-semibold text-slate-900">Unable to load this meeting.</p>
+          <p className="mt-2 text-sm text-slate-500">Please go back and try again.</p>
           <Link
             href={basePath}
-            className="mt-4 inline-flex rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            className="mt-4 inline-flex rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             Back to meetings
           </Link>
@@ -980,28 +982,28 @@ export default function OrganizationMeetingRoomClient({
 
   if (screen !== 'room') {
     return (
-      <div className="min-h-screen bg-[#020b23] px-4 py-8 text-slate-100">
-        <div className="mx-auto w-full max-w-2xl rounded-3xl border border-slate-800 bg-[#071336] p-6 shadow-[0_20px_80px_rgba(1,6,26,0.45)]">
+      <div className="min-h-screen px-4 py-8 text-slate-900">
+        <div className="mx-auto w-full max-w-2xl rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-[0_26px_60px_rgba(15,23,42,0.12)] backdrop-blur">
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-400">Civil Meeting Room</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">{meeting.title || 'Untitled meeting'}</h1>
-          <p className="mt-1 text-sm text-slate-300">{scheduleLabel}</p>
+          <h1 className="mt-2 text-3xl font-semibold text-slate-900">{meeting.title || 'Untitled meeting'}</h1>
+          <p className="mt-1 text-sm text-slate-500">{scheduleLabel}</p>
 
-          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">
-            <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1">{meeting.visibility}</span>
-            <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1">
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">{meeting.visibility}</span>
+            <span className="rounded-full border border-[var(--cc-primary)]/20 bg-[var(--cc-primary)]/8 px-2.5 py-1 text-[var(--cc-primary)]">
               {meeting.status === 'ACTIVE' ? 'LIVE' : 'UNPUBLISHED'}
             </span>
-            {meeting.requiresManualAdmit ? <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1">Manual admit</span> : null}
-            {meeting.requiresPassword ? <span className="rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1">Password</span> : null}
+            {meeting.requiresManualAdmit ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">Manual admit</span> : null}
+            {meeting.requiresPassword ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">Password</span> : null}
           </div>
 
-          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-300">
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             {hostPresent ? 'Host is currently in the meeting.' : 'Host has not yet joined the meeting.'}
           </div>
 
           {canManageMeetings && !hostPresent ? (
-            <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-              <p className="text-sm font-semibold text-amber-100">
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-800">
                 {hostWaitingParticipants.length === 1
                   ? '1 participant is waiting for you to start hosting.'
                   : `${hostWaitingParticipants.length} participants are waiting for you to start hosting.`}
@@ -1009,7 +1011,7 @@ export default function OrganizationMeetingRoomClient({
               {hostWaitingParticipants.length > 0 ? (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {hostWaitingParticipants.slice(0, 8).map((participant) => (
-                    <span key={participant.userId} className="rounded-full border border-amber-300/30 bg-amber-200/10 px-2 py-1 text-xs text-amber-50">
+                    <span key={participant.userId} className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs text-amber-800">
                       {participant.name}
                     </span>
                   ))}
@@ -1020,18 +1022,18 @@ export default function OrganizationMeetingRoomClient({
 
           {meeting.requiresPassword ? (
             <label className="mt-5 grid gap-1">
-              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Room password</span>
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Room password</span>
               <input
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15"
                 placeholder="Enter room password"
               />
             </label>
           ) : null}
 
           {screen === 'waiting' ? (
-            <div className="mt-5 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               {admittedWhileWaiting
                 ? 'Admission approved. You can enter now.'
                 : 'Waiting for host approval. Keep this screen open.'}
@@ -1054,7 +1056,7 @@ export default function OrganizationMeetingRoomClient({
                   ? 'Open meeting room'
                   : 'Join Meeting'}
           </button>
-          {mediaError ? <p className="mt-3 text-sm text-rose-300">{mediaError}</p> : null}
+          {mediaError ? <p className="mt-3 text-sm text-[var(--cc-primary)]">{mediaError}</p> : null}
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             {canManageMeetings ? (
@@ -1063,12 +1065,12 @@ export default function OrganizationMeetingRoomClient({
                 onClick={() => {
                   void inviteMeeting()
                 }}
-                className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-200"
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >
                 Invite individuals
               </button>
             ) : null}
-            <Link href={basePath} className="text-sm font-semibold text-slate-300 underline-offset-4 hover:underline">
+            <Link href={basePath} className="text-sm font-semibold text-slate-600 underline-offset-4 hover:text-slate-900 hover:underline">
               Back to meetings
             </Link>
           </div>
@@ -1078,57 +1080,57 @@ export default function OrganizationMeetingRoomClient({
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#020b23] text-slate-100">
-      <header className="border-b border-slate-800 bg-[#071336]/95 px-4 py-4 backdrop-blur">
+    <div className="flex min-h-screen flex-col text-slate-900">
+      <header className="border-b border-slate-200 bg-white/85 px-4 py-4 backdrop-blur">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Civil Meeting Room</p>
-            <h1 className="truncate text-2xl font-semibold text-white">{meeting.title || 'Untitled meeting'}</h1>
-            <p className="text-sm text-slate-300">{scheduleLabel}</p>
+            <h1 className="truncate text-2xl font-semibold text-slate-900">{meeting.title || 'Untitled meeting'}</h1>
+            <p className="text-sm text-slate-500">{scheduleLabel}</p>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs text-slate-200">
-            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1">{hostPresent ? 'Host in room' : 'Host offline'}</span>
-            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1">{rtcStatus === 'connected' ? 'A/V connected' : 'A/V idle'}</span>
-            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1">{stagePeers.length + 1} participant{stagePeers.length === 0 ? '' : 's'}</span>
-            <span className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1">{meeting.visibility}</span>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{hostPresent ? 'Host in room' : 'Host offline'}</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{rtcStatus === 'connected' ? 'A/V connected' : 'A/V idle'}</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{stagePeers.length + 1} participant{stagePeers.length === 0 ? '' : 's'}</span>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{meeting.visibility}</span>
           </div>
         </div>
       </header>
 
       <main className="min-h-0 flex-1 p-3 sm:p-4">
         <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <section className="min-h-0 rounded-2xl border border-slate-800 bg-[#04102d] p-3 sm:p-4">
+          <section className="min-h-0 rounded-[28px] border border-white/70 bg-white/90 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur sm:p-4">
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Stage</p>
             <div className="mt-3 grid max-h-full min-h-0 grid-cols-1 content-start gap-3 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
-              <article className="rounded-2xl border border-slate-700 bg-[#08163b] p-3">
+              <article className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">You</p>
-                <p className="mt-1 text-lg font-semibold text-white">Local preview</p>
-                <p className="text-sm text-slate-300">{localPreviewSummary}</p>
-                <div className="mt-3 aspect-video overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                <p className="mt-1 text-lg font-semibold text-slate-900">Local preview</p>
+                <p className="text-sm text-slate-500">{localPreviewSummary}</p>
+                <div className="mt-3 aspect-video overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
                   {mediaReady ? (
                     <video ref={localVideoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full items-center justify-center px-3 text-sm text-slate-400">Connect A/V to start preview.</div>
+                    <div className="flex h-full items-center justify-center px-3 text-sm text-slate-500">Connect A/V to start preview.</div>
                   )}
                 </div>
               </article>
 
               {stagePeers.map((peer) => (
-                <article key={peer.peerId} className="rounded-2xl border border-slate-700 bg-[#08163b] p-3">
+                <article key={peer.peerId} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
                   <div className="flex items-center gap-2">
                     {peer.profile?.avatarUrl ? (
                       <img src={peer.profile.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
                     ) : (
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-semibold text-slate-100">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--cc-primary)]/10 text-xs font-semibold text-[var(--cc-primary)]">
                         {initialsFrom(peer.profile ?? null, 'P')}
                       </div>
                     )}
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">{peer.displayName || peer.profile?.name || 'Participant'}</p>
-                      <p className="text-xs text-slate-400">{peer.role === 'manager' ? 'Host' : 'Participant'}</p>
+                      <p className="truncate text-sm font-semibold text-slate-900">{peer.displayName || peer.profile?.name || 'Participant'}</p>
+                      <p className="text-xs text-slate-500">{peer.role === 'manager' ? 'Host' : 'Participant'}</p>
                     </div>
                   </div>
-                  <div className="mt-3 flex aspect-video items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-xs text-slate-400">
+                  <div className="mt-3 flex aspect-video items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-xs text-slate-500">
                     {remoteStreams[peer.peerId] ? (
                       <video
                         autoPlay
@@ -1151,35 +1153,35 @@ export default function OrganizationMeetingRoomClient({
               ))}
 
               {stagePeers.length === 0 ? (
-                <article className="rounded-2xl border border-dashed border-slate-700 bg-[#08163b] p-4 text-sm text-slate-300 sm:col-span-2 xl:col-span-3">
+                <article className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-4 text-sm text-slate-500 sm:col-span-2 xl:col-span-3">
                   No other participants are connected yet.
                 </article>
               ) : null}
             </div>
           </section>
 
-          <aside className="min-h-0 rounded-2xl border border-slate-800 bg-[#04102d] p-3 sm:p-4">
+          <aside className="min-h-0 rounded-[28px] border border-white/70 bg-white/90 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur sm:p-4">
             <div className="flex h-full min-h-0 flex-col">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Room chat</p>
-                  <p className="text-sm font-semibold text-white">Persistent meeting thread</p>
+                  <p className="text-sm font-semibold text-slate-900">Persistent meeting thread</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     void loadThreadSnapshot()
                   }}
-                  className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200"
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                 >
                   Refresh
                 </button>
               </div>
 
-              <div ref={chatScrollerRef} className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-xl border border-slate-700 bg-slate-950/40 p-3">
-                {chatLoading && messages.length === 0 ? <p className="text-sm text-slate-400">Loading messages…</p> : null}
-                {!activeThreadId ? <p className="text-sm text-slate-400">Meeting chat unlocks after admission.</p> : null}
-                {activeThreadId && messages.length === 0 ? <p className="text-sm text-slate-400">No messages yet.</p> : null}
+              <div ref={chatScrollerRef} className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                {chatLoading && messages.length === 0 ? <p className="text-sm text-slate-500">Loading messages…</p> : null}
+                {!activeThreadId ? <p className="text-sm text-slate-500">Meeting chat unlocks after admission.</p> : null}
+                {activeThreadId && messages.length === 0 ? <p className="text-sm text-slate-500">No messages yet.</p> : null}
 
                 {messages.map((message) => {
                   const mine = Boolean(message.isMine)
@@ -1189,7 +1191,7 @@ export default function OrganizationMeetingRoomClient({
                         className={
                           mine
                             ? 'max-w-[85%] rounded-2xl border border-[var(--cc-primary)] bg-[var(--cc-primary)] px-3 py-2 text-sm text-white'
-                            : 'max-w-[85%] rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100'
+                            : 'max-w-[85%] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700'
                         }
                       >
                         <p className="text-xs font-semibold opacity-90">
@@ -1214,7 +1216,7 @@ export default function OrganizationMeetingRoomClient({
                   value={chatDraft}
                   onChange={(event) => setChatDraft(event.target.value)}
                   placeholder="Message room"
-                  className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none"
+                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/15"
                   disabled={!activeThreadId}
                 />
                 <button
@@ -1230,13 +1232,13 @@ export default function OrganizationMeetingRoomClient({
         </div>
       </main>
 
-      <footer className="border-t border-slate-800 bg-[#071336]/95 px-3 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur">
+      <footer className="border-t border-slate-200 bg-white/88 px-3 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] backdrop-blur">
         <div className="flex flex-wrap items-center justify-center gap-2">
           <button
             type="button"
             onClick={() => setMicEnabled((prev) => !prev)}
             className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
-              micEnabled ? 'border-emerald-500 bg-emerald-600/20 text-emerald-100' : 'border-slate-700 bg-slate-900 text-slate-200'
+              micEnabled ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'
             }`}
           >
             {micEnabled ? 'Mic on' : 'Mic off'}
@@ -1245,7 +1247,7 @@ export default function OrganizationMeetingRoomClient({
             type="button"
             onClick={() => setCameraEnabled((prev) => !prev)}
             className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
-              cameraEnabled ? 'border-emerald-500 bg-emerald-600/20 text-emerald-100' : 'border-slate-700 bg-slate-900 text-slate-200'
+              cameraEnabled ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'
             }`}
           >
             {cameraEnabled ? 'Camera on' : 'Camera off'}
@@ -1254,7 +1256,7 @@ export default function OrganizationMeetingRoomClient({
             type="button"
             onClick={() => setSpeakerEnabled((prev) => !prev)}
             className={`rounded-xl border px-4 py-2 text-sm font-semibold ${
-              speakerEnabled ? 'border-emerald-500 bg-emerald-600/20 text-emerald-100' : 'border-slate-700 bg-slate-900 text-slate-200'
+              speakerEnabled ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'
             }`}
           >
             {speakerEnabled ? 'Speaker on' : 'Speaker off'}
@@ -1271,7 +1273,11 @@ export default function OrganizationMeetingRoomClient({
               }
               void connectRtc()
             }}
-            className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            className={
+              rtcStatus === 'connected'
+                ? 'rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700'
+                : 'rounded-xl bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white'
+            }
           >
             {rtcStatus === 'connecting' ? 'Connecting…' : rtcStatus === 'connected' ? 'Disconnect A/V' : 'Connect A/V'}
           </button>
@@ -1284,7 +1290,7 @@ export default function OrganizationMeetingRoomClient({
               setScreen('prepare')
               setJoinState('idle')
             }}
-            className="rounded-xl border border-rose-500/60 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100"
+            className="rounded-xl border border-[var(--cc-primary)]/35 bg-[var(--cc-primary)]/8 px-4 py-2 text-sm font-semibold text-[var(--cc-primary)]"
           >
             Exit room
           </button>

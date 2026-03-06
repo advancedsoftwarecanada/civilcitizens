@@ -13,6 +13,7 @@ import AppFrame from './_components/AppFrame'
 import NotificationTapRouter from './_components/NotificationTapRouter'
 import IosPwaPushPrompt from './_components/IosPwaPushPrompt'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
+import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -28,6 +29,7 @@ function resolveMetadataBaseUrl(): string {
 }
 
 const baseUrl = resolveMetadataBaseUrl()
+const launchOverlayBootstrap = `(function(){try{if(window.location.pathname==='/'&&window.localStorage.getItem('token')){document.documentElement.classList.add('cc-launch-pending')}}catch(_error){}})();`
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
@@ -87,25 +89,36 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children, modal }: { children: ReactNode; modal: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
-        <GoogleAnalytics />
-        <TopNavVisibility />
-        <ViewerBootstrap />
-        <Suspense fallback={null}>
-          <NotificationTapRouter />
-        </Suspense>
-        <Suspense fallback={null}>
-          <AnalyticsTracker />
-        </Suspense>
-        <Suspense fallback={null}>
-          <ScrollManager />
-        </Suspense>
-        <IosPwaPushPrompt />
-        <IosOpenInAppBanner />
-        <AppFrame modal={modal}>{children}</AppFrame>
-        <MobileDockVisibility />
-        <Toasts />
+        <script dangerouslySetInnerHTML={{ __html: launchOverlayBootstrap }} />
+        <div id="cc-launch-overlay" aria-hidden="true">
+          <div className="cc-launch-overlay__glow" />
+          <div className="cc-launch-overlay__content">
+            <img src="/favicon.png" alt="" className="cc-launch-overlay__logo" />
+            <span className="cc-launch-overlay__spinner" aria-hidden="true" />
+          </div>
+        </div>
+        <div id="cc-app-root">
+          <GoogleAnalytics />
+          <TopNavVisibility />
+          <ViewerBootstrap />
+          <LaunchOverlayCleanup />
+          <Suspense fallback={null}>
+            <NotificationTapRouter />
+          </Suspense>
+          <Suspense fallback={null}>
+            <AnalyticsTracker />
+          </Suspense>
+          <Suspense fallback={null}>
+            <ScrollManager />
+          </Suspense>
+          <IosPwaPushPrompt />
+          <IosOpenInAppBanner />
+          <AppFrame modal={modal}>{children}</AppFrame>
+          <MobileDockVisibility />
+          <Toasts />
+        </div>
       </body>
     </html>
   )
