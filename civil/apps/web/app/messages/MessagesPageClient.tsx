@@ -195,8 +195,7 @@ function isMobileMessagesViewport() {
 
 const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
 const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
-const MOBILE_DOCK_HEIGHT_PX = 70
-const MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_PX = 88
+const MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS = 'var(--mobile-thread-composer-height)'
 
 const threadHasUnreadFallback = (thread: ThreadSummary) => {
   const viewer = thread.participants.find((participant) => participant.isViewer)
@@ -1650,9 +1649,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const title = getThreadTitle(activeThread)
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
-    const mobileDockOffsetPx = hideGlobalMobileDockInThread ? 0 : MOBILE_DOCK_HEIGHT_PX
     const mobileComposerBottomSpacer = showMobileDockComposer
-      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_PX}px + env(safe-area-inset-bottom) + ${Math.round(mobileKeyboardInset)}px)`
+      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS} + var(--mobile-dock-bottom-pad) + ${Math.round(mobileKeyboardInset)}px)`
       : undefined
 
     const sendActiveThreadMessage = () => {
@@ -1989,9 +1987,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         {showMobileDockComposer && typeof document !== 'undefined'
           ? createPortal(
               <div
-                className="fixed inset-x-0 z-[85] border-t border-slate-200 bg-white/95 px-3 pb-[max(0.45rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] lg:hidden"
+                className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] lg:hidden"
                 style={{
-                  bottom: `calc(${mobileDockOffsetPx}px + ${Math.round(mobileKeyboardInset)}px)`,
+                  bottom: hideGlobalMobileDockInThread
+                    ? `${Math.round(mobileKeyboardInset)}px`
+                    : `calc(var(--mobile-dock-clearance) + ${Math.round(mobileKeyboardInset)}px)`,
                 }}
               >
                 {composerNode}
@@ -2092,7 +2092,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
 
   const keyboardAwareViewportClass = hideGlobalMobileDockInThread
     ? 'sticky top-0 h-[calc(100dvh-4.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-2 md:pb-8'
-    : 'sticky top-0 h-[calc(100dvh-5.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8'
+    : 'sticky top-0 h-[calc(100dvh-4.5rem-var(--mobile-dock-clearance))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8'
 
   return (
     <DashboardShell
