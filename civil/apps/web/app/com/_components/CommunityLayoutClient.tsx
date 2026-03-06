@@ -9,6 +9,7 @@ import CommunityContextRightRail from './CommunityContextRightRail'
 import { CommunityContextProvider } from './CommunityContext'
 import CommunityHeader from './CommunityHeader'
 import { useInviteViewStore } from '../../_lib/inviteViewStore'
+import { isMeetingRoomPath } from '../../_lib/meetingRoomRoute'
 
 export default function CommunityLayoutClient({
   summary,
@@ -33,9 +34,14 @@ export default function CommunityLayoutClient({
     if (!pathname) return false
     return pathname.includes('/invite/')
   }, [pathname])
+  const isMeetingRoomRoute = useMemo(() => isMeetingRoomPath(pathname), [pathname])
 
   if (isInviteRoute && inviteGuestMode !== false) {
     return <>{children}</>
+  }
+
+  if (isMeetingRoomRoute) {
+    return <CommunityContextProvider value={summary}>{children}</CommunityContextProvider>
   }
 
   return (

@@ -285,6 +285,29 @@ const PUSH_REGISTER_SECRET = (process.env.PUSH_REGISTER_SECRET || '').trim()
 const PUSH_ADMIN_SECRET = (process.env.PUSH_ADMIN_SECRET || '').trim()
 const PUSH_DELIVERY_URL = (process.env.PUSH_DELIVERY_URL || '').trim().replace(/\/$/, '')
 
+function deriveMeetingRtcServiceUrlFromWs(rawValue: string): string {
+  const value = rawValue.trim()
+  if (!value) return ''
+  try {
+    const parsed = new URL(value)
+    const protocol = parsed.protocol === 'wss:' ? 'https:' : parsed.protocol === 'ws:' ? 'http:' : parsed.protocol
+    const normalizedPath = parsed.pathname.replace(/\/+$/, '')
+    const pathWithoutWs = normalizedPath.replace(/\/v1\/ws$/i, '')
+    return `${protocol}//${parsed.host}${pathWithoutWs}`.replace(/\/$/, '')
+  } catch {
+    return ''
+  }
+}
+
+const MEETING_RTC_PORT = String(process.env.CIVIL_MEETING_RTC_PORT || '8788').trim() || '8788'
+const MEETING_RTC_SERVICE_URL_FROM_WS = deriveMeetingRtcServiceUrlFromWs(process.env.MEETING_RTC_WS_URL || '')
+const DEFAULT_MEETING_RTC_SERVICE_URL =
+  MEETING_RTC_SERVICE_URL_FROM_WS ||
+  (process.env.NODE_ENV === 'production' ? 'http://meeting-rtc:8788' : `http://127.0.0.1:${MEETING_RTC_PORT}`)
+const MEETING_RTC_SERVICE_URL = (process.env.MEETING_RTC_SERVICE_URL || DEFAULT_MEETING_RTC_SERVICE_URL).trim().replace(/\/$/, '')
+const MEETING_RTC_SERVICE_SECRET = (process.env.MEETING_RTC_SERVICE_SECRET || '').trim()
+const MEETING_RTC_REQUEST_TIMEOUT_MS = Number(process.env.MEETING_RTC_REQUEST_TIMEOUT_MS || 8000)
+
 const PushDeviceRegisterInput = z.object({
   token: z.string().min(1),
   platform: z.string().trim().min(1).max(32).optional().default('ios'),
@@ -3035,6 +3058,131 @@ async function resolveUserId(req: FastifyRequest): Promise<string | null> {
     // ignore
   }
   return null
+}
+
+function hashMeetingPassword(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
+async function issueMeetingRtcSession(args: {
+  roomId: string
+  userId: string
+  role: 'manager' | 'participant'
+  displayName: string
+  deviceId: string | null
+  capabilities: {
+    audio?: boolean
+    video?: boolean
+  } | null
+}) {
+  if (!MEETING_RTC_SERVICE_URL) return { error: 'meeting_rtc_not_configured' as const }
+
+  const timeoutMs =
+    Number.isFinite(MEETING_RTC_REQUEST_TIMEOUT_MS) && MEETING_RTC_REQUEST_TIMEOUT_MS > 0
+      ? Math.floor(MEETING_RTC_REQUEST_TIMEOUT_MS)
+      : 8000
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(`${MEETING_RTC_SERVICE_URL}/v1/rooms/${encodeURIComponent(args.roomId)}/sessions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(MEETING_RTC_SERVICE_SECRET ? { 'x-meeting-rtc-secret': MEETING_RTC_SERVICE_SECRET } : {}),
+      },
+      body: JSON.stringify({
+        userId: args.userId,
+        role: args.role,
+        displayName: args.displayName,
+        deviceId: args.deviceId,
+        capabilities: args.capabilities ?? undefined,
+      }),
+      signal: controller.signal,
+    })
+
+    const text = await response.text().catch(() => '')
+    let json: any = null
+    if (text) {
+      try {
+        json = JSON.parse(text)
+      } catch {
+        json = null
+      }
+    }
+
+    if (!response.ok) {
+      return {
+        error: (json && typeof json.error === 'string' ? json.error : 'meeting_rtc_service_error') as string,
+        statusCode: response.status,
+      }
+    }
+
+    return { session: json ?? {} }
+  } catch (err) {
+    const aborted = (err as { name?: string } | null)?.name === 'AbortError'
+    return { error: aborted ? 'meeting_rtc_timeout' : 'meeting_rtc_unreachable' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function readMeetingRtcRoomState(
+  roomId: string,
+): Promise<{ peerCount: number; hostPresent: boolean; peers: Array<{ peerId: string; userId: string; displayName: string; role: string }> } | null> {
+  if (!MEETING_RTC_SERVICE_URL) return null
+
+  const timeoutMs =
+    Number.isFinite(MEETING_RTC_REQUEST_TIMEOUT_MS) && MEETING_RTC_REQUEST_TIMEOUT_MS > 0
+      ? Math.floor(MEETING_RTC_REQUEST_TIMEOUT_MS)
+      : 8000
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(`${MEETING_RTC_SERVICE_URL}/v1/rooms/${encodeURIComponent(roomId)}/state`, {
+      method: 'GET',
+      headers: {
+        ...(MEETING_RTC_SERVICE_SECRET ? { 'x-meeting-rtc-secret': MEETING_RTC_SERVICE_SECRET } : {}),
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) return null
+
+    const text = await response.text().catch(() => '')
+    if (!text) return null
+
+    let json: any = null
+    try {
+      json = JSON.parse(text)
+    } catch {
+      return null
+    }
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return null
+
+    const rawPeers: unknown[] = Array.isArray(json.peers) ? json.peers : []
+    const peers = rawPeers
+      .filter((entry: unknown): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object' && !Array.isArray(entry)))
+      .map((typed: Record<string, unknown>) => {
+        return {
+          peerId: typeof typed.peerId === 'string' ? typed.peerId : '',
+          userId: typeof typed.userId === 'string' ? typed.userId : '',
+          displayName: typeof typed.displayName === 'string' ? typed.displayName : '',
+          role: typeof typed.role === 'string' ? typed.role : 'participant',
+        }
+      })
+      .filter((entry: { peerId: string; userId: string }) => Boolean(entry.peerId && entry.userId))
+
+    const peerCount = Number.isFinite(Number(json.peerCount)) ? Math.max(0, Number(json.peerCount)) : peers.length
+    const hostPresent = peers.some((entry: { role: string }) => entry.role === 'manager')
+    return { peerCount, hostPresent, peers }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function withSchemaGuard<T>(
@@ -8541,6 +8689,72 @@ const CommunityOrgEventParams = CommunityOrgSlugParams.extend({
   eventId: z.string().trim().min(3).max(64),
 })
 
+const CommunityOrgMeetingParams = CommunityOrgSlugParams.extend({
+  meetingId: z.string().trim().min(3).max(80),
+})
+
+const OrgMeetingScheduleInput = z
+  .object({
+    startsAt: z.string().datetime().optional().nullable(),
+    endsAt: z.string().datetime().optional().nullable(),
+  })
+  .optional()
+  .nullable()
+
+const CommunityOrgMeetingCreateBody = z
+  .object({
+    title: z.string().trim().min(1).max(180),
+    description: z.string().trim().max(5000).optional().nullable(),
+    visibility: z.enum(['PUBLIC', 'PRIVATE']).default('PUBLIC'),
+    requiresPassword: z.boolean().default(false),
+    password: z.string().trim().min(1).max(128).optional().nullable(),
+    requiresManualAdmit: z.boolean().default(false),
+    maxParticipants: z.coerce.number().int().min(1).max(10).optional().nullable(),
+    schedule: OrgMeetingScheduleInput,
+    assignedMemberUserIds: z.array(z.string().trim().min(1).max(120)).max(500).optional(),
+    status: z.enum(['ACTIVE', 'ARCHIVED']).default('ARCHIVED'),
+  })
+  .superRefine((value, ctx) => {
+    if (value.requiresPassword && (!value.password || !value.password.trim())) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['password'], message: 'password_required' })
+    }
+  })
+
+const CommunityOrgMeetingUpdateBody = z
+  .object({
+    title: z.string().trim().min(1).max(180).optional(),
+    description: z.string().trim().max(5000).optional().nullable(),
+    visibility: z.enum(['PUBLIC', 'PRIVATE']).optional(),
+    requiresPassword: z.boolean().optional(),
+    password: z.string().trim().min(1).max(128).optional().nullable(),
+    requiresManualAdmit: z.boolean().optional(),
+    maxParticipants: z.coerce.number().int().min(1).max(10).optional().nullable(),
+    schedule: OrgMeetingScheduleInput,
+    assignedMemberUserIds: z.array(z.string().trim().min(1).max(120)).max(500).optional(),
+    status: z.enum(['ACTIVE', 'ARCHIVED']).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.requiresPassword === true && value.password !== undefined && !value.password?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['password'], message: 'password_required' })
+    }
+  })
+
+const CommunityOrgMeetingJoinBody = z.object({
+  password: z.string().trim().min(1).max(128).optional().nullable(),
+})
+
+const CommunityOrgMeetingRtcSessionBody = z.object({
+  displayName: z.string().trim().min(1).max(120).optional().nullable(),
+  deviceId: z.string().trim().min(1).max(120).optional().nullable(),
+  capabilities: z
+    .object({
+      audio: z.boolean().optional(),
+      video: z.boolean().optional(),
+    })
+    .optional()
+    .nullable(),
+})
+
 const CommunityOrgAchievementParams = CommunityOrgSlugParams.extend({
   achievementId: z.string().trim().min(3).max(64),
 })
@@ -8729,6 +8943,7 @@ const CommunityOrgShopProductPhotosUpdateBody = z.object({
 
 const ORG_CHANNEL_CONTEXT_TYPE = 'organization_channel'
 const MARKET_LISTING_CHAT_CONTEXT_TYPE = 'market_listing'
+const ORG_MEETING_CONTEXT_TYPE = 'organization_meeting'
 
 function slugifyChannelName(name: string) {
   return name
@@ -8775,6 +8990,223 @@ type OrgChatPrefs = {
 
 let organizationShopTablesReady: Promise<void> | null = null
 let citizenMarketplaceTablesReady: Promise<void> | null = null
+let organizationMeetingTablesReady: Promise<void> | null = null
+const ORGANIZATION_MEETING_MAX_PARTICIPANTS = 10
+
+type OrganizationMeetingStatus = 'ACTIVE' | 'ARCHIVED'
+type OrganizationMeetingVisibility = 'PUBLIC' | 'PRIVATE'
+type OrganizationMeetingAdmissionStatus = 'WAITING' | 'ADMITTED' | 'DENIED'
+
+type OrganizationMeetingRow = {
+  id: string
+  business_id: string
+  created_by: string | null
+  title: string
+  description: string | null
+  visibility: string
+  status: string
+  requires_password: boolean
+  password_hash: string | null
+  requires_manual_admit: boolean
+  max_participants: number | null
+  schedule_starts_at: Date | null
+  schedule_ends_at: Date | null
+  thread_id: string | null
+  created_at: Date
+  updated_at: Date
+}
+
+type OrganizationMeetingAssignmentRow = {
+  meeting_id: string
+  user_id: string
+}
+
+type OrganizationMeetingAdmissionRow = {
+  meeting_id: string
+  user_id: string
+  status: string
+}
+
+type OrganizationMeetingWaitingParticipant = {
+  userId: string
+  status: OrganizationMeetingAdmissionStatus
+  name: string
+  handle: string | null
+  avatarUrl: string | null
+}
+
+function normalizeMeetingStatus(value: string | null | undefined): OrganizationMeetingStatus {
+  return value === 'ACTIVE' ? 'ACTIVE' : 'ARCHIVED'
+}
+
+function normalizeMeetingVisibility(value: string | null | undefined): OrganizationMeetingVisibility {
+  return value === 'PRIVATE' ? 'PRIVATE' : 'PUBLIC'
+}
+
+function normalizeMeetingAdmissionStatus(value: string | null | undefined): OrganizationMeetingAdmissionStatus | null {
+  if (value === 'WAITING' || value === 'ADMITTED' || value === 'DENIED') return value
+  return null
+}
+
+function normalizeMeetingMaxParticipants(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return ORGANIZATION_MEETING_MAX_PARTICIPANTS
+  return Math.max(1, Math.min(ORGANIZATION_MEETING_MAX_PARTICIPANTS, Math.trunc(value)))
+}
+
+function mapMeetingRowForViewer(args: {
+  row: OrganizationMeetingRow
+  participantCount: number
+  canManageMeetings: boolean
+  isAssociated: boolean
+  isAssigned: boolean
+  isParticipant: boolean
+  admissionStatus: OrganizationMeetingAdmissionStatus | null
+}): {
+  id: string
+  title: string
+  description: string | null
+  visibility: OrganizationMeetingVisibility
+  status: OrganizationMeetingStatus
+  requiresPassword: boolean
+  requiresManualAdmit: boolean
+  maxParticipants: number | null
+  participantCount: number
+  canJoinNow: boolean
+  blockedReason: string | null
+  schedule: {
+    startsAt: string | null
+    endsAt: string | null
+  }
+  threadId: string | null
+  admissionStatus: OrganizationMeetingAdmissionStatus | null
+} {
+  const status = normalizeMeetingStatus(args.row.status)
+  const visibility = normalizeMeetingVisibility(args.row.visibility)
+  const startsAt = args.row.schedule_starts_at ? new Date(args.row.schedule_starts_at).toISOString() : null
+  const endsAt = args.row.schedule_ends_at ? new Date(args.row.schedule_ends_at).toISOString() : null
+
+  let canJoinNow = true
+  let blockedReason: string | null = null
+  const now = Date.now()
+
+  if (status !== 'ACTIVE' && !args.canManageMeetings) {
+    canJoinNow = false
+    blockedReason = 'meeting_not_published'
+  } else if (visibility === 'PRIVATE' && !args.canManageMeetings && !args.isAssociated && !args.isAssigned) {
+    canJoinNow = false
+    blockedReason = 'meeting_private'
+  } else if (startsAt && now < new Date(startsAt).getTime()) {
+    canJoinNow = false
+    blockedReason = 'meeting_not_started'
+  } else if (endsAt && now > new Date(endsAt).getTime()) {
+    canJoinNow = false
+    blockedReason = 'meeting_ended'
+  } else if (
+    typeof args.row.max_participants === 'number' &&
+    args.row.max_participants > 0 &&
+    args.participantCount >= args.row.max_participants &&
+    !args.isParticipant &&
+    !args.canManageMeetings
+  ) {
+    canJoinNow = false
+    blockedReason = 'meeting_full'
+  } else if (args.row.requires_manual_admit && args.admissionStatus === 'WAITING' && !args.canManageMeetings) {
+    canJoinNow = false
+    blockedReason = 'waiting_for_admit'
+  }
+
+  const exposeThreadId = args.canManageMeetings || args.isParticipant || args.admissionStatus === 'ADMITTED'
+
+  return {
+    id: args.row.id,
+    title: args.row.title || 'Untitled meeting',
+    description: args.row.description ?? null,
+    visibility,
+    status,
+    requiresPassword: Boolean(args.row.requires_password),
+    requiresManualAdmit: Boolean(args.row.requires_manual_admit),
+    maxParticipants: normalizeMeetingMaxParticipants(args.row.max_participants),
+    participantCount: Number.isFinite(args.participantCount) ? Math.max(0, args.participantCount) : 0,
+    canJoinNow,
+    blockedReason,
+    schedule: {
+      startsAt,
+      endsAt,
+    },
+    threadId: exposeThreadId ? args.row.thread_id ?? null : null,
+    admissionStatus: args.admissionStatus,
+  }
+}
+
+function ensureOrganizationMeetingTables() {
+  if (organizationMeetingTablesReady) return organizationMeetingTablesReady
+
+  organizationMeetingTablesReady = (async () => {
+    try {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS organization_meeting (
+          id TEXT PRIMARY KEY,
+          business_id TEXT NOT NULL REFERENCES "Business"(id) ON DELETE CASCADE,
+          created_by TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          visibility TEXT NOT NULL DEFAULT 'PUBLIC',
+          status TEXT NOT NULL DEFAULT 'ARCHIVED',
+          requires_password BOOLEAN NOT NULL DEFAULT FALSE,
+          password_hash TEXT,
+          requires_manual_admit BOOLEAN NOT NULL DEFAULT FALSE,
+          max_participants INTEGER,
+          schedule_starts_at TIMESTAMPTZ,
+          schedule_ends_at TIMESTAMPTZ,
+          thread_id TEXT REFERENCES "MessageThread"(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS organization_meeting_business_status_idx
+        ON organization_meeting (business_id, status, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS organization_meeting_assignment (
+          meeting_id TEXT NOT NULL REFERENCES organization_meeting(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (meeting_id, user_id)
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS organization_meeting_assignment_user_idx
+        ON organization_meeting_assignment (user_id, meeting_id);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS organization_meeting_admission (
+          meeting_id TEXT NOT NULL REFERENCES organization_meeting(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'WAITING',
+          decided_by_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (meeting_id, user_id)
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS organization_meeting_admission_status_idx
+        ON organization_meeting_admission (meeting_id, status, updated_at DESC);
+      `)
+    } catch (err) {
+      organizationMeetingTablesReady = null
+      throw err
+    }
+  })()
+
+  return organizationMeetingTablesReady
+}
 
 function ensureOrganizationShopTables() {
   if (organizationShopTablesReady) return organizationShopTablesReady
@@ -9804,6 +10236,148 @@ function resolveOrganizationPermissions({
 
 function canOrganizationPermission(permissions: OrgPermission[], permission: OrgPermission) {
   return permissions.includes(permission)
+}
+
+type OrganizationMeetingAccessContext = {
+  provinceCode: string
+  communitySlug: string
+  org: {
+    id: string
+    ownerId: string
+    metadata: Prisma.JsonValue | null
+    status: string
+    name: string
+  }
+  viewerId: string | null
+  viewerRole: 'OWNER' | 'MANAGER' | null
+  permissions: OrgPermission[]
+  canManageMeetings: boolean
+  isAssociated: boolean
+}
+
+async function resolveOrganizationMeetingAccess(args: {
+  provinceRaw: string
+  municipalityRaw: string
+  slugRaw: string
+  viewerId: string | null
+}): Promise<
+  | { ok: false; statusCode: number; error: string }
+  | { ok: true; value: OrganizationMeetingAccessContext }
+> {
+  const provinceCode = normalizeProvinceCode(args.provinceRaw)
+  if (!provinceCode) return { ok: false, statusCode: 404, error: 'province_not_found' }
+
+  const municipality = args.municipalityRaw.trim().toLowerCase()
+  if (!municipality) return { ok: false, statusCode: 404, error: 'community_not_found' }
+
+  const community = findCommunity(provinceCode, municipality)
+  if (!community) return { ok: false, statusCode: 404, error: 'community_not_found' }
+
+  const slug = args.slugRaw.trim().toLowerCase()
+  const org = await prisma.business.findFirst({
+    where: { provinceCode, communitySlug: community.slug, slug },
+    select: { id: true, ownerId: true, metadata: true, status: true, name: true },
+  })
+  if (!org) return { ok: false, statusCode: 404, error: 'organization_not_found' }
+
+  const viewerId = args.viewerId
+  const [membership, follow] = viewerId
+    ? await Promise.all([
+        prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: org.id, userId: viewerId } },
+          select: { role: true },
+        }),
+        prisma.businessFollow.findUnique({
+          where: { businessId_userId: { businessId: org.id, userId: viewerId } },
+          select: { id: true },
+        }),
+      ])
+    : [null, null]
+
+  const viewerRole: 'OWNER' | 'MANAGER' | null = viewerId
+    ? org.ownerId === viewerId
+      ? 'OWNER'
+      : membership?.role === 'MANAGER'
+        ? 'MANAGER'
+        : null
+    : null
+
+  const system = readOrganizationSystemState(org.metadata)
+  const permissions = resolveOrganizationPermissions({
+    org: { ownerId: org.ownerId },
+    role: viewerRole,
+    system,
+    userId: viewerId,
+  })
+  const canManageMeetings = canOrganizationPermission(permissions, 'manage_events')
+  const isAssociated = Boolean(viewerId && (org.ownerId === viewerId || membership || follow))
+
+  return {
+    ok: true,
+    value: {
+      provinceCode,
+      communitySlug: community.slug,
+      org: {
+        id: org.id,
+        ownerId: org.ownerId,
+        metadata: org.metadata,
+        status: org.status,
+        name: org.name,
+      },
+      viewerId,
+      viewerRole,
+      permissions,
+      canManageMeetings,
+      isAssociated,
+    },
+  }
+}
+
+async function ensureOrganizationMeetingThread(args: {
+  orgId: string
+  meetingId: string
+  title: string
+  ownerUserId: string
+  existingThreadId?: string | null
+}) {
+  if (args.existingThreadId) {
+    const existing = await prisma.messageThread.findUnique({
+      where: { id: args.existingThreadId },
+      select: { id: true },
+    })
+    if (existing?.id) return existing.id
+  }
+
+  const uniqueKey = `orgmeeting:${args.orgId}:${args.meetingId}`
+  const existingByUnique = await prisma.messageThread.findUnique({
+    where: { uniqueKey },
+    select: { id: true },
+  })
+  if (existingByUnique?.id) return existingByUnique.id
+
+  const now = new Date()
+  const created = await prisma.messageThread.create({
+    data: {
+      type: MessageThreadType.group,
+      uniqueKey,
+      contextType: ORG_MEETING_CONTEXT_TYPE,
+      contextId: `${args.orgId}|${args.meetingId}|${encodeURIComponent(args.title || 'Meeting room')}`,
+      lastMessageAt: now,
+      participants: {
+        create: [
+          {
+            userId: args.ownerUserId,
+            role: MessageParticipantRole.admin,
+            lastReadAt: now,
+            lastActivityAt: now,
+          },
+        ],
+      },
+    },
+    select: { id: true },
+  })
+
+  return created.id
 }
 
 function buildGuestSpeakerInvites(args: {
@@ -10864,6 +11438,1050 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/state', asyn
         memberState: viewerId ? system.members[viewerId] ?? null : null,
       },
     })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/meetings', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const viewerId = (await resolveUserId(req)) ?? null
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+
+    await ensureOrganizationMeetingTables()
+
+    const rawIncludeArchived = (req.query as Record<string, unknown> | undefined)?.includeArchived
+    const wantsArchived =
+      rawIncludeArchived === '1' ||
+      rawIncludeArchived === 'true' ||
+      rawIncludeArchived === 1 ||
+      rawIncludeArchived === true
+    const includeArchived = wantsArchived && access.value.canManageMeetings
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE business_id = ${access.value.org.id}
+      ${includeArchived ? Prisma.empty : Prisma.sql`AND status = 'ACTIVE'`}
+      ${
+        access.value.canManageMeetings || access.value.isAssociated
+          ? Prisma.empty
+          : Prisma.sql`AND visibility = 'PUBLIC'`
+      }
+      ORDER BY
+        CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END,
+        COALESCE(schedule_starts_at, updated_at) ASC,
+        updated_at DESC
+      LIMIT 200
+    `)) as OrganizationMeetingRow[]
+
+    if (!rows.length) {
+      return reply.send({
+        viewer: { canManageMeetings: access.value.canManageMeetings },
+        items: [],
+      })
+    }
+
+    const meetingIds = rows.map((row) => row.id)
+    const threadIds = Array.from(new Set(rows.map((row) => row.thread_id).filter((value): value is string => Boolean(value))))
+
+    type ThreadParticipantCountRow = { thread_id: string; count: number }
+    const participantRows = threadIds.length
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT "threadId" as thread_id, COUNT(*)::int as count
+          FROM "MessageParticipant"
+          WHERE "threadId" IN (${Prisma.join(threadIds)})
+          GROUP BY "threadId"
+        `)) as ThreadParticipantCountRow[])
+      : []
+    const participantCountByThreadId = new Map<string, number>(
+      participantRows.map((row) => [row.thread_id, Number(row.count) || 0]),
+    )
+
+    const assignedRows = viewerId
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT meeting_id, user_id
+          FROM organization_meeting_assignment
+          WHERE user_id = ${viewerId}
+            AND meeting_id IN (${Prisma.join(meetingIds)})
+        `)) as OrganizationMeetingAssignmentRow[])
+      : []
+    const assignedMeetingIds = new Set(assignedRows.map((row) => row.meeting_id))
+
+    const admissionRows = viewerId
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT meeting_id, user_id, status
+          FROM organization_meeting_admission
+          WHERE user_id = ${viewerId}
+            AND meeting_id IN (${Prisma.join(meetingIds)})
+        `)) as OrganizationMeetingAdmissionRow[])
+      : []
+    const admissionByMeetingId = new Map<string, OrganizationMeetingAdmissionStatus | null>(
+      admissionRows.map((row) => [row.meeting_id, normalizeMeetingAdmissionStatus(row.status)]),
+    )
+
+    type ViewerParticipantRow = { thread_id: string }
+    const viewerParticipantRows = viewerId && threadIds.length
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT "threadId" as thread_id
+          FROM "MessageParticipant"
+          WHERE "userId" = ${viewerId}
+            AND "threadId" IN (${Prisma.join(threadIds)})
+        `)) as ViewerParticipantRow[])
+      : []
+    const viewerThreadIds = new Set(viewerParticipantRows.map((row) => row.thread_id))
+
+    const items = rows.map((row) =>
+      mapMeetingRowForViewer({
+        row,
+        participantCount: row.thread_id ? participantCountByThreadId.get(row.thread_id) ?? 0 : 0,
+        canManageMeetings: access.value.canManageMeetings,
+        isAssociated: access.value.isAssociated,
+        isAssigned: assignedMeetingIds.has(row.id),
+        isParticipant: row.thread_id ? viewerThreadIds.has(row.thread_id) : false,
+        admissionStatus: admissionByMeetingId.get(row.id) ?? null,
+      }),
+    )
+
+    return reply.send({
+      viewer: { canManageMeetings: access.value.canManageMeetings },
+      items,
+    })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/governance/meetings', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? null
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgSlugParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgMeetingCreateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId: userId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+    if (!access.value.canManageMeetings) return reply.code(403).send({ error: 'forbidden' })
+
+    await ensureOrganizationMeetingTables()
+
+    const meetingId = `meeting_${randomUUID().replace(/-/g, '').slice(0, 14)}`
+    const title = sanitizePlainText(body.data.title).trim() || 'Untitled meeting'
+    const description = body.data.description ? sanitizePlainText(body.data.description).trim() || null : null
+    const visibility = body.data.visibility
+    const status = body.data.status
+    const requiresPassword = body.data.requiresPassword
+    const passwordHash = requiresPassword && body.data.password ? hashMeetingPassword(body.data.password.trim()) : null
+    const requiresManualAdmit = body.data.requiresManualAdmit
+    const maxParticipants = normalizeMeetingMaxParticipants(body.data.maxParticipants)
+    const startsAt = body.data.schedule?.startsAt ? new Date(body.data.schedule.startsAt) : null
+    const endsAt = body.data.schedule?.endsAt ? new Date(body.data.schedule.endsAt) : null
+    const now = new Date()
+
+    const threadId = await ensureOrganizationMeetingThread({
+      orgId: access.value.org.id,
+      meetingId,
+      title,
+      ownerUserId: userId,
+      existingThreadId: null,
+    })
+
+    await prisma.$executeRaw`
+      INSERT INTO organization_meeting (
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${meetingId},
+        ${access.value.org.id},
+        ${userId},
+        ${title},
+        ${description},
+        ${visibility},
+        ${status},
+        ${requiresPassword},
+        ${passwordHash},
+        ${requiresManualAdmit},
+        ${maxParticipants},
+        ${startsAt},
+        ${endsAt},
+        ${threadId},
+        ${now},
+        ${now}
+      )
+    `
+
+    const assignedIds = Array.from(new Set((body.data.assignedMemberUserIds ?? []).map((value) => value.trim()).filter(Boolean)))
+    for (const assignedUserId of assignedIds) {
+      await prisma.$executeRaw`
+        INSERT INTO organization_meeting_assignment (meeting_id, user_id, created_at)
+        VALUES (${meetingId}, ${assignedUserId}, ${now})
+        ON CONFLICT (meeting_id, user_id) DO NOTHING
+      `
+    }
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${meetingId}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const row = rows[0]
+    if (!row) return reply.code(500).send({ error: 'meeting_create_failed' })
+
+    const meeting = mapMeetingRowForViewer({
+      row,
+      participantCount: 1,
+      canManageMeetings: true,
+      isAssociated: true,
+      isAssigned: false,
+      isParticipant: true,
+      admissionStatus: 'ADMITTED',
+    })
+
+    return reply.code(201).send({ meeting })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/meetings/:meetingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const params = CommunityOrgMeetingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const viewerId = (await resolveUserId(req)) ?? null
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+
+    await ensureOrganizationMeetingTables()
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${params.data.meetingId}
+        AND business_id = ${access.value.org.id}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'meeting_not_found' })
+
+    const assignedRows = viewerId
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT meeting_id, user_id
+          FROM organization_meeting_assignment
+          WHERE meeting_id = ${row.id}
+            AND user_id = ${viewerId}
+          LIMIT 1
+        `)) as OrganizationMeetingAssignmentRow[])
+      : []
+    const isAssigned = Boolean(assignedRows[0])
+
+    const admissionRows = viewerId
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT meeting_id, user_id, status
+          FROM organization_meeting_admission
+          WHERE meeting_id = ${row.id}
+            AND user_id = ${viewerId}
+          LIMIT 1
+        `)) as OrganizationMeetingAdmissionRow[])
+      : []
+    const admissionStatus = normalizeMeetingAdmissionStatus(admissionRows[0]?.status)
+
+    type ThreadParticipantCountRow = { count: number }
+    const participantCountRows = row.thread_id
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT COUNT(*)::int as count
+          FROM "MessageParticipant"
+          WHERE "threadId" = ${row.thread_id}
+        `)) as ThreadParticipantCountRow[])
+      : [{ count: 0 }]
+    const participantCount = Number(participantCountRows[0]?.count || 0)
+
+    type ViewerParticipantRow = { exists: number }
+    const viewerParticipantRows = viewerId && row.thread_id
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT 1::int as exists
+          FROM "MessageParticipant"
+          WHERE "threadId" = ${row.thread_id}
+            AND "userId" = ${viewerId}
+          LIMIT 1
+        `)) as ViewerParticipantRow[])
+      : []
+    const isParticipant = Boolean(viewerParticipantRows[0]?.exists)
+
+    const meeting = mapMeetingRowForViewer({
+      row,
+      participantCount,
+      canManageMeetings: access.value.canManageMeetings,
+      isAssociated: access.value.isAssociated,
+      isAssigned,
+      isParticipant,
+      admissionStatus,
+    })
+
+    if (
+      !access.value.canManageMeetings &&
+      normalizeMeetingVisibility(row.visibility) === 'PRIVATE' &&
+      !access.value.isAssociated &&
+      !isAssigned
+    ) {
+      return reply.code(403).send({ error: 'meeting_not_assigned' })
+    }
+    if (!access.value.canManageMeetings && normalizeMeetingStatus(row.status) !== 'ACTIVE') {
+      return reply.code(404).send({ error: 'meeting_not_found' })
+    }
+
+    const rtcState = await readMeetingRtcRoomState(row.id)
+
+    type WaitingParticipantRow = {
+      user_id: string
+      status: string
+      name: string | null
+      handle: string | null
+      avatar_url: string | null
+    }
+
+    let waitingParticipants: OrganizationMeetingWaitingParticipant[] = []
+    if (access.value.canManageMeetings && viewerId) {
+      const waitingRows = (await prisma.$queryRaw(Prisma.sql`
+        SELECT
+          admission.user_id,
+          admission.status,
+          "User"."name" as name,
+          "User"."handle" as handle,
+          "User"."avatarUrl" as avatar_url
+        FROM organization_meeting_admission admission
+        LEFT JOIN "User" ON "User"."id" = admission.user_id
+        WHERE admission.meeting_id = ${row.id}
+          AND admission.user_id <> ${viewerId}
+          AND admission.status IN ('WAITING', 'ADMITTED')
+        ORDER BY
+          CASE admission.status
+            WHEN 'WAITING' THEN 0
+            ELSE 1
+          END ASC,
+          admission.updated_at ASC
+        LIMIT 50
+      `)) as WaitingParticipantRow[]
+
+      waitingParticipants = waitingRows
+        .map((entry): OrganizationMeetingWaitingParticipant | null => {
+          const status = normalizeMeetingAdmissionStatus(entry.status)
+          if (!status) return null
+          const userId = typeof entry.user_id === 'string' ? entry.user_id : ''
+          if (!userId) return null
+          const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : 'Civil member'
+          const handle = typeof entry.handle === 'string' && entry.handle.trim() ? entry.handle.trim() : null
+          const avatarUrl = typeof entry.avatar_url === 'string' && entry.avatar_url.trim() ? entry.avatar_url.trim() : null
+          return { userId, status, name, handle, avatarUrl }
+        })
+        .filter((entry): entry is OrganizationMeetingWaitingParticipant => Boolean(entry))
+    }
+
+    return reply.send({
+      meeting: {
+        ...meeting,
+        rtc: rtcState
+          ? {
+              peerCount: rtcState.peerCount,
+              hostPresent: rtcState.hostPresent,
+            }
+          : null,
+        waitingParticipants,
+      },
+      viewer: { canManageMeetings: access.value.canManageMeetings },
+    })
+  }),
+)
+
+app.get('/communities/:province/:municipality/orgs/:slug/governance/meetings/:meetingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? null
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMeetingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId: userId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+    if (!access.value.canManageMeetings) return reply.code(403).send({ error: 'forbidden' })
+
+    await ensureOrganizationMeetingTables()
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${params.data.meetingId}
+        AND business_id = ${access.value.org.id}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'meeting_not_found' })
+
+    type ThreadParticipantCountRow = { count: number }
+    const participantCountRows = row.thread_id
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT COUNT(*)::int as count
+          FROM "MessageParticipant"
+          WHERE "threadId" = ${row.thread_id}
+        `)) as ThreadParticipantCountRow[])
+      : [{ count: 0 }]
+    const participantCount = Number(participantCountRows[0]?.count || 0)
+
+    type AdmissionLookupRow = { status: string | null }
+    const admissionRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT status
+      FROM organization_meeting_admission
+      WHERE meeting_id = ${row.id}
+        AND user_id = ${userId}
+      LIMIT 1
+    `)) as AdmissionLookupRow[]
+    const admissionStatus = normalizeMeetingAdmissionStatus(admissionRows[0]?.status)
+
+    type ViewerParticipantRow = { exists: number }
+    const viewerParticipantRows = row.thread_id
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT 1::int as exists
+          FROM "MessageParticipant"
+          WHERE "threadId" = ${row.thread_id}
+            AND "userId" = ${userId}
+          LIMIT 1
+        `)) as ViewerParticipantRow[])
+      : []
+    const isParticipant = Boolean(viewerParticipantRows[0]?.exists)
+
+    const meeting = mapMeetingRowForViewer({
+      row,
+      participantCount,
+      canManageMeetings: true,
+      isAssociated: true,
+      isAssigned: false,
+      isParticipant,
+      admissionStatus,
+    })
+
+    const rtcState = await readMeetingRtcRoomState(row.id)
+    return reply.send({
+      meeting: {
+        ...meeting,
+        rtc: rtcState
+          ? {
+              peerCount: rtcState.peerCount,
+              hostPresent: rtcState.hostPresent,
+            }
+          : null,
+      },
+      viewer: { canManageMeetings: true },
+    })
+  }),
+)
+
+app.put('/communities/:province/:municipality/orgs/:slug/governance/meetings/:meetingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? null
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMeetingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgMeetingUpdateBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId: userId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+    if (!access.value.canManageMeetings) return reply.code(403).send({ error: 'forbidden' })
+
+    await ensureOrganizationMeetingTables()
+
+    const existingRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${params.data.meetingId}
+        AND business_id = ${access.value.org.id}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const existing = existingRows[0]
+    if (!existing) return reply.code(404).send({ error: 'meeting_not_found' })
+
+    const nextTitle = body.data.title === undefined ? existing.title : sanitizePlainText(body.data.title).trim() || 'Untitled meeting'
+    const nextDescription =
+      body.data.description === undefined
+        ? existing.description
+        : body.data.description
+          ? sanitizePlainText(body.data.description).trim() || null
+          : null
+    const nextVisibility = body.data.visibility ?? normalizeMeetingVisibility(existing.visibility)
+    const nextStatus = body.data.status ?? normalizeMeetingStatus(existing.status)
+    const nextRequiresManualAdmit =
+      body.data.requiresManualAdmit === undefined ? Boolean(existing.requires_manual_admit) : body.data.requiresManualAdmit
+    const nextMaxParticipants = normalizeMeetingMaxParticipants(
+      body.data.maxParticipants === undefined ? existing.max_participants : body.data.maxParticipants,
+    )
+
+    const nextRequiresPassword =
+      body.data.requiresPassword === undefined ? Boolean(existing.requires_password) : body.data.requiresPassword
+    let nextPasswordHash = existing.password_hash
+    if (nextRequiresPassword) {
+      if (typeof body.data.password === 'string' && body.data.password.trim()) {
+        nextPasswordHash = hashMeetingPassword(body.data.password.trim())
+      }
+      if (!nextPasswordHash) return reply.code(400).send({ error: 'password_required' })
+    } else {
+      nextPasswordHash = null
+    }
+
+    let nextStartsAt = existing.schedule_starts_at
+    let nextEndsAt = existing.schedule_ends_at
+    if (body.data.schedule !== undefined) {
+      nextStartsAt = body.data.schedule?.startsAt ? new Date(body.data.schedule.startsAt) : null
+      nextEndsAt = body.data.schedule?.endsAt ? new Date(body.data.schedule.endsAt) : null
+    }
+
+    const now = new Date()
+    await prisma.$executeRaw`
+      UPDATE organization_meeting
+      SET
+        title = ${nextTitle},
+        description = ${nextDescription},
+        visibility = ${nextVisibility},
+        status = ${nextStatus},
+        requires_password = ${nextRequiresPassword},
+        password_hash = ${nextPasswordHash},
+        requires_manual_admit = ${nextRequiresManualAdmit},
+        max_participants = ${nextMaxParticipants},
+        schedule_starts_at = ${nextStartsAt},
+        schedule_ends_at = ${nextEndsAt},
+        updated_at = ${now}
+      WHERE id = ${existing.id}
+    `
+
+    if (body.data.assignedMemberUserIds !== undefined) {
+      const assignedIds = Array.from(new Set(body.data.assignedMemberUserIds.map((value) => value.trim()).filter(Boolean)))
+      await prisma.$executeRaw`
+        DELETE FROM organization_meeting_assignment
+        WHERE meeting_id = ${existing.id}
+      `
+      for (const assignedUserId of assignedIds) {
+        await prisma.$executeRaw`
+          INSERT INTO organization_meeting_assignment (meeting_id, user_id, created_at)
+          VALUES (${existing.id}, ${assignedUserId}, ${now})
+          ON CONFLICT (meeting_id, user_id) DO NOTHING
+        `
+      }
+    }
+
+    const refreshedRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${existing.id}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const refreshed = refreshedRows[0]
+    if (!refreshed) return reply.code(500).send({ error: 'meeting_save_failed' })
+
+    type ThreadParticipantCountRow = { count: number }
+    const participantCountRows = refreshed.thread_id
+      ? ((await prisma.$queryRaw(Prisma.sql`
+          SELECT COUNT(*)::int as count
+          FROM "MessageParticipant"
+          WHERE "threadId" = ${refreshed.thread_id}
+        `)) as ThreadParticipantCountRow[])
+      : [{ count: 0 }]
+    const participantCount = Number(participantCountRows[0]?.count || 0)
+
+    const meeting = mapMeetingRowForViewer({
+      row: refreshed,
+      participantCount,
+      canManageMeetings: true,
+      isAssociated: true,
+      isAssigned: false,
+      isParticipant: true,
+      admissionStatus: 'ADMITTED',
+    })
+
+    return reply.send({ meeting })
+  }),
+)
+
+app.delete('/communities/:province/:municipality/orgs/:slug/governance/meetings/:meetingId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? null
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMeetingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId: userId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+    if (!access.value.canManageMeetings) return reply.code(403).send({ error: 'forbidden' })
+
+    await ensureOrganizationMeetingTables()
+
+    const deleted = await prisma.$executeRaw`
+      DELETE FROM organization_meeting
+      WHERE id = ${params.data.meetingId}
+        AND business_id = ${access.value.org.id}
+    `
+    if (Number(deleted) <= 0) return reply.code(404).send({ error: 'meeting_not_found' })
+
+    return reply.send({ ok: true })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/governance/meetings/:meetingId/join', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? null
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMeetingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgMeetingJoinBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId: userId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+
+    await ensureOrganizationMeetingTables()
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${params.data.meetingId}
+        AND business_id = ${access.value.org.id}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'meeting_not_found' })
+
+    const assignedRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT meeting_id, user_id
+      FROM organization_meeting_assignment
+      WHERE meeting_id = ${row.id}
+        AND user_id = ${userId}
+      LIMIT 1
+    `)) as OrganizationMeetingAssignmentRow[]
+    const isAssigned = Boolean(assignedRows[0])
+
+    const admissionRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT meeting_id, user_id, status
+      FROM organization_meeting_admission
+      WHERE meeting_id = ${row.id}
+        AND user_id = ${userId}
+      LIMIT 1
+    `)) as OrganizationMeetingAdmissionRow[]
+    const admissionStatus = normalizeMeetingAdmissionStatus(admissionRows[0]?.status)
+
+    const status = normalizeMeetingStatus(row.status)
+    const visibility = normalizeMeetingVisibility(row.visibility)
+
+    if (!access.value.canManageMeetings && status !== 'ACTIVE') {
+      return reply.code(403).send({ error: 'meeting_not_published' })
+    }
+    if (!access.value.canManageMeetings && visibility === 'PRIVATE' && !access.value.isAssociated && !isAssigned) {
+      return reply.code(403).send({ error: 'meeting_not_assigned' })
+    }
+
+    if (row.requires_password && !access.value.canManageMeetings) {
+      const provided = body.data.password?.trim() ?? ''
+      if (!provided || !row.password_hash || hashMeetingPassword(provided) !== row.password_hash) {
+        return reply.code(403).send({ error: 'invalid_meeting_password' })
+      }
+    }
+
+    if (row.schedule_starts_at && Date.now() < new Date(row.schedule_starts_at).getTime()) {
+      return reply.code(403).send({ error: 'meeting_not_started' })
+    }
+    if (row.schedule_ends_at && Date.now() > new Date(row.schedule_ends_at).getTime()) {
+      return reply.code(403).send({ error: 'meeting_ended' })
+    }
+
+    let threadId = row.thread_id
+    if (!threadId) {
+      threadId = await ensureOrganizationMeetingThread({
+        orgId: access.value.org.id,
+        meetingId: row.id,
+        title: row.title,
+        ownerUserId: access.value.org.ownerId,
+      })
+      await prisma.$executeRaw`
+        UPDATE organization_meeting
+        SET thread_id = ${threadId}, updated_at = ${new Date()}
+        WHERE id = ${row.id}
+      `
+    }
+
+    const now = new Date()
+    if (row.requires_manual_admit && !access.value.canManageMeetings && admissionStatus !== 'ADMITTED') {
+      await prisma.$executeRaw`
+        INSERT INTO organization_meeting_admission (meeting_id, user_id, status, decided_by_user_id, created_at, updated_at)
+        VALUES (${row.id}, ${userId}, ${'WAITING'}, ${null}, ${now}, ${now})
+        ON CONFLICT (meeting_id, user_id)
+        DO UPDATE SET status = EXCLUDED.status, decided_by_user_id = NULL, updated_at = EXCLUDED.updated_at
+      `
+      const meeting = mapMeetingRowForViewer({
+        row: { ...row, thread_id: threadId },
+        participantCount: 0,
+        canManageMeetings: access.value.canManageMeetings,
+        isAssociated: access.value.isAssociated,
+        isAssigned,
+        isParticipant: false,
+        admissionStatus: 'WAITING',
+      })
+      const rtcState = await readMeetingRtcRoomState(row.id)
+      return reply.send({
+        state: 'waiting',
+        threadId: null,
+        meeting: {
+          ...meeting,
+          rtc: rtcState
+            ? {
+                peerCount: rtcState.peerCount,
+                hostPresent: rtcState.hostPresent,
+              }
+            : null,
+        },
+      })
+    }
+
+    await prisma.messageParticipant.upsert({
+      where: {
+        threadId_userId: {
+          threadId,
+          userId,
+        },
+      },
+      create: {
+        threadId,
+        userId,
+        role: access.value.canManageMeetings ? MessageParticipantRole.admin : MessageParticipantRole.member,
+        lastActivityAt: now,
+      },
+      update: {
+        lastActivityAt: now,
+      },
+    })
+
+    await prisma.$executeRaw`
+      INSERT INTO organization_meeting_admission (meeting_id, user_id, status, decided_by_user_id, created_at, updated_at)
+      VALUES (${row.id}, ${userId}, ${'ADMITTED'}, ${access.value.canManageMeetings ? userId : null}, ${now}, ${now})
+      ON CONFLICT (meeting_id, user_id)
+      DO UPDATE SET status = EXCLUDED.status, decided_by_user_id = EXCLUDED.decided_by_user_id, updated_at = EXCLUDED.updated_at
+    `
+
+    type ThreadParticipantCountRow = { count: number }
+    const participantCountRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT COUNT(*)::int as count
+      FROM "MessageParticipant"
+      WHERE "threadId" = ${threadId}
+    `)) as ThreadParticipantCountRow[]
+    const participantCount = Number(participantCountRows[0]?.count || 0)
+
+    const meeting = mapMeetingRowForViewer({
+      row: { ...row, thread_id: threadId },
+      participantCount,
+      canManageMeetings: access.value.canManageMeetings,
+      isAssociated: access.value.isAssociated,
+      isAssigned,
+      isParticipant: true,
+      admissionStatus: 'ADMITTED',
+    })
+
+    const rtcState = await readMeetingRtcRoomState(row.id)
+    return reply.send({
+      state: 'joined',
+      threadId,
+      meeting: {
+        ...meeting,
+        rtc: rtcState
+          ? {
+              peerCount: rtcState.peerCount,
+              hostPresent: rtcState.hostPresent,
+            }
+          : null,
+      },
+    })
+  }),
+)
+
+app.post('/communities/:province/:municipality/orgs/:slug/meetings/:meetingId/rtc/session', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (await resolveUserId(req)) ?? null
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = CommunityOrgMeetingParams.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+    const body = CommunityOrgMeetingRtcSessionBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const access = await resolveOrganizationMeetingAccess({
+      provinceRaw: params.data.province,
+      municipalityRaw: params.data.municipality,
+      slugRaw: params.data.slug,
+      viewerId: userId,
+    })
+    if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+
+    await ensureOrganizationMeetingTables()
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        id,
+        business_id,
+        created_by,
+        title,
+        description,
+        visibility,
+        status,
+        requires_password,
+        password_hash,
+        requires_manual_admit,
+        max_participants,
+        schedule_starts_at,
+        schedule_ends_at,
+        thread_id,
+        created_at,
+        updated_at
+      FROM organization_meeting
+      WHERE id = ${params.data.meetingId}
+        AND business_id = ${access.value.org.id}
+      LIMIT 1
+    `)) as OrganizationMeetingRow[]
+    const row = rows[0]
+    if (!row) return reply.code(404).send({ error: 'meeting_not_found' })
+    if (normalizeMeetingStatus(row.status) !== 'ACTIVE' && !access.value.canManageMeetings) {
+      return reply.code(403).send({ error: 'meeting_not_published' })
+    }
+
+    let threadId = row.thread_id
+    if (!threadId) {
+      threadId = await ensureOrganizationMeetingThread({
+        orgId: access.value.org.id,
+        meetingId: row.id,
+        title: row.title,
+        ownerUserId: access.value.org.ownerId,
+      })
+      await prisma.$executeRaw`
+        UPDATE organization_meeting
+        SET thread_id = ${threadId}, updated_at = ${new Date()}
+        WHERE id = ${row.id}
+      `
+    }
+
+    type AdmissionLookupRow = { status: string | null }
+    const admissionRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT status
+      FROM organization_meeting_admission
+      WHERE meeting_id = ${row.id}
+        AND user_id = ${userId}
+      LIMIT 1
+    `)) as AdmissionLookupRow[]
+    const admissionStatus = normalizeMeetingAdmissionStatus(admissionRows[0]?.status)
+
+    type ParticipantLookupRow = { exists: number }
+    const participantRows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT 1::int as exists
+      FROM "MessageParticipant"
+      WHERE "threadId" = ${threadId}
+        AND "userId" = ${userId}
+      LIMIT 1
+    `)) as ParticipantLookupRow[]
+    const isParticipant = Boolean(participantRows[0]?.exists)
+
+    if (!access.value.canManageMeetings && !isParticipant && admissionStatus !== 'ADMITTED') {
+      return reply.code(403).send({ error: 'meeting_not_joined' })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, handle: true },
+    })
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+    const displayName = body.data.displayName?.trim() || user.name?.trim() || user.handle || 'Civil user'
+
+    const rtc = await issueMeetingRtcSession({
+      roomId: row.id,
+      userId,
+      role: access.value.canManageMeetings ? 'manager' : 'participant',
+      displayName,
+      deviceId: body.data.deviceId ?? null,
+      capabilities: body.data.capabilities ?? null,
+    })
+
+    if ('error' in rtc) {
+      const statusCode =
+        typeof rtc.statusCode === 'number' && rtc.statusCode >= 400
+          ? rtc.statusCode
+          : rtc.error === 'meeting_rtc_not_configured'
+            ? 503
+            : rtc.error === 'meeting_rtc_timeout'
+              ? 504
+              : 502
+      return reply.code(statusCode).send({ error: rtc.error })
+    }
+
+    return reply.send(rtc.session)
   }),
 )
 
@@ -22973,4 +24591,11 @@ const start = async () => {
     process.exit(1)
   }
 }
-start()
+const skipListen = (() => {
+  const raw = (process.env.API_SKIP_LISTEN || '').trim().toLowerCase()
+  return raw === '1' || raw === 'true' || raw === 'yes'
+})()
+
+if (!skipListen) {
+  start()
+}
