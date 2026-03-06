@@ -5,10 +5,9 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { normalizeProvinceCode } from '@civil/shared'
 import {
-  HiOutlineArrowRightCircle,
+  HiOutlineBars3,
   HiOutlineBell,
   HiOutlineChatBubbleOvalLeft,
-  HiOutlineHome,
   HiOutlineMagnifyingGlass,
   HiOutlineShoppingCart,
   HiOutlineXMark,
@@ -33,11 +32,11 @@ const NAV_BUTTONS: Array<{
   label: string
   icon: IconType
 }> = [
-  { key: 'home', label: 'Home', icon: HiOutlineHome },
+  { key: 'home', label: 'Menu', icon: HiOutlineBars3 },
   { key: 'cart', label: 'Cart', icon: HiOutlineShoppingCart },
   { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
-  { key: 'more', label: 'More', icon: HiOutlineArrowRightCircle },
+  { key: 'more', label: 'More', icon: HiOutlineBars3 },
 ] as const
 
 const DRAWER_TRANSITION_MS = 320
@@ -378,11 +377,7 @@ export default function MobileDock() {
   const handleButtonPress = useCallback(
     (key: NavButtonKey) => {
       if (key === 'home') {
-        if (pathname === '/home') {
-          handleOpenMenu()
-          return
-        }
-        router.push('/home')
+        handleOpenMenu()
         return
       }
       if (key === 'cart') {
@@ -489,7 +484,7 @@ export default function MobileDock() {
     <>
       <nav
         data-mobile-dock="true"
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 min-h-[var(--mobile-dock-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 lg:hidden"
         role="navigation"
         aria-label="Mobile navigation"
       >
@@ -497,7 +492,7 @@ export default function MobileDock() {
           {NAV_BUTTONS.map((item) => {
             const Icon = item.icon
             const isActive =
-              (item.key === 'home' && (pathname === '/home' || pathname?.startsWith('/home') || menuOpen)) ||
+              (item.key === 'home' && menuOpen) ||
               (item.key === 'cart' && (pathname?.startsWith('/market/cart') || pathname?.startsWith('/market/checkout'))) ||
               (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
               (item.key === 'messages' && (pathname?.startsWith('/messages') || pathname?.startsWith('/channels'))) ||
@@ -518,7 +513,7 @@ export default function MobileDock() {
                 type="button"
                 onClick={() => handleButtonPress(item.key)}
                 className={clsx(
-                  'flex w-full items-center justify-center rounded-2xl px-3 py-2 transition-colors',
+                  'flex h-11 w-full items-center justify-center rounded-2xl px-3 transition-colors',
                   isActive
                     ? 'bg-[var(--cc-primary)] text-white shadow shadow-[var(--cc-primary)]/30'
                     : 'text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10',
