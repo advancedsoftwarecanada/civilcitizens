@@ -1,0 +1,119 @@
+export type SearchType = 'all' | 'people' | 'communities' | 'organizations' | 'events' | 'market' | 'posts'
+
+export type HomeCommunitySummary = {
+  provinceCode: string
+  provinceName: string | null
+  communitySlug?: string | null
+  communityName?: string | null
+  chamberSlug?: string | null
+  chamberName?: string | null
+}
+
+export type UserSearchResult = {
+  id: string
+  name: string | null
+  handle: string
+  avatarUrl: string | null
+  isPremium: boolean
+  isVerified: boolean
+  homeCommunity?: HomeCommunitySummary | null
+  homeChamber?: HomeCommunitySummary | null
+}
+
+export type CommunitySearchResult = {
+  slug: string
+  name: string
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+  chamberSlug: string
+  chamberName: string
+  latitude: number
+  longitude: number
+  population: number | null
+  distanceKm?: number
+}
+
+export type OrganizationSearchResult = {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  logoUrl: string | null
+  coverUrl: string | null
+  isVerified: boolean
+  provinceCode: string
+  communitySlug: string
+  communityName: string | null
+  href: string
+}
+
+export type EventSearchResult = {
+  id: string
+  title: string
+  description: string | null
+  imageUrl: string | null
+  startsAt: string | null
+  startsAtLabel: string | null
+  organization: {
+    name: string
+    slug: string
+    logoUrl: string | null
+    isVerified: boolean
+  }
+  provinceCode: string
+  communitySlug: string
+  communityName: string | null
+  href: string
+}
+
+export type MarketSearchResult = {
+  id: string
+  title: string
+  description: string | null
+  imageUrl: string | null
+  priceLabel: string
+  locationLabel: string | null
+  href: string
+}
+
+export type PostSearchResult = {
+  id: string
+  title: string | null
+  excerpt: string | null
+  imageUrl: string | null
+  communityName: string | null
+  provinceName: string | null
+  author: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+  organization: {
+    name: string
+    slug: string
+    logoUrl: string | null
+  } | null
+  href: string
+}
+
+export type SearchResponseMeta = {
+  type?: SearchType
+  peopleHasMore?: boolean
+  communitiesHasMore?: boolean
+  organizationsHasMore?: boolean
+  eventsHasMore?: boolean
+  marketHasMore?: boolean
+  postsHasMore?: boolean
+}
+
+export type SearchResponse = {
+  people?: UserSearchResult[]
+  communities?: CommunitySearchResult[]
+  organizations?: OrganizationSearchResult[]
+  events?: EventSearchResult[]
+  market?: MarketSearchResult[]
+  posts?: PostSearchResult[]
+  meta?: SearchResponseMeta
+}

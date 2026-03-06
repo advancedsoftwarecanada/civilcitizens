@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
-import SearchPageClient, { type SearchType } from './SearchPageClient'
+import type { SearchType } from '../_components/search/searchTypes'
+import SearchPageClient from './SearchPageClient'
 
 export const metadata: Metadata = {
   title: 'Search',
@@ -13,6 +14,14 @@ export default function SearchPage({ searchParams }: SearchPageProps) {
   const rawQuery = searchParams?.q
   const initialQuery = typeof rawQuery === 'string' ? rawQuery : Array.isArray(rawQuery) ? rawQuery[0] ?? '' : ''
   const rawType = searchParams?.type
-  const initialType: SearchType = rawType === 'communities' ? 'communities' : 'people'
+  const initialType: SearchType =
+    rawType === 'people' ||
+    rawType === 'communities' ||
+    rawType === 'organizations' ||
+    rawType === 'events' ||
+    rawType === 'market' ||
+    rawType === 'posts'
+      ? rawType
+      : 'all'
   return <SearchPageClient initialQuery={initialQuery} initialType={initialType} />
 }
