@@ -2799,14 +2799,18 @@ const UserSearchQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(30),
 })
 
-const SearchTypeEnum = z.enum(['people', 'communities', 'all'])
+const SearchTypeEnum = z.enum(['all', 'people', 'communities', 'organizations', 'events', 'market', 'posts'])
 
 const CombinedSearchQuery = z.object({
   q: z.string().trim().min(1).max(120),
-  type: SearchTypeEnum.default('people'),
+  type: SearchTypeEnum.default('all'),
   limit: z.coerce.number().int().min(1).max(50).default(30),
   peopleLimit: z.coerce.number().int().min(1).max(10).default(3),
   communityLimit: z.coerce.number().int().min(1).max(10).default(3),
+  organizationLimit: z.coerce.number().int().min(1).max(10).default(3),
+  eventLimit: z.coerce.number().int().min(1).max(10).default(3),
+  marketLimit: z.coerce.number().int().min(1).max(10).default(3),
+  postLimit: z.coerce.number().int().min(1).max(10).default(3),
 })
 
 function normalizeSearchTerm(value: string): string {
@@ -2836,6 +2840,94 @@ type UserSearchResultPayload = {
     communitySlug: string
     communityName: string | null
   } | null
+}
+
+type OrganizationSearchResultPayload = {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  logoUrl: string | null
+  coverUrl: string | null
+  isVerified: boolean
+  provinceCode: string
+  communitySlug: string
+  communityName: string | null
+  href: string
+}
+
+type EventSearchResultPayload = {
+  id: string
+  title: string
+  description: string | null
+  imageUrl: string | null
+  startsAt: string | null
+  startsAtLabel: string | null
+  organization: {
+    name: string
+    slug: string
+    logoUrl: string | null
+    isVerified: boolean
+  }
+  provinceCode: string
+  communitySlug: string
+  communityName: string | null
+  href: string
+}
+
+type MarketSearchResultPayload = {
+  id: string
+  title: string
+  description: string | null
+  imageUrl: string | null
+  priceLabel: string
+  locationLabel: string | null
+  href: string
+}
+
+type PostSearchResultPayload = {
+  id: string
+  title: string | null
+  excerpt: string | null
+  imageUrl: string | null
+  communityName: string | null
+  provinceName: string | null
+  author: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+  organization: {
+    name: string
+    slug: string
+    logoUrl: string | null
+  } | null
+  href: string
+}
+
+function buildSearchableText(...parts: Array<string | null | undefined>): string {
+  return normalizeSearchTerm(parts.filter((part): part is string => typeof part === 'string' && part.trim().length > 0).join(' '))
+}
+
+function scoreSearchTextMatch(text: string, query: string): number {
+  const haystack = normalizeSearchTerm(text).toLowerCase()
+  const normalizedQuery = normalizeSearchTerm(query).toLowerCase()
+  if (!haystack || !normalizedQuery) return 0
+
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+  let score = 0
+
+  if (haystack === normalizedQuery) score += 1000
+  if (haystack.startsWith(normalizedQuery)) score += 600
+  if (haystack.includes(normalizedQuery)) score += 300
+
+  if (tokens.length) {
+    const tokenHits = tokens.filter((token) => haystack.includes(token)).length
+    score += tokenHits * 80
+    if (tokenHits === tokens.length) score += 180
+  }
+
+  return score
 }
 
 async function searchUsersForQuery({
@@ -3037,6 +3129,392 @@ async function searchCommunitiesForQuery(query: string, limit: number): Promise<
   })
 
   return combined.slice(0, limit)
+}
+
+async function searchOrganizationsForQuery(query: string, limit: number): Promise<OrganizationSearchResultPayload[]> {
+  const normalizedQuery = normalizeSearchTerm(query)
+  if (!normalizedQuery) return []
+
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+  const slugQuery = normalizedQuery.toLowerCase().replace(/\s+/g, '-')
+  const insensitiveMode = Prisma.QueryMode.insensitive
+
+  const buildContains = (field: 'name' | 'description'): Prisma.BusinessWhereInput => {
+    if (!tokens.length) {
+      return {
+        [field]: {
+          contains: normalizedQuery,
+          mode: insensitiveMode,
+        },
+      }
+    }
+    return {
+      AND: tokens.map(
+        (token) =>
+          ({
+            [field]: {
+              contains: token,
+              mode: insensitiveMode,
+            },
+          }) as Prisma.BusinessWhereInput,
+      ),
+    }
+  }
+
+  type OrganizationSearchRow = {
+    id: string
+    name: string
+    slug: string
+    description: string | null
+    logoUrl: string | null
+    coverUrl: string | null
+    isVerified: boolean
+    provinceCode: string | null
+    communitySlug: string | null
+  }
+
+  const businesses: OrganizationSearchRow[] = await prisma.business.findMany({
+    where: {
+      status: BusinessStatus.ACTIVE,
+      OR: [
+        buildContains('name'),
+        buildContains('description'),
+        { slug: { contains: slugQuery, mode: insensitiveMode } },
+      ],
+    },
+    orderBy: [{ name: 'asc' }],
+    take: Math.max(limit * 3, 18),
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      logoUrl: true,
+      coverUrl: true,
+      isVerified: true,
+      provinceCode: true,
+      communitySlug: true,
+    },
+  })
+
+  const ranked: Array<{ item: OrganizationSearchResultPayload; score: number }> = businesses
+    .map((business: OrganizationSearchRow) => {
+      if (!business.provinceCode || !business.communitySlug) return null
+      const provinceCode = business.provinceCode.toLowerCase()
+      const communitySlug = business.communitySlug.toLowerCase()
+      const community = findCommunity(business.provinceCode, business.communitySlug)
+      return {
+        item: {
+          id: business.id,
+          name: business.name,
+          slug: business.slug,
+          description: truncatePreviewText(stripHtmlToPlainText(business.description ?? ''), 180) || null,
+          logoUrl: normalizeMediaUrl(business.logoUrl ?? null),
+          coverUrl: normalizeMediaUrl(business.coverUrl ?? null),
+          isVerified: Boolean(business.isVerified),
+          provinceCode,
+          communitySlug,
+          communityName: community?.name ?? null,
+          href: `/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(business.slug)}`,
+        } satisfies OrganizationSearchResultPayload,
+        score: scoreSearchTextMatch(buildSearchableText(business.name, business.slug, business.description), normalizedQuery),
+      }
+    })
+    .filter((entry): entry is { item: OrganizationSearchResultPayload; score: number } => Boolean(entry))
+
+  ranked.sort((a: { item: OrganizationSearchResultPayload; score: number }, b: { item: OrganizationSearchResultPayload; score: number }) => {
+    const scoreDelta = b.score - a.score
+    if (scoreDelta !== 0) return scoreDelta
+    return a.item.name.localeCompare(b.item.name)
+  })
+
+  return ranked.slice(0, limit).map((entry: { item: OrganizationSearchResultPayload; score: number }) => entry.item)
+}
+
+async function searchEventsForQuery({
+  viewerId,
+  query,
+  limit,
+}: {
+  viewerId: string
+  query: string
+  limit: number
+}): Promise<EventSearchResultPayload[]> {
+  const normalizedQuery = normalizeSearchTerm(query)
+  if (!normalizedQuery) return []
+
+  type EventOrgRow = {
+    id: string
+    name: string
+    slug: string
+    description: string | null
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    coverUrl: string | null
+    isVerified: boolean
+    metadata: unknown
+  }
+
+  const likePattern = `%${normalizedQuery.toLowerCase()}%`
+  const rows: EventOrgRow[] = await prisma.$queryRaw(Prisma.sql`
+    SELECT
+      id,
+      name,
+      slug,
+      description,
+      "provinceCode" AS "provinceCode",
+      "communitySlug" AS "communitySlug",
+      "logoUrl" AS "logoUrl",
+      "coverUrl" AS "coverUrl",
+      "isVerified" AS "isVerified",
+      metadata
+    FROM "Business"
+    WHERE status = ${BusinessStatus.ACTIVE}::"BusinessStatus"
+      AND "provinceCode" IS NOT NULL
+      AND "communitySlug" IS NOT NULL
+      AND (
+        LOWER(name) LIKE ${likePattern}
+        OR LOWER(COALESCE(description, '')) LIKE ${likePattern}
+        OR LOWER(COALESCE(metadata::text, '')) LIKE ${likePattern}
+      )
+    ORDER BY name ASC
+    LIMIT ${Math.max(limit * 8, 40)}
+  `)
+
+  const results: Array<{ item: EventSearchResultPayload; score: number; startsAtMs: number }> = []
+
+  for (const row of rows) {
+    if (!row.provinceCode || !row.communitySlug) continue
+    const community = findCommunity(row.provinceCode, row.communitySlug)
+    const system = readOrganizationSystemState(row.metadata)
+
+    for (const event of system.events) {
+      if (!canViewerAccessEventForPreview(event, system, viewerId)) continue
+
+      const searchText = buildSearchableText(event.title, stripHtmlToPlainText(event.description ?? ''), row.name, row.description)
+      const score = scoreSearchTextMatch(searchText, normalizedQuery)
+      if (score <= 0) continue
+
+      const startsAt = typeof event.startsAt === 'string' && event.startsAt.trim().length > 0 ? event.startsAt : null
+      const parsedStartsAt = startsAt ? Date.parse(startsAt) : Number.NaN
+      const startsAtMs = Number.isFinite(parsedStartsAt) ? parsedStartsAt : Number.MAX_SAFE_INTEGER
+      const provinceCode = row.provinceCode.toLowerCase()
+      const communitySlug = row.communitySlug.toLowerCase()
+
+      results.push({
+        item: {
+          id: event.id,
+          title: truncatePreviewText(event.title || 'Civil event', 120) || 'Civil event',
+          description: truncatePreviewText(stripHtmlToPlainText(event.description ?? ''), 180) || null,
+          imageUrl: normalizeMediaUrl(event.primaryPhotoUrl ?? event.galleryPhotoUrls?.[0] ?? row.coverUrl ?? row.logoUrl ?? null),
+          startsAt,
+          startsAtLabel: formatEventPreviewDate(startsAt),
+          organization: {
+            name: row.name,
+            slug: row.slug,
+            logoUrl: normalizeMediaUrl(row.logoUrl ?? null),
+            isVerified: Boolean(row.isVerified),
+          },
+          provinceCode,
+          communitySlug,
+          communityName: community?.name ?? null,
+          href: `/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(row.slug)}/events/${encodeURIComponent(event.id)}`,
+        },
+        score,
+        startsAtMs,
+      })
+    }
+  }
+
+  results.sort((a, b) => {
+    const scoreDelta = b.score - a.score
+    if (scoreDelta !== 0) return scoreDelta
+    const startDelta = a.startsAtMs - b.startsAtMs
+    if (Number.isFinite(startDelta) && startDelta !== 0) return startDelta
+    return a.item.title.localeCompare(b.item.title)
+  })
+
+  return results.slice(0, limit).map((entry) => entry.item)
+}
+
+async function searchMarketListingsForQuery(query: string, limit: number): Promise<MarketSearchResultPayload[]> {
+  const normalizedQuery = normalizeSearchTerm(query)
+  if (!normalizedQuery) return []
+
+  await ensureCitizenMarketplaceTables()
+
+  type MarketSearchRow = {
+    id: string
+    title: string
+    description: string | null
+    price_cents: number
+    currency: string
+    photo_urls: unknown
+    pickup_city: string | null
+    pickup_province: string | null
+    created_at: Date
+  }
+
+  const likePattern = `%${normalizedQuery.toLowerCase()}%`
+  const rows: MarketSearchRow[] = await prisma.$queryRaw(Prisma.sql`
+    SELECT
+      id,
+      title,
+      description,
+      price_cents,
+      currency,
+      photo_urls,
+      pickup_city,
+      pickup_province,
+      created_at
+    FROM citizen_market_listing
+    WHERE is_active = TRUE
+      AND is_draft = FALSE
+      AND LOWER(status) = 'active'
+      AND (
+        LOWER(title) LIKE ${likePattern}
+        OR LOWER(COALESCE(description, '')) LIKE ${likePattern}
+      )
+    ORDER BY created_at DESC
+    LIMIT ${Math.max(limit * 4, 24)}
+  `)
+
+  const ranked: Array<{ item: MarketSearchResultPayload; score: number; createdAt: number }> = rows.map((row: MarketSearchRow) => {
+    const gallery = readGalleryUrls(row.photo_urls)
+    return {
+      item: {
+        id: row.id,
+        title: truncatePreviewText(row.title || 'Marketplace item', 120) || 'Marketplace item',
+        description: truncatePreviewText(stripHtmlToPlainText(row.description ?? ''), 180) || null,
+        imageUrl: gallery[0] ?? null,
+        priceLabel: formatMarketplacePrice(Number(row.price_cents) || 0, row.currency || 'CAD'),
+        locationLabel: [row.pickup_city, row.pickup_province].filter(Boolean).join(', ') || null,
+        href: `/market/listings/${encodeURIComponent(row.id)}`,
+      } satisfies MarketSearchResultPayload,
+      score: scoreSearchTextMatch(buildSearchableText(row.title, row.description), normalizedQuery),
+      createdAt: row.created_at.getTime(),
+    }
+  })
+
+  ranked.sort((a: { item: MarketSearchResultPayload; score: number; createdAt: number }, b: { item: MarketSearchResultPayload; score: number; createdAt: number }) => {
+    const scoreDelta = b.score - a.score
+    if (scoreDelta !== 0) return scoreDelta
+    return b.createdAt - a.createdAt
+  })
+
+  return ranked.slice(0, limit).map((entry: { item: MarketSearchResultPayload; score: number; createdAt: number }) => entry.item)
+}
+
+async function searchCommunityPostsForQuery(query: string, limit: number): Promise<PostSearchResultPayload[]> {
+  const normalizedQuery = normalizeSearchTerm(query)
+  if (!normalizedQuery) return []
+
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+  const insensitiveMode = Prisma.QueryMode.insensitive
+  const buildContains = (field: 'title' | 'body'): Prisma.PostWhereInput => {
+    if (!tokens.length) {
+      return {
+        [field]: {
+          contains: normalizedQuery,
+          mode: insensitiveMode,
+        },
+      }
+    }
+    return {
+      AND: tokens.map(
+        (token) =>
+          ({
+            [field]: {
+              contains: token,
+              mode: insensitiveMode,
+            },
+          }) as Prisma.PostWhereInput,
+      ),
+    }
+  }
+
+  type SearchPostRow = Prisma.PostGetPayload<{
+    include: {
+      author: true
+      business: true
+    }
+  }>
+
+  const posts: SearchPostRow[] = await prisma.post.findMany({
+    where: {
+      visibility: 'public',
+      provinceCode: { not: null },
+      communitySlug: { not: null },
+      OR: [
+        buildContains('title'),
+        buildContains('body'),
+        {
+          author: {
+            OR: [
+              { name: { contains: normalizedQuery, mode: insensitiveMode } },
+              { handle: { contains: normalizedQuery.replace(/^@/, ''), mode: insensitiveMode } },
+            ],
+          },
+        },
+        {
+          business: {
+            name: { contains: normalizedQuery, mode: insensitiveMode },
+          },
+        },
+      ],
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: Math.max(limit * 4, 24),
+    include: {
+      author: true,
+      business: true,
+    },
+  })
+
+  const ranked: Array<{ item: PostSearchResultPayload; score: number; createdAt: number }> = posts
+    .map((post: SearchPostRow) => {
+      const formatted = formatPost(post as any)
+      const href = getCanonicalPaths(post as any).community
+      if (!href) return null
+      return {
+        item: {
+          id: post.id,
+          title: formatted.title,
+          excerpt: truncatePreviewText(stripHtmlToPlainText(post.body ?? ''), 200) || null,
+          imageUrl: formatted.images?.[0] ?? formatted.mediaUrl ?? formatted.organization?.coverUrl ?? formatted.organization?.logoUrl ?? null,
+          communityName: formatted.communityName,
+          provinceName: formatted.provinceName,
+          author: {
+            handle: formatted.author.handle,
+            name: formatted.author.name,
+            avatarUrl: formatted.author.avatarUrl,
+          },
+          organization: formatted.organization
+            ? {
+                name: formatted.organization.name,
+                slug: formatted.organization.slug,
+                logoUrl: formatted.organization.logoUrl,
+              }
+            : null,
+          href,
+        } satisfies PostSearchResultPayload,
+        score: scoreSearchTextMatch(
+          buildSearchableText(post.title, stripHtmlToPlainText(post.body ?? ''), post.author.name, post.author.handle, post.business?.name),
+          normalizedQuery,
+        ),
+        createdAt: post.createdAt.getTime(),
+      }
+    })
+    .filter((entry): entry is { item: PostSearchResultPayload; score: number; createdAt: number } => Boolean(entry))
+
+  ranked.sort((a: { item: PostSearchResultPayload; score: number; createdAt: number }, b: { item: PostSearchResultPayload; score: number; createdAt: number }) => {
+    const scoreDelta = b.score - a.score
+    if (scoreDelta !== 0) return scoreDelta
+    return b.createdAt - a.createdAt
+  })
+
+  return ranked.slice(0, limit).map((entry: { item: PostSearchResultPayload; score: number; createdAt: number }) => entry.item)
 }
 
 async function loadAuthenticatedUser(req: FastifyRequest) {
@@ -22535,10 +23013,10 @@ app.get('/search', async (req: FastifyRequest, reply: FastifyReply) =>
     const parse = CombinedSearchQuery.safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-    const { q, type, limit, peopleLimit, communityLimit } = parse.data
+    const { q, type, limit, peopleLimit, communityLimit, organizationLimit, eventLimit, marketLimit, postLimit } = parse.data
     const normalizedQuery = normalizeSearchTerm(q)
     if (!normalizedQuery) {
-      return reply.send({ people: [], communities: [], meta: { type } })
+      return reply.send({ people: [], communities: [], organizations: [], events: [], market: [], posts: [], meta: { type } })
     }
 
     if (type === 'people') {
@@ -22557,23 +23035,75 @@ app.get('/search', async (req: FastifyRequest, reply: FastifyReply) =>
       return reply.send({ communities: trimmedCommunities, meta: { type, communitiesHasMore } })
     }
 
+    if (type === 'organizations') {
+      const take = limit + 1
+      const organizationResults = await searchOrganizationsForQuery(normalizedQuery, take)
+      const organizationsHasMore = organizationResults.length > limit
+      const trimmedOrganizations = organizationsHasMore ? organizationResults.slice(0, limit) : organizationResults
+      return reply.send({ organizations: trimmedOrganizations, meta: { type, organizationsHasMore } })
+    }
+
+    if (type === 'events') {
+      const take = limit + 1
+      const eventResults = await searchEventsForQuery({ viewerId: userId, query: normalizedQuery, limit: take })
+      const eventsHasMore = eventResults.length > limit
+      const trimmedEvents = eventsHasMore ? eventResults.slice(0, limit) : eventResults
+      return reply.send({ events: trimmedEvents, meta: { type, eventsHasMore } })
+    }
+
+    if (type === 'market') {
+      const take = limit + 1
+      const marketResults = await searchMarketListingsForQuery(normalizedQuery, take)
+      const marketHasMore = marketResults.length > limit
+      const trimmedMarket = marketHasMore ? marketResults.slice(0, limit) : marketResults
+      return reply.send({ market: trimmedMarket, meta: { type, marketHasMore } })
+    }
+
+    if (type === 'posts') {
+      const take = limit + 1
+      const postResults = await searchCommunityPostsForQuery(normalizedQuery, take)
+      const postsHasMore = postResults.length > limit
+      const trimmedPosts = postsHasMore ? postResults.slice(0, limit) : postResults
+      return reply.send({ posts: trimmedPosts, meta: { type, postsHasMore } })
+    }
+
     const peopleTake = peopleLimit + 1
     const communityTake = communityLimit + 1
-    const [peopleResults, communityResults] = await Promise.all([
+    const organizationTake = organizationLimit + 1
+    const eventTake = eventLimit + 1
+    const marketTake = marketLimit + 1
+    const postTake = postLimit + 1
+    const [peopleResults, communityResults, organizationResults, eventResults, marketResults, postResults] = await Promise.all([
       searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit: peopleTake }),
       searchCommunitiesForQuery(normalizedQuery, communityTake),
+      searchOrganizationsForQuery(normalizedQuery, organizationTake),
+      searchEventsForQuery({ viewerId: userId, query: normalizedQuery, limit: eventTake }),
+      searchMarketListingsForQuery(normalizedQuery, marketTake),
+      searchCommunityPostsForQuery(normalizedQuery, postTake),
     ])
 
     const peopleHasMore = peopleResults.length > peopleLimit
     const communitiesHasMore = communityResults.length > communityLimit
+    const organizationsHasMore = organizationResults.length > organizationLimit
+    const eventsHasMore = eventResults.length > eventLimit
+    const marketHasMore = marketResults.length > marketLimit
+    const postsHasMore = postResults.length > postLimit
 
     return reply.send({
       people: peopleHasMore ? peopleResults.slice(0, peopleLimit) : peopleResults,
       communities: communitiesHasMore ? communityResults.slice(0, communityLimit) : communityResults,
+      organizations: organizationsHasMore ? organizationResults.slice(0, organizationLimit) : organizationResults,
+      events: eventsHasMore ? eventResults.slice(0, eventLimit) : eventResults,
+      market: marketHasMore ? marketResults.slice(0, marketLimit) : marketResults,
+      posts: postsHasMore ? postResults.slice(0, postLimit) : postResults,
       meta: {
         type,
         peopleHasMore,
         communitiesHasMore,
+        organizationsHasMore,
+        eventsHasMore,
+        marketHasMore,
+        postsHasMore,
       },
     })
   }),
