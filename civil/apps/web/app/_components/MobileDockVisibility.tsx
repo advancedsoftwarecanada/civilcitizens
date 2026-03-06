@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation'
 import MobileDock from './MobileDock'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
+import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 
 export default function MobileDockVisibility() {
   const pathname = usePathname()
@@ -22,7 +23,8 @@ export default function MobileDockVisibility() {
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/install/') ||
     (isInviteRoute && inviteGuestMode !== false) ||
-    isPostThreadRoute
+    isPostThreadRoute ||
+    isMeetingRoomPath(resolvedPathname)
   ) {
     return null
   }

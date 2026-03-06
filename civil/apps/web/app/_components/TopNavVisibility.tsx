@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation'
 import TopNav from './TopNav'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
+import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 
 const HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 
@@ -17,7 +18,8 @@ export default function TopNavVisibility() {
     HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/install/') ||
-    (isInviteRoute && inviteGuestMode !== false)
+    (isInviteRoute && inviteGuestMode !== false) ||
+    isMeetingRoomPath(resolvedPathname)
 
   if (hideNav) {
     return null

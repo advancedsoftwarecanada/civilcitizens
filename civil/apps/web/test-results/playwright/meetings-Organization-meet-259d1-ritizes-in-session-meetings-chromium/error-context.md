@@ -1,0 +1,129 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - link "Civil home" [ref=e4] [cursor=pointer]:
+        - /url: /home
+        - img "Civil" [ref=e5]
+      - generic [ref=e7]:
+        - img
+        - searchbox "Search" [ref=e9]
+      - generic [ref=e10]:
+        - link "Cart" [ref=e11] [cursor=pointer]:
+          - /url: /market/cart
+          - img [ref=e12]
+        - link "Messages" [ref=e14] [cursor=pointer]:
+          - /url: /messages
+          - img [ref=e15]
+        - button "Notifications" [ref=e18] [cursor=pointer]:
+          - img [ref=e19]
+  - generic [ref=e21]:
+    - complementary [ref=e22]:
+      - link "PP Playwright Pw-mme97s8v-2egawv View profile" [ref=e23] [cursor=pointer]:
+        - /url: /u/playwrightpwmmesvega
+        - generic [ref=e27]: PP
+        - generic [ref=e28]:
+          - paragraph [ref=e29]: Playwright Pw-mme97s8v-2egawv
+          - paragraph [ref=e30]: View profile
+      - navigation [ref=e31]:
+        - link "Civic Pulse" [ref=e32] [cursor=pointer]:
+          - /url: /home
+          - img [ref=e34]
+          - generic [ref=e37]: Civic Pulse
+        - link "Messages" [ref=e38] [cursor=pointer]:
+          - /url: /messages
+          - img [ref=e40]
+          - generic [ref=e43]: Messages
+        - link "Friends" [ref=e44] [cursor=pointer]:
+          - /url: /friends
+          - img [ref=e46]
+          - generic [ref=e49]: Friends
+        - link "Network" [ref=e50] [cursor=pointer]:
+          - /url: /network
+          - img [ref=e52]
+          - generic [ref=e55]: Network
+        - link "Communities" [ref=e56] [cursor=pointer]:
+          - /url: /communities
+          - img [ref=e58]
+          - generic [ref=e61]: Communities
+        - link "Organizations" [ref=e62] [cursor=pointer]:
+          - /url: /organizations
+          - img [ref=e64]
+          - generic [ref=e67]: Organizations
+        - link "Events" [ref=e68] [cursor=pointer]:
+          - /url: /events
+          - img [ref=e70]
+          - generic [ref=e73]: Events
+        - link "Market" [ref=e74] [cursor=pointer]:
+          - /url: /market
+          - img [ref=e76]
+          - generic [ref=e79]: Market
+        - link "Work" [ref=e80] [cursor=pointer]:
+          - /url: /work
+          - img [ref=e82]
+          - generic [ref=e85]: Work
+        - link "News" [ref=e86] [cursor=pointer]:
+          - /url: /news
+          - img [ref=e88]
+          - generic [ref=e91]: News
+        - link "Podcasts" [ref=e92] [cursor=pointer]:
+          - /url: /podcasts
+          - img [ref=e94]
+          - generic [ref=e97]: Podcasts
+        - link "Music" [ref=e98] [cursor=pointer]:
+          - /url: /music
+          - img [ref=e100]
+          - generic [ref=e103]: Music
+        - link "Video" [ref=e104] [cursor=pointer]:
+          - /url: /video
+          - img [ref=e106]
+          - generic [ref=e109]: Video
+        - link "Account Settings" [ref=e110] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e112]
+          - generic [ref=e115]: Account Settings
+    - main [ref=e119]:
+      - generic [ref=e123]:
+        - generic [ref=e125]:
+          - paragraph [ref=e126]: Playwright Org name-mme97sg0-pzdwo5 · Ajax
+          - heading "Meetings" [level=2] [ref=e127]
+          - generic [ref=e131]:
+            - button "Calendar" [ref=e132] [cursor=pointer]
+            - button "List" [ref=e133] [cursor=pointer]
+        - complementary [ref=e134]:
+          - generic [ref=e136]:
+            - heading "Organization" [level=2] [ref=e138]
+            - generic [ref=e140]:
+              - generic [ref=e143]: PN
+              - generic [ref=e144]:
+                - paragraph [ref=e145]: Playwright Org name-mme97sg0-pzdwo5
+                - paragraph [ref=e146]: 1 joined
+            - generic [ref=e147]:
+              - link "Posts" [ref=e148] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup
+                - generic [ref=e149]: Posts
+              - link "Chat" [ref=e150] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/chat-channels
+                - generic [ref=e151]: Chat
+              - link "Events" [ref=e152] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/events
+                - generic [ref=e153]: Events
+              - link "Meetings" [ref=e154] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/meetings
+                - generic [ref=e155]: Meetings
+              - link "Jobs" [ref=e156] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/jobs
+                - generic [ref=e157]: Jobs
+              - link "Shop" [ref=e158] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/shop
+                - generic [ref=e159]: Shop
+              - link "Members" [ref=e160] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/members
+                - generic [ref=e161]: Members
+              - link "Settings" [ref=e162] [cursor=pointer]:
+                - /url: /com/on/ajax/orgs/pw-org-mme97sg0-x8pfup/settings
+                - generic [ref=e163]: Settings
+  - alert [ref=e164]
+```

@@ -57,12 +57,16 @@ services:
       PUSH_REGISTER_SECRET: ${PUSH_REGISTER_SECRET:-}
       PUSH_ADMIN_SECRET: ${PUSH_ADMIN_SECRET:-}
       PUSH_DELIVERY_URL: ${PUSH_DELIVERY_URL:-http://push:8787}
+      # Meeting RTC signaling service
+      MEETING_RTC_SERVICE_URL: ${MEETING_RTC_SERVICE_URL:-http://meeting-rtc:8788}
+      MEETING_RTC_SERVICE_SECRET: ${MEETING_RTC_SERVICE_SECRET:-}
+      MEETING_RTC_REQUEST_TIMEOUT_MS: ${MEETING_RTC_REQUEST_TIMEOUT_MS:-8000}
       CIVIL_ENV_LABEL: ${CIVIL_ENV_LABEL:-}
       CIVIL_ENV_PRIMARY: ${CIVIL_ENV_PRIMARY:-}
       CIVIL_ENV_FILES: ${CIVIL_ENV_FILES:-}
       CIVIL_ADMIN_EMAILS: ${CIVIL_ADMIN_EMAILS:-}
     # Do not publish API to host; Nginx proxies to it via internal network
-    depends_on: [postgres, redis]
+    depends_on: [postgres, redis, meeting-rtc]
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
       interval: 10s
@@ -95,6 +99,26 @@ services:
       - pushdata:/data
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  meeting-rtc:
+    profiles: [app]
+    build:
+      context: ../builds/meetings/rtc-service
+      dockerfile: Dockerfile
+    environment:
+      PORT: 8788
+      MEETING_RTC_SECRET: ${MEETING_RTC_SERVICE_SECRET:-}
+      RTC_WS_URL: ${MEETING_RTC_WS_URL:-}
+      RTC_WS_PATH: ${MEETING_RTC_WS_PATH:-/v1/ws}
+      RTC_SESSION_TTL_SECONDS: ${MEETING_RTC_SESSION_TTL_SECONDS:-1800}
+      RTC_HEARTBEAT_INTERVAL_MS: ${MEETING_RTC_HEARTBEAT_INTERVAL_MS:-30000}
+      RTC_ICE_SERVERS_JSON: ${MEETING_RTC_ICE_SERVERS_JSON:-}
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8788/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\" "]
       interval: 10s
       timeout: 5s
       retries: 5
