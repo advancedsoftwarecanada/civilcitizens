@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import { usePathname } from 'next/navigation'
 import { useInviteViewStore } from '../../_lib/inviteViewStore'
+import { isMeetingRoomPath } from '../../_lib/meetingRoomRoute'
 
 import type { CommunityOrganization } from '../../_lib/organizations'
 import OrganizationRightColumn from './OrganizationRightColumn'
@@ -26,8 +27,9 @@ export default function OrganizationLayoutClient({
     if (!pathname) return false
     return pathname.includes('/invite/')
   }, [pathname])
+  const isMeetingRoomRoute = useMemo(() => isMeetingRoomPath(pathname), [pathname])
 
-  if (isInviteRoute && inviteGuestMode !== false) {
+  if ((isInviteRoute && inviteGuestMode !== false) || isMeetingRoomRoute) {
     return <>{children}</>
   }
 

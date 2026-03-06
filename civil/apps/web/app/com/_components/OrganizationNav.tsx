@@ -13,6 +13,7 @@ const ORG_LINKS = [
   { key: 'chat-channels', label: 'Chat', segment: 'chat-channels' },
   { key: 'forum', label: 'Forum', segment: 'forum' },
   { key: 'events', label: 'Events', segment: 'events' },
+  { key: 'meetings', label: 'Meetings', segment: 'meetings' },
   { key: 'members', label: 'Members', segment: 'members' },
   { key: 'jobs', label: 'Jobs', segment: 'jobs' },
   { key: 'settings', label: 'Settings', segment: 'settings' },

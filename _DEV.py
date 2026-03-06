@@ -45,6 +45,7 @@ WEB_PORT = int(os.environ.get("CIVIL_WEB_PORT", "33101"))
 # accessed from containers via host.docker.internal. Defaulting away from 3002
 # avoids a collision observed in practice.
 API_PORT = int(os.environ.get("CIVIL_API_PORT", "3012"))
+MEETING_RTC_PORT = int(os.environ.get("CIVIL_MEETING_RTC_PORT", "8788"))
 
 CYBERTRON_POSTGRES_PORT = int(os.environ.get("CYBERTRON_POSTGRES_PORT", "5542"))
 CYBERTRON_REDIS_PORT = int(os.environ.get("CYBERTRON_REDIS_PORT", "6579"))
@@ -53,10 +54,14 @@ CYBERTRON_MINIO_PORT = int(os.environ.get("CYBERTRON_MINIO_PORT", "9102"))
 WEB_PID_FILE = Path("/tmp/civil-dev-web.pid")
 API_PID_FILE = Path("/tmp/civil-dev-api.pid")
 WORKER_PID_FILE = Path("/tmp/civil-dev-worker.pid")
+MEETING_RTC_PID_FILE = Path("/tmp/civil-dev-meeting-rtc.pid")
 
 WEB_LOG = Path("/tmp/civil-web.log")
 API_LOG = Path("/tmp/civil-api.log")
 WORKER_LOG = Path("/tmp/civil-worker.log")
+MEETING_RTC_LOG = Path("/tmp/civil-meeting-rtc.log")
+
+MEETING_RTC_DIR = REPO_ROOT / "builds" / "meetings" / "rtc-service"
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -115,6 +120,8 @@ def _is_repo_dev_process(pid: int) -> bool:
     if "tsx" in cmd and "watch" in cmd and "apps/api" in cmd:
         return True
     if "tsx" in cmd and "watch" in cmd and "apps/worker" in cmd:
+        return True
+    if "server.mjs" in cmd and "rtc-service" in cmd:
         return True
     if "concurrently" in cmd and "@civil/api" in cmd:
         return True
@@ -306,10 +313,35 @@ def _apply_prisma_migrations(pnpm: str, env: dict[str, str]) -> None:
     )
 
 
+def _ensure_meeting_rtc_deps(env: dict[str, str]) -> None:
+    if not MEETING_RTC_DIR.exists():
+        raise RuntimeError(f"missing meeting rtc service directory: {MEETING_RTC_DIR}")
+
+    ws_pkg = MEETING_RTC_DIR / "node_modules" / "ws" / "package.json"
+    if ws_pkg.exists():
+        return
+
+    npm = shutil.which("npm", path=env.get("PATH"))
+    if not npm:
+        raise RuntimeError("npm not found on PATH for meeting rtc dependencies")
+
+    subprocess.run(
+        [npm, "ci", "--no-audit", "--no-fund"],
+        cwd=str(MEETING_RTC_DIR),
+        env=env,
+        check=True,
+    )
+
+
 def stop() -> int:
     stopped_any = False
 
-    for label, pid_file in (("web", WEB_PID_FILE), ("api", API_PID_FILE), ("worker", WORKER_PID_FILE)):
+    for label, pid_file in (
+        ("web", WEB_PID_FILE),
+        ("api", API_PID_FILE),
+        ("worker", WORKER_PID_FILE),
+        ("meeting-rtc", MEETING_RTC_PID_FILE),
+    ):
         pid = _read_pid(pid_file)
         if pid and _pid_is_alive(pid):
             print(f"⏹ Stopping {label} (pid {pid})")
@@ -320,7 +352,7 @@ def stop() -> int:
         except Exception:
             pass
 
-    for port, label in ((WEB_PORT, "web"), (API_PORT, "api")):
+    for port, label in ((WEB_PORT, "web"), (API_PORT, "api"), (MEETING_RTC_PORT, "meeting-rtc")):
         for pid in sorted(_pids_listening_on_port(port)):
             if not _pid_is_alive(pid):
                 continue
@@ -363,6 +395,12 @@ def start() -> int:
     env.setdefault("MEDIA_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
     env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
     env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
+    env.setdefault("MEETING_RTC_SERVICE_URL", f"http://127.0.0.1:{MEETING_RTC_PORT}")
+    env.setdefault("MEETING_RTC_SERVICE_SECRET", "dev_meeting_rtc_secret")
+    env.setdefault("MEETING_RTC_REQUEST_TIMEOUT_MS", "8000")
+    env.setdefault("MEETING_RTC_WS_URL", f"wss://{env['CIVIL_PUBLIC_HOST']}/rtc/v1/ws")
+    env.setdefault("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
+    env.setdefault("MEETING_RTC_ICE_SERVERS_JSON", '[{"urls":["stun:stun.l.google.com:19302"]}]')
 
     # Ensure CybertronDev infra is up (postgres/redis/nginx/minio)
     try:
@@ -381,8 +419,17 @@ def start() -> int:
         print("   Fix migrations/DB connectivity, then re-run ./_DEV.py start")
         return 1
 
+    # Ensure meeting RTC dependencies are installed before launching the service.
+    try:
+        _ensure_meeting_rtc_deps(env)
+    except Exception as e:
+        print("❌ Meeting RTC dependency install failed.")
+        print(f"   Error: {e}")
+        print("   Fix meeting RTC dependencies, then re-run python3 _DEV.py start")
+        return 1
+
     # Port conflict handling
-    for port in (WEB_PORT, API_PORT):
+    for port in (WEB_PORT, API_PORT, MEETING_RTC_PORT):
         if not _port_open("127.0.0.1", port):
             continue
         pids = _pids_listening_on_port(port)
@@ -425,20 +472,41 @@ def start() -> int:
         env=env,
     )
 
+    meeting_rtc_env = dict(env)
+    meeting_rtc_env["PORT"] = str(MEETING_RTC_PORT)
+    meeting_rtc_env["MEETING_RTC_SECRET"] = env.get("MEETING_RTC_SERVICE_SECRET", "")
+    meeting_rtc_env["RTC_WS_URL"] = env.get("MEETING_RTC_WS_URL", "")
+    meeting_rtc_env["RTC_ICE_SERVERS_JSON"] = env.get("MEETING_RTC_ICE_SERVERS_JSON", "")
+    meeting_rtc_env["RTC_SESSION_TTL_SECONDS"] = env.get("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
+    if "MEETING_RTC_HEARTBEAT_INTERVAL_MS" in env:
+        meeting_rtc_env["RTC_HEARTBEAT_INTERVAL_MS"] = env["MEETING_RTC_HEARTBEAT_INTERVAL_MS"]
+
+    print(f"▶ Starting meeting-rtc (detached) on :{MEETING_RTC_PORT} (log: {MEETING_RTC_LOG})")
+    _spawn_detached(
+        ["node", "server.mjs"],
+        cwd=MEETING_RTC_DIR,
+        pid_file=MEETING_RTC_PID_FILE,
+        log_file=MEETING_RTC_LOG,
+        env=meeting_rtc_env,
+    )
+
     deadline = time.time() + 20.0
     while time.time() < deadline:
         web_ok = _port_open("127.0.0.1", WEB_PORT)
         api_ok = _port_open("127.0.0.1", API_PORT)
-        if web_ok and api_ok:
+        rtc_ok = _port_open("127.0.0.1", MEETING_RTC_PORT)
+        if web_ok and api_ok and rtc_ok:
             print("✅ Dev processes are up")
             print(f"   - Web: http://localhost:{WEB_PORT}/")
             print(f"   - API: http://localhost:{API_PORT}/health")
+            print(f"   - Meeting RTC: http://localhost:{MEETING_RTC_PORT}/health")
             return 0
         time.sleep(0.25)
 
     print("⚠ Started processes, but ports did not become ready in time.")
     print(f"   - Web log: {WEB_LOG}")
     print(f"   - API log: {API_LOG}")
+    print(f"   - Meeting RTC log: {MEETING_RTC_LOG}")
     print()
     print("== API last 60 lines ==")
     print(_tail(API_LOG, 60))
@@ -463,6 +531,7 @@ def status() -> int:
 
     print(line("web", WEB_PID_FILE, WEB_PORT))
     print(line("api", API_PID_FILE, API_PORT))
+    print(line("meeting-rtc", MEETING_RTC_PID_FILE, MEETING_RTC_PORT))
     worker_pid = _read_pid(WORKER_PID_FILE)
     worker_alive = bool(worker_pid and _pid_is_alive(worker_pid))
     worker_cmd = _cmdline(worker_pid) if worker_pid else ""
@@ -480,6 +549,9 @@ def logs(lines: int) -> int:
     print()
     print(f"== Worker ({WORKER_LOG}) last {lines} ==")
     print(_tail(WORKER_LOG, lines))
+    print()
+    print(f"== Meeting RTC ({MEETING_RTC_LOG}) last {lines} ==")
+    print(_tail(MEETING_RTC_LOG, lines))
     return 0
 
 
@@ -498,6 +570,14 @@ def doctor() -> int:
         "NEXT_PUBLIC_MEDIA_BASE_URL",
         file_env.get("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{public_host}/media"),
     )
+    meeting_rtc_service_url = os.environ.get(
+        "MEETING_RTC_SERVICE_URL",
+        file_env.get("MEETING_RTC_SERVICE_URL", f"http://127.0.0.1:{MEETING_RTC_PORT}"),
+    )
+    meeting_rtc_ws_url = os.environ.get(
+        "MEETING_RTC_WS_URL",
+        file_env.get("MEETING_RTC_WS_URL", f"wss://{public_host}/rtc/v1/ws"),
+    )
 
     print("== Effective dev configuration ==")
     print(f"- CIVIL_WEB_PORT={WEB_PORT}")
@@ -511,6 +591,9 @@ def doctor() -> int:
     print(f"- NEXT_PUBLIC_MEDIA_BASE_URL={media_base}")
     print(f"- DATABASE_URL={database_url}")
     print(f"- REDIS_URL={redis_url}")
+    print(f"- MEETING_RTC_SERVICE_URL={meeting_rtc_service_url}")
+    print(f"- MEETING_RTC_WS_URL={meeting_rtc_ws_url}")
+    print(f"- CIVIL_MEETING_RTC_PORT={MEETING_RTC_PORT}")
     print()
 
     print("== Connectivity ==")
@@ -519,6 +602,7 @@ def doctor() -> int:
     print(f"- localhost:{CYBERTRON_POSTGRES_PORT} open={_port_open('127.0.0.1', CYBERTRON_POSTGRES_PORT)} (postgres)")
     print(f"- localhost:{CYBERTRON_REDIS_PORT} open={_port_open('127.0.0.1', CYBERTRON_REDIS_PORT)} (redis)")
     print(f"- localhost:{CYBERTRON_MINIO_PORT} open={_port_open('127.0.0.1', CYBERTRON_MINIO_PORT)} (minio)")
+    print(f"- localhost:{MEETING_RTC_PORT} open={_port_open('127.0.0.1', MEETING_RTC_PORT)} (meeting-rtc)")
 
     db_env = _load_env_file(CIVIL_DIR / "packages" / "db" / ".env")
     db_url = db_env.get("DATABASE_URL")
