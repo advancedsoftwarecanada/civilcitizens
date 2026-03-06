@@ -55,6 +55,7 @@ model User {
   experiences               Experience[]
   mediaAssets               MediaAsset[]         @relation("UserMediaAssets")
   posts                     Post[]
+  pollVotes                 PollVote[]
   avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
   coverMedia                MediaAsset?          @relation("CoverMedia", fields: [coverMediaId], references: [id])
   avatarPost                Post?                @relation("AvatarPost", fields: [avatarPostId], references: [id])
@@ -117,6 +118,7 @@ model Post {
   hashtags       PostHashtag[]
   votes          Vote[]
   reactions      PostReaction[]
+  poll           Poll?
   sharedPostId   String?
   sharedPost     Post?         @relation("SharedPost", fields: [sharedPostId], references: [id])
   shares         Post[]        @relation("SharedPost")
@@ -187,6 +189,54 @@ model PostReaction {
   @@index([postId])
   @@index([type])
   @@index([postId, createdAt])
+}
+
+model Poll {
+  id                 String                @id @default(cuid())
+  postId             String                @unique
+  resultsVisibility  PollResultsVisibility
+  resultsAvailableAt DateTime?
+  firstVoteAt        DateTime?
+  endedAt            DateTime?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  post               Post                  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  options            PollOption[]
+  votes              PollVote[]
+
+  @@index([resultsVisibility, resultsAvailableAt])
+  @@index([endedAt])
+}
+
+model PollOption {
+  id        String     @id @default(cuid())
+  pollId    String
+  label     String
+  sortOrder Int
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes     PollVote[]
+
+  @@unique([pollId, sortOrder])
+  @@index([pollId, createdAt])
+}
+
+model PollVote {
+  pollId                    String
+  userId                    String
+  optionId                  String
+  createdAt                 DateTime   @default(now())
+  updatedAt                 DateTime   @updatedAt
+  resultNotificationSentAt  DateTime?
+  poll                      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option                    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user                      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([pollId, userId])
+  @@index([optionId])
+  @@index([userId])
+  @@index([resultNotificationSentAt])
 }
 
 model Notification {
@@ -340,6 +390,14 @@ enum PushBrowser {
   edge
   safari
   unknown
+}
+
+enum PollResultsVisibility {
+  AFTER_VOTE
+  AFTER_6_HOURS
+  AFTER_12_HOURS
+  AFTER_24_HOURS
+  AFTER_48_HOURS
 }
 
 enum ReactionType {

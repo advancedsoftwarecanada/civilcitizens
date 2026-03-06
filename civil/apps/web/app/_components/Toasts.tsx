@@ -46,6 +46,7 @@ export default function Toasts() {
             <div key={t.id} className="pointer-events-auto w-[min(22rem,calc(100vw-1.5rem))]">
               <NotificationCard
                 notification={t.notification}
+                variant="toast"
                 onOpen={(notification, targetUrl) => {
                   void handleToastOpen(t.id, notification.id, targetUrl)
                 }}

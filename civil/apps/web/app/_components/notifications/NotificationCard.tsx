@@ -18,9 +18,16 @@ export type NotificationCardProps = {
   onRequestAction?: (notification: NotificationItem, action: 'accept' | 'reject') => void
   friendActionState?: FriendActionState | null
   onOpen?: (notification: NotificationItem, targetUrl: string) => void
+  variant?: 'default' | 'toast'
 }
 
-export function NotificationCard({ notification, onRequestAction, friendActionState, onOpen }: NotificationCardProps) {
+export function NotificationCard({
+  notification,
+  onRequestAction,
+  friendActionState,
+  onOpen,
+  variant = 'default',
+}: NotificationCardProps) {
   const friendshipId = getFriendshipId(notification)
   const actionable = isActionableNotification(notification)
   const requestStatus = actionable ? getNotificationRequestStatus(notification) : null
@@ -57,9 +64,18 @@ export function NotificationCard({ notification, onRequestAction, friendActionSt
   return (
     <div
       className={clsx(
-        'rounded-2xl border px-4 py-3 text-sm text-slate-800 shadow-sm',
-        targetUrl && 'cursor-pointer transition hover:border-slate-300 hover:bg-slate-50/70',
-        notification.unread ? 'border-[var(--cc-primary)]/40 bg-[var(--cc-primary)]/5' : 'border-slate-100 bg-white',
+        'overflow-hidden rounded-2xl border px-4 py-3 text-sm text-slate-800',
+        targetUrl && 'cursor-pointer transition',
+        variant === 'toast'
+          ? [
+              'border-white/80 bg-white/95 shadow-2xl shadow-slate-900/15 backdrop-blur-xl',
+              targetUrl && 'hover:border-slate-200 hover:bg-white',
+            ]
+          : [
+              'shadow-sm',
+              targetUrl && 'hover:border-slate-300 hover:bg-slate-50/70',
+              notification.unread ? 'border-[var(--cc-primary)]/40 bg-white' : 'border-slate-100 bg-white',
+            ],
       )}
       onClick={handleCardClick}
       onKeyDown={handleCardKeyDown}

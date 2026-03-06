@@ -1,15 +1,15 @@
 'use client'
 
-import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 import DashboardShell from '../../_components/DashboardShell'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
-import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
+import { hasHomeCommunity } from '../../_lib/me'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
+import CivilCard from '../../_components/CivilCard'
 
 type OrganizationRow = {
   id: string
@@ -66,7 +66,6 @@ function followToOption(follow: CommunityFollowRow): CommunityOption {
 
 export default function OrganizationsManagerPage() {
   const [status, setStatus] = useState<Status>('loading')
-  const [me, setMe] = useState<MeResponse | null>(null)
   const [followedOrganizations, setFollowedOrganizations] = useState<OrganizationRow[]>([])
   const [ownedOrganizations, setOwnedOrganizations] = useState<OrganizationRow[]>([])
   const [communityOptions, setCommunityOptions] = useState<CommunityOption[]>([])
@@ -158,7 +157,6 @@ export default function OrganizationsManagerPage() {
         })()
 
         if (!cancelled) {
-          setMe(viewer)
           setFollowedOrganizations(Array.isArray(followsPayload?.items) ? followsPayload.items : [])
           setOwnedOrganizations(Array.isArray(ownedPayload?.items) ? ownedPayload.items : [])
           setCommunityOptions(communityChoices)
@@ -238,18 +236,17 @@ export default function OrganizationsManagerPage() {
                 {followedOrganizations.length ? (
                   <ul className="space-y-2">
                     {followedOrganizations.slice(0, 25).map((org) => (
-                      <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-800">
-                        {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                        <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
-                        <Link
+                      <li key={org.id}>
+                        <CivilCard
                           href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                          className="relative flex items-center gap-2 px-3 py-2 text-sm font-medium text-white hover:text-white"
-                        >
-                          <span className="h-8 w-8 overflow-hidden rounded-full border border-white/40 bg-white/20">
-                            {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
-                          </span>
-                          {org.name}
-                        </Link>
+                          size="md"
+                          name={org.name}
+                          avatarAlt={org.name}
+                          avatarInitials={org.name}
+                          avatarSrc={org.logoUrl ?? null}
+                          coverUrl={org.coverUrl ?? null}
+                          isVerified={Boolean(org.isVerified)}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -265,18 +262,17 @@ export default function OrganizationsManagerPage() {
                 {ownedOrganizations.length ? (
                   <ul className="space-y-2">
                     {ownedOrganizations.slice(0, 25).map((org) => (
-                      <li key={org.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-800">
-                        {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                        <span className="absolute inset-0 bg-slate-900/60" aria-hidden="true" />
-                        <Link
+                      <li key={org.id}>
+                        <CivilCard
                           href={`/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`}
-                          className="relative flex items-center gap-2 px-3 py-2 text-sm font-medium text-white hover:text-white"
-                        >
-                          <span className="h-8 w-8 overflow-hidden rounded-full border border-white/40 bg-white/20">
-                            {org.logoUrl ? <img src={org.logoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
-                          </span>
-                          {org.name}
-                        </Link>
+                          size="md"
+                          name={org.name}
+                          avatarAlt={org.name}
+                          avatarInitials={org.name}
+                          avatarSrc={org.logoUrl ?? null}
+                          coverUrl={org.coverUrl ?? null}
+                          isVerified={Boolean(org.isVerified)}
+                        />
                       </li>
                     ))}
                   </ul>

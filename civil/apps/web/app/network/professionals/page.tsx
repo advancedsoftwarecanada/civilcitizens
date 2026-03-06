@@ -1,11 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 import DashboardShell from '../../_components/DashboardShell'
 import { RightRail } from '../../_components/RightRail'
-import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
+import CivilCard from '../../_components/CivilCard'
 
 type Professional = {
   id: string
@@ -73,22 +72,18 @@ export default function NetworkProfessionalsPage() {
             {items.map((entry) => {
               const displayName = entry.user.name || entry.user.handle
               return (
-                <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                  {entry.user.coverUrl ? (
-                    <img src={entry.user.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-                  ) : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link href={`/u/${entry.user.handle}`} className="group relative flex items-center gap-2.5 px-3 py-2">
-                    <VerifiedAvatar
-                      src={entry.user.avatarUrl}
-                      alt={displayName}
-                      initials={displayName}
-                      size={36}
-                      isVerified={entry.user.isVerified}
-                      isBusiness={entry.user.isPremium}
-                    />
-                    <span className="max-w-[260px] truncate text-sm font-semibold text-white">{displayName}</span>
-                  </Link>
+                <li key={entry.id}>
+                  <CivilCard
+                    href={`/u/${entry.user.handle}`}
+                    size="md"
+                    name={displayName}
+                    avatarAlt={displayName}
+                    avatarInitials={displayName}
+                    avatarSrc={entry.user.avatarUrl}
+                    coverUrl={entry.user.coverUrl ?? null}
+                    isVerified={entry.user.isVerified}
+                    isBusiness={entry.user.isPremium}
+                  />
                 </li>
               )
             })}
