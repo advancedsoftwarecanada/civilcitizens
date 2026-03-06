@@ -297,7 +297,7 @@ def command_deploy(compose_cmd: list[str], overrides: Mapping[str, str]) -> None
     # but only build the app images.
     run_compose(
         compose_cmd,
-        ["--profile", "infra", "--profile", "app", "build", "api", "web", "worker", "push"],
+        ["--profile", "infra", "--profile", "app", "build", "api", "web", "worker", "push", "meeting-rtc"],
         overrides,
     )
 
@@ -318,6 +318,7 @@ def command_deploy(compose_cmd: list[str], overrides: Mapping[str, str]) -> None
             "web",
             "worker",
             "push",
+            "meeting-rtc",
             "nginx",
         ],
         overrides,
