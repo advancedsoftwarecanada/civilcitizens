@@ -20,6 +20,8 @@ import {
   FriendshipStatus,
   ConnectionStatus,
   MessageThreadType,
+  MessageCallMode,
+  MessageCallStatus,
   MessageType,
   MessageParticipantRole,
   BusinessRole,
@@ -64,6 +66,9 @@ import {
   CreateDirectThreadInput,
   CreateGroupThreadInput,
   GroupParticipantInput,
+  ResolveGroupThreadInput,
+  StartMessageCallInput,
+  MessageCallRtcSessionInput,
   SendMessageInput,
   MessageThreadListQuery,
   UpdatePostInput,
@@ -284,6 +289,8 @@ const DEFAULT_SUPER_ADMINS = ['andrewnormore@gmail.com']
 const COMMUNITY_FOLLOW_TARGET = 3
 const COMMUNITY_SUGGESTION_CACHE_LIMIT = 10
 const NOTIFICATION_CHANNEL_PREFIX = 'chan:notify:'
+const REALTIME_ONLINE_KEY_PREFIX = 'presence:notify:'
+const REALTIME_ONLINE_TTL_MS = 90_000
 const PUSH_REGISTER_SECRET = (process.env.PUSH_REGISTER_SECRET || '').trim()
 const PUSH_ADMIN_SECRET = (process.env.PUSH_ADMIN_SECRET || '').trim()
 const PUSH_DELIVERY_URL = (process.env.PUSH_DELIVERY_URL || '').trim().replace(/\/$/, '')
@@ -1191,6 +1198,32 @@ async function dispatchRealtimeEvent(userId: string, payload: { type: string; da
   } catch (err) {
     console.error('failed to publish realtime payload', err)
   }
+}
+
+function getRealtimeOnlineKey(userId: string) {
+  return `${REALTIME_ONLINE_KEY_PREFIX}${userId}`
+}
+
+async function markUserRealtimeOnline(userId: string, connectionId: string) {
+  const key = getRealtimeOnlineKey(userId)
+  const expiresAt = Date.now() + REALTIME_ONLINE_TTL_MS
+  await redis.zadd(key, expiresAt, connectionId)
+  await redis.pexpire(key, REALTIME_ONLINE_TTL_MS * 2)
+}
+
+async function clearUserRealtimeOnline(userId: string, connectionId: string) {
+  const key = getRealtimeOnlineKey(userId)
+  await redis.zrem(key, connectionId)
+  const remaining = await redis.zcard(key)
+  if (remaining === 0) {
+    await redis.del(key)
+  }
+}
+
+async function isUserRealtimeOnline(userId: string) {
+  const key = getRealtimeOnlineKey(userId)
+  await redis.zremrangebyscore(key, '-inf', Date.now())
+  return (await redis.zcard(key)) > 0
 }
 
 async function loadActivePushTokens(userId: string, platform = 'ios'): Promise<string[]> {
@@ -2162,6 +2195,22 @@ const MESSAGE_SELECT = {
   sender: { select: FRIEND_USER_SELECT },
 } satisfies Prisma.MessageSelect
 
+const MESSAGE_CALL_SELECT = {
+  id: true,
+  threadId: true,
+  initiatorId: true,
+  endedByUserId: true,
+  roomId: true,
+  mode: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  startedAt: true,
+  lastJoinedAt: true,
+  endedAt: true,
+  initiator: { select: FRIEND_USER_SELECT },
+} satisfies Prisma.MessageCallSelect
+
 const THREAD_PARTICIPANT_SELECT = {
   userId: true,
   role: true,
@@ -2174,6 +2223,12 @@ const THREAD_PARTICIPANT_SELECT = {
 
 const THREAD_WITH_PARTICIPANTS_INCLUDE = {
   participants: { select: THREAD_PARTICIPANT_SELECT },
+  calls: {
+    select: MESSAGE_CALL_SELECT,
+    where: { endedAt: null },
+    orderBy: [{ createdAt: 'desc' }],
+    take: 1,
+  },
 } satisfies Prisma.MessageThreadInclude
 
 const THREAD_SUMMARY_INCLUDE = {
@@ -2186,13 +2241,52 @@ const THREAD_SUMMARY_INCLUDE = {
 } satisfies Prisma.MessageThreadInclude
 
 type MessageRecord = Prisma.MessageGetPayload<{ select: typeof MESSAGE_SELECT }>
+type MessageCallRecord = Prisma.MessageCallGetPayload<{ select: typeof MESSAGE_CALL_SELECT }>
 type ThreadParticipantRecord = Prisma.MessageParticipantGetPayload<{ select: typeof THREAD_PARTICIPANT_SELECT }>
 type ThreadWithParticipants = Prisma.MessageThreadGetPayload<{ include: typeof THREAD_WITH_PARTICIPANTS_INCLUDE }>
 type ThreadSummaryRecord = Prisma.MessageThreadGetPayload<{ include: typeof THREAD_SUMMARY_INCLUDE }>
 
+const MESSAGE_CALL_RING_TTL_MS = 30 * 1000
+const MESSAGE_CALL_IDLE_TTL_MS = 15 * 60 * 1000
+const messageCallTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+
+type MessageCallSystemMeta = {
+  kind: 'call_ended'
+  reason: 'hangup' | 'no_answer'
+  mode: 'audio' | 'video'
+  callId: string
+  callbackThreadId: string
+  callbackLabel: 'Call Back'
+  actorUserId: string | null
+  actorName: string | null
+}
+
 function normalizeAttachmentList(value: Prisma.JsonValue | null | undefined): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((entry): entry is string => typeof entry === 'string')
+}
+
+function extractMessageSystemMeta(value: Prisma.JsonValue | null | undefined): MessageCallSystemMeta | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const typed = value as Record<string, unknown>
+  if (typed.kind !== 'call_ended') return null
+  const reason = typed.reason
+  const mode = typed.mode
+  const callId = typed.callId
+  const callbackThreadId = typed.callbackThreadId
+  if ((reason !== 'hangup' && reason !== 'no_answer') || (mode !== 'audio' && mode !== 'video')) return null
+  if (typeof callId !== 'string' || !callId.trim()) return null
+  if (typeof callbackThreadId !== 'string' || !callbackThreadId.trim()) return null
+  return {
+    kind: 'call_ended',
+    reason,
+    mode,
+    callId,
+    callbackThreadId,
+    callbackLabel: 'Call Back',
+    actorUserId: typeof typed.actorUserId === 'string' && typed.actorUserId.trim() ? typed.actorUserId : null,
+    actorName: typeof typed.actorName === 'string' && typed.actorName.trim() ? typed.actorName : null,
+  }
 }
 
 function formatMessage(record: MessageRecord, viewerId: string) {
@@ -2201,6 +2295,7 @@ function formatMessage(record: MessageRecord, viewerId: string) {
     threadId: record.threadId,
     body: record.body ?? null,
     attachments: normalizeAttachmentList(record.attachments),
+    systemMeta: extractMessageSystemMeta(record.attachments),
     messageType: record.messageType,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -2224,7 +2319,44 @@ function formatThreadParticipant(participant: ThreadParticipantRecord, viewerId:
   }
 }
 
+function clearScheduledMessageCallTimeout(callId: string) {
+  const timer = messageCallTimeouts.get(callId)
+  if (!timer) return
+  clearTimeout(timer)
+  messageCallTimeouts.delete(callId)
+}
+
+function isMessageCallLive(call: MessageCallRecord | null | undefined): boolean {
+  if (!call || call.endedAt) return false
+  const now = Date.now()
+  if (call.status === MessageCallStatus.ringing) {
+    return now - call.createdAt.getTime() <= MESSAGE_CALL_RING_TTL_MS
+  }
+  const activityAt = call.lastJoinedAt ?? call.startedAt ?? call.createdAt
+  return now - activityAt.getTime() <= MESSAGE_CALL_IDLE_TTL_MS
+}
+
+function formatMessageCall(call: MessageCallRecord, viewerId: string) {
+  return {
+    id: call.id,
+    threadId: call.threadId,
+    initiatorId: call.initiatorId,
+    endedByUserId: call.endedByUserId ?? null,
+    roomId: call.roomId,
+    mode: call.mode,
+    status: call.status,
+    createdAt: call.createdAt,
+    updatedAt: call.updatedAt,
+    startedAt: call.startedAt ?? null,
+    lastJoinedAt: call.lastJoinedAt ?? null,
+    endedAt: call.endedAt ?? null,
+    initiator: formatFriendUser(call.initiator),
+    isInitiator: call.initiatorId === viewerId,
+  }
+}
+
 function formatThreadBase(thread: ThreadWithParticipants, viewerId: string) {
+  const activeCall = thread.calls.find((call) => isMessageCallLive(call)) ?? null
   return {
     id: thread.id,
     type: thread.type,
@@ -2234,6 +2366,7 @@ function formatThreadBase(thread: ThreadWithParticipants, viewerId: string) {
     updatedAt: thread.updatedAt,
     lastMessageAt: thread.lastMessageAt ?? thread.createdAt,
     participants: thread.participants.map((participant) => formatThreadParticipant(participant, viewerId)),
+    activeCall: activeCall ? formatMessageCall(activeCall, viewerId) : null,
   }
 }
 
@@ -2258,6 +2391,95 @@ function formatThreadSummaryRecord(
 function buildDirectThreadKey(userA: string, userB: string): string {
   const [first, second] = [userA, userB].sort()
   return `direct:${first}:${second}`
+}
+
+function buildGroupThreadKey(userIds: string[]): string {
+  return `group:${[...new Set(userIds)].sort().join(':')}`
+}
+
+function buildMessageCallEndedBody(args: {
+  reason: 'hangup' | 'no_answer'
+  actorName: string | null
+}): string {
+  if (args.reason === 'no_answer') return 'No answer.'
+  if (args.actorName) return `${args.actorName} hung up.`
+  return 'Call ended.'
+}
+
+function buildMessageCallSystemMeta(args: {
+  call: Pick<MessageCallRecord, 'id' | 'threadId' | 'mode'>
+  reason: 'hangup' | 'no_answer'
+  actorUserId: string | null
+  actorName: string | null
+}): MessageCallSystemMeta {
+  return {
+    kind: 'call_ended',
+    reason: args.reason,
+    mode: args.call.mode,
+    callId: args.call.id,
+    callbackThreadId: args.call.threadId,
+    callbackLabel: 'Call Back',
+    actorUserId: args.actorUserId,
+    actorName: args.actorName,
+  }
+}
+
+async function expireMessageCallIfStale(call: MessageCallRecord | null | undefined, endedByUserId?: string | null) {
+  if (!call || !call.id || isMessageCallLive(call)) return false
+  clearScheduledMessageCallTimeout(call.id)
+  await prisma.messageCall.updateMany({
+    where: { id: call.id, endedAt: null },
+    data: {
+      status: MessageCallStatus.ended,
+      endedAt: new Date(),
+      ...(endedByUserId ? { endedByUserId } : {}),
+    },
+  })
+  return true
+}
+
+async function findExistingExactThreadId(participantIds: string[]): Promise<string | null> {
+  const normalized = [...new Set(participantIds)].sort()
+  if (normalized.length < 2) return null
+  if (normalized.length === 2) {
+    const existing = await prisma.messageThread.findUnique({
+      where: { uniqueKey: buildDirectThreadKey(normalized[0]!, normalized[1]!) },
+      select: { id: true },
+    })
+    return existing?.id ?? null
+  }
+
+  const uniqueKey = buildGroupThreadKey(normalized)
+  const byKey = await prisma.messageThread.findUnique({
+    where: { uniqueKey },
+    select: { id: true },
+  })
+  if (byKey?.id) return byKey.id
+
+  const rows = (await prisma.$queryRaw(Prisma.sql`
+    SELECT t."id", t."uniqueKey"
+    FROM "MessageThread" t
+    JOIN "MessageParticipant" mp ON mp."threadId" = t."id"
+    WHERE t."type" = 'group'
+      AND t."contextType" IS NULL
+    GROUP BY t."id", t."uniqueKey"
+    HAVING COUNT(*)::int = ${normalized.length}
+      AND COUNT(*) FILTER (WHERE mp."userId" IN (${Prisma.join(normalized)}))::int = ${normalized.length}
+    ORDER BY MAX(t."updatedAt") DESC
+    LIMIT 1
+  `)) as Array<{ id: string; uniqueKey: string | null }>
+
+  const existing = rows[0]
+  if (!existing?.id) return null
+  if (!existing.uniqueKey) {
+    await prisma.messageThread
+      .update({
+        where: { id: existing.id },
+        data: { uniqueKey },
+      })
+      .catch(() => undefined)
+  }
+  return existing.id
 }
 
 async function usersAreFriends(userId: string, targetUserId: string): Promise<boolean> {
@@ -2310,6 +2532,217 @@ async function loadThreadForUser(threadId: string, userId: string) {
     },
     include: THREAD_WITH_PARTICIPANTS_INCLUDE,
   })
+}
+
+async function loadCallableMessageThreadForUser(threadId: string, userId: string) {
+  return prisma.messageThread.findFirst({
+    where: {
+      id: threadId,
+      type: { in: [MessageThreadType.direct, MessageThreadType.group] },
+      contextType: null,
+      participants: {
+        some: { userId },
+      },
+    },
+    include: THREAD_WITH_PARTICIPANTS_INCLUDE,
+  })
+}
+
+async function loadLatestThreadCall(threadId: string): Promise<MessageCallRecord | null> {
+  const call = await prisma.messageCall.findFirst({
+    where: {
+      threadId,
+      endedAt: null,
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    select: MESSAGE_CALL_SELECT,
+  })
+  return call ?? null
+}
+
+async function loadLiveThreadCall(
+  threadId: string,
+  options?: {
+    expireStale?: boolean
+    endedByUserId?: string | null
+  },
+): Promise<MessageCallRecord | null> {
+  const latest = await loadLatestThreadCall(threadId)
+  if (!latest) return null
+  if (isMessageCallLive(latest)) {
+    if (latest.status === MessageCallStatus.ringing) {
+      scheduleMessageCallTimeout(latest)
+    }
+    return latest
+  }
+  if (options?.expireStale) {
+    if (latest.status === MessageCallStatus.ringing) {
+      await finalizeMessageCall({
+        callId: latest.id,
+        endedByUserId: options.endedByUserId ?? null,
+        reason: 'no_answer',
+      })
+    } else {
+      await expireMessageCallIfStale(latest, options.endedByUserId)
+    }
+  }
+  return null
+}
+
+async function loadMessageCallForUser(callId: string, userId: string): Promise<MessageCallRecord | null> {
+  const call = await prisma.messageCall.findFirst({
+    where: {
+      id: callId,
+      thread: {
+        contextType: null,
+        participants: {
+          some: { userId },
+        },
+      },
+    },
+    select: MESSAGE_CALL_SELECT,
+  })
+  return call ?? null
+}
+
+async function finalizeMessageCall(args: {
+  callId: string
+  endedByUserId?: string | null
+  reason: 'hangup' | 'no_answer' | 'expired'
+}) {
+  clearScheduledMessageCallTimeout(args.callId)
+
+  const call = await prisma.messageCall.findUnique({
+    where: { id: args.callId },
+    select: {
+      ...MESSAGE_CALL_SELECT,
+      thread: {
+        include: THREAD_SUMMARY_INCLUDE,
+      },
+    },
+  })
+  if (!call) return null
+
+  const actorUserId = args.endedByUserId ?? (args.reason === 'no_answer' ? call.initiatorId : null)
+  const actorRecord =
+    actorUserId && actorUserId !== call.initiatorId
+      ? await prisma.user.findUnique({ where: { id: actorUserId }, select: FRIEND_USER_SELECT })
+      : null
+  const actor = actorRecord ? formatFriendUser(actorRecord) : formatFriendUser(call.initiator)
+  const actorName = actor?.name?.trim() || actor?.handle || null
+  const shouldCreateSystemMessage = args.reason === 'hangup' || args.reason === 'no_answer'
+
+  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const endedAt = new Date()
+    const updated = await tx.messageCall.updateMany({
+      where: { id: call.id, endedAt: null },
+      data: {
+        status: MessageCallStatus.ended,
+        endedAt,
+        ...(args.endedByUserId ? { endedByUserId: args.endedByUserId } : {}),
+      },
+    })
+    if (updated.count === 0) return null
+
+    let systemMessage: MessageRecord | null = null
+    if (shouldCreateSystemMessage && actorUserId) {
+      systemMessage = await tx.message.create({
+        data: {
+          threadId: call.threadId,
+          senderId: actorUserId,
+          body: buildMessageCallEndedBody({
+            reason: args.reason === 'no_answer' ? 'no_answer' : 'hangup',
+            actorName,
+          }),
+          attachments: buildMessageCallSystemMeta({
+            call,
+            reason: args.reason === 'no_answer' ? 'no_answer' : 'hangup',
+            actorUserId,
+            actorName,
+          }) as Prisma.InputJsonValue,
+          messageType: MessageType.system,
+        },
+        select: MESSAGE_SELECT,
+      })
+
+      await tx.messageThread.update({
+        where: { id: call.threadId },
+        data: { lastMessageAt: systemMessage.createdAt },
+      })
+
+      await tx.messageParticipant.updateMany({
+        where: { threadId: call.threadId, userId: actorUserId },
+        data: {
+          lastActivityAt: systemMessage.createdAt,
+          lastReadAt: systemMessage.createdAt,
+        },
+      })
+
+      await tx.messageParticipant.updateMany({
+        where: { threadId: call.threadId, userId: { not: actorUserId } },
+        data: { lastActivityAt: systemMessage.createdAt },
+      })
+    }
+
+    const thread = await tx.messageThread.findUnique({
+      where: { id: call.threadId },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+    return {
+      thread,
+      systemMessage,
+    }
+  })
+
+  if (!result?.thread) return null
+
+  await Promise.all(
+    result.thread.participants.map((participant: ThreadParticipantRecord) =>
+      Promise.allSettled([
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'thread.created',
+          data: { thread: formatThreadSummaryRecord(result.thread!, participant.userId) },
+        }),
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'message.call.ended',
+          data: {
+            threadId: call.threadId,
+            callId: call.id,
+            reason: args.reason,
+          },
+        }),
+        result.systemMessage
+          ? dispatchRealtimeEvent(participant.userId, {
+              type: 'message.created',
+              data: {
+                threadId: call.threadId,
+                message: formatMessage(result.systemMessage, participant.userId),
+              },
+            })
+          : Promise.resolve(),
+      ]),
+    ),
+  )
+
+  return {
+    thread: result.thread,
+    systemMessage: result.systemMessage,
+  }
+}
+
+function scheduleMessageCallTimeout(call: Pick<MessageCallRecord, 'id' | 'createdAt'>) {
+  clearScheduledMessageCallTimeout(call.id)
+  const elapsedMs = Date.now() - call.createdAt.getTime()
+  const delayMs = Math.max(0, MESSAGE_CALL_RING_TTL_MS - elapsedMs)
+  const timer = setTimeout(() => {
+    void finalizeMessageCall({
+      callId: call.id,
+      reason: 'no_answer',
+    }).catch((error) => {
+      console.error('message_call_timeout_finalize_failed', error)
+    })
+  }, delayMs)
+  messageCallTimeouts.set(call.id, timer)
 }
 
 type MessageLinkPreviewRecord = {
@@ -2903,6 +3336,7 @@ const MessageThreadParticipantParams = z.object({
   id: z.string().cuid(),
   userId: z.string().cuid().or(z.string().uuid()),
 })
+const MessageCallIdParam = z.object({ id: z.string().cuid() })
 const NotificationAckInput = z
   .object({
     ids: z.array(z.string().cuid()).min(1).max(50).optional(),
@@ -8741,6 +9175,327 @@ app.post('/messages/threads/group', async (req: FastifyRequest, reply: FastifyRe
     )
 
     return reply.code(201).send({ thread: formatThreadSummaryRecord(thread, userId) })
+  }),
+)
+
+app.post('/messages/threads/:id/resolve-group', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+    const parse = ResolveGroupThreadInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const sourceThread = await loadCallableMessageThreadForUser(params.data.id, userId)
+    if (!sourceThread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    const existingParticipantIds = sourceThread.participants.map((participant: ThreadParticipantRecord) => participant.userId)
+    const additionalParticipantIds: string[] = Array.from(
+      new Set<string>(parse.data.participantIds.filter((id: string) => id && id !== userId && !existingParticipantIds.includes(id))),
+    )
+
+    if (!additionalParticipantIds.length) {
+      const existingThread = await prisma.messageThread.findUnique({ where: { id: sourceThread.id }, include: THREAD_SUMMARY_INCLUDE })
+      if (!existingThread) return reply.code(404).send({ error: 'thread_not_found' })
+      return reply.send({ thread: formatThreadSummaryRecord(existingThread, userId), created: false })
+    }
+
+    const friendIdSet = await loadFriendIdSet(userId)
+    if (additionalParticipantIds.some((id) => !friendIdSet.has(id))) {
+      return reply.code(403).send({ error: 'group_members_must_be_friends' })
+    }
+
+    const existingUsers = await prisma.user.findMany({
+      where: { id: { in: additionalParticipantIds } },
+      select: { id: true },
+    })
+    const existingUserIds = new Set(existingUsers.map((user: { id: string }) => user.id))
+    if (additionalParticipantIds.some((id) => !existingUserIds.has(id))) {
+      return reply.code(404).send({ error: 'user_not_found' })
+    }
+
+    const participantIds = Array.from(new Set([...existingParticipantIds, ...additionalParticipantIds])).sort()
+    if (participantIds.length < 3) {
+      return reply.code(400).send({ error: 'group_requires_at_least_three_participants' })
+    }
+    if (participantIds.length > 20) {
+      return reply.code(400).send({ error: 'group_too_large' })
+    }
+
+    const existingThreadId = await findExistingExactThreadId(participantIds)
+    if (existingThreadId) {
+      const existingThread = await prisma.messageThread.findUnique({
+        where: { id: existingThreadId },
+        include: THREAD_SUMMARY_INCLUDE,
+      })
+      if (!existingThread) return reply.code(404).send({ error: 'thread_not_found' })
+      return reply.send({ thread: formatThreadSummaryRecord(existingThread, userId), created: false })
+    }
+
+    const now = new Date()
+    const uniqueKey = buildGroupThreadKey(participantIds)
+    const createdThread = await prisma.messageThread.create({
+      data: {
+        type: MessageThreadType.group,
+        uniqueKey,
+        lastMessageAt: now,
+        participants: {
+          create: participantIds.map((participantId) => ({
+            userId: participantId,
+            role: participantId === userId ? MessageParticipantRole.admin : MessageParticipantRole.member,
+            lastActivityAt: now,
+            ...(participantId === userId ? { lastReadAt: now } : {}),
+          })),
+        },
+      },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+
+    await Promise.all(
+      createdThread.participants
+        .filter((participant: ThreadParticipantRecord) => participant.userId !== userId)
+        .map((participant: ThreadParticipantRecord) =>
+          dispatchRealtimeEvent(participant.userId, {
+            type: 'thread.created',
+            data: { thread: formatThreadSummaryRecord(createdThread, participant.userId) },
+          }),
+        ),
+    )
+
+    return reply.code(201).send({ thread: formatThreadSummaryRecord(createdThread, userId), created: true })
+  }),
+)
+
+app.get('/messages/threads/:id/call', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const thread = await loadCallableMessageThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    const call = await loadLiveThreadCall(thread.id, { expireStale: true, endedByUserId: userId })
+    return reply.send({
+      thread: formatThreadBase(thread, userId),
+      call: call ? formatMessageCall(call, userId) : null,
+    })
+  }),
+)
+
+app.post('/messages/threads/:id/call/start', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageThreadIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+    const parse = StartMessageCallInput.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const thread = await loadCallableMessageThreadForUser(params.data.id, userId)
+    if (!thread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    if (thread.type === MessageThreadType.direct) {
+      const otherIds = thread.participants
+        .map((participant: ThreadParticipantRecord) => participant.userId)
+        .filter((participantId: string) => participantId !== userId)
+      const counterpartId = otherIds[0]
+      if (!counterpartId || otherIds.length !== 1) {
+        return reply.code(400).send({ error: 'invalid_direct_thread' })
+      }
+      const [friendStatus, connectionStatus] = await Promise.all([
+        usersAreFriends(userId, counterpartId),
+        usersAreAcceptedConnections(userId, counterpartId),
+      ])
+      if (!friendStatus && !connectionStatus) {
+        return reply.code(403).send({ error: 'not_callable' })
+      }
+    }
+
+    const existingCall = await loadLiveThreadCall(thread.id, { expireStale: true, endedByUserId: userId })
+    if (existingCall) {
+      return reply.send({ call: formatMessageCall(existingCall, userId) })
+    }
+
+    const createdCall = await prisma.messageCall.create({
+      data: {
+        threadId: thread.id,
+        initiatorId: userId,
+        roomId: `message-call-${randomUUID()}`,
+        mode: parse.data.mode as MessageCallMode,
+        status: MessageCallStatus.ringing,
+      },
+      select: MESSAGE_CALL_SELECT,
+    })
+    scheduleMessageCallTimeout(createdCall)
+
+    const updatedThread = await prisma.messageThread.findUnique({
+      where: { id: thread.id },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+    if (!updatedThread) return reply.code(404).send({ error: 'thread_not_found' })
+
+    await Promise.all(
+      updatedThread.participants.map((participant: ThreadParticipantRecord) =>
+        dispatchRealtimeEvent(participant.userId, {
+          type: 'thread.created',
+          data: { thread: formatThreadSummaryRecord(updatedThread, participant.userId) },
+        }),
+      ),
+    )
+
+    const initiatorLabel =
+      formatDisplayNameForPush(createdCall.initiator.name || createdCall.initiator.handle || 'Someone') ||
+      createdCall.initiator.name ||
+      createdCall.initiator.handle ||
+      'Someone'
+    const modeLabel = createdCall.mode === MessageCallMode.video ? 'video' : 'audio'
+    const callUrl = `/messages/call/${encodeURIComponent(thread.id)}?call=${encodeURIComponent(createdCall.id)}`
+
+    await Promise.all(
+      updatedThread.participants
+        .filter((participant: ThreadParticipantRecord) => participant.userId !== userId)
+        .map(async (participant: ThreadParticipantRecord) => {
+          const realtimePromise = dispatchRealtimeEvent(participant.userId, {
+            type: 'message.call.invited',
+            data: {
+              thread: formatThreadSummaryRecord(updatedThread, participant.userId),
+              call: formatMessageCall(createdCall, participant.userId),
+            },
+          })
+
+          const muted = isThreadMuted(participant.mutedUntil ?? null)
+          const online = muted ? false : await isUserRealtimeOnline(participant.userId).catch(() => false)
+          const pushPromise =
+            muted || online
+              ? Promise.resolve()
+              : sendPushToUser(participant.userId, {
+                  title: initiatorLabel,
+                  body: `${initiatorLabel} started a ${modeLabel} call.`,
+                  url: callUrl,
+                  type: 'call',
+                  entityId: createdCall.id,
+                }).then(() => undefined)
+
+          await Promise.allSettled([realtimePromise, pushPromise])
+        }),
+    )
+
+    return reply.code(201).send({ call: formatMessageCall(createdCall, userId) })
+  }),
+)
+
+app.post('/messages/calls/:id/rtc/session', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageCallIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+    const body = MessageCallRtcSessionInput.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const call = await loadMessageCallForUser(params.data.id, userId)
+    if (!call) return reply.code(404).send({ error: 'call_not_found' })
+
+    if (!isMessageCallLive(call)) {
+      await expireMessageCallIfStale(call, userId)
+      return reply.code(410).send({ error: 'call_ended' })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, handle: true },
+    })
+    if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+    const displayName = body.data.displayName?.trim() || user.name?.trim() || user.handle || 'Civil user'
+    const shouldActivateCall = call.status === MessageCallStatus.active || userId !== call.initiatorId
+    const refreshedCall = await prisma.messageCall.update({
+      where: { id: call.id },
+      data: {
+        status: shouldActivateCall ? MessageCallStatus.active : call.status,
+        startedAt: shouldActivateCall ? call.startedAt ?? new Date() : call.startedAt,
+        lastJoinedAt: new Date(),
+      },
+      select: MESSAGE_CALL_SELECT,
+    })
+    if (shouldActivateCall) {
+      clearScheduledMessageCallTimeout(refreshedCall.id)
+    } else {
+      scheduleMessageCallTimeout(refreshedCall)
+    }
+
+    const rtc = await issueMeetingRtcSession({
+      roomId: refreshedCall.roomId,
+      userId,
+      role: 'participant',
+      displayName,
+      deviceId: body.data.deviceId ?? null,
+      capabilities:
+        body.data.capabilities ??
+        ({
+          audio: true,
+          video: refreshedCall.mode === MessageCallMode.video,
+        } as const),
+    })
+
+    if ('error' in rtc) {
+      const statusCode =
+        typeof rtc.statusCode === 'number' && rtc.statusCode >= 400
+          ? rtc.statusCode
+          : rtc.error === 'meeting_rtc_not_configured'
+            ? 503
+            : rtc.error === 'meeting_rtc_timeout'
+              ? 504
+              : 502
+      return reply.code(statusCode).send({ error: rtc.error })
+    }
+
+    const updatedThread = await prisma.messageThread.findUnique({
+      where: { id: refreshedCall.threadId },
+      include: THREAD_SUMMARY_INCLUDE,
+    })
+    if (updatedThread) {
+      await Promise.all(
+        updatedThread.participants.map((participant: ThreadParticipantRecord) =>
+          dispatchRealtimeEvent(participant.userId, {
+            type: 'thread.created',
+            data: { thread: formatThreadSummaryRecord(updatedThread, participant.userId) },
+          }),
+        ),
+      )
+    }
+
+    return reply.send({
+      ...rtc.session,
+      call: formatMessageCall(refreshedCall, userId),
+    })
+  }),
+)
+
+app.post('/messages/calls/:id/end', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = MessageCallIdParam.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const call = await loadMessageCallForUser(params.data.id, userId)
+    if (!call) return reply.code(404).send({ error: 'call_not_found' })
+
+    await finalizeMessageCall({
+      callId: call.id,
+      endedByUserId: userId,
+      reason: 'hangup',
+    })
+    return reply.send({ success: true })
   }),
 )
 
@@ -23993,10 +24748,15 @@ app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply
   req.log.info({ userId }, 'notifications_stream_connected')
   const sub = new IORedis(REDIS_URL)
   const channel = `${NOTIFICATION_CHANNEL_PREFIX}${userId}`
+  const connectionId = randomUUID()
   await sub.subscribe(channel)
+  await markUserRealtimeOnline(userId, connectionId)
   reply.sse({ data: JSON.stringify({ type: 'connected' }) })
 
   const heartbeat = setInterval(() => {
+    void markUserRealtimeOnline(userId, connectionId).catch((err) => {
+      req.log.warn({ err, userId }, 'notifications_stream_presence_refresh_failed')
+    })
     reply.sse({ data: JSON.stringify({ type: 'ping' }) })
   }, 30000)
 
@@ -24007,6 +24767,9 @@ app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply
   req.raw.on('close', async () => {
     clearInterval(heartbeat)
     req.log.info({ userId }, 'notifications_stream_disconnected')
+    await clearUserRealtimeOnline(userId, connectionId).catch((err) => {
+      req.log.warn({ err, userId }, 'notifications_stream_presence_clear_failed')
+    })
     await sub.unsubscribe(channel)
     sub.disconnect()
   })

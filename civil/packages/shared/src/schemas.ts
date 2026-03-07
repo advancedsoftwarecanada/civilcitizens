@@ -484,6 +484,32 @@ export const GroupParticipantInput = z.object({
 })
 export type GroupParticipantInput = z.infer<typeof GroupParticipantInput>
 
+export const ResolveGroupThreadInput = z.object({
+  participantIds: z
+    .array(z.string().cuid().or(z.string().uuid()))
+    .min(1)
+    .max(19),
+})
+export type ResolveGroupThreadInput = z.infer<typeof ResolveGroupThreadInput>
+
+export const StartMessageCallInput = z.object({
+  mode: z.enum(['audio', 'video']),
+})
+export type StartMessageCallInput = z.infer<typeof StartMessageCallInput>
+
+export const MessageCallRtcSessionInput = z.object({
+  displayName: z.string().trim().max(120).nullable().optional(),
+  deviceId: z.string().trim().max(160).nullable().optional(),
+  capabilities: z
+    .object({
+      audio: z.boolean().optional(),
+      video: z.boolean().optional(),
+    })
+    .nullable()
+    .optional(),
+})
+export type MessageCallRtcSessionInput = z.infer<typeof MessageCallRtcSessionInput>
+
 export const SendMessageInput = z
   .object({
     body: z

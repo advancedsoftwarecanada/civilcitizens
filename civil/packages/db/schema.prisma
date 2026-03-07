@@ -68,6 +68,8 @@ model User {
   connectionsReceived       Connection[]         @relation("connectionsReceived")
   messageParticipants       MessageParticipant[]
   messagesSent              Message[]
+  initiatedMessageCalls     MessageCall[]        @relation("MessageCallInitiator")
+  endedMessageCalls         MessageCall[]        @relation("MessageCallEndedBy")
   jobPostingsCreated        JobPosting[]          @relation("JobPostingCreator")
   jobApplications           JobApplication[]
   jobPromotionsCreated      JobPromotion[]        @relation("JobPromotionCreator")
@@ -320,16 +322,17 @@ model Connection {
 }
 
 model MessageThread {
-  id           String             @id @default(cuid())
-  type         MessageThreadType  @default(direct)
-  uniqueKey    String?            @unique
-  contextType  String?
-  contextId    String?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  lastMessageAt DateTime?         @default(now())
-  messages     Message[]
-  participants MessageParticipant[]
+  id            String             @id @default(cuid())
+  type          MessageThreadType  @default(direct)
+  uniqueKey     String?            @unique
+  contextType   String?
+  contextId     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  lastMessageAt DateTime?          @default(now())
+  messages      Message[]
+  participants  MessageParticipant[]
+  calls         MessageCall[]
 
   @@index([lastMessageAt])
 }
@@ -364,6 +367,27 @@ model Message {
   sender      User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([threadId, createdAt])
+}
+
+model MessageCall {
+  id            String            @id @default(cuid())
+  threadId      String
+  initiatorId   String
+  endedByUserId String?
+  roomId        String            @unique
+  mode          MessageCallMode
+  status        MessageCallStatus @default(ringing)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  startedAt     DateTime?
+  lastJoinedAt  DateTime?
+  endedAt       DateTime?
+  thread        MessageThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  initiator     User              @relation("MessageCallInitiator", fields: [initiatorId], references: [id], onDelete: Cascade)
+  endedByUser   User?             @relation("MessageCallEndedBy", fields: [endedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([threadId, createdAt])
+  @@index([threadId, endedAt])
 }
 
 enum FriendshipStatus {
@@ -908,6 +932,17 @@ enum MessageThreadType {
   order
   job
   support
+}
+
+enum MessageCallMode {
+  audio
+  video
+}
+
+enum MessageCallStatus {
+  ringing
+  active
+  ended
 }
 
 enum MessageParticipantRole {

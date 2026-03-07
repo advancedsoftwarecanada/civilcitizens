@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import MessagesNavBlock from '../_components/MessagesNavBlock'
@@ -27,6 +28,8 @@ import {
   HiOutlinePhoto,
   HiOutlineXMark,
   HiOutlineCog6Tooth,
+  HiOutlinePhone,
+  HiOutlineVideoCamera,
 } from 'react-icons/hi2'
 
 const THREAD_PAGE_LIMIT = 20
@@ -53,11 +56,23 @@ type ThreadParticipant = {
   isViewer: boolean
 }
 
+type MessageSystemMeta = {
+  kind: 'call_ended'
+  reason: 'hangup' | 'no_answer'
+  mode: 'audio' | 'video'
+  callId: string
+  callbackThreadId: string
+  callbackLabel: string
+  actorUserId: string | null
+  actorName: string | null
+}
+
 type MessagePayload = {
   id: string
   threadId: string
   body: string | null
   attachments: string[]
+  systemMeta?: MessageSystemMeta | null
   messageType: string
   createdAt: string
   updatedAt: string
@@ -65,6 +80,23 @@ type MessagePayload = {
   senderId: string
   sender: ThreadUser
   isMine: boolean
+}
+
+type ThreadCall = {
+  id: string
+  threadId: string
+  initiatorId: string
+  endedByUserId: string | null
+  roomId: string
+  mode: 'audio' | 'video'
+  status: 'ringing' | 'active' | 'ended'
+  createdAt: string
+  updatedAt: string
+  startedAt: string | null
+  lastJoinedAt: string | null
+  endedAt: string | null
+  initiator: ThreadUser
+  isInitiator: boolean
 }
 
 type ThreadSummary = {
@@ -77,6 +109,7 @@ type ThreadSummary = {
   lastMessageAt: string
   participants: ThreadParticipant[]
   lastMessage: MessagePayload | null
+  activeCall?: ThreadCall | null
   unreadCount?: number
   unread?: boolean
 }
@@ -342,6 +375,7 @@ function stripSuppressedUrlsFromBody(body: string, suppressedUrls: Set<string>):
 }
 
 export default function MessagesPageClient({ initialThreadId, initialInboxSection }: MessagesPageClientProps) {
+  const router = useRouter()
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
@@ -414,6 +448,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [groupMemberFilter, setGroupMemberFilter] = useState('')
   const [memberActionLoadingId, setMemberActionLoadingId] = useState<string | null>(null)
   const [leavingGroup, setLeavingGroup] = useState(false)
+  const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
   const [activeInboxSection, setActiveInboxSection] = useState<MessagesNavSection>(
     initialInboxSection && initialInboxSection !== 'market' ? initialInboxSection : DEFAULT_MESSAGES_NAV_SECTION,
   )
@@ -1395,6 +1430,10 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
   const isActiveGroupThread = activeThread?.type === 'group'
   const isActiveGroupOwner = isActiveGroupThread && activeViewerParticipant?.role === 'admin'
+  const activeThreadSupportsCalling = Boolean(
+    activeThread && !activeThread.contextType && (activeThread.type === 'direct' || activeThread.type === 'group'),
+  )
+  const activeThreadCall = activeThread?.activeCall ?? null
 
   const filteredGroupCandidates = useMemo(() => {
     const q = groupCandidateFilter.trim().toLowerCase()
@@ -1519,6 +1558,39 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       setLeavingGroup(false)
     }
   }, [activeThread, authedFetch, isActiveGroupThread])
+
+  const startThreadCall = useCallback(
+    async (mode: 'audio' | 'video') => {
+      if (!activeThread) return
+      if (activeThread.contextType) return
+      if (activeThread.type !== 'direct' && activeThread.type !== 'group') return
+
+      setCallActionMode(mode)
+      try {
+        const response = await authedFetch(`/messages/threads/${activeThread.id}/call/start`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        })
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { call?: ThreadCall; error?: string } | null
+        if (!response.ok || !payload?.call) {
+          pushToast(payload?.error ?? 'Unable to start this call right now.', 'error')
+          return
+        }
+        router.push(`/messages/call/${encodeURIComponent(activeThread.id)}?call=${encodeURIComponent(payload.call.id)}`)
+      } catch (error) {
+        console.error('Failed to start thread call', error)
+        pushToast('Unable to start this call right now.', 'error')
+      } finally {
+        setCallActionMode(null)
+      }
+    },
+    [activeThread, authedFetch, router],
+  )
 
   const renderThreadList = () => {
     const mobileViewport = isMobileViewport
@@ -1857,8 +1929,42 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           )}
           <div className="flex-1 min-w-0">
             <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
-            <p className="text-xs text-slate-500">{activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}</p>
+            <p className="text-xs text-slate-500">
+              {activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}
+              {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
+            </p>
           </div>
+          {activeThreadSupportsCalling ? (
+            <div className="flex items-center gap-2">
+              {activeThreadCall ? (
+                <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 sm:inline-flex">
+                  Active call
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  void startThreadCall('audio')
+                }}
+                disabled={callActionMode !== null}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                title={activeThreadCall ? 'Join audio call' : 'Start audio call'}
+              >
+                <HiOutlinePhone className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void startThreadCall('video')
+                }}
+                disabled={callActionMode !== null}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                title={activeThreadCall ? 'Join video call' : 'Start video call'}
+              >
+                <HiOutlineVideoCamera className="h-5 w-5" />
+              </button>
+            </div>
+          ) : null}
           {isActiveGroupThread ? (
             <details className="group relative">
               <summary className="inline-flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
@@ -1909,6 +2015,31 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                   <p className="text-center text-sm text-slate-500">Loading messages…</p>
                 ) : null}
                 {activeMessages.map((message) => {
+                  if (message.messageType === 'system' && message.systemMeta?.kind === 'call_ended') {
+                    const callbackLabel = message.systemMeta.callbackLabel || 'Call Back'
+                    return (
+                      <div key={message.id} className="flex w-full justify-center">
+                        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-center shadow-sm">
+                          <p className="text-sm font-semibold text-slate-800">{message.body || 'Call ended.'}</p>
+                          <div className="mt-3 flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void startThreadCall(message.systemMeta?.mode === 'audio' ? 'audio' : 'video')
+                              }}
+                              disabled={callActionMode !== null}
+                              className="inline-flex items-center gap-2 rounded-full border border-[var(--cc-primary)] bg-white px-4 py-2 text-xs font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/5 disabled:opacity-50"
+                            >
+                              {message.systemMeta.mode === 'audio' ? <HiOutlinePhone className="h-4 w-4" /> : <HiOutlineVideoCamera className="h-4 w-4" />}
+                              {callbackLabel}
+                            </button>
+                          </div>
+                          <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                        </div>
+                      </div>
+                    )
+                  }
+
                   const isMine = message.isMine
                   const senderDisplayName = formatUserDisplayName(message.sender.name, message.sender.handle) || message.sender.handle
                   const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
