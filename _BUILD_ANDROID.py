@@ -9,6 +9,7 @@ What it does:
     2. Verifies the APK signature with `apksigner` when available.
     3. Copies the final APK into `civil/apps/web/public/android/`.
     4. Copies the final AAB into `builds/mobile/android/release/` for Google Play upload.
+    5. Reads and advances the repo-tracked Android version code file.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ ANDROID_PROJECT_DIR = REPO_ROOT / "builds" / "mobile" / "capacitor" / "android"
 ANDROID_OUTPUT_APK = ANDROID_PROJECT_DIR / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
 ANDROID_OUTPUT_AAB = ANDROID_PROJECT_DIR / "app" / "build" / "outputs" / "bundle" / "release" / "app-release.aab"
 ANDROID_RELEASE_DIR = REPO_ROOT / "builds" / "mobile" / "android" / "release"
+ANDROID_VERSION_CODE_FILE = REPO_ROOT / "builds" / "mobile" / "android" / "version-code.txt"
 WEB_PUBLIC_ANDROID_DIR = REPO_ROOT / "civil" / "apps" / "web" / "public" / "android"
 PUBLISHED_AAB = ANDROID_RELEASE_DIR / "Civil-android-release.aab"
 PUBLISHED_AAB_PLAY = ANDROID_RELEASE_DIR / "civil.aab"
@@ -52,6 +54,25 @@ def _resolve_apksigner(android_home: Path) -> Path | None:
     return None
 
 
+def _read_version_code(path: Path) -> int:
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing Android version code file: {path}")
+
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        raise ValueError(f"Android version code file is empty: {path}")
+
+    version_code = int(raw)
+    if version_code < 1:
+        raise ValueError(f"Android version code must be >= 1: {path}")
+    return version_code
+
+
+def _write_version_code(path: Path, version_code: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{version_code}\n", encoding="utf-8")
+
+
 def main() -> int:
     if not ANDROID_PROJECT_DIR.is_dir():
         print(f"Error: missing Android project at {ANDROID_PROJECT_DIR}", file=sys.stderr)
@@ -70,6 +91,17 @@ def main() -> int:
     env["ANDROID_HOME"] = str(ANDROID_SDK)
     env["ANDROID_SDK_ROOT"] = str(ANDROID_SDK)
     env["PATH"] = f"{ANDROID_STUDIO_JAVA / 'bin'}:{env.get('PATH', '')}"
+
+    version_code_override = (env.get("CIVIL_ANDROID_VERSION_CODE") or "").strip()
+    if version_code_override:
+        version_code = int(version_code_override)
+        version_source = "env:CIVIL_ANDROID_VERSION_CODE"
+    else:
+        version_code = _read_version_code(ANDROID_VERSION_CODE_FILE)
+        env["CIVIL_ANDROID_VERSION_CODE"] = str(version_code)
+        version_source = str(ANDROID_VERSION_CODE_FILE)
+
+    print(f"Using Android version code {version_code} from {version_source}")
 
     _run(["./gradlew", "clean", "assembleRelease", "bundleRelease"], cwd=ANDROID_PROJECT_DIR, env=env)
 
@@ -92,12 +124,20 @@ def main() -> int:
     shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB)
     shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB_PLAY)
 
+    if not version_code_override:
+        next_version_code = version_code + 1
+        _write_version_code(ANDROID_VERSION_CODE_FILE, next_version_code)
+    else:
+        next_version_code = version_code
+
     print()
     print(f"Built APK: {ANDROID_OUTPUT_APK}")
     print(f"Built AAB: {ANDROID_OUTPUT_AAB}")
     print(f"Published APK: {PUBLISHED_APK}")
     print(f"Published AAB: {PUBLISHED_AAB}")
     print(f"Google Play AAB: {PUBLISHED_AAB_PLAY}")
+    print(f"Android version code used: {version_code}")
+    print(f"Next Android version code: {next_version_code}")
     print(f"Web path: /android/{PUBLISHED_APK.name}")
     return 0
 
