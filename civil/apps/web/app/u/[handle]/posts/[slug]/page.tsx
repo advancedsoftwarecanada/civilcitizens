@@ -11,6 +11,7 @@ import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
+import CivilCard from '../../../../_components/CivilCard'
 import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
 import PostReactionBar from '../../../../_components/PostReactionBar'
 import PollCard from '../../../../_components/PollCard'
@@ -24,7 +25,6 @@ import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../_lib/text'
-import VerifiedAvatar from '../../../../_components/VerifiedAvatar'
 import { useRegisterPageView } from '../../../../_components/AnalyticsTracker'
 
 function PostDetailImages({ images, mediaUrl }: { images?: string[] | null; mediaUrl?: string | null }) {
@@ -443,7 +443,6 @@ export default function UserPostPage({ params }: PageProps) {
       ? `/u/${post.author.handle}`
       : '/home'
   const headerCoverUrl = postOrganization?.coverUrl ?? post?.author.coverUrl ?? null
-  const hasHeaderCover = Boolean(headerCoverUrl)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
@@ -484,44 +483,34 @@ export default function UserPostPage({ params }: PageProps) {
               </nav>
 
                 <header className="space-y-4">
-                  <div className={clsx('relative overflow-hidden rounded-xl border px-3 py-2', hasHeaderCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
-                    {headerCoverUrl ? <img src={headerCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                    <div className={clsx('absolute inset-0', hasHeaderCover ? 'bg-slate-900/50' : 'bg-transparent')} />
-                    <div className="relative z-[1] flex items-start gap-3">
-                      <VerifiedAvatar
-                        src={postOrganization ? (postOrganization.logoUrl ?? null) : post.author.avatarUrl}
-                        alt={postAuthorDisplayName}
-                        initials={postAuthorDisplayName}
-                        size={56}
-                        isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
-                        isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
-                        className="shrink-0"
-                        href={authorProfileHref}
-                      />
-                      <div className="min-w-0 flex-1 space-y-2">
-                        <div className={clsx('flex flex-wrap items-center gap-x-2 gap-y-1 text-sm', hasHeaderCover ? 'text-white/80' : 'text-slate-500')}>
-                          <Link href={authorProfileHref} className={clsx('font-semibold hover:underline', hasHeaderCover ? 'text-white' : 'text-slate-900')}>
-                            {postOrganization?.name ?? postAuthorDisplayName}
+                  <CivilCard
+                    size="banner"
+                    name={postOrganization?.name ?? postAuthorDisplayName}
+                    subtitle={`@${post.author.handle} • ${formatDateTime(post.createdAt)}`}
+                    details={
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
+                        <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
+                          {JURISDICTION_LABELS[post.jurisdiction]}
+                        </span>
+                        {post.provinceCode && post.communitySlug ? (
+                          <Link
+                            href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
+                            className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85 hover:border-white/60"
+                          >
+                            {post.communityName ?? post.communitySlug}
                           </Link>
-                          <span>@{post.author.handle}</span>
-                          <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
-                        </div>
-                        <div className={clsx('flex flex-wrap items-center gap-2 text-xs font-semibold', hasHeaderCover ? 'text-white/85' : 'text-slate-500')}>
-                          <span className={clsx('rounded-full px-2 py-0.5', hasHeaderCover ? 'border border-white/35 text-white/85' : 'bg-slate-100 text-slate-600')}>
-                            {JURISDICTION_LABELS[post.jurisdiction]}
-                          </span>
-                          {post.provinceCode && post.communitySlug ? (
-                            <Link
-                              href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
-                              className={clsx('rounded-full px-2 py-0.5 uppercase tracking-wide', hasHeaderCover ? 'border border-white/35 text-white/85 hover:border-white/60' : 'border border-slate-200 text-slate-500 hover:border-slate-300')}
-                            >
-                              {post.communityName ?? post.communitySlug}
-                            </Link>
-                          ) : null}
-                        </div>
+                        ) : null}
                       </div>
-                    </div>
-                  </div>
+                    }
+                    avatarAlt={postAuthorDisplayName}
+                    avatarInitials={postAuthorDisplayName}
+                    avatarSrc={postOrganization ? (postOrganization.logoUrl ?? null) : post.author.avatarUrl}
+                    avatarHref={authorProfileHref}
+                    titleHref={authorProfileHref}
+                    coverUrl={headerCoverUrl}
+                    isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
+                    isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
+                  />
                   <div className="text-[16px] leading-7 text-slate-900">
                     <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} />
                     {post.type === 'article' && post.title ? (

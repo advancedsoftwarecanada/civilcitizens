@@ -8,9 +8,19 @@ type ModalProps = {
   children: ReactNode
   title?: string
   maxWidthClassName?: string
+  closeOnBackdrop?: boolean
+  closeOnEscape?: boolean
 }
 
-export default function Modal({ open, onClose, children, title, maxWidthClassName }: ModalProps) {
+export default function Modal({
+  open,
+  onClose,
+  children,
+  title,
+  maxWidthClassName,
+  closeOnBackdrop = true,
+  closeOnEscape = true,
+}: ModalProps) {
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null)
 
   useEffect(() => {
@@ -30,10 +40,12 @@ export default function Modal({ open, onClose, children, title, maxWidthClassNam
 
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && closeOnEscape) onClose()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [closeOnEscape, open, onClose])
 
   // Intercept auth link clicks inside modal to avoid hard navigation
   const onCaptureClick: React.MouseEventHandler<HTMLDivElement> = (e) => {
@@ -57,7 +69,7 @@ export default function Modal({ open, onClose, children, title, maxWidthClassNam
   return createPortal(
     <div
       className="fixed inset-0 z-50 overflow-y-auto"
-      onClick={onClose}
+      onClick={closeOnBackdrop ? onClose : undefined}
       onClickCapture={onCaptureClick}
       data-cc-modal-root
     >

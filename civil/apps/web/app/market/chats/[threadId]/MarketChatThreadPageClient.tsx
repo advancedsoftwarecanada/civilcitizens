@@ -2,8 +2,8 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import CivilCard from '../../../_components/CivilCard'
 import DashboardShell from '../../../_components/DashboardShell'
-import VerifiedAvatar from '../../../_components/VerifiedAvatar'
 import { pushToast } from '../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import { buildApiUrl } from '../../../_lib/api'
@@ -385,38 +385,28 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
       {status === 'ready' ? (
         <section className="space-y-3 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
           {counterpart ? (
-            <div className="overflow-hidden rounded-2xl border border-slate-200">
-              <div className="relative h-16 bg-slate-800">
-                {counterpart.coverUrl ? <img src={counterpart.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                <div className={`absolute inset-0 ${counterpart.coverUrl ? 'bg-slate-900/45' : 'bg-slate-800'}`} />
-                <div className="relative flex h-full items-center justify-between gap-3 px-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <VerifiedAvatar
-                      src={counterpart.avatarUrl}
-                      alt={counterpart.name || (counterpart.handle ? `@${counterpart.handle}` : 'User')}
-                      initials={counterpart.name || counterpart.handle}
-                      size={44}
-                      isVerified={Boolean(counterpart.isVerified)}
-                      href={counterpart.handle ? `/u/${encodeURIComponent(counterpart.handle)}` : undefined}
-                      className="shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-white">{counterpart.name || (counterpart.handle ? `@${counterpart.handle}` : 'User')}</div>
-                      {counterpart.handle ? <div className="truncate text-xs text-white/85">@{counterpart.handle}</div> : null}
-                    </div>
-                  </div>
-
-                  {counterpart.handle ? (
-                    <Link
-                      href={`/u/${encodeURIComponent(counterpart.handle)}`}
-                      className="rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/15"
-                    >
-                      View profile
-                    </Link>
-                  ) : null}
-                </div>
-              </div>
-            </div>
+            <CivilCard
+              size="rail"
+              name={counterpart.name || (counterpart.handle ? `@${counterpart.handle}` : 'User')}
+              subtitle={counterpart.handle ? `@${counterpart.handle}` : undefined}
+              avatarAlt={counterpart.name || (counterpart.handle ? `@${counterpart.handle}` : 'User')}
+              avatarInitials={counterpart.name || counterpart.handle}
+              avatarSrc={counterpart.avatarUrl}
+              avatarHref={counterpart.handle ? `/u/${encodeURIComponent(counterpart.handle)}` : undefined}
+              titleHref={counterpart.handle ? `/u/${encodeURIComponent(counterpart.handle)}` : undefined}
+              coverUrl={counterpart.coverUrl ?? null}
+              isVerified={Boolean(counterpart.isVerified)}
+              trailing={
+                counterpart.handle ? (
+                  <Link
+                    href={`/u/${encodeURIComponent(counterpart.handle)}`}
+                    className="rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/15"
+                  >
+                    View profile
+                  </Link>
+                ) : null
+              }
+            />
           ) : null}
 
           {threadIsInBuyerInbox ? (

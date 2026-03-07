@@ -3,7 +3,7 @@ import Link from 'next/link'
 import clsx from 'clsx'
 import VerifiedAvatar from './VerifiedAvatar'
 
-export type CivilCardSize = 'sm' | 'md' | 'lg'
+export type CivilCardSize = 'sm' | 'rail' | 'md' | 'banner' | 'lg'
 
 type CivilCardProps = {
   name: ReactNode
@@ -41,6 +41,10 @@ const CIVIL_CARD_SIZES: Record<
     card: string
     identityGap: string
     avatar: number
+    avatarWidth?: number
+    avatarHeight?: number
+    avatarOverlay?: boolean
+    contentPadding: string
     title: string
     subtitle: string
     details: string
@@ -49,31 +53,71 @@ const CIVIL_CARD_SIZES: Record<
   }
 > = {
   sm: {
-    card: 'min-h-[42px] rounded-xl px-2.5 py-1.5',
+    card: 'min-h-[42px] rounded-xl px-0 py-0',
     identityGap: 'gap-2',
     avatar: 30,
+    avatarWidth: 42,
+    avatarHeight: 42,
+    avatarOverlay: true,
+    contentPadding: 'py-1.5 pl-[50px] pr-3',
     title: 'text-sm',
     subtitle: 'text-[11px]',
     details: 'text-xs',
     titleLines: 1,
     subtitleLines: 1,
   },
-  md: {
-    card: 'min-h-[54px] rounded-2xl px-3 py-2',
+  rail: {
+    card: 'min-h-[58px] rounded-2xl px-0 py-0',
     identityGap: 'gap-2.5',
-    avatar: 36,
+    avatar: 40,
+    avatarWidth: 58,
+    avatarHeight: 58,
+    avatarOverlay: true,
+    contentPadding: 'py-2.5 pl-[70px] pr-3',
     title: 'text-sm',
     subtitle: 'text-xs',
     details: 'text-xs',
     titleLines: 1,
     subtitleLines: 1,
   },
-  lg: {
-    card: 'min-h-[104px] rounded-3xl px-5 py-4',
-    identityGap: 'gap-4',
-    avatar: 64,
-    title: 'text-2xl',
+  md: {
+    card: 'min-h-[82px] rounded-[1.7rem] px-0 py-0',
+    identityGap: 'gap-3',
+    avatar: 56,
+    avatarWidth: 86,
+    avatarHeight: 82,
+    avatarOverlay: true,
+    contentPadding: 'py-3 pl-[98px] pr-4',
+    title: 'text-base',
     subtitle: 'text-sm',
+    details: 'text-sm',
+    titleLines: 1,
+    subtitleLines: 1,
+  },
+  banner: {
+    card: 'min-h-[92px] rounded-[1.45rem] px-0 py-0',
+    identityGap: 'gap-3',
+    avatar: 62,
+    avatarWidth: 96,
+    avatarHeight: 92,
+    avatarOverlay: true,
+    contentPadding: 'py-3 pl-[108px] pr-4',
+    title: 'text-lg',
+    subtitle: 'text-xs',
+    details: 'text-xs',
+    titleLines: 1,
+    subtitleLines: 1,
+  },
+  lg: {
+    card: 'min-h-[126px] rounded-3xl px-0 py-0',
+    identityGap: 'gap-4',
+    avatar: 84,
+    avatarWidth: 128,
+    avatarHeight: 126,
+    avatarOverlay: true,
+    contentPadding: 'py-4 pl-[144px] pr-5',
+    title: 'text-2xl',
+    subtitle: 'text-base',
     details: 'text-sm',
     titleLines: 2,
     subtitleLines: 2,
@@ -96,6 +140,16 @@ function clampStyle(lines?: number): CSSProperties | undefined {
     WebkitBoxOrient: 'vertical' as CSSProperties['WebkitBoxOrient'],
     WebkitLineClamp: String(lines),
   }
+}
+
+function deriveCardInitials(source?: string | null) {
+  if (!source) return 'C'
+  const cleaned = source.trim()
+  if (!cleaned) return 'C'
+  const parts = cleaned.split(/\s+/).filter(Boolean)
+  const first = parts[0]?.charAt(0) ?? cleaned.charAt(0)
+  const second = parts.length > 1 ? parts[parts.length - 1]?.charAt(0) : cleaned.charAt(1)
+  return `${first ?? ''}${second ?? ''}`.toUpperCase() || cleaned.charAt(0).toUpperCase()
 }
 
 export default function CivilCard({
@@ -128,10 +182,13 @@ export default function CivilCard({
   interactive,
 }: CivilCardProps) {
   const sizeStyles = CIVIL_CARD_SIZES[size]
+  const usesAvatarOverlay = Boolean(sizeStyles.avatarOverlay)
   const resolvedTitleLines = titleLines ?? sizeStyles.titleLines
   const resolvedSubtitleLines = subtitleLines ?? sizeStyles.subtitleLines
   const resolvedAlign = align ?? (details ? 'start' : 'center')
   const isInteractive = interactive ?? Boolean(href || titleHref || avatarHref)
+  const overlayAvatarWidth = Math.max(24, Math.round(avatarSize ?? sizeStyles.avatarWidth ?? sizeStyles.avatar))
+  const overlayAvatarInitials = deriveCardInitials(avatarInitials ?? avatarAlt)
 
   const rootClassName = clsx(
     'group relative block overflow-hidden border border-slate-200 bg-slate-800 text-white shadow-sm',
@@ -187,6 +244,44 @@ export default function CivilCard({
         aria-hidden="true"
       />
 
+      {usesAvatarOverlay ? (
+        avatarHref && !href ? (
+          <Link
+            href={avatarHref}
+            aria-label={avatarAlt}
+            className={clsx(
+              'absolute inset-y-0 left-0 z-[2] flex items-center justify-center overflow-hidden text-slate-600',
+              !avatarSrc && 'bg-slate-200',
+            )}
+            style={{ width: overlayAvatarWidth }}
+          >
+            {avatarSrc ? (
+              <img src={avatarSrc} alt={avatarAlt} className="h-full w-full object-cover" loading="lazy" />
+            ) : (
+              <span className="select-none font-semibold" style={{ fontSize: `${Math.round(overlayAvatarWidth / 2.2)}px` }}>
+                {overlayAvatarInitials}
+              </span>
+            )}
+          </Link>
+        ) : (
+          <div
+            className={clsx(
+              'absolute inset-y-0 left-0 z-[2] flex items-center justify-center overflow-hidden text-slate-600',
+              !avatarSrc && 'bg-slate-200',
+            )}
+            style={{ width: overlayAvatarWidth }}
+          >
+            {avatarSrc ? (
+              <img src={avatarSrc} alt={avatarAlt} className="h-full w-full object-cover" loading="lazy" />
+            ) : (
+              <span className="select-none font-semibold" style={{ fontSize: `${Math.round(overlayAvatarWidth / 2.2)}px` }}>
+                {overlayAvatarInitials}
+              </span>
+            )}
+          </div>
+        )
+      ) : null}
+
       <div
         className={clsx(
           'relative z-[1] flex min-w-0 justify-between gap-3',
@@ -199,18 +294,21 @@ export default function CivilCard({
             'flex min-w-0 flex-1',
             resolvedAlign === 'start' ? 'items-start' : 'items-center',
             sizeStyles.identityGap,
+            sizeStyles.contentPadding,
           )}
         >
-          <VerifiedAvatar
-            src={avatarSrc}
-            alt={avatarAlt}
-            initials={avatarInitials ?? avatarAlt}
-            size={avatarSize ?? sizeStyles.avatar}
-            isVerified={isVerified}
-            isBusiness={isBusiness}
-            className="shrink-0"
-            href={avatarHref}
-          />
+          {!usesAvatarOverlay ? (
+            <VerifiedAvatar
+              src={avatarSrc}
+              alt={avatarAlt}
+              initials={avatarInitials ?? avatarAlt}
+              size={avatarSize ?? sizeStyles.avatar}
+              isVerified={isVerified}
+              isBusiness={isBusiness}
+              className="shrink-0"
+              href={avatarHref}
+            />
+          ) : null}
 
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
@@ -219,7 +317,7 @@ export default function CivilCard({
                 <span
                   className={clsx(
                     'shrink-0 text-white/80',
-                    size === 'lg' ? 'text-sm' : 'text-[11px]',
+                    size === 'lg' || size === 'banner' ? 'text-sm' : 'text-[11px]',
                     titleSuffixClassName,
                   )}
                 >

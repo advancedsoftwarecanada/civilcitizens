@@ -9,12 +9,16 @@ export type VerifiedAvatarProps = {
   alt: string
   initials?: string | null
   size?: number
+  width?: number
+  height?: number
   isVerified?: boolean
   isBusiness?: boolean
   className?: string
   badgeSize?: number
   hideBadge?: boolean
   href?: string
+  roundedClassName?: string
+  imageClassName?: string
 }
 
 function deriveInitials(source?: string | null) {
@@ -32,17 +36,24 @@ export default function VerifiedAvatar({
   alt,
   initials,
   size = 48,
+  width,
+  height,
   isVerified = false,
   isBusiness = false,
   className,
   badgeSize,
   hideBadge = false,
   href,
+  roundedClassName,
+  imageClassName,
 }: VerifiedAvatarProps) {
-  const dimension = Math.max(24, Math.round(size))
+  const resolvedWidth = Math.max(24, Math.round(width ?? size))
+  const resolvedHeight = Math.max(24, Math.round(height ?? size))
+  const dimension = Math.max(resolvedWidth, resolvedHeight)
   const fallback = deriveInitials(initials ?? alt)
   const textSize = Math.round(dimension / 2.4)
   const pinSize = badgeSize ?? Math.max(16, Math.round(dimension * 0.45))
+  const shapeClassName = roundedClassName ?? 'rounded-full'
   const badgeVariant = isVerified ? 'verified' : isBusiness ? 'business' : null
   const ringClass =
     badgeVariant === 'business'
@@ -54,20 +65,28 @@ export default function VerifiedAvatar({
   const badgeAlt = badgeVariant === 'business' ? 'Business badge' : badgeVariant === 'verified' ? 'Verified badge' : undefined
 
   const wrapperProps = {
-    className: clsx('relative inline-flex items-center justify-center rounded-full', className),
-    style: { width: dimension, height: dimension },
+    className: clsx('relative inline-flex items-center justify-center', shapeClassName, className),
+    style: { width: resolvedWidth, height: resolvedHeight },
   }
 
   const avatarCore = (
     <>
       <div
         className={clsx(
-          'relative inline-flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-200 text-slate-600',
+          'relative inline-flex h-full w-full items-center justify-center overflow-hidden bg-slate-200 text-slate-600',
+          shapeClassName,
           ringClass || undefined,
         )}
       >
         {src ? (
-          <Image src={src} alt={alt} width={dimension} height={dimension} unoptimized className="h-full w-full object-cover" />
+          <Image
+            src={src}
+            alt={alt}
+            width={resolvedWidth}
+            height={resolvedHeight}
+            unoptimized
+            className={clsx('h-full w-full object-cover', imageClassName)}
+          />
         ) : (
           <span className="select-none font-semibold" style={{ fontSize: `${textSize}px` }}>
             {fallback}
