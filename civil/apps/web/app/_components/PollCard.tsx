@@ -210,35 +210,41 @@ export default function PollCard({ post, viewerId, onPostUpdate, variant = 'feed
       <div className="mt-4 space-y-2">
         {poll.options.map((option) => {
           const selected = poll.viewer.optionId === option.id
-          const percentage = poll.viewer.canSeeResults ? Math.max(0, option.percentage ?? 0) : 0
+          const percentage = poll.viewer.canSeeResults ? Math.max(0, Math.min(100, option.percentage ?? 0)) : 0
 
           return (
             <button
               key={option.id}
               type="button"
               className={clsx(
-                'relative block w-full overflow-hidden rounded-xl border px-4 py-3 text-left transition',
-                selected ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5' : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-white',
+                'relative isolate block w-full overflow-hidden rounded-xl border bg-white text-left transition',
+                selected ? 'border-[var(--cc-primary)]' : 'border-slate-200 hover:border-slate-300',
                 !poll.viewer.canVote && 'cursor-default',
               )}
               onClick={() => void handleVote(option.id)}
               disabled={isBusy || !poll.viewer.canVote}
               aria-pressed={selected}
             >
+              <span className={clsx('absolute inset-0', selected ? 'bg-[var(--cc-primary)]/5' : 'bg-slate-50')} aria-hidden="true" />
               {poll.viewer.canSeeResults ? (
                 <span
-                  className="absolute inset-y-0 left-0 rounded-xl bg-[var(--cc-primary)]/12"
-                  style={{ width: `${percentage}%` }}
+                  className={clsx(
+                    'absolute inset-1 origin-left rounded-[0.9rem]',
+                    selected
+                      ? 'bg-[linear-gradient(90deg,rgba(202,5,45,0.26),rgba(202,5,45,0.12))]'
+                      : 'bg-[linear-gradient(90deg,rgba(59,130,246,0.16),rgba(59,130,246,0.07))]',
+                  )}
+                  style={{ transform: `scaleX(${percentage / 100})` }}
                   aria-hidden="true"
                 />
               ) : null}
-              <span className="relative z-[1] flex items-center justify-between gap-3">
+              <span className="relative z-[1] flex items-center justify-between gap-3 px-4 py-3">
                 <span className={clsx('min-w-0 text-sm font-semibold', selected ? 'text-[var(--cc-primary-700)]' : 'text-slate-800')}>
                   {option.label}
                 </span>
                 <span className="shrink-0 text-xs font-semibold text-slate-500">
                   {poll.viewer.canSeeResults
-                    ? `${option.voteCount ?? 0} • ${option.percentage ?? 0}%`
+                    ? `${option.voteCount ?? 0} • ${percentage}%`
                     : selected
                       ? 'Selected'
                       : ''}

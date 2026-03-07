@@ -603,10 +603,6 @@ export default function UserPostsPage({ params }: PageProps) {
     setComposerOpen(true)
   }
 
-  const handleComingSoon = (label: string) => {
-    pushToast(`${label} creation is coming soon.`, 'info')
-  }
-
   const requireAuthToken = () => {
     if (typeof window === 'undefined') return null
     const token = localStorage.getItem('token')
@@ -1401,14 +1397,6 @@ export default function UserPostsPage({ params }: PageProps) {
                   <span role="img" aria-label="Poll">📊</span>
                   Poll
                 </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Link')}>
-                  <span role="img" aria-label="Link">🔗</span>
-                  Link
-                </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Video')}>
-                  <span role="img" aria-label="Video">🎥</span>
-                  Video
-                </button>
                 <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('photo')}>
                   <span role="img" aria-label="Photos">📷</span>
                   Photos
@@ -1422,6 +1410,8 @@ export default function UserPostsPage({ params }: PageProps) {
               title="Share something new"
               key={composerDefaultType}
               maxWidthClassName="max-w-3xl"
+              closeOnBackdrop={false}
+              closeOnEscape={false}
             >
               <PostComposer
                 me={viewer}

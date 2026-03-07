@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
+import clsx from 'clsx'
 import { getProvinceDisplayName, normalizeProvinceCode, type ReactionType } from '@civil/shared'
 import PostComposer, { ApiPost, CommunityTarget, type PostType } from './PostComposer'
 import { RightRail } from './RightRail'
@@ -578,6 +579,11 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     if (scope !== 'organizations' || !selectedOrganizationId) return null
     return postableOrganizations.find((org) => org.id === selectedOrganizationId) ?? null
   }, [postableOrganizations, scope, selectedOrganizationId])
+  const composerCoverUrl = useMemo(
+    () => (scope === 'organizations' ? selectedOrganization?.coverUrl ?? me?.coverUrl ?? null : me?.coverUrl ?? null),
+    [me?.coverUrl, scope, selectedOrganization?.coverUrl],
+  )
+  const hasComposerCover = Boolean(composerCoverUrl)
 
   const composerModalTitle = useMemo(() => {
     switch (scope) {
@@ -609,10 +615,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     setComposerOpen(true)
   }
 
-  const handleComingSoon = (label: string) => {
-    pushToast(`${label} creation is coming soon.`, 'info')
-  }
-
   const emptyLabel = emptyState ?? "No updates yet. Once the community starts posting, you'll see them here."
   const composerDefaultAudience: 'friends' | 'network' | 'community' =
     scope === 'communities' ? 'community' : scope === 'network' ? 'network' : 'friends'
@@ -622,25 +624,78 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     () => sortOptions.find((option) => option.value === sortMode) ?? null,
     [sortMode, sortOptions],
   )
+  const composerSectionClassName = clsx(
+    'relative min-w-0 space-y-4 overflow-hidden px-6 py-5 shadow-subtle',
+    hasComposerCover
+      ? 'rounded-[var(--cc-radius)] border border-white/[0.18] bg-transparent shadow-[0_24px_56px_rgba(15,23,42,0.14)]'
+      : 'surface-card',
+  )
+  const composerOverlayClassName = hasComposerCover
+    ? 'bg-[linear-gradient(180deg,rgba(15,23,42,0.24)_0%,rgba(15,23,42,0.18)_24%,rgba(15,23,42,0.12)_52%,rgba(15,23,42,0.08)_100%)]'
+    : 'bg-transparent'
+  const composerTitleClassName = hasComposerCover
+    ? 'text-white/80 [text-shadow:0_1px_2px_rgba(15,23,42,0.55)]'
+    : 'text-slate-400'
+  const composerSortShellClassName = hasComposerCover
+    ? 'border border-white/[0.18] bg-slate-950/[0.20] backdrop-blur-md'
+    : 'bg-slate-100'
+  const composerSortInactiveClassName = hasComposerCover
+    ? 'text-white/80 hover:text-white'
+    : 'text-slate-500 hover:text-slate-700'
+  const composerPromptClassName = hasComposerCover
+    ? 'border border-white/20 bg-slate-950/[0.22] text-white/90 backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-slate-950/[0.30] hover:text-white'
+    : 'border border-slate-200 bg-slate-50 text-slate-500 hover:bg-white hover:text-slate-700'
+  const composerActionClassName = hasComposerCover
+    ? 'border border-white/[0.22] bg-slate-950/[0.18] text-white backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-slate-950/[0.26] hover:text-white'
+    : 'border border-slate-200 bg-white/90 hover:border-slate-300 hover:bg-white hover:text-slate-700'
+  const composerActionIconClassName = hasComposerCover
+    ? 'bg-white/[0.16] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]'
+    : 'bg-slate-100 text-slate-600'
+  const composerSortDescriptionClassName = hasComposerCover ? 'text-right text-xs text-white/70' : 'text-right text-xs text-slate-500'
+  const composerActions: Array<{ type: PostType; label: string; icon: string }> = [
+    { type: 'post', label: 'Post', icon: '📝' },
+    { type: 'article', label: 'Article', icon: '📄' },
+    { type: 'poll', label: 'Poll', icon: '📊' },
+    { type: 'photo', label: 'Photos', icon: '📷' },
+  ]
 
   return (
     <DashboardShell rightRail={resolvedRightRail} mainClassName="min-w-0 space-y-6">
-      <section className="surface-card min-w-0 space-y-4 px-6 py-5 shadow-subtle">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <section className={composerSectionClassName}>
+        {composerCoverUrl ? (
+          <img
+            src={composerCoverUrl}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : null}
+        <span className={clsx('absolute inset-0', composerOverlayClassName)} aria-hidden="true" />
+        <div className="relative z-[1] flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           {scope !== 'organizations' ? (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">{title}</p>
+              <p className={clsx('text-xs font-semibold uppercase tracking-[0.35em]', composerTitleClassName)}>{title}</p>
               {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
             </div>
           ) : null}
           {sortOptions.length > 1 ? (
             <div className="space-y-2">
-              <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+              <div
+                className={clsx(
+                  'inline-flex rounded-full p-1 text-xs font-semibold text-slate-500',
+                  composerSortShellClassName,
+                )}
+              >
                 {sortOptions.map((option) => (
                   <button
                     key={option.value}
                     type="button"
-                    className={`rounded-full px-4 py-1.5 transition ${sortMode === option.value ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500 hover:text-slate-700'}`}
+                    className={clsx(
+                      'rounded-full px-4 py-1.5 transition',
+                      sortMode === option.value
+                        ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
+                        : composerSortInactiveClassName,
+                    )}
                     onClick={() => setSortMode(option.value)}
                     disabled={loading && sortMode === option.value}
                   >
@@ -648,11 +703,11 @@ export default function FeedPageClient(props: FeedPageClientProps) {
                   </button>
                 ))}
               </div>
-              {activeSortOption?.description ? <p className="text-right text-xs text-slate-500">{activeSortOption.description}</p> : null}
+              {activeSortOption?.description ? <p className={composerSortDescriptionClassName}>{activeSortOption.description}</p> : null}
             </div>
           ) : null}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="relative z-[1] flex items-center gap-3">
           <VerifiedAvatar
             src={me?.avatarUrl ?? null}
             alt={viewerDisplayName}
@@ -665,7 +720,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           />
           <button
             type="button"
-            className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-500 transition hover:bg-white hover:text-slate-700"
+            className={clsx(
+              'flex-1 rounded-full px-4 py-3 text-left text-sm transition',
+              composerPromptClassName,
+            )}
             onClick={() => openComposer('post')}
           >
             {"What's on your mind, "}
@@ -673,31 +731,30 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             {'?'}
           </button>
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('post')}>
-            <span role="img" aria-label="Post">📝</span>
-            Post
-          </button>
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('article')}>
-            <span role="img" aria-label="Article">📄</span>
-            Article
-          </button>
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('poll')}>
-            <span role="img" aria-label="Poll">📊</span>
-            Poll
-          </button>
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Link')}>
-            <span role="img" aria-label="Link">🔗</span>
-            Link
-          </button>
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 text-slate-400" onClick={() => handleComingSoon('Video')}>
-            <span role="img" aria-label="Video">🎥</span>
-            Video
-          </button>
-          <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('photo')}>
-            <span role="img" aria-label="Photos">📷</span>
-            Photos
-          </button>
+        <div className={clsx('relative z-[1] flex flex-wrap items-center gap-3 text-xs font-semibold', hasComposerCover ? 'text-white' : 'text-slate-500')}>
+          {composerActions.map((action) => (
+            <button
+              key={action.type}
+              type="button"
+              className={clsx(
+                'inline-flex min-w-[108px] items-center justify-center gap-2.5 rounded-full px-4 py-2 text-sm transition',
+                composerActionClassName,
+              )}
+              onClick={() => openComposer(action.type)}
+            >
+              <span
+                className={clsx(
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-[0.95rem] leading-none',
+                  composerActionIconClassName,
+                )}
+                role="img"
+                aria-label={action.label}
+              >
+                {action.icon}
+              </span>
+              {action.label}
+            </button>
+          ))}
         </div>
       </section>
 
@@ -764,6 +821,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         title={composerModalTitle}
         key={composerDefaultType}
         maxWidthClassName="max-w-3xl"
+        closeOnBackdrop={false}
+        closeOnEscape={false}
       >
         {scope === 'organizations' ? (
           <div className="space-y-4">

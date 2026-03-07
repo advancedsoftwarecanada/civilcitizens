@@ -3,9 +3,9 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+import CivilCard from '../../../../_components/CivilCard'
 import DashboardShell from '../../../../_components/DashboardShell'
 import Modal from '../../../../_components/Modal'
-import VerifiedAvatar from '../../../../_components/VerifiedAvatar'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { buildApiUrl } from '../../../../_lib/api'
 import { getStoredToken } from '../../../../_lib/tokenStorage'
@@ -86,35 +86,23 @@ function ConversationCard({
         (notResponded ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-white')
       }
     >
-      {counterpart.coverUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={counterpart.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      ) : null}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-950/70 via-slate-950/25 to-white/85" />
-
       <div className="relative">
-        <div className="flex items-start justify-between gap-3 px-4 pt-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <VerifiedAvatar
-              src={counterpart.avatarUrl || undefined}
-              alt={displayName}
-              size={42}
-              isVerified={false}
-              isBusiness={false}
-              initials={counterpart.handle || counterpart.name || 'C'}
-            />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <div className="truncate text-sm font-semibold text-white">{displayName}</div>
-                {notResponded ? (
-                  <span className="flex-none rounded-full border border-blue-200 bg-white/95 px-2 py-0.5 text-[11px] font-medium text-blue-700">Not responded</span>
-                ) : null}
-              </div>
-              <div className="truncate text-xs text-white/85">{displayHandle}</div>
-            </div>
-          </div>
-          <div className="flex-none pt-1 text-xs text-white/85">{timestamp}</div>
-        </div>
+        <CivilCard
+          size="rail"
+          name={displayName}
+          titleSuffix={
+            notResponded ? (
+              <span className="rounded-full border border-blue-200 bg-white/95 px-2 py-0.5 text-[11px] font-medium text-blue-700">Not responded</span>
+            ) : undefined
+          }
+          subtitle={displayHandle}
+          avatarAlt={displayName}
+          avatarInitials={counterpart.handle || counterpart.name || 'C'}
+          avatarSrc={counterpart.avatarUrl || undefined}
+          coverUrl={counterpart.coverUrl}
+          className="!rounded-b-none !border-0"
+          trailing={<div className="pt-0.5 text-xs text-white/85">{timestamp}</div>}
+        />
 
         <div className="px-4 pb-4 pt-3">
           <div className="rounded-xl bg-white/95 px-3 py-2">
@@ -204,7 +192,6 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
             <div className="flex min-w-0 items-start gap-3">
               <div className="h-16 w-16 flex-none overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
                 {listing.photoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={listing.photoUrl} alt="" className="h-full w-full object-cover" />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">No photo</div>

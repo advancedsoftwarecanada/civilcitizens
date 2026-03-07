@@ -14,13 +14,9 @@ import {
   HiOutlineShoppingBag,
   HiOutlineBriefcase,
   HiOutlineUsers,
-  HiOutlineNewspaper,
-  HiOutlineMicrophone,
-  HiOutlineMusicalNote,
-  HiOutlineVideoCamera,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
-import VerifiedAvatar from './VerifiedAvatar'
+import CivilCard from './CivilCard'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
 
@@ -66,19 +62,16 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineBriefcase },
-  { key: 'news', label: 'News', href: '/news', icon: HiOutlineNewspaper },
-  { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: HiOutlineMicrophone },
-  { key: 'music', label: 'Music', href: '/music', icon: HiOutlineMusicalNote },
-  { key: 'video', label: 'Video', href: '/video', icon: HiOutlineVideoCamera },
+  // TODO(app-store): restore News, Podcasts, Music, and Video nav items once those product areas are ready.
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
 ]
 
 function navItemClasses(active: boolean) {
   return clsx(
-    'group flex h-[var(--nav-item-h)] min-h-[36px] items-center gap-2 rounded-[var(--nav-radius)] px-[var(--nav-pad-x)] py-[var(--nav-pad-y)] text-[12.5px] font-semibold leading-tight transition-colors',
+    'group flex h-[var(--nav-item-h)] min-h-[36px] items-center gap-2.5 rounded-[var(--nav-radius)] px-[var(--nav-pad-x)] py-[var(--nav-pad-y)] text-[12.5px] font-semibold leading-tight transition-all',
     active
       ? 'bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20'
-      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+      : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900',
   )
 }
 
@@ -113,8 +106,8 @@ export default function Sidebar({ me, active }: SidebarProps) {
     '--profile-card-gap': '8px',
     '--nav-pad-x': '10px',
     '--nav-pad-y': '6px',
-    '--nav-icon-pad': '7px',
-    '--nav-icon-size': '18px',
+    '--nav-icon-pad': '8px',
+    '--nav-icon-size': '20px',
     '--nav-radius': '12px',
     '--nav-item-h': `calc((${navAvailableHeightExpr}) / ${navCount})`,
   } as CSSProperties
@@ -136,13 +129,13 @@ export default function Sidebar({ me, active }: SidebarProps) {
         <Link key={item.key} href={item.href} className={navItemClasses(activeMatch)} aria-current={activeMatch ? 'page' : undefined}>
           <span
             className={clsx(
-              'rounded-lg p-[var(--nav-icon-pad)] text-[var(--nav-icon-size)] transition-colors',
+              'inline-flex items-center justify-center rounded-xl border p-[var(--nav-icon-pad)] text-[var(--nav-icon-size)] shadow-sm transition-all',
               activeMatch
-                ? 'bg-white/25 text-white'
-                : 'text-slate-400 group-hover:bg-[var(--cc-primary)]/10 group-hover:text-[var(--cc-primary)]',
+                ? 'border-white/25 bg-white/18 text-white'
+                : 'border-slate-200 bg-white text-slate-500 group-hover:border-[var(--cc-primary)]/30 group-hover:bg-[var(--cc-primary)]/10 group-hover:text-[var(--cc-primary)]',
             )}
           >
-            <Icon />
+            <Icon className="h-[var(--nav-icon-size)] w-[var(--nav-icon-size)]" />
           </span>
           <div className="flex-1">
             <span className="block leading-tight">
@@ -161,28 +154,19 @@ export default function Sidebar({ me, active }: SidebarProps) {
       className="hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pt-[72px] lg:pb-[10px] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]"
       style={{ ...spacingVars, ...sidebarBleedStyle }}
     >
-      <Link
+      <CivilCard
         href={profileHref}
-        className="relative mt-[var(--profile-card-gap)] flex h-[56px] items-center gap-2 overflow-hidden rounded-2xl border border-slate-200 px-2.5 py-2 transition hover:border-slate-300"
-      >
-        {effectiveMe?.coverUrl ? (
-          <img src={effectiveMe.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-        ) : null}
-        <div className={clsx('absolute inset-0', effectiveMe?.coverUrl ? 'bg-slate-900/55' : 'bg-slate-700')} />
-        <VerifiedAvatar
-          src={effectiveMe?.avatarUrl ?? null}
-          alt={displayName}
-          initials={avatarInitials}
-          size={38}
-          isVerified={verified}
-          isBusiness={business}
-          className="relative z-[1]"
-        />
-        <div className="relative z-[1] min-w-0">
-          <p className="truncate text-sm font-semibold text-white">{displayName}</p>
-          <p className="text-xs text-white/80">View profile</p>
-        </div>
-      </Link>
+        size="rail"
+        name={displayName}
+        subtitle="View profile"
+        avatarAlt={displayName}
+        avatarInitials={avatarInitials}
+        avatarSrc={effectiveMe?.avatarUrl ?? null}
+        coverUrl={effectiveMe?.coverUrl ?? null}
+        isVerified={verified}
+        isBusiness={business}
+        className="mt-[var(--profile-card-gap)]"
+      />
 
       <nav className="mt-[var(--sidebar-top-gap)] flex flex-1 flex-col gap-[var(--sidebar-gap)]">
         {navContent(PRIMARY_NAV)}

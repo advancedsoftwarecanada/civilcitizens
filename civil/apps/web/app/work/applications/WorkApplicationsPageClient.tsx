@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import CivilCard from '../../_components/CivilCard'
 import DashboardShell from '../../_components/DashboardShell'
 import { RightRail } from '../../_components/RightRail'
-import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
 import { getStoredToken } from '../../_lib/tokenStorage'
 
@@ -125,14 +125,15 @@ export default function WorkApplicationsPageClient() {
 
                       {jobHref ? (
                         <Link href={jobHref} className="mt-3 block">
-                          <div className="relative overflow-hidden rounded-xl border border-slate-200 px-3 py-2">
-                            {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                            <div className={`absolute inset-0 ${org.coverUrl ? 'bg-slate-900/50' : 'bg-slate-50'}`} />
-                            <div className="relative z-[1] flex items-center gap-2">
-                              <VerifiedAvatar src={org.logoUrl} alt={org.name} initials={org.name} size={24} />
-                              <p className={`truncate text-sm font-semibold ${org.coverUrl ? 'text-white' : 'text-slate-700'}`}>{org.name}</p>
-                            </div>
-                          </div>
+                          <CivilCard
+                            size="rail"
+                            name={org.name}
+                            avatarAlt={org.name}
+                            avatarInitials={org.name}
+                            avatarSrc={org.logoUrl}
+                            coverUrl={org.coverUrl}
+                            isBusiness
+                          />
                         </Link>
                       ) : null}
                     </div>
