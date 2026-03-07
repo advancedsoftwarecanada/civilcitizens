@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
-import { HiOutlineUserPlus, HiOutlineBriefcase } from 'react-icons/hi2'
+import { HiOutlineUserPlus, HiOutlineBriefcase, HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
@@ -138,6 +138,13 @@ function formatExperienceRange(exp: UserExperience) {
   return 'Dates not provided'
 }
 
+function isValidUserId(value: string) {
+  const trimmed = value.trim()
+  const cuidPattern = /^c[a-z0-9]{24,}$/i
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  return cuidPattern.test(trimmed) || uuidPattern.test(trimmed)
+}
+
 function formatCount(value?: number | null) {
   if (typeof value !== 'number' || Number.isNaN(value)) return '0'
   return value.toLocaleString()
@@ -212,6 +219,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
+  const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -412,6 +420,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const isSendingConnectionRequest = connectionAction === 'send'
   const isAcceptingConnectionRequest = connectionAction === 'accept'
   const isRejectingConnectionRequest = connectionAction === 'reject'
+  const canDirectlyReachProfile =
+    !isOwner && (resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected')
   const renderFriendshipPrimaryCta = () => {
     switch (resolvedRelationship.friendshipStatus) {
       case 'incoming':
@@ -606,6 +616,64 @@ export default function UserPostsPage({ params }: PageProps) {
     }
     return token
   }
+
+  const resolveDirectTargetId = useCallback(
+    async (token: string) => {
+      if (!profile) return ''
+
+      const localId = typeof profile.id === 'string' ? profile.id.trim() : ''
+      if (isValidUserId(localId)) return localId
+
+      try {
+        const res = await fetch(buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/posts?limit=1`), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        if (!res.ok) return localId
+        const data = (await res.json().catch(() => null)) as { user?: { id?: string } | null }
+        const refreshedId = typeof data?.user?.id === 'string' ? data.user.id.trim() : ''
+        return refreshedId || localId
+      } catch (err) {
+        console.warn('Fallback user id lookup failed', err)
+        return localId
+      }
+    },
+    [profile],
+  )
+
+  const ensureDirectThread = useCallback(
+    async (token: string) => {
+      if (!profile) return null
+
+      const targetId = await resolveDirectTargetId(token)
+      if (!targetId) {
+        pushToast('Unable to start a conversation: missing user id.', 'error')
+        return null
+      }
+      if (!isValidUserId(targetId)) {
+        pushToast('Unable to start a conversation: profile id is not valid.', 'error')
+        return null
+      }
+
+      const res = await fetch(buildApiUrl('/messages/threads/direct'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: targetId }),
+      })
+      const payload = (await res.json().catch(() => null)) as { thread?: { id: string } | null; error?: string } | null
+      if (!res.ok || !payload?.thread?.id) {
+        const message = payload?.error ?? (res.status === 400 ? 'Unable to start a conversation: invalid user id.' : 'Unable to start a conversation right now.')
+        pushToast(message, 'error')
+        return null
+      }
+
+      return payload.thread.id
+    },
+    [profile, resolveDirectTargetId],
+  )
 
   const handleSendFriendRequest = async () => {
     if (!profile) return
@@ -900,65 +968,51 @@ export default function UserPostsPage({ params }: PageProps) {
     const token = requireAuthToken()
     if (!token) return
 
-    const isValidUserId = (value: string) => {
-      const trimmed = value.trim()
-      const cuidPattern = /^c[a-z0-9]{24,}$/i
-      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-      return cuidPattern.test(trimmed) || uuidPattern.test(trimmed)
-    }
-
-    const resolveTargetId = async () => {
-      const localId = typeof profile.id === 'string' ? profile.id.trim() : ''
-      if (isValidUserId(localId)) return localId
-
-      // Fallback: re-fetch profile to get a clean id
-      try {
-        const res = await fetch(buildApiUrl(`/users/${encodeURIComponent(profile.handle)}/posts?limit=1`), {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        })
-        if (!res.ok) return localId
-        const data = (await res.json().catch(() => null)) as { user?: { id?: string } | null }
-        const refreshedId = typeof data?.user?.id === 'string' ? data.user.id.trim() : ''
-        return refreshedId || localId
-      } catch (err) {
-        console.warn('Fallback user id lookup failed', err)
-        return localId
-      }
-    }
-
     setMessageLoading(true)
     try {
-      const targetId = await resolveTargetId()
-      if (!targetId) {
-        pushToast('Unable to start a conversation: missing user id.', 'error')
-        return
-      }
-      if (!isValidUserId(targetId)) {
-        pushToast('Unable to start a conversation: profile id is not valid.', 'error')
-        return
-      }
-
-      const res = await fetch(buildApiUrl('/messages/threads/direct'), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ userId: targetId }),
-      })
-      const payload = (await res.json().catch(() => null)) as { thread?: { id: string } | null; error?: string } | null
-      if (!res.ok || !payload?.thread?.id) {
-        const message = payload?.error ?? (res.status === 400 ? 'Unable to start a conversation: invalid user id.' : 'Unable to start a conversation right now.')
-        pushToast(message, 'error')
-        return
-      }
-      router.push(`/messages?thread=${payload.thread.id}`)
+      const threadId = await ensureDirectThread(token)
+      if (!threadId) return
+      router.push(`/messages?thread=${threadId}`)
     } catch (err) {
       console.error('Failed to start direct message', err)
       pushToast('Unable to start a conversation right now.', 'error')
     } finally {
       setMessageLoading(false)
+    }
+  }
+
+  const handleStartDirectCall = async (mode: 'audio' | 'video') => {
+    if (!profile) return
+    if (!canDirectlyReachProfile) return
+
+    const token = requireAuthToken()
+    if (!token) return
+
+    setCallActionMode(mode)
+    try {
+      const threadId = await ensureDirectThread(token)
+      if (!threadId) return
+
+      const res = await fetch(buildApiUrl(`/messages/threads/${encodeURIComponent(threadId)}/call/start`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ mode }),
+      })
+      const payload = (await res.json().catch(() => null)) as { call?: { id: string } | null; error?: string } | null
+      if (!res.ok || !payload?.call?.id) {
+        pushToast(payload?.error ?? 'Unable to start this call right now.', 'error')
+        return
+      }
+
+      router.push(`/messages/call/${encodeURIComponent(threadId)}?call=${encodeURIComponent(payload.call.id)}`)
+    } catch (err) {
+      console.error('Failed to start direct call', err)
+      pushToast('Unable to start this call right now.', 'error')
+    } finally {
+      setCallActionMode(null)
     }
   }
 
@@ -1152,15 +1206,39 @@ export default function UserPostsPage({ params }: PageProps) {
                   ) : (
                     <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
                       {renderFriendshipPrimaryCta()}
-                      {resolvedRelationship.friendshipStatus === 'friends' ? (
-                        <button
-                          type="button"
-                          className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={handleStartDirectMessage}
-                          disabled={messageLoading}
-                        >
-                          {messageLoading ? 'Opening...' : 'Message'}
-                        </button>
+                      {canDirectlyReachProfile ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => {
+                              void handleStartDirectCall('audio')
+                            }}
+                            disabled={messageLoading || callActionMode !== null}
+                          >
+                            <HiOutlinePhone className="mr-2 h-4 w-4" aria-hidden="true" />
+                            {callActionMode === 'audio' ? 'Calling...' : 'Call'}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => {
+                              void handleStartDirectCall('video')
+                            }}
+                            disabled={messageLoading || callActionMode !== null}
+                          >
+                            <HiOutlineVideoCamera className="mr-2 h-4 w-4" aria-hidden="true" />
+                            {callActionMode === 'video' ? 'Starting video...' : 'Video'}
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={handleStartDirectMessage}
+                            disabled={messageLoading || callActionMode !== null}
+                          >
+                            {messageLoading ? 'Opening...' : 'Message'}
+                          </button>
+                        </div>
                       ) : null}
                       {renderConnectionPrimaryCta()}
                     </div>
