@@ -97,6 +97,10 @@ async function registerUser(request: APIRequestContext) {
   return { token: token as string, userId: userId as string }
 }
 
+export async function createTestUser(request: APIRequestContext) {
+  return registerUser(request)
+}
+
 async function pickCommunity(request: APIRequestContext): Promise<{ province: string; municipality: string }> {
   const preferredProvince = (process.env.PLAYWRIGHT_PROVINCE ?? 'on').trim().toLowerCase()
   const preferred = await request.get(`/api/communities?province=${encodeURIComponent(preferredProvince)}`)

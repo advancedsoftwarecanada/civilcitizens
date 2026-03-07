@@ -47,6 +47,9 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: 'Civil Citizens',
   },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
   keywords: ['civic', 'canada', 'organizing', 'cities', 'civil citizens'],
   icons: {
     icon: '/favicon.png',
@@ -91,7 +94,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children, modal }: { children: ReactNode; modal: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} min-h-screen bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
+      <body className={`${inter.className} bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
         <script dangerouslySetInnerHTML={{ __html: launchOverlayBootstrap }} />
         <div id="cc-launch-overlay" aria-hidden="true">
           <div className="cc-launch-overlay__glow" />

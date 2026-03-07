@@ -3,12 +3,14 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p ${CIVIL_WEB_PORT:-3001}",
+    "dev": "node ./scripts/dev-safe.mjs",
     "build": "next build",
     "start": "next start -p 3001",
     "lint": "eslint .",
+    "smoke:assets": "node ./scripts/check-static-assets.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:assets": "playwright test e2e/static-assets.spec.ts",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
     "format": "prettier -w ."

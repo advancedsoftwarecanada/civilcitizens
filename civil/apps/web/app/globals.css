@@ -3,6 +3,8 @@
 @tailwind utilities;
 
 :root {
+  --cc-viewport-height: 100vh;
+  --cc-top-nav-height: 4.5rem;
   --cc-primary: #d52b1e;
   --cc-primary-700: #b0261a;
   --cc-border: #e2e8f0;
@@ -21,6 +23,12 @@
   --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
   --mobile-thread-composer-height: var(--mobile-dock-height);
   --mobile-dock-clearance: var(--mobile-dock-height);
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --cc-viewport-height: 100dvh;
+  }
 }
 
 @supports (-webkit-touch-callout: none) {
@@ -130,6 +138,11 @@ html.cc-launch-pending #cc-app-root {
     background-size: 1400px 900px, 1400px 900px, 100% 320%;
     background-position: top left, top right, top center;
     color: #0f172a;
+  }
+
+  body,
+  #cc-app-root {
+    min-height: var(--cc-viewport-height);
   }
 }
 
@@ -281,5 +294,9 @@ html.cc-launch-pending #cc-app-root {
 @media (max-width: 1023px) {
   html.cc-messages-thread-context [data-mobile-dock='true'] {
     display: none !important;
+  }
+
+  html.cc-messages-thread-context [data-app-frame='true'] {
+    padding-bottom: 0 !important;
   }
 }

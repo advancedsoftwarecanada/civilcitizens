@@ -42,8 +42,10 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
 
   return (
     <div
+      data-app-frame="true"
       className={clsx(
-        hideForMeetingRoom ? 'min-h-screen' : 'min-h-screen pb-[var(--mobile-dock-clearance)] lg:pb-0',
+        'min-h-0',
+        !hideForMeetingRoom && 'pb-[var(--mobile-dock-clearance)] lg:pb-0',
         !topNavHidden && !hideForMeetingRoom && 'md:pt-[4.5rem]',
       )}
     >
