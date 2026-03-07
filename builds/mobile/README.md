@@ -30,6 +30,8 @@ Then open the native projects:
 
 - Android public test APK + Play Store bundle:
 	- `python3 _BUILD_ANDROID.py`
+	- Version code source: `builds/mobile/android/version-code.txt`
+	- After each successful build, the script increments that file automatically.
 	- Outputs:
 		- APK: `civil/apps/web/public/android/civil.apk`
 		- AAB: `builds/mobile/android/release/civil.aab`
