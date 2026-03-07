@@ -50,7 +50,7 @@ export default function InstallIosSwitchToSafariPage() {
         <div className="rounded-3xl border border-white/20 bg-slate-900/80 p-6 shadow-[0_30px_90px_rgba(2,6,23,0.65)] backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <Image
-              src="/PWA-ICON.jpg"
+              src="/PWA-ICON.png"
               alt="Civil app icon"
               width={52}
               height={52}

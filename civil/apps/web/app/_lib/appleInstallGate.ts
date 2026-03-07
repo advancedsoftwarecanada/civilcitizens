@@ -1,6 +1,6 @@
 'use client'
 
-import { isAppleNativeApp } from './nativePush'
+import { isAndroidNativeApp, isAppleNativeApp } from './nativePush'
 
 type NavigatorWithStandalone = Navigator & { standalone?: boolean }
 export const IOS_PWA_INSTALL_ROUTE = '/install/ios/pwa'
@@ -53,6 +53,7 @@ export function shouldBlockForAppleInstall(): boolean {
 
 export function shouldBlockForAndroidInstall(): boolean {
   if (!isAndroidMobileOrTablet()) return false
+  if (isAndroidNativeApp()) return false
   if (isInstalledPwaDisplayMode()) return false
   return true
 }
@@ -65,6 +66,7 @@ export function isIosInstalledPwaContext(): boolean {
 
 export function isAndroidInstalledPwaContext(): boolean {
   if (!isAndroidMobileOrTablet()) return false
+  if (isAndroidNativeApp()) return true
   return isInstalledPwaDisplayMode()
 }
 
