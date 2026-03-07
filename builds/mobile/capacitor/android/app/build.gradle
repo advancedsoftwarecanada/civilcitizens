@@ -1,14 +1,42 @@
+import java.util.Properties
+
 apply plugin: 'com.android.application'
+
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
+def releaseStoreFile = keystoreProperties.getProperty('storeFile') ?: System.getenv('CIVIL_ANDROID_KEYSTORE_PATH')
+def releaseStorePassword = keystoreProperties.getProperty('storePassword') ?: System.getenv('CIVIL_ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = keystoreProperties.getProperty('keyAlias') ?: System.getenv('CIVIL_ANDROID_KEY_ALIAS')
+def releaseKeyPassword = keystoreProperties.getProperty('keyPassword') ?: System.getenv('CIVIL_ANDROID_KEY_PASSWORD')
+def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { value -> value?.trim() }
+def releaseVersionCodeRaw = (System.getenv('CIVIL_ANDROID_VERSION_CODE') ?: '1').trim()
+def releaseVersionName = (System.getenv('CIVIL_ANDROID_VERSION_NAME') ?: '1.0').trim()
+def releaseVersionCode = Integer.parseInt(releaseVersionCodeRaw)
 
 android {
     namespace "ca.civilcitizens"
     compileSdk rootProject.ext.compileSdkVersion
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile rootProject.file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     defaultConfig {
         applicationId "ca.civilcitizens"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode releaseVersionCode
+        versionName releaseVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,11 +46,22 @@ android {
     }
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }
+
+if (hasReleaseSigning) {
+    logger.lifecycle("Android release signing enabled with alias '${releaseKeyAlias}'")
+} else {
+    logger.lifecycle('Android release signing not configured; release builds will remain unsigned')
+}
+
+logger.lifecycle("Android release version ${releaseVersionName} (${releaseVersionCode})")
 
 repositories {
     flatDir{

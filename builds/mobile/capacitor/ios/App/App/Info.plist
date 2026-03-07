@@ -28,6 +28,14 @@
 	<string>We use your location to help you find your local community.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>We use your camera to take a profile photo.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We use your microphone for voice and video calls.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We use your photo library so you can upload photos and videos.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>We save photos and videos you choose to export from Civil.</string>
+	<key>NSUserNotificationsUsageDescription</key>
+	<string>We use notifications for messages, calls, and important community updates.</string>
 	<key>CIVILPushServiceURL</key>
 	<string></string>
 	<key>CIVILPushRegisterSecret</key>
