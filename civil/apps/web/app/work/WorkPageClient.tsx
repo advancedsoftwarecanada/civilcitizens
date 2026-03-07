@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
-import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 
 type IndustryOption = {
@@ -139,14 +139,15 @@ function JobCard({
 
           {organizationJobsHref ? (
             <Link href={organizationJobsHref} className="mt-3 block">
-              <div className="relative overflow-hidden rounded-xl border border-slate-200 px-3 py-2">
-                {job.organization.coverUrl ? <img src={job.organization.coverUrl} alt={`${job.organization.name} cover`} className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                <div className={`absolute inset-0 ${job.organization.coverUrl ? 'bg-slate-900/50' : 'bg-slate-50'}`} />
-                <div className="relative z-[1] flex items-center gap-2">
-                  <VerifiedAvatar src={job.organization.logoUrl} alt={job.organization.name} initials={job.organization.name} size={24} />
-                  <p className={`truncate text-sm font-semibold ${job.organization.coverUrl ? 'text-white' : 'text-slate-700'}`}>{job.organization.name}</p>
-                </div>
-              </div>
+              <CivilCard
+                size="rail"
+                name={job.organization.name}
+                avatarAlt={job.organization.name}
+                avatarInitials={job.organization.name}
+                avatarSrc={job.organization.logoUrl}
+                coverUrl={job.organization.coverUrl}
+                isBusiness
+              />
             </Link>
           ) : null}
         </div>

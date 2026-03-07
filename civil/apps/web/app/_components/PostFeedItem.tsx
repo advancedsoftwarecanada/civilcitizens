@@ -8,7 +8,7 @@ import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import { HiEllipsisHorizontal, HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost, CommunityTarget } from './PostComposer'
-import VerifiedAvatar from './VerifiedAvatar'
+import CivilCard from './CivilCard'
 import { formatDisplayName } from '../_lib/text'
 import { buildApiUrl } from '../_lib/api'
 import { getStoredToken } from '../_lib/tokenStorage'
@@ -75,14 +75,31 @@ function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null
   if (allImages.length === 0) return null
 
   if (allImages.length === 1) {
+    const imageSrc = allImages[0]
+    if (!imageSrc) return null
+    const tiledBackdropStyle = {
+      backgroundImage: `url("${imageSrc.replace(/"/g, '\\"')}")`,
+      backgroundPosition: 'center',
+      backgroundRepeat: 'repeat',
+      backgroundSize: 'auto 100%',
+    } as const
     return (
-      <Link href={postUrl} className="block overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-        <img
-          src={allImages[0]}
-          alt="Post image"
-          className="h-auto w-full max-h-[70vh] object-contain bg-slate-900/5"
-          loading="lazy"
-        />
+      <Link href={postUrl} className="group relative block overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
+        <div className="absolute inset-[-8%] overflow-hidden" aria-hidden="true">
+          <div
+            className="h-full w-full scale-110 opacity-50 blur-3xl saturate-150 transition-transform duration-500 group-hover:scale-[1.16]"
+            style={tiledBackdropStyle}
+          />
+          <span className="absolute inset-0 bg-[linear-gradient(180deg,rgba(15,23,42,0.18)_0%,rgba(15,23,42,0.08)_45%,rgba(15,23,42,0.18)_100%)]" />
+        </div>
+        <div className="relative flex min-h-[16rem] items-center justify-center bg-slate-950/8 px-2 py-2 sm:min-h-[20rem]">
+          <img
+            src={imageSrc}
+            alt="Post image"
+            className="relative z-[1] h-auto w-full max-h-[70vh] object-contain"
+            loading="lazy"
+          />
+        </div>
       </Link>
     )
   }
@@ -171,8 +188,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       : post.author.handle
   const avatarInitials = authorDisplayName || organization?.name || post.author.handle
   const authorCoverUrl = organization?.coverUrl ?? post.author.coverUrl ?? null
-  const hasHeaderCover = Boolean(authorCoverUrl)
   const isAuthor = viewerId === post.author.id
+  const postTypeLabel =
+    post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : 'Post'
 
   useEffect(() => {
     setRecentComments(post.recentComments ?? [])
@@ -384,114 +402,74 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       className="surface-card min-w-0 space-y-4 px-6 py-5 shadow-subtle cursor-pointer"
       onClick={handleCardClick}
     >
-      <header>
-        <div className="relative">
-          <div
-            className={clsx(
-              'relative flex flex-1 items-start gap-3 overflow-hidden rounded-xl px-3 py-2',
-              hasHeaderCover ? 'border border-slate-300' : 'border border-slate-200',
-            )}
-          >
-            {authorCoverUrl ? <img src={authorCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-            <div className={clsx('absolute inset-0', hasHeaderCover ? 'bg-slate-900/50' : 'bg-slate-50')} />
-            <VerifiedAvatar
-              src={organization ? (organization.logoUrl ?? null) : post.author.avatarUrl}
-              alt={authorDisplayName ?? post.author.handle}
-              initials={avatarInitials}
-              size={48}
-              isVerified={isVerifiedAuthor}
-              isBusiness={isBusinessAuthor}
-              className="shrink-0 relative z-[1]"
-              href={profileHref}
-            />
-            <div className="min-w-0 relative z-[1]">
-              <div className="space-y-0.5 text-sm">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <Link
-                    href={profileHref}
-                    className={clsx('font-semibold hover:underline', hasHeaderCover ? 'text-white' : 'text-slate-900')}
-                    title={`View ${authorDisplayName ?? post.author.handle}`}
-                  >
-                    {authorDisplayName ?? post.author.handle}
-                  </Link>
-                  {organization ? (
-                    <span className={clsx('text-xs font-semibold', hasHeaderCover ? 'text-white/80' : 'text-slate-500')}>Organization</span>
-                  ) : null}
-                </div>
-                <div className={clsx('text-xs', hasHeaderCover ? 'text-white/80' : 'text-slate-500')}>
-                  {formattedDate}
-                </div>
-              </div>
-              <div className={clsx('mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold', hasHeaderCover ? 'text-white/85' : 'text-slate-500')}>
-                {communityUrl ? (
-                  <Link
-                    href={communityUrl}
-                    className={clsx(
-                      'rounded-full px-2 py-0.5 uppercase tracking-wide',
-                      hasHeaderCover
-                        ? 'border border-white/35 text-white/85 hover:border-white/60'
-                        : 'border border-slate-200 text-slate-500 hover:border-slate-300',
-                    )}
-                    aria-label="Open community feed"
-                  >
-                    {post.communityName ?? post.communitySlug}
-                  </Link>
-                ) : null}
-                <span
-                  className={clsx(
-                    'rounded-full px-2 py-0.5',
-                    hasHeaderCover
-                      ? 'border border-white/35 text-white/85'
-                      : 'border border-slate-200 text-slate-500',
-                  )}
+      <header className="relative z-[2]">
+        <CivilCard
+          size="banner"
+          name={authorDisplayName ?? post.author.handle}
+          titleSuffix={organization ? 'Organization' : undefined}
+          subtitle={formattedDate}
+          details={
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
+              {communityUrl ? (
+                <Link
+                  href={communityUrl}
+                  className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85 hover:border-white/60"
+                  aria-label="Open community feed"
                 >
-                  {post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : 'Post'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {isAuthor ? (
-            <div className="absolute right-2 top-2 z-20" ref={menuRef}>
-              <button
-                onClick={() => setMenuOpen(!menuOpen)}
-                className={clsx(
-                  'rounded-full p-1 transition',
-                  hasHeaderCover
-                    ? 'text-white/80 hover:bg-black/25 hover:text-white'
-                    : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600',
-                )}
-                disabled={isDeleting}
-              >
-                <HiEllipsisHorizontal className="h-5 w-5" />
-              </button>
-              {menuOpen ? (
-                <div className="absolute right-0 top-full z-20 mt-1 w-32 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setIsEditing(true)
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                  >
-                    <HiPencil className="h-4 w-4" />
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false)
-                      void handleDelete()
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    <HiTrash className="h-4 w-4" />
-                    Delete
-                  </button>
-                </div>
+                  {post.communityName ?? post.communitySlug}
+                </Link>
               ) : null}
+              <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
+                {postTypeLabel}
+              </span>
             </div>
-          ) : null}
-        </div>
+          }
+          avatarAlt={authorDisplayName ?? post.author.handle}
+          avatarInitials={avatarInitials}
+          avatarSrc={organization ? (organization.logoUrl ?? null) : post.author.avatarUrl}
+          avatarHref={profileHref}
+          titleHref={profileHref}
+          coverUrl={authorCoverUrl}
+          isVerified={isVerifiedAuthor}
+          isBusiness={isBusinessAuthor}
+          contentClassName={isAuthor ? 'pr-14' : undefined}
+        />
+        {isAuthor ? (
+          <div ref={menuRef} className="absolute right-3 top-3 z-30">
+            <button
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-slate-950/45 text-white shadow-lg backdrop-blur-md transition hover:border-[var(--cc-primary)] hover:bg-slate-950/60"
+              disabled={isDeleting}
+              aria-label="Post actions"
+            >
+              <HiEllipsisHorizontal className="h-5 w-5" />
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 top-full z-40 mt-2 w-36 rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_20px_40px_rgba(15,23,42,0.18)]">
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setIsEditing(true)
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  <HiPencil className="h-4 w-4" />
+                  Edit
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void handleDelete()
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                >
+                  <HiTrash className="h-4 w-4" />
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <div className="space-y-3 text-[15px] leading-6 text-slate-800">
@@ -539,51 +517,23 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           >
             {(() => {
               const sharedCover = post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ?? null
-              const sharedHasCover = Boolean(sharedCover)
+              const sharedDisplayName = post.sharedPost.organization?.name
+                ? formatDisplayName(post.sharedPost.organization.name)
+                : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle
+
               return (
-                <div className="relative mb-2 flex items-center gap-2 overflow-hidden rounded-lg border border-slate-200 px-2 py-1.5">
-                  {sharedCover ? (
-                    <img
-                      src={sharedCover}
-                      alt=""
-                      className="absolute inset-0 h-full w-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : null}
-                  <div
-                    className={clsx(
-                      'absolute inset-0',
-                      sharedHasCover ? 'bg-slate-900/50' : 'bg-slate-50',
-                    )}
-                  />
-                  <VerifiedAvatar
-                    src={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
-                    alt={
-                      post.sharedPost.organization?.name
-                        ? formatDisplayName(post.sharedPost.organization.name)
-                        : post.sharedPost.author.name || post.sharedPost.author.handle
-                    }
-                    initials={
-                      post.sharedPost.organization?.name
-                        ? formatDisplayName(post.sharedPost.organization.name)
-                        : post.sharedPost.author.name || post.sharedPost.author.handle
-                    }
-                    size={24}
-                    isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
-                    isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
-                    className="relative z-[1]"
-                  />
-                  <div className="relative z-[1] min-w-0">
-                    <div className={clsx('text-sm font-semibold', sharedHasCover ? 'text-white' : 'text-slate-900')}>
-                      {post.sharedPost.organization?.name
-                        ? formatDisplayName(post.sharedPost.organization.name)
-                        : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle}
-                    </div>
-                    <div className={clsx('text-xs', sharedHasCover ? 'text-white/80' : 'text-slate-500')}>
-                      {new Date(post.sharedPost.createdAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                </div>
+                <CivilCard
+                  size="rail"
+                  name={sharedDisplayName}
+                  subtitle={new Date(post.sharedPost.createdAt).toLocaleDateString()}
+                  avatarAlt={sharedDisplayName}
+                  avatarInitials={sharedDisplayName}
+                  avatarSrc={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
+                  coverUrl={sharedCover}
+                  isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
+                  isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
+                  className="mb-2 w-fit max-w-full"
+                />
               )
             })()}
             <div className="text-sm text-slate-800 [overflow-wrap:anywhere] break-words">
@@ -638,9 +588,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         {previewComments.map((comment) => {
           const commentAuthorName = comment.author.name ? formatDisplayName(comment.author.name) : comment.author.handle
           const commentCoverUrl = comment.author.coverUrl ?? null
-          const hasCommentCover = Boolean(commentCoverUrl)
           const isReplyTarget = activeReplyParentId === comment.id
           const isNestedReply = Boolean(comment.parentId)
+          const createdLabel = formatRelativeTime(comment.createdAt)
           return (
             <div
               key={comment.id}
@@ -651,27 +601,19 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               )}
             >
               <div className="min-w-0">
-                <div className={clsx('relative inline-flex max-w-full items-center gap-2 overflow-hidden rounded-lg border px-2 py-1', hasCommentCover ? 'border-slate-300' : 'border-slate-200')}>
-                  {commentCoverUrl ? <img src={commentCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                  <div className={clsx('absolute inset-0', hasCommentCover ? 'bg-slate-900/50' : 'bg-slate-50')} />
-                  <VerifiedAvatar
-                    src={comment.author.avatarUrl ?? null}
-                    alt={commentAuthorName}
-                    initials={commentAuthorName}
-                    size={24}
-                    isVerified={Boolean(comment.author.isVerified)}
-                    isBusiness={Boolean(comment.author.isPremium)}
-                    className="shrink-0 relative z-[1]"
-                    href={`/u/${comment.author.handle}`}
-                  />
-                  <Link
-                    href={`/u/${comment.author.handle}`}
-                    className={clsx('relative z-[1] shrink-0 text-sm font-semibold hover:underline', hasCommentCover ? 'text-white' : 'text-slate-900')}
-                  >
-                    {commentAuthorName}
-                  </Link>
-                  <span className={clsx('relative z-[1] text-[11px]', hasCommentCover ? 'text-white/80' : 'text-slate-500')}>• {formatRelativeTime(comment.createdAt)}</span>
-                </div>
+                <CivilCard
+                  href={`/u/${comment.author.handle}`}
+                  size="sm"
+                  name={commentAuthorName}
+                  avatarAlt={commentAuthorName}
+                  avatarInitials={commentAuthorName}
+                  avatarSrc={comment.author.avatarUrl ?? null}
+                  coverUrl={commentCoverUrl}
+                  isVerified={Boolean(comment.author.isVerified)}
+                  isBusiness={Boolean(comment.author.isPremium)}
+                  titleSuffix={createdLabel ? `• ${createdLabel}` : undefined}
+                  className="w-fit max-w-full border-slate-200"
+                />
                 {isNestedReply ? <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]/80">Reply in thread</p> : null}
                 <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-800">{comment.body}</p>
                 <div className="mt-1.5 flex items-center gap-2">

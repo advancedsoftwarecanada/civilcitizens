@@ -3,9 +3,9 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import clsx from 'clsx'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import type { ReactionType } from '@civil/shared'
+import CivilCard from '../../../../../_components/CivilCard'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
@@ -15,7 +15,6 @@ import PollCard from '../../../../../_components/PollCard'
 import ThreadBottomCommentComposer from '../../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
-import VerifiedAvatar from '../../../../../_components/VerifiedAvatar'
 import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
@@ -427,23 +426,18 @@ export default function ChamberPostPage({ params }: PageProps) {
               return (
                 <li key={item.id}>
                   <Link href={itemCommunityHref} className="block rounded-lg border border-slate-200 p-2 hover:bg-slate-50">
-                    <div className={clsx('relative overflow-hidden rounded-md border px-2 py-1.5', itemCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
-                      {itemCover ? <img src={itemCover} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                      <span className={clsx('absolute inset-0', itemCover ? 'bg-slate-900/55' : 'bg-transparent')} aria-hidden="true" />
-                      <div className="relative z-[1] flex items-center gap-2">
-                        <VerifiedAvatar
-                          src={itemAvatar}
-                          alt={itemName}
-                          initials={itemName}
-                          size={26}
-                          isVerified={Boolean(item.organization?.isVerified ?? item.author.isVerified)}
-                          isBusiness={Boolean(item.organization) || Boolean(item.author.isPremium)}
-                        />
-                        <span className={clsx('truncate text-xs font-semibold', itemCover ? 'text-white' : 'text-slate-800')}>
-                          {itemName}
-                        </span>
-                      </div>
-                    </div>
+                    <CivilCard
+                      href={itemCommunityHref}
+                      size="sm"
+                      name={itemName}
+                      avatarAlt={itemName}
+                      avatarInitials={itemName}
+                      avatarSrc={itemAvatar}
+                      coverUrl={itemCover}
+                      isVerified={Boolean(item.organization?.isVerified ?? item.author.isVerified)}
+                      isBusiness={Boolean(item.organization) || Boolean(item.author.isPremium)}
+                      className="w-full border-slate-200"
+                    />
 
                     <div className="mt-2 flex items-start gap-2">
                       <p className="line-clamp-2 min-w-0 flex-1 text-sm text-slate-700">
@@ -479,20 +473,18 @@ export default function ChamberPostPage({ params }: PageProps) {
                 ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`
                 : '/organizations/directory'
               return (
-                <li key={org.id} className="relative overflow-hidden rounded-lg border border-slate-200 bg-slate-700">
-                  {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                  <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                  <Link href={href} className="relative flex items-center gap-2.5 px-3 py-2">
-                    <VerifiedAvatar
-                      src={org.logoUrl ?? null}
-                      alt={org.name}
-                      initials={org.name}
-                      size={30}
-                      isVerified={Boolean(org.isVerified)}
-                      isBusiness
-                    />
-                    <span className="truncate text-sm font-semibold text-white">{org.name}</span>
-                  </Link>
+                <li key={org.id}>
+                  <CivilCard
+                    href={href}
+                    size="md"
+                    name={org.name}
+                    avatarAlt={org.name}
+                    avatarInitials={org.name}
+                    avatarSrc={org.logoUrl ?? null}
+                    coverUrl={org.coverUrl ?? null}
+                    isVerified={Boolean(org.isVerified)}
+                    isBusiness
+                  />
                 </li>
               )
             })}
@@ -512,7 +504,6 @@ export default function ChamberPostPage({ params }: PageProps) {
       ? `/u/${post.author.handle}`
       : '/home'
   const headerCoverUrl = postOrganization?.coverUrl ?? post?.author.coverUrl ?? null
-  const hasHeaderCover = Boolean(headerCoverUrl)
   const breadcrumbCommunityName = communityDisplayName
 
   return (
@@ -544,44 +535,34 @@ export default function ChamberPostPage({ params }: PageProps) {
           </nav>
 
           <header className="space-y-4 border-b border-gray-100 pb-4">
-            <div className={clsx('relative overflow-hidden rounded-xl border px-3 py-2', hasHeaderCover ? 'border-slate-300' : 'border-slate-200 bg-slate-50')}>
-              {headerCoverUrl ? <img src={headerCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-              <div className={clsx('absolute inset-0', hasHeaderCover ? 'bg-slate-900/50' : 'bg-transparent')} />
-              <div className="relative z-[1] flex items-start gap-3">
-                <VerifiedAvatar
-                  src={postOrganization ? (postOrganization.logoUrl ?? null) : post.author.avatarUrl}
-                  alt={postAuthorDisplayName}
-                  initials={postAuthorDisplayName}
-                  size={56}
-                  isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
-                  isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
-                  className="shrink-0"
-                  href={authorProfileHref}
-                />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <div className={clsx('flex flex-wrap items-center gap-x-2 gap-y-1 text-sm', hasHeaderCover ? 'text-white/80' : 'text-slate-500')}>
-                    <Link href={authorProfileHref} className={clsx('font-semibold hover:underline', hasHeaderCover ? 'text-white' : 'text-slate-900')}>
-                      {postOrganization?.name ?? postAuthorDisplayName}
+            <CivilCard
+              size="banner"
+              name={postOrganization?.name ?? postAuthorDisplayName}
+              subtitle={`@${post.author.handle} • ${formatDateTime(post.createdAt)}`}
+              details={
+                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
+                  <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
+                    {JURISDICTION_LABELS[post.jurisdiction]}
+                  </span>
+                  {post.provinceCode && post.communitySlug ? (
+                    <Link
+                      href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
+                      className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85 hover:border-white/60"
+                    >
+                      {post.communityName ?? post.communitySlug}
                     </Link>
-                    <span>@{post.author.handle}</span>
-                    <span className="text-xs">• {formatDateTime(post.createdAt)}</span>
-                  </div>
-                  <div className={clsx('flex flex-wrap items-center gap-2 text-xs font-semibold', hasHeaderCover ? 'text-white/85' : 'text-slate-500')}>
-                    <span className={clsx('rounded-full px-2 py-0.5', hasHeaderCover ? 'border border-white/35 text-white/85' : 'bg-slate-100 text-slate-600')}>
-                      {JURISDICTION_LABELS[post.jurisdiction]}
-                    </span>
-                    {post.provinceCode && post.communitySlug ? (
-                      <Link
-                        href={`/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`}
-                        className={clsx('rounded-full px-2 py-0.5 uppercase tracking-wide', hasHeaderCover ? 'border border-white/35 text-white/85 hover:border-white/60' : 'border border-slate-200 text-slate-500 hover:border-slate-300')}
-                      >
-                        {post.communityName ?? post.communitySlug}
-                      </Link>
-                    ) : null}
-                  </div>
+                  ) : null}
                 </div>
-              </div>
-            </div>
+              }
+              avatarAlt={postAuthorDisplayName}
+              avatarInitials={postAuthorDisplayName}
+              avatarSrc={postOrganization ? (postOrganization.logoUrl ?? null) : post.author.avatarUrl}
+              avatarHref={authorProfileHref}
+              titleHref={authorProfileHref}
+              coverUrl={headerCoverUrl}
+              isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
+              isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
+            />
 
             <div className="space-y-4 text-[16px] leading-7 text-gray-900">
               {post.mediaUrl ? (

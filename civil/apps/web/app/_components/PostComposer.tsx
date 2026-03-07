@@ -11,12 +11,10 @@ import { pushToast } from './useToasts'
 export type PostType = 'post' | 'article' | 'photo' | 'poll'
 export type PostVisibility = 'public' | 'members'
 
-const POST_TYPE_CHOICES: Array<{ type: PostType | 'link' | 'video'; label: string; icon: string; comingSoon?: boolean }> = [
+const POST_TYPE_CHOICES: Array<{ type: PostType; label: string; icon: string }> = [
   { type: 'post', label: 'Post', icon: '📝' },
   { type: 'article', label: 'Article', icon: '📄' },
   { type: 'poll', label: 'Poll', icon: '📊' },
-  { type: 'link', label: 'Link', icon: '🔗', comingSoon: true },
-  { type: 'video', label: 'Video', icon: '🎥', comingSoon: true },
   { type: 'photo', label: 'Photos', icon: '📷' },
 ]
 
@@ -770,10 +768,6 @@ export default function PostComposer({
     className,
   )
 
-  const handleComingSoon = useCallback((label: string) => {
-    pushToast(`${label} creation is coming soon.`, 'info')
-  }, [])
-
   const showCommunityWarning = !communityTarget && !normalizedCommunityOptions.length
 
   return (
@@ -918,30 +912,33 @@ export default function PostComposer({
             )}
           >
             {POST_TYPE_CHOICES.map((choice) => {
-            const isActive = !choice.comingSoon && postType === choice.type
-            const isComingSoon = Boolean(choice.comingSoon)
-            return (
-              <button
-                key={choice.type}
-                type="button"
-                className={clsx(
-                  'flex items-center gap-2 whitespace-nowrap rounded-full px-4 py-1 transition',
-                  variant !== 'plain' && 'shrink-0',
-                  isActive ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
-                  isComingSoon ? 'text-slate-400 hover:text-slate-500' : '',
-                )}
-                onClick={() =>
-                  isComingSoon ? handleComingSoon(choice.label) : setPostType(choice.type as PostType)
-                }
-                disabled={submitting}
-              >
-                <span role="img" aria-label={choice.label}>
-                  {choice.icon}
-                </span>
-                {choice.label}
-              </button>
-            )
-          })}
+              const isActive = postType === choice.type
+              return (
+                <button
+                  key={choice.type}
+                  type="button"
+                  className={clsx(
+                    'inline-flex min-w-[108px] items-center justify-center gap-2.5 whitespace-nowrap rounded-full px-4 py-1.5 transition',
+                    variant !== 'plain' && 'shrink-0',
+                    isActive ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500 hover:text-slate-700',
+                  )}
+                  onClick={() => setPostType(choice.type)}
+                  disabled={submitting}
+                >
+                  <span
+                    className={clsx(
+                      'inline-flex h-6 w-6 items-center justify-center rounded-full text-[0.95rem] leading-none',
+                      isActive ? 'bg-[rgba(213,43,30,0.08)] text-[var(--cc-primary)]' : 'bg-slate-200/80 text-slate-600',
+                    )}
+                    role="img"
+                    aria-label={choice.label}
+                  >
+                    {choice.icon}
+                  </span>
+                  {choice.label}
+                </button>
+              )
+            })}
           </div>
         </div>
       </header>

@@ -506,7 +506,7 @@ const generateCroppedImageBlob = async (
 
 const cropExportOptionsForCategory = (category: ProfileMediaCategory) =>
   category === 'avatar'
-    ? { shape: 'circle' as const, width: AVATAR_EXPORT_SIZE, height: AVATAR_EXPORT_SIZE }
+    ? { shape: 'rect' as const, width: AVATAR_EXPORT_SIZE, height: AVATAR_EXPORT_SIZE }
     : { shape: 'rect' as const, width: COVER_EXPORT_WIDTH, height: COVER_EXPORT_HEIGHT }
 
 function initialsFromUser(user: { name?: string | null; handle?: string | null }) {
@@ -2273,7 +2273,7 @@ export default function ProfileEditPage() {
         imageUrl={(modalMediaState?.previewUrl || modalMediaState?.serverUrl || (photoModalCategory === 'avatar' ? avatarDisplayUrl : coverDisplayUrl)) ?? null}
         cropperImageUrl={photoModalCategory && activePhotoDraft?.previewUrl ? activePhotoDraft.previewUrl : null}
         aspect={currentPhotoCategory === 'avatar' ? 1 : COVER_ASPECT_RATIO}
-        cropShape={currentPhotoCategory === 'avatar' ? 'round' : 'rect'}
+        cropShape="rect"
         showGrid={currentPhotoCategory !== 'avatar'}
         crop={activePhotoDraft?.crop ?? { x: 0, y: 0 }}
         zoom={activePhotoDraft?.zoom ?? 1}
