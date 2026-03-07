@@ -14,6 +14,7 @@ import NotificationTapRouter from './_components/NotificationTapRouter'
 import IosPwaPushPrompt from './_components/IosPwaPushPrompt'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
+import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -116,6 +117,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <IosPwaPushPrompt />
           <IosOpenInAppBanner />
           <AppFrame modal={modal}>{children}</AppFrame>
+          <IncomingMessageCallOverlay />
           <MobileDockVisibility />
           <Toasts />
         </div>

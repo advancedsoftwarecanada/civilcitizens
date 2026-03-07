@@ -12,7 +12,7 @@ const VAPID_SUBJECT = (process.env.VAPID_SUBJECT || '').trim()
 const MAX_FAILURES_BEFORE_DEACTIVATE = 5
 const PUSH_MAX_PAYLOAD_BYTES = 3072
 
-const ALLOWED_PUSH_TYPES = ['message', 'org', 'marketplace', 'system'] as const
+const ALLOWED_PUSH_TYPES = ['message', 'call', 'org', 'marketplace', 'system'] as const
 
 export type PushPayloadType = (typeof ALLOWED_PUSH_TYPES)[number]
 
