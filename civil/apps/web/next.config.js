@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   distDir: process.env.CIVIL_NEXT_DIST_DIR || '.next',
+  allowedDevOrigins: ['dev.civilcitizens.ca'],
   transpilePackages: ['@civil/ui', '@civil/shared'],
   eslint: {
     ignoreDuringBuilds: true,

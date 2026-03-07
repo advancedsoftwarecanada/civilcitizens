@@ -1883,7 +1883,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     )
 
     return (
-      <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
+      <div className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
         <header className="flex items-center gap-3 border-b border-slate-100 pb-3">
           <button
             type="button"
@@ -1993,8 +1993,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
             </details>
           ) : null}
         </header>
-        <div className="mt-4 flex-1 overflow-hidden">
-          <div className="flex h-full flex-col">
+        <div className="mt-4 min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-col">
             {activeThreadHasMore ? (
               <button
                 type="button"
@@ -2006,7 +2006,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                 Load previous
               </button>
             ) : null}
-            <div ref={messagesViewportRef} className="flex-1 overflow-y-auto pr-2">
+            <div ref={messagesViewportRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2">
               <div
                 className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-0' : 'pb-1')}
                 style={mobileComposerBottomSpacer ? { paddingBottom: mobileComposerBottomSpacer } : undefined}
@@ -2179,7 +2179,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   ) : null
 
   const inboxPanel = (
-    <div className="flex h-full flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
+    <div className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
       <div className="space-y-3 border-b border-slate-100 pb-4">
         <MessagesNavBlock
           active={activeInboxSection}
@@ -2207,7 +2207,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           </Link>
         </div>
       </div>
-      <div className="mt-4 flex-1 overflow-y-auto pr-1">
+      <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
         <div className="mb-2 flex items-center justify-between px-1">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{contextActions.contextLabel}</p>
           <p className="text-[11px] text-slate-400">
@@ -2222,20 +2222,22 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
 
   const keyboardAwareViewportClass = hideGlobalMobileDockInThread
-    ? 'sticky top-0 h-[calc(100dvh-4.5rem-env(safe-area-inset-bottom))] md:h-[calc(100vh-4.5rem)] pb-2 md:pb-8'
-    : 'sticky top-0 h-[calc(100dvh-4.5rem-var(--mobile-dock-clearance))] md:h-[calc(100vh-4.5rem)] pb-4 md:pb-8'
+    ? 'min-h-0 h-[var(--cc-viewport-height)] pb-2 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
+    : 'min-h-0 h-[calc(var(--cc-viewport-height)-var(--mobile-dock-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
 
   return (
     <DashboardShell
       className="!min-h-0"
       rightRail={inboxPanel}
+      mainTopClassName="pt-0"
       rightRailClassName={keyboardAwareViewportClass}
+      rightRailTopClassName="pt-0"
       mainClassName={keyboardAwareViewportClass}
     >
       {isMobileViewport ? (
-        <div className="h-full">{activeThread ? renderMessages() : inboxPanel}</div>
+        <div className="h-full min-h-0">{activeThread ? renderMessages() : inboxPanel}</div>
       ) : (
-        <div className="h-full">{renderMessages()}</div>
+        <div className="h-full min-h-0">{renderMessages()}</div>
       )}
       {lightboxUrl
         ? createPortal(
