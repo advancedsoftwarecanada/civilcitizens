@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the signed Android release artifacts and publish the APK to the web public folder.
+"""Build the signed Android release artifacts and publish the APK and AAB.
 
 Usage:
   python3 _BUILD_ANDROID.py
@@ -8,6 +8,7 @@ What it does:
     1. Builds the Android release APK and AAB from the Capacitor project.
     2. Verifies the APK signature with `apksigner` when available.
     3. Copies the final APK into `civil/apps/web/public/android/`.
+    4. Copies the final AAB into `builds/mobile/android/release/` for Google Play upload.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ ANDROID_OUTPUT_AAB = ANDROID_PROJECT_DIR / "app" / "build" / "outputs" / "bundle
 ANDROID_RELEASE_DIR = REPO_ROOT / "builds" / "mobile" / "android" / "release"
 WEB_PUBLIC_ANDROID_DIR = REPO_ROOT / "civil" / "apps" / "web" / "public" / "android"
 PUBLISHED_AAB = ANDROID_RELEASE_DIR / "Civil-android-release.aab"
+PUBLISHED_AAB_PLAY = ANDROID_RELEASE_DIR / "civil.aab"
 ANDROID_STUDIO_JAVA = Path("/Applications/Android Studio.app/Contents/jbr/Contents/Home")
 ANDROID_SDK = Path.home() / "Library" / "Android" / "sdk"
 PUBLISHED_APK = WEB_PUBLIC_ANDROID_DIR / "civil.apk"
@@ -88,12 +90,14 @@ def main() -> int:
     WEB_PUBLIC_ANDROID_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ANDROID_OUTPUT_APK, PUBLISHED_APK)
     shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB)
+    shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB_PLAY)
 
     print()
     print(f"Built APK: {ANDROID_OUTPUT_APK}")
     print(f"Built AAB: {ANDROID_OUTPUT_AAB}")
     print(f"Published APK: {PUBLISHED_APK}")
     print(f"Published AAB: {PUBLISHED_AAB}")
+    print(f"Google Play AAB: {PUBLISHED_AAB_PLAY}")
     print(f"Web path: /android/{PUBLISHED_APK.name}")
     return 0
 
