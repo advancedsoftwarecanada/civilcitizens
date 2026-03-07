@@ -3,14 +3,23 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import type { ReactNode } from 'react'
 import {
   HiOutlineArrowRightOnRectangle,
+  HiOutlineBell,
+  HiOutlineChatBubbleLeftRight,
+  HiOutlineBuildingLibrary,
   HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
+  HiOutlineFlag,
+  HiOutlineShoppingBag,
+  HiOutlineTrash,
   HiOutlineUserCircle,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
+import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
+import Modal from '../_components/Modal'
 import type { MeResponse } from '../_lib/me'
 import { hasHomeCommunity } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
@@ -18,6 +27,7 @@ import { isSuperAdmin } from '../_lib/admin'
 import { clearAuthSession } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
+import { redirectToAuthModal } from '../_lib/authModal'
 import {
   enableNativePushOptIn,
   disableNativePushNotifications,
@@ -34,32 +44,200 @@ import {
   isPushEnabled as isWebPushEnabled,
 } from '../_lib/pushClient'
 import { resetIosPwaPushPromptForNextOpen } from '../_lib/iosPwaPushPromptState'
-import YourOrdersPanel from '../market/_components/YourOrdersPanel'
-import ShippingAddressesPanel from '../market/_components/ShippingAddressesPanel'
+import { pushToast } from '../_components/useToasts'
 
-const CARD_LINKS: Array<{
-  key: 'profile' | 'communities'
+type SettingsActionCardItem = {
+  key: string
   label: string
   description: string
-  href: string
+  href?: string
+  onClick?: () => void
   icon: IconType
-}> = [
-  {
-    key: 'profile',
-    label: 'My Profile',
-    description: 'Edit your bio, experience, and civic identity.',
-    href: '/profile/edit',
-    icon: HiOutlineUserCircle,
-  },
-  {
-    key: 'communities',
-    label: 'Manage Communities',
-    description: 'Pick your home riding and follow more communities.',
-    href: '/communities/settings',
-    icon: HiOutlineBuildingOffice2,
-  },
-  // TODO: Re-enable Billing card in /settings when premium/billing is ready to surface.
-]
+  tone?: 'default' | 'danger'
+}
+
+type SettingsActionCardProps = {
+  label: string
+  description: string
+  icon: IconType
+  href?: string
+  onClick?: () => void
+  tone?: 'default' | 'danger'
+}
+
+type SettingsToggleCardProps = {
+  icon: IconType
+  title: string
+  description: string
+  enabled: boolean
+  busy: boolean
+  disabled?: boolean
+  note?: string | null
+  actionLabel?: string | null
+  onAction?: () => void
+  onToggle: (nextEnabled: boolean) => void
+}
+
+function normalizeDangerInput(value: string | null | undefined) {
+  return (value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+function SettingsSectionHeader({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string
+  title: string
+  description: string
+}) {
+  return (
+    <header>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{eyebrow}</p>
+      <h2 className="mt-1 text-xl font-semibold text-slate-900">{title}</h2>
+      <p className="mt-1 text-sm text-slate-500">{description}</p>
+    </header>
+  )
+}
+
+function SettingsPanelSection({
+  id,
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  id?: string
+  eyebrow: string
+  title: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <section id={id} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <SettingsSectionHeader eyebrow={eyebrow} title={title} description={description} />
+      <div className="mt-6">{children}</div>
+    </section>
+  )
+}
+
+function SettingsActionCard({
+  label,
+  description,
+  icon: Icon,
+  href,
+  onClick,
+  tone = 'default',
+}: SettingsActionCardProps) {
+  const cardClassName = clsx(
+    'rounded-2xl border p-4 text-left transition hover:bg-slate-50',
+    tone === 'danger'
+      ? 'border-rose-200 bg-rose-50/40 hover:border-rose-300 hover:bg-rose-50/60'
+      : 'border-slate-200 bg-white',
+  )
+  const iconShellClassName = clsx(
+    'rounded-xl border p-2 transition',
+    tone === 'danger'
+      ? 'border-rose-200 bg-rose-50 text-rose-600'
+      : 'border-slate-200 bg-slate-50 text-slate-700',
+  )
+  const labelClassName = tone === 'danger' ? 'text-rose-700' : 'text-slate-900'
+  const descriptionClassName = tone === 'danger' ? 'text-rose-700/80' : 'text-slate-500'
+
+  const content = (
+    <div className="flex items-start gap-3">
+      <div className={iconShellClassName}>
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className={clsx('text-sm font-semibold', labelClassName)}>{label}</p>
+        <p className={clsx('mt-1 text-xs leading-5', descriptionClassName)}>{description}</p>
+      </div>
+    </div>
+  )
+
+  if (href) {
+    return (
+      <Link href={href} className={cardClassName}>
+        {content}
+      </Link>
+    )
+  }
+
+  return (
+    <button type="button" onClick={onClick} className={clsx(cardClassName, 'w-full')}>
+      {content}
+    </button>
+  )
+}
+
+function SettingsToggleCard({
+  icon: Icon,
+  title,
+  description,
+  enabled,
+  busy,
+  disabled = false,
+  note,
+  actionLabel,
+  onAction,
+  onToggle,
+}: SettingsToggleCardProps) {
+  const toggleDisabled = disabled || busy
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-700">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-900">{title}</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          disabled={toggleDisabled}
+          onClick={() => onToggle(!enabled)}
+          className={clsx(
+            'relative inline-flex h-7 w-12 shrink-0 rounded-full border transition disabled:cursor-not-allowed disabled:opacity-60',
+            enabled ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]' : 'border-slate-200 bg-slate-200',
+          )}
+        >
+          <span
+            className={clsx(
+              'absolute top-0.5 h-[22px] w-[22px] rounded-full bg-white shadow-sm transition-transform',
+              enabled ? 'translate-x-[1.35rem]' : 'translate-x-0.5',
+            )}
+          />
+        </button>
+      </div>
+
+      {note ? <p className="mt-3 text-xs leading-5 text-slate-500">{note}</p> : null}
+
+      {actionLabel && onAction ? (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={onAction}
+            disabled={toggleDisabled}
+            className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--cc-primary)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? 'Working…' : actionLabel}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  )
+}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -67,6 +245,11 @@ export default function SettingsPage() {
   const [viewer, setViewer] = useState<MeResponse | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [showDeleteNameModal, setShowDeleteNameModal] = useState(false)
+  const [showDeleteYesModal, setShowDeleteYesModal] = useState(false)
+  const [deleteNameInput, setDeleteNameInput] = useState('')
+  const [deleteYesInput, setDeleteYesInput] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const [showNativePushControl, setShowNativePushControl] = useState(false)
   const [nativePushState, setNativePushState] = useState<PushPermissionState>('unknown')
   const [nativePushBusy, setNativePushBusy] = useState(false)
@@ -97,6 +280,7 @@ export default function SettingsPage() {
         console.error('Unable to load viewer for settings', error)
       }
     })()
+
     return () => {
       cancelled = true
     }
@@ -127,7 +311,7 @@ export default function SettingsPage() {
     setShowWebPushControl(true)
     setWebPushPermission(getWebPushPermissionState())
     if (!canEnableWebPush()) {
-      setWebPushMessage('Install the PWA (especially on iOS) and allow notifications to enable web push.')
+      setWebPushMessage('Install the PWA and allow notifications on this device to enable web push.')
       return
     }
 
@@ -151,9 +335,7 @@ export default function SettingsPage() {
       if (token) {
         await fetch(buildApiUrl('/auth/logout'), {
           method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-          },
+          headers: { authorization: `Bearer ${token}` },
         })
       }
     } catch (error) {
@@ -163,13 +345,6 @@ export default function SettingsPage() {
       router.replace('/')
     }
   }, [router, token])
-
-  const requestLogout = () => setShowLogoutConfirm(true)
-  const cancelLogout = () => setShowLogoutConfirm(false)
-  const confirmLogout = async () => {
-    await handleLogout()
-    setShowLogoutConfirm(false)
-  }
 
   const handleEnableNativePush = useCallback(async () => {
     if (!showNativePushControl) return
@@ -187,8 +362,7 @@ export default function SettingsPage() {
 
   const handleToggleNativePush = useCallback(
     async (nextEnabled: boolean) => {
-      if (!showNativePushControl) return
-      if (nativePushBusy) return
+      if (!showNativePushControl || nativePushBusy) return
 
       setNativePushBusy(true)
       try {
@@ -212,8 +386,7 @@ export default function SettingsPage() {
 
   const handleToggleWebPush = useCallback(
     async (nextEnabled: boolean) => {
-      if (!showWebPushControl) return
-      if (webPushBusy) return
+      if (!showWebPushControl || webPushBusy) return
 
       setWebPushBusy(true)
       setWebPushMessage(null)
@@ -241,218 +414,364 @@ export default function SettingsPage() {
     [showWebPushControl, webPushBusy],
   )
 
-  const isNativePushToggleOn = useMemo(() => {
-    return !nativePushOptedOut
-  }, [nativePushOptedOut])
+  const isNativePushToggleOn = useMemo(() => !nativePushOptedOut, [nativePushOptedOut])
   const isWebPushSupported = canEnableWebPush()
-
-  const greeting = useMemo(() => {
-    if (!viewer?.name) return 'Settings'
-    return `Settings for ${viewer.name}`
-  }, [viewer?.name])
-
+  const viewerDisplayName = useMemo(() => viewer?.name?.trim() || viewer?.handle || 'Civil Citizen', [viewer?.handle, viewer?.name])
   const isAdminViewer = useMemo(() => isSuperAdmin(viewer), [viewer])
   const showManageOrganizations = useMemo(() => hasHomeCommunity(viewer), [viewer])
   const manageOrganizationsHref = showManageOrganizations ? '/organizations/manager' : null
+  const deleteVerificationValue = useMemo(() => {
+    const fullName = viewer?.name?.trim()
+    if (fullName) return fullName
+    return viewer?.email?.trim() ?? ''
+  }, [viewer?.email, viewer?.name])
+  const deleteVerificationLabel = viewer?.name?.trim() ? 'Type your full name' : 'Type your account email'
+  const deleteNameMatches = useMemo(
+    () => normalizeDangerInput(deleteNameInput) === normalizeDangerInput(deleteVerificationValue),
+    [deleteNameInput, deleteVerificationValue],
+  )
+  const deleteYesMatches = deleteYesInput.trim().toUpperCase() === 'YES'
+
+  const openDeleteAccountFlow = useCallback(() => {
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    setDeleteNameInput('')
+    setDeleteYesInput('')
+    setShowDeleteYesModal(false)
+    setShowDeleteNameModal(true)
+  }, [token])
+
+  const controlPanelItems = useMemo<SettingsActionCardItem[]>(() => {
+    const items: SettingsActionCardItem[] = [
+      {
+        key: 'profile',
+        label: 'Profile',
+        description: 'Edit your bio, cover photo, profile photo, and civic identity.',
+        href: '/profile/edit',
+        icon: HiOutlineUserCircle,
+      },
+      {
+        key: 'communities',
+        label: 'Communities',
+        description: 'Set your home riding and manage the communities you follow.',
+        href: '/communities/settings',
+        icon: HiOutlineBuildingOffice2,
+      },
+      {
+        key: 'commerce',
+        label: 'Orders & Shipping',
+        description: 'Open your market buyer account, orders, and saved shipping details.',
+        href: '/market/account',
+        icon: HiOutlineShoppingBag,
+      },
+      {
+        key: 'support',
+        label: 'Customer Support',
+        description: 'Submit service or feature requests and track reported content you filed.',
+        href: '/settings/support',
+        icon: HiOutlineChatBubbleLeftRight,
+      },
+      {
+        key: 'logout',
+        label: 'Log Out',
+        description: 'End your current session on this device.',
+        onClick: () => setShowLogoutConfirm(true),
+        icon: HiOutlineArrowRightOnRectangle,
+      },
+      {
+        key: 'delete',
+        label: 'Delete Account',
+        description: 'Delete your profile, messages, posts, organizations, and authored content permanently.',
+        onClick: openDeleteAccountFlow,
+        icon: HiOutlineTrash,
+        tone: 'danger',
+      },
+    ]
+
+    if (manageOrganizationsHref) {
+      items.splice(2, 0, {
+        key: 'organizations',
+        label: 'Organizations',
+        description: 'Manage organizations you own, follow, or help operate.',
+        href: manageOrganizationsHref,
+        icon: HiOutlineBuildingLibrary,
+      })
+    }
+
+    if (isAdminViewer) {
+      items.push({
+        key: 'moderation',
+        label: 'Reports & Support',
+        description: 'Review quarantined content, customer-service requests, and feature requests.',
+        href: '/settings/admin/reports',
+        icon: HiOutlineFlag,
+      })
+      items.push({
+        key: 'admin',
+        label: 'Admin Dashboard',
+        description: 'Open platform diagnostics and moderation controls.',
+        href: '/admin',
+        icon: HiOutlineCog8Tooth,
+      })
+    }
+
+    return items
+  }, [isAdminViewer, manageOrganizationsHref, openDeleteAccountFlow])
+
+  const closeDeleteAccountFlow = useCallback(() => {
+    if (deleteBusy) return
+    setShowDeleteNameModal(false)
+    setShowDeleteYesModal(false)
+    setDeleteNameInput('')
+    setDeleteYesInput('')
+  }, [deleteBusy])
+
+  const continueDeleteAccountFlow = useCallback(() => {
+    if (!deleteNameMatches || deleteBusy) return
+    setShowDeleteNameModal(false)
+    setShowDeleteYesModal(true)
+  }, [deleteBusy, deleteNameMatches])
+
+  const confirmDeleteAccount = useCallback(async () => {
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!deleteNameMatches || !deleteYesMatches) return
+
+    setDeleteBusy(true)
+    try {
+      const response = await fetch(buildApiUrl('/account'), {
+        method: 'DELETE',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          fullName: deleteNameInput,
+          confirmation: deleteYesInput.trim().toUpperCase(),
+        }),
+      })
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      if (!response.ok) {
+        if (payload?.error === 'name_mismatch') {
+          pushToast('The full-name confirmation did not match your account.', 'error')
+        } else if (payload?.error === 'confirmation_mismatch') {
+          pushToast('Type YES to permanently delete this account.', 'error')
+        } else {
+          pushToast(payload?.error ?? 'Unable to delete this account right now.', 'error')
+        }
+        return
+      }
+
+      clearAuthSession()
+      router.replace('/')
+    } catch (error) {
+      console.error('Failed to delete account', error)
+      pushToast('Unable to delete this account right now.', 'error')
+    } finally {
+      setDeleteBusy(false)
+    }
+  }, [deleteNameInput, deleteNameMatches, deleteYesInput, deleteYesMatches, router, token])
+
+  const panelEyebrow = useMemo(() => `${viewerDisplayName.toUpperCase()} · ACCOUNT`, [viewerDisplayName])
 
   return (
-    <DashboardShell
-      className="bg-slate-50"
-      mainClassName="space-y-6"
-    >
-      <section className="surface-card px-6 py-5 shadow-subtle">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Account</p>
-            <h1 className="mt-2 text-3xl font-semibold text-slate-900">{greeting}</h1>
-            <p className="mt-3 text-sm text-slate-600">
-              Manage everything about your Civil account from one dashboard. Pick a card to jump straight into the experience you need.
+    <DashboardShell className="bg-slate-50" mainClassName="space-y-6">
+      <SettingsPanelSection
+        id="notifications"
+        eyebrow="Notifications"
+        title="Device Controls"
+        description="Manage how Civil reaches you on this device without digging through browser settings."
+      >
+        <section className="surface-card p-4 shadow-subtle">
+          {showNativePushControl || showWebPushControl ? (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {showNativePushControl ? (
+                <SettingsToggleCard
+                  icon={HiOutlineBell}
+                  title="iOS Notifications"
+                  description="Allow the installed app to receive push notifications from Civil."
+                  enabled={isNativePushToggleOn}
+                  busy={nativePushBusy}
+                  note={
+                    isNativePushToggleOn && nativePushState !== 'granted'
+                      ? 'If notifications still do not appear, check your iPhone Settings > Notifications > Civil.'
+                      : null
+                  }
+                  actionLabel={
+                    nativePushState !== 'denied' && nativePushState !== 'unknown' && nativePushState !== 'prompt' && nativePushOptedOut
+                      ? 'Re-enable Notifications'
+                      : null
+                  }
+                  onAction={() => {
+                    void handleEnableNativePush()
+                  }}
+                  onToggle={(nextEnabled) => {
+                    void handleToggleNativePush(nextEnabled)
+                  }}
+                />
+              ) : null}
+
+              {showWebPushControl ? (
+                <SettingsToggleCard
+                  icon={HiOutlineBell}
+                  title="Web Push Notifications"
+                  description="Turn on browser or PWA notifications for this device."
+                  enabled={webPushEnabled}
+                  busy={webPushBusy}
+                  disabled={!webPushEnabled && !isWebPushSupported}
+                  note={
+                    webPushMessage
+                      ? webPushMessage
+                      : !isWebPushSupported
+                        ? `Permission: ${webPushPermission}. iOS requires opening the installed PWA from your home screen before enabling push.`
+                        : `Permission: ${webPushPermission}.`
+                  }
+                  onToggle={(nextEnabled) => {
+                    void handleToggleWebPush(nextEnabled)
+                  }}
+                />
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">Notification controls are not available on this device.</p>
+          )}
+        </section>
+      </SettingsPanelSection>
+
+      <SettingsPanelSection
+        eyebrow={panelEyebrow}
+        title="Control Panel"
+        description="Manage every part of your account from one place."
+      >
+        <section className="surface-card p-4 shadow-subtle">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {controlPanelItems.map((item) => (
+              <SettingsActionCard
+                key={item.key}
+                href={item.href}
+                onClick={item.onClick}
+                icon={item.icon}
+                label={item.label}
+                description={item.description}
+                tone={item.tone}
+              />
+            ))}
+          </div>
+        </section>
+      </SettingsPanelSection>
+
+      <Modal open={showLogoutConfirm} onClose={() => setShowLogoutConfirm(false)} title="Log out">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">You will need to sign in again to continue.</p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowLogoutConfirm(false)}
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleLogout()
+              }}
+              className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+            >
+              Log Out
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={showDeleteNameModal} onClose={closeDeleteAccountFlow} title="Delete account">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            This permanently deletes your account and removes your authored posts, messages, comments, owned organizations, and related content.
+          </p>
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Confirmation Step 1</p>
+            <p className="mt-2 text-sm text-rose-800">
+              {deleteVerificationLabel}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-rose-900">{deleteVerificationValue || 'No account name available.'}</p>
+          </div>
+          <input
+            type="text"
+            value={deleteNameInput}
+            onChange={(event) => setDeleteNameInput(event.target.value)}
+            disabled={deleteBusy}
+            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder={deleteVerificationValue}
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeDeleteAccountFlow}
+              disabled={deleteBusy}
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={continueDeleteAccountFlow}
+              disabled={deleteBusy || !deleteNameMatches || !deleteVerificationValue}
+              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={showDeleteYesModal} onClose={closeDeleteAccountFlow} title="Delete account">
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-700">Confirmation Step 2</p>
+            <p className="mt-2 text-sm text-rose-800">
+              Type <span className="font-semibold text-rose-900">YES</span> to permanently delete this account.
             </p>
           </div>
-        </div>
-
-        {showNativePushControl ? (
-          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">iOS Notifications</p>
-                <p className="text-xs text-slate-600">
-                  {isNativePushToggleOn
-                    ? 'We will attempt to send you push notifications.'
-                    : 'Turn this on to allow the server to send push notifications.'}
-                </p>
-              </div>
-              <label className="inline-flex items-center gap-3 select-none">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {nativePushBusy ? 'Working…' : isNativePushToggleOn ? 'On' : 'Off'}
-                </span>
-                <input
-                  type="checkbox"
-                  className="h-5 w-5 accent-[var(--cc-primary)] disabled:cursor-not-allowed"
-                  checked={isNativePushToggleOn}
-                  disabled={nativePushBusy}
-                  onChange={(e) => void handleToggleNativePush(e.target.checked)}
-                />
-              </label>
-            </div>
-            {isNativePushToggleOn && nativePushState !== 'granted' ? (
-              <div className="mt-3 text-xs text-slate-500">
-                Please ensure your notifications are allowed, in config -&gt; notifications -&gt; civil -&gt; on.
-              </div>
-            ) : null}
-            {nativePushState !== 'denied' && nativePushState !== 'unknown' && nativePushState !== 'prompt' && nativePushOptedOut ? (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={handleEnableNativePush}
-                  disabled={nativePushBusy}
-                  className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {nativePushBusy ? 'Checking…' : 'Re-enable Notifications'}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showWebPushControl ? (
-          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Enable notifications</p>
-                <p className="text-xs text-slate-600">
-                  Turn on web push notifications for this device and browser.
-                </p>
-              </div>
-              <label className="inline-flex items-center gap-3 select-none">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  {webPushBusy ? 'Working…' : webPushEnabled ? 'On' : 'Off'}
-                </span>
-                <input
-                  type="checkbox"
-                  className="h-5 w-5 accent-[var(--cc-primary)] disabled:cursor-not-allowed"
-                  checked={webPushEnabled}
-                  disabled={webPushBusy || (!webPushEnabled && !isWebPushSupported)}
-                  onChange={(e) => void handleToggleWebPush(e.target.checked)}
-                />
-              </label>
-            </div>
-            <p className="mt-3 text-xs text-slate-500">
-              Permission: {webPushPermission}
-            </p>
-            {!isWebPushSupported ? (
-              <p className="mt-1 text-xs text-slate-500">
-                iOS requires opening the installed PWA from your home screen before enabling push.
-              </p>
-            ) : null}
-            {webPushMessage ? (
-              <p className="mt-1 text-xs text-slate-500">{webPushMessage}</p>
-            ) : null}
-          </div>
-        ) : null}
-
-        <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {CARD_LINKS.map((card) => {
-            const Icon = card.icon
-            return (
-              <Link
-                key={card.key}
-                href={card.href}
-                className="group rounded-3xl border border-slate-200 bg-white/90 p-4 text-slate-700 shadow-subtle transition hover:border-[var(--cc-primary)] hover:bg-white"
-              >
-                <span className="inline-flex rounded-2xl bg-[var(--cc-primary)]/10 p-2 text-[var(--cc-primary)]">
-                  <Icon className="h-5 w-5" />
-                </span>
-                <h2 className="mt-3 text-base font-semibold text-slate-900">
-                  {card.label}
-                  <span className="ml-1 text-sm text-[var(--cc-primary)] transition group-hover:translate-x-1">{'>'}</span>
-                </h2>
-                <p className="mt-2 text-xs text-slate-600">{card.description}</p>
-              </Link>
-            )
-          })}
-
-          {manageOrganizationsHref ? (
-            <Link
-              href={manageOrganizationsHref}
-              className="group rounded-3xl border border-slate-200 bg-white/90 p-4 text-slate-700 shadow-subtle transition hover:border-[var(--cc-primary)] hover:bg-white"
+          <input
+            type="text"
+            value={deleteYesInput}
+            onChange={(event) => setDeleteYesInput(event.target.value.toUpperCase())}
+            disabled={deleteBusy}
+            className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm uppercase tracking-[0.18em] text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+            placeholder="YES"
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (deleteBusy) return
+                setShowDeleteYesModal(false)
+                setShowDeleteNameModal(true)
+              }}
+              disabled={deleteBusy}
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              <span className="inline-flex rounded-2xl bg-[var(--cc-primary)]/10 p-2 text-[var(--cc-primary)]">
-                <HiOutlineBuildingOffice2 className="h-5 w-5" />
-              </span>
-              <h2 className="mt-3 text-base font-semibold text-slate-900">
-                Manage Organizations
-                <span className="ml-1 text-sm text-[var(--cc-primary)] transition group-hover:translate-x-1">{'>'}</span>
-              </h2>
-              <p className="mt-2 text-xs text-slate-600">Manage organizations you follow or own.</p>
-            </Link>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="surface-card px-6 py-5 shadow-subtle">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <button
-            type="button"
-            onClick={requestLogout}
-            className="inline-flex items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-5 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100"
-          >
-            <HiOutlineArrowRightOnRectangle className="h-5 w-5" />
-            Log Out
-          </button>
-
-          {isAdminViewer ? (
-            <Link
-              href="/admin"
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-900 bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void confirmDeleteAccount()
+              }}
+              disabled={deleteBusy || !deleteNameMatches || !deleteYesMatches}
+              className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
             >
-              <HiOutlineCog8Tooth className="h-5 w-5" />
-              Open Admin Dashboard
-            </Link>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="surface-card px-6 py-5 shadow-subtle">
-        <h2 className="text-base font-semibold text-slate-900">Commerce</h2>
-        <p className="mt-1 text-xs text-slate-600">Your order history and saved shipping details.</p>
-        <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <YourOrdersPanel title="Your Orders" limit={10} />
-          <ShippingAddressesPanel title="Shipping Addresses" />
-        </div>
-      </section>
-
-      {showLogoutConfirm ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-rose-200 bg-white p-5 shadow-xl">
-            <div className="flex items-center gap-3 text-rose-700">
-              <span className="rounded-xl bg-rose-50 p-2">
-                <HiOutlineArrowRightOnRectangle className="h-5 w-5" />
-              </span>
-              <div>
-                <p className="text-sm font-semibold text-rose-700">Confirm log out</p>
-                <p className="text-xs text-slate-600">You will need to sign in again to continue.</p>
-              </div>
-            </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={cancelLogout}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmLogout}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
-              >
-                Log Out
-              </button>
-            </div>
+              {deleteBusy ? 'Deleting…' : 'Delete Permanently'}
+            </button>
           </div>
         </div>
-      ) : null}
+      </Modal>
     </DashboardShell>
   )
 }

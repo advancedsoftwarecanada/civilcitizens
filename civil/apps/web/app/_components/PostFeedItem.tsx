@@ -1,14 +1,15 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
-import { HiEllipsisHorizontal, HiPencil, HiTrash } from 'react-icons/hi2'
+import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost, CommunityTarget } from './PostComposer'
 import CivilCard from './CivilCard'
+import ContentModerationMenu from './ContentModerationMenu'
 import { formatDisplayName } from '../_lib/text'
 import { buildApiUrl } from '../_lib/api'
 import { getStoredToken } from '../_lib/tokenStorage'
@@ -149,7 +150,6 @@ function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null
 export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerId, communityOptions }: PostFeedItemProps) {
   const router = useRouter()
   const [pending, setPending] = useState(false)
-  const [menuOpen, setMenuOpen] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [repostModalOpen, setRepostModalOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
@@ -162,7 +162,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const [replyDraft, setReplyDraft] = useState('')
   const [recentComments, setRecentComments] = useState(post.recentComments ?? [])
   const [hideInlineCommentComposer, setHideInlineCommentComposer] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
   const commentCount = post.counts?.commentCount ?? 0
   const viewerReaction = post.viewer?.reaction ?? null
   const postUrl = buildPostUrl(post)
@@ -191,6 +190,39 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const isAuthor = viewerId === post.author.id
   const postTypeLabel =
     post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : 'Post'
+  const reportTargetLabel = post.title?.trim() || bodyWithoutCivilLinks.slice(0, 120) || authorDisplayName || post.author.handle
+  const blockTarget = organization
+    ? {
+        type: 'organization' as const,
+        id: organization.id,
+        label: organization.name,
+      }
+    : {
+        type: 'user' as const,
+        id: post.author.id,
+        label: authorDisplayName || post.author.handle,
+      }
+  const authorActions = isAuthor
+    ? [
+        {
+          key: 'edit',
+          label: 'Edit',
+          icon: HiPencil,
+          disabled: isDeleting,
+          onSelect: () => setIsEditing(true),
+        },
+        {
+          key: 'delete',
+          label: 'Delete',
+          icon: HiTrash,
+          tone: 'danger' as const,
+          disabled: isDeleting,
+          onSelect: () => {
+            void handleDelete()
+          },
+        },
+      ]
+    : []
 
   useEffect(() => {
     setRecentComments(post.recentComments ?? [])
@@ -212,17 +244,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, FEED_COMMENT_PREVIEW_LIMIT)
   }, [recentComments])
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [menuOpen])
 
   const handleDelete = async () => {
     if (!confirm('Are you sure you want to delete this post?')) return
@@ -432,44 +453,32 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           coverUrl={authorCoverUrl}
           isVerified={isVerifiedAuthor}
           isBusiness={isBusinessAuthor}
-          contentClassName={isAuthor ? 'pr-14' : undefined}
+          contentClassName="pr-14"
         />
-        {isAuthor ? (
-          <div ref={menuRef} className="absolute right-3 top-3 z-30">
-            <button
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-slate-950/45 text-white shadow-lg backdrop-blur-md transition hover:border-[var(--cc-primary)] hover:bg-slate-950/60"
-              disabled={isDeleting}
-              aria-label="Post actions"
-            >
-              <HiEllipsisHorizontal className="h-5 w-5" />
-            </button>
-            {menuOpen ? (
-              <div className="absolute right-0 top-full z-40 mt-2 w-36 rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_20px_40px_rgba(15,23,42,0.18)]">
-                <button
-                  onClick={() => {
-                    setMenuOpen(false)
-                    setIsEditing(true)
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                >
-                  <HiPencil className="h-4 w-4" />
-                  Edit
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false)
-                    void handleDelete()
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                >
-                  <HiTrash className="h-4 w-4" />
-                  Delete
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        <div className="absolute right-3 top-3 z-30">
+          <ContentModerationMenu
+            actions={authorActions}
+            reportTarget={
+              isAuthor
+                ? null
+                : {
+                    targetType: 'POST',
+                    targetId: post.id,
+                    targetLabel: reportTargetLabel,
+                  }
+            }
+            blockTarget={isAuthor ? null : blockTarget}
+            buttonLabel={isAuthor ? 'Post actions' : 'Post settings'}
+            onReported={() => {
+              onDelete?.(post.id)
+              router.refresh()
+            }}
+            onBlocked={() => {
+              onDelete?.(post.id)
+              router.refresh()
+            }}
+          />
+        </div>
       </header>
 
       <div className="space-y-3 text-[15px] leading-6 text-slate-800">

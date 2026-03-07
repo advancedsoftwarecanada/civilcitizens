@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useMemo } from 'react'
-import { HiOutlineBriefcase, HiOutlineCog8Tooth, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
+import { HiOutlineBriefcase, HiOutlineCog8Tooth, HiOutlineFlag, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import DashboardShell from '../_components/DashboardShell'
 import { useAdminAccess } from './_hooks/useAdminAccess'
@@ -36,6 +36,13 @@ const ACTIONS: AdminAction[] = [
     description: 'Open dashboards for usage, engagement, and traffic trends.',
     href: '/admin/analytics',
     icon: HiOutlinePresentationChartBar,
+  },
+  {
+    key: 'moderation',
+    label: 'Reports & support',
+    description: 'Review quarantined content plus customer-service and feature requests.',
+    href: '/settings/admin/reports',
+    icon: HiOutlineFlag,
   },
   {
     key: 'jobs',
@@ -80,7 +87,7 @@ export default function AdminPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Admin</p>
           <h1 className="text-2xl font-semibold text-slate-900">Operator console</h1>
           <p className="text-sm text-slate-600">
-            Jump to environment diagnostics, GeoData coverage, and analytics dashboards.
+            Jump to environment diagnostics, GeoData coverage, analytics dashboards, and the unified reports queue.
           </p>
         </section>
 
@@ -110,7 +117,7 @@ export default function AdminPage() {
         <section className="surface-card px-6 py-5 text-sm text-slate-500">
           <p className="font-semibold text-slate-700">Coming soon</p>
           <p className="mt-1">
-            We&apos;ll expand the operator console with moderation queues, billing insights, and launch tools as they ship.
+            We&apos;ll keep expanding the operator console with billing insights and launch tools as they ship.
           </p>
         </section>
       </>
