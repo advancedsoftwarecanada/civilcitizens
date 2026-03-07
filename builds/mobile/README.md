@@ -30,3 +30,6 @@ Then open the native projects:
 
 - Android public test APK + Play Store bundle:
 	- `python3 _BUILD_ANDROID.py`
+	- Outputs:
+		- APK: `civil/apps/web/public/android/civil.apk`
+		- AAB: `builds/mobile/android/release/civil.aab`
