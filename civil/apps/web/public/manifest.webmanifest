@@ -8,9 +8,9 @@
   "theme_color": "#CA052D",
   "icons": [
     {
-      "src": "/PWA-ICON.jpg?v=20260303",
+      "src": "/PWA-ICON.png?v=20260306",
       "sizes": "1024x1024",
-      "type": "image/jpeg",
+      "type": "image/png",
       "purpose": "any"
     },
     {

@@ -51,7 +51,7 @@ export const metadata: Metadata = {
   icons: {
     icon: '/favicon.png',
     shortcut: '/favicon.png',
-    apple: '/PWA-ICON.jpg?v=20260303',
+    apple: '/PWA-ICON.png?v=20260306',
   },
   openGraph: {
     title: 'Civil Citizens',

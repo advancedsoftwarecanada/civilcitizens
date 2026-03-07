@@ -66,6 +66,16 @@ export function isAppleNativeApp(): boolean {
   return bridge.getPlatform() === 'ios'
 }
 
+export function isAndroidNativeApp(): boolean {
+  const bridge = getCapacitorBridge()
+  if (!bridge || typeof bridge.getPlatform !== 'function') return false
+  return bridge.getPlatform() === 'android'
+}
+
+export function isNativeApp(): boolean {
+  return isAppleNativeApp() || isAndroidNativeApp()
+}
+
 export async function getLastNativeNotificationTapUrl(): Promise<string | null> {
   const bridge = getCapacitorBridge()
   if (!bridge || bridge.getPlatform?.() !== 'ios') return null

@@ -214,6 +214,46 @@ export default function OrganizationMeetingRoomClient({
   const rtcIceServersRef = useRef<RTCIceServer[]>([{ urls: 'stun:stun.l.google.com:19302' }])
   const chatScrollerRef = useRef<HTMLDivElement | null>(null)
 
+  const attachStreamToMediaElement = useCallback(
+    (node: HTMLMediaElement | null, stream: MediaStream | null, { muted = false }: { muted?: boolean } = {}) => {
+      if (!node) return
+
+      node.autoplay = true
+      node.muted = muted
+      node.defaultMuted = muted
+
+      if (node instanceof HTMLVideoElement) {
+        node.playsInline = true
+        node.controls = false
+        node.setAttribute('playsinline', 'true')
+        node.setAttribute('webkit-playsinline', 'true')
+      }
+
+      if (!stream) {
+        node.srcObject = null
+        return
+      }
+
+      if (node.srcObject !== stream) {
+        node.srcObject = stream
+      }
+
+      const tryPlay = () => {
+        const playback = node.play()
+        if (playback && typeof playback.catch === 'function') {
+          playback.catch((error) => {
+            console.warn('organization_meeting_media_playback_failed', error)
+          })
+        }
+      }
+
+      tryPlay()
+      window.setTimeout(tryPlay, 0)
+      window.setTimeout(tryPlay, 250)
+    },
+    [],
+  )
+
   const basePath = useMemo(
     () =>
       `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(organization)}/meetings`,
@@ -284,10 +324,8 @@ export default function OrganizationMeetingRoomClient({
       }
     }
     localStreamRef.current = null
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null
-    }
-  }, [])
+    attachStreamToMediaElement(localVideoRef.current, null, { muted: true })
+  }, [attachStreamToMediaElement])
 
   const closeRtcSocket = useCallback(() => {
     const socket = rtcSocketRef.current
@@ -737,10 +775,7 @@ export default function OrganizationMeetingRoomClient({
       })
       stopLocalPreview()
       localStreamRef.current = stream
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream
-        void localVideoRef.current.play().catch(() => undefined)
-      }
+      attachStreamToMediaElement(localVideoRef.current, stream, { muted: true })
       applyLocalTracksToPeerConnections(stream)
       setMediaReady(true)
       setMediaError(null)
@@ -1137,12 +1172,7 @@ export default function OrganizationMeetingRoomClient({
                         playsInline
                         className="h-full w-full rounded-xl object-cover"
                         ref={(node) => {
-                          if (!node) return
-                          const stream = remoteStreams[peer.peerId]
-                          if (!stream) return
-                          if (node.srcObject !== stream) {
-                            node.srcObject = stream
-                          }
+                          attachStreamToMediaElement(node, remoteStreams[peer.peerId] ?? null, { muted: false })
                         }}
                       />
                     ) : (

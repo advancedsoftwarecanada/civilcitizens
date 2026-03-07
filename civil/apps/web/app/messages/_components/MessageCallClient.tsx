@@ -214,6 +214,46 @@ export default function MessageCallClient({
   const rtcPeerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map())
   const rtcIceServersRef = useRef<RTCIceServer[]>([{ urls: 'stun:stun.l.google.com:19302' }])
 
+  const attachStreamToMediaElement = useCallback(
+    (node: HTMLMediaElement | null, stream: MediaStream | null, { muted = false }: { muted?: boolean } = {}) => {
+      if (!node) return
+
+      node.autoplay = true
+      node.muted = muted
+      node.defaultMuted = muted
+
+      if (node instanceof HTMLVideoElement) {
+        node.playsInline = true
+        node.controls = false
+        node.setAttribute('playsinline', 'true')
+        node.setAttribute('webkit-playsinline', 'true')
+      }
+
+      if (!stream) {
+        node.srcObject = null
+        return
+      }
+
+      if (node.srcObject !== stream) {
+        node.srcObject = stream
+      }
+
+      const tryPlay = () => {
+        const playback = node.play()
+        if (playback && typeof playback.catch === 'function') {
+          playback.catch((error) => {
+            console.warn('message_call_media_playback_failed', error)
+          })
+        }
+      }
+
+      tryPlay()
+      window.setTimeout(tryPlay, 0)
+      window.setTimeout(tryPlay, 250)
+    },
+    [],
+  )
+
   const authedFetch = useCallback(async (path: string, init?: RequestInit) => {
     const token = getStoredToken()
     if (!token) {
@@ -244,26 +284,15 @@ export default function MessageCallClient({
       }
     }
     localStreamRef.current = null
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null
-    }
-  }, [])
+    attachStreamToMediaElement(localVideoRef.current, null, { muted: true })
+  }, [attachStreamToMediaElement])
 
   const syncLocalPreview = useCallback(
     (stream: MediaStream | null) => {
       if (!localVideoRef.current) return
-      if (!stream) {
-        localVideoRef.current.srcObject = null
-        return
-      }
-      if (localVideoRef.current.srcObject !== stream) {
-        localVideoRef.current.srcObject = stream
-      }
-      if (cameraEnabled) {
-        void localVideoRef.current.play().catch(() => undefined)
-      }
+      attachStreamToMediaElement(localVideoRef.current, cameraEnabled ? stream : null, { muted: true })
     },
-    [cameraEnabled],
+    [attachStreamToMediaElement, cameraEnabled],
   )
 
   const clearRemoteStreamForPeer = useCallback((peerId: string) => {
@@ -1052,11 +1081,7 @@ export default function MessageCallClient({
                                 playsInline
                                 className="h-full w-full object-cover"
                                 ref={(node) => {
-                                  if (!node) return
-                                  if (node.srcObject !== remoteStream) {
-                                    node.srcObject = remoteStream
-                                  }
-                                  node.muted = false
+                                  attachStreamToMediaElement(node, remoteStream, { muted: false })
                                 }}
                               />
                             ) : (
@@ -1065,11 +1090,7 @@ export default function MessageCallClient({
                                   <audio
                                     autoPlay
                                     ref={(node) => {
-                                      if (!node) return
-                                      if (node.srcObject !== remoteStream) {
-                                        node.srcObject = remoteStream
-                                      }
-                                      node.muted = false
+                                      attachStreamToMediaElement(node, remoteStream, { muted: false })
                                     }}
                                     className="hidden"
                                   />

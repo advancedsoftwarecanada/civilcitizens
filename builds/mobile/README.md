@@ -25,3 +25,8 @@ Then open the native projects:
 
 - iOS: `mobile/capacitor/ios/App/App.xcworkspace`
 - Android: `mobile/capacitor/android/`
+
+## Release commands
+
+- Android public test APK + Play Store bundle:
+	- `python3 _BUILD_ANDROID.py`
