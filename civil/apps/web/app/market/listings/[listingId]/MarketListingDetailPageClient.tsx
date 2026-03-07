@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { LuRepeat2, LuShare } from 'react-icons/lu'
+import ContentModerationMenu from '../../../_components/ContentModerationMenu'
 import DashboardShell from '../../../_components/DashboardShell'
 import SharePostModal from '../../../_components/SharePostModal'
 import ShareSendModal from '../../../_components/ShareSendModal'
@@ -179,7 +180,7 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
             </div>
 
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <h2 className="text-xl font-semibold text-slate-900">{listing.title}</h2>
                 <p className="mt-1 text-sm text-slate-600">
                   {listing.pickupCity ? `${listing.pickupCity}${listing.pickupProvince ? `, ${listing.pickupProvince}` : ''}` : 'Location not specified'}
@@ -203,7 +204,26 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                   </button>
                 </div>
               </div>
-              <div className="text-lg font-semibold text-slate-900">{priceLabel}</div>
+              <div className="flex items-start gap-2">
+                {listing.seller ? (
+                  <ContentModerationMenu
+                    reportTarget={{
+                      targetType: 'MARKET_LISTING',
+                      targetId: listing.id,
+                      targetLabel: listing.title,
+                    }}
+                    blockTarget={{
+                      type: 'user',
+                      id: listing.seller.id,
+                      label: listing.seller.name || (listing.seller.handle ? `@${listing.seller.handle}` : 'Seller'),
+                    }}
+                    buttonClassName="border-slate-200 bg-white text-slate-700 shadow-none backdrop-blur-0 hover:bg-slate-50 hover:text-slate-900"
+                    onReported={() => router.push('/market')}
+                    onBlocked={() => router.push('/market')}
+                  />
+                ) : null}
+                <div className="text-lg font-semibold text-slate-900">{priceLabel}</div>
+              </div>
             </div>
 
             {listing.description ? <p className="text-base text-slate-800">{listing.description}</p> : null}
