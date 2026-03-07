@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
+import { HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import Sidebar from '../../../../_components/Sidebar'
 import { RightRail } from '../../../../_components/RightRail'
@@ -13,14 +14,18 @@ import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import CivilCard from '../../../../_components/CivilCard'
 import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
+import ContentModerationMenu from '../../../../_components/ContentModerationMenu'
 import PostReactionBar from '../../../../_components/PostReactionBar'
 import PollCard from '../../../../_components/PollCard'
 import ThreadBottomCommentComposer from '../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../_components/ShareSendModal'
+import { pushToast } from '../../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
+import { buildApiUrl } from '../../../../_lib/api'
 import { buildPostShareTarget } from '../../../../_lib/shareTarget'
 import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
+import { getStoredToken } from '../../../../_lib/tokenStorage'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
@@ -443,6 +448,61 @@ export default function UserPostPage({ params }: PageProps) {
       ? `/u/${post.author.handle}`
       : '/home'
   const headerCoverUrl = postOrganization?.coverUrl ?? post?.author.coverUrl ?? null
+  const isAuthor = Boolean(viewer?.id && post?.author.id && viewer.id === post.author.id)
+  const reportTargetLabel = post?.title?.trim() || postOrganization?.name || postAuthorDisplayName || 'Post'
+  const blockTarget = post
+    ? postOrganization
+      ? {
+          type: 'organization' as const,
+          id: postOrganization.id,
+          label: postOrganization.name,
+        }
+      : {
+          type: 'user' as const,
+          id: post.author.id,
+          label: postAuthorDisplayName || post.author.handle,
+        }
+    : null
+  const postDeletedRedirectHref = post ? `/u/${post.author.handle}` : '/home'
+  const postSettingsActions = isAuthor
+    ? [
+        {
+          key: 'delete',
+          label: 'Delete',
+          icon: HiTrash,
+          tone: 'danger' as const,
+          onSelect: async () => {
+            if (!post) return
+            if (!window.confirm('Are you sure you want to delete this post?')) return
+
+            const token = getStoredToken()
+            if (!token) {
+              redirectToAuthModal('login')
+              return
+            }
+
+            try {
+              const response = await fetch(buildApiUrl(`/posts/${encodeURIComponent(post.id)}`), {
+                method: 'DELETE',
+                headers: {
+                  authorization: `Bearer ${token}`,
+                },
+              })
+
+              if (!response.ok) {
+                pushToast('Failed to delete post.', 'error')
+                return
+              }
+
+              pushToast('Post deleted.', 'success')
+              router.push(postDeletedRedirectHref)
+            } catch {
+              pushToast('Failed to delete post.', 'error')
+            }
+          },
+        },
+      ]
+    : []
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
@@ -482,7 +542,7 @@ export default function UserPostPage({ params }: PageProps) {
                 ) : null}
               </nav>
 
-                <header className="space-y-4">
+                <header className="relative space-y-4">
                   <CivilCard
                     size="banner"
                     name={postOrganization?.name ?? postAuthorDisplayName}
@@ -510,7 +570,26 @@ export default function UserPostPage({ params }: PageProps) {
                     coverUrl={headerCoverUrl}
                     isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
                     isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
+                    contentClassName="pr-14"
                   />
+                  <div className="absolute right-3 top-3 z-20">
+                    <ContentModerationMenu
+                      actions={postSettingsActions}
+                      reportTarget={
+                        post && !isAuthor
+                          ? {
+                              targetType: 'POST',
+                              targetId: post.id,
+                              targetLabel: reportTargetLabel,
+                            }
+                          : null
+                      }
+                      blockTarget={post && !isAuthor ? blockTarget : null}
+                      buttonLabel={isAuthor ? 'Post actions' : 'Post settings'}
+                      onReported={() => router.push('/home')}
+                      onBlocked={() => router.push('/home')}
+                    />
+                  </div>
                   <div className="text-[16px] leading-7 text-slate-900">
                     <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} />
                     {post.type === 'article' && post.title ? (

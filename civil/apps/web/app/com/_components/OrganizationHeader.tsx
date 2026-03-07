@@ -2,7 +2,9 @@
 
 import clsx from 'clsx'
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { LuRepeat2, LuShare } from 'react-icons/lu'
+import ContentModerationMenu from '../../_components/ContentModerationMenu'
 import SharePostModal from '../../_components/SharePostModal'
 import ShareSendModal from '../../_components/ShareSendModal'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
@@ -31,6 +33,7 @@ export default function OrganizationHeader({
   municipality: string
   slug: string
 }) {
+  const router = useRouter()
   const [resolvedOrg, setResolvedOrg] = useState<CommunityOrganization | null>(org)
   const [memberCount, setMemberCount] = useState<number | null>(null)
   const [repostModalOpen, setRepostModalOpen] = useState(false)
@@ -96,6 +99,7 @@ export default function OrganizationHeader({
         meta: `${memberCount ?? '—'} members`,
       }
     : null
+  const showModerationMenu = Boolean(resolvedOrg && !resolvedOrg.viewerRole)
 
   return (
     <div className={resolvedOrg ? 'space-y-0' : undefined}>
@@ -150,6 +154,23 @@ export default function OrganizationHeader({
 
           {resolvedOrg ? (
             <div className="flex flex-wrap items-center gap-2 md:self-start">
+              {showModerationMenu ? (
+                <ContentModerationMenu
+                  reportTarget={{
+                    targetType: 'ORGANIZATION',
+                    targetId: resolvedOrg.id,
+                    targetLabel: resolvedOrg.name,
+                  }}
+                  blockTarget={{
+                    type: 'organization',
+                    id: resolvedOrg.id,
+                    label: resolvedOrg.name,
+                  }}
+                  buttonClassName="border-slate-200 bg-white text-slate-700 shadow-none backdrop-blur-0 hover:bg-slate-50 hover:text-slate-900"
+                  onReported={() => router.push('/home')}
+                  onBlocked={() => router.push('/home')}
+                />
+              ) : null}
               <button
                 type="button"
                 onClick={() => setRepostModalOpen(true)}

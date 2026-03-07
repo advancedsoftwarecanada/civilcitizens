@@ -65,6 +65,27 @@ export default function TermsPage() {
           </section>
 
           <section className="space-y-3 text-slate-700">
+            <h2 className="text-xl font-semibold text-slate-900">Account Deletion</h2>
+            <p>
+              You may request deletion of your account from your account settings. To reduce accidental or fraudulent
+              deletion requests, we currently require a two-step confirmation: first, you must type your full name, or
+              the email address on the account if no full name is set, and second, you must type <span className="font-semibold text-slate-900">YES</span>.
+            </p>
+            <p>When an account deletion request is confirmed, Civil Citizens currently deletes the account and removes associated data, including:</p>
+            <ul className="list-disc space-y-1 pl-6">
+              <li>Your profile record and access to the account.</li>
+              <li>Your authored posts, comments, reactions, votes, poll votes, notifications, and feed-related records.</li>
+              <li>Your direct-message participation, sent messages, and related call records that depend on your account.</li>
+              <li>Your friendships, network connections, community follows, business follows, memberships, and push subscriptions.</li>
+              <li>Organizations or business entities you own, along with posts and related records attached to those owned entities.</li>
+            </ul>
+            <p>
+              Where deletion causes a direct-message thread to become empty or no longer valid, the remaining stale thread may also be removed. After
+              deletion is completed, the account cannot be recovered through the normal product flow.
+            </p>
+          </section>
+
+          <section className="space-y-3 text-slate-700">
             <h2 className="text-xl font-semibold text-slate-900">Moderation and Enforcement</h2>
             <p>
               We may review, remove, restrict, or disable content and accounts that violate these terms, applicable law,
@@ -92,7 +113,8 @@ export default function TermsPage() {
             <h2 className="text-xl font-semibold text-slate-900">Termination</h2>
             <p>
               You may stop using the platform at any time. We may suspend or terminate access where terms are violated,
-              required by law, or needed to protect platform integrity.
+              required by law, or needed to protect platform integrity. If you use the in-product delete-account flow,
+              the Account Deletion section above describes what happens to your account and related data.
             </p>
           </section>
 

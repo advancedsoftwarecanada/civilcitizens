@@ -49,9 +49,17 @@ model User {
   businesses                Business[]
   businessMemberships       BusinessMembership[]
   businessFollows           BusinessFollow[]
+  blockedBusinesses         BusinessBlock[]      @relation("UserBlockedBusinesses")
+  blockedUsers              UserBlock[]          @relation("UserBlocksCreated")
+  blockedByUsers            UserBlock[]          @relation("UserBlocksReceived")
   communityFollows          CommunityFollow[]
   comments                  Comment[]
   commentVotes              CommentVote[]
+  contentReportsFiled       ContentReport[]      @relation("ContentReportReporter")
+  contentReportsReviewed    ContentReport[]      @relation("ContentReportReviewer")
+  contentReportsTargeting   ContentReport[]      @relation("ContentReportSubjectUser")
+  supportRequestsFiled      SupportRequest[]     @relation("SupportRequestRequester")
+  supportRequestsReviewed   SupportRequest[]     @relation("SupportRequestReviewer")
   experiences               Experience[]
   mediaAssets               MediaAsset[]         @relation("UserMediaAssets")
   posts                     Post[]
@@ -85,6 +93,7 @@ model Post {
   id             String        @id @default(cuid())
   authorId       String
   businessId     String?
+  moderationStatus ModerationStatus @default(VISIBLE)
   audience       String        @default("friends")
   visibility     String        @default("public")
   body           String
@@ -127,6 +136,7 @@ model Post {
 
   @@index([authorId, createdAt])
   @@index([businessId, createdAt])
+  @@index([moderationStatus, createdAt])
   @@index([provinceCode, communitySlug, createdAt])
   @@index([jurisdiction, createdAt])
 }
@@ -653,6 +663,7 @@ model Business {
   logoMediaId          String?              @unique
   coverMediaId         String?              @unique
   status               BusinessStatus       @default(DRAFT)
+  moderationStatus     ModerationStatus     @default(VISIBLE)
   isVerified           Boolean              @default(false)
   logoUrl              String?
   coverUrl             String?
@@ -667,14 +678,86 @@ model Business {
   owner                User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   memberships          BusinessMembership[]
   follows              BusinessFollow[]
+  blockedByUsers       BusinessBlock[]      @relation("BusinessBlockedByUsers")
+  contentReports       ContentReport[]      @relation("ContentReportSubjectBusiness")
   posts                Post[]
   jobPostings          JobPosting[]
   jobAnalyticsEvents   JobAnalyticsEvent[]
 
   @@unique([provinceCode, communitySlug, slug])
   @@index([ownerId])
+  @@index([status, moderationStatus])
   @@index([provinceCode, communitySlug])
   @@index([slug])
+}
+
+model ContentReport {
+  id                String              @id @default(cuid())
+  reporterUserId    String
+  targetType        ModerationTargetType
+  targetId          String
+  targetLabel       String?
+  targetUrl         String?
+  reportedUserId    String?
+  reportedBusinessId String?
+  reasons           String[]
+  details           String?
+  status            ContentReportStatus @default(OPEN)
+  quarantineAppliedAt DateTime?
+  reviewedAt        DateTime?
+  reviewedByUserId  String?
+  reviewNotes       String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  reporter          User                @relation("ContentReportReporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  reviewedBy        User?               @relation("ContentReportReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reportedUser      User?               @relation("ContentReportSubjectUser", fields: [reportedUserId], references: [id], onDelete: SetNull)
+  reportedBusiness  Business?           @relation("ContentReportSubjectBusiness", fields: [reportedBusinessId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@index([reporterUserId, createdAt])
+}
+
+model SupportRequest {
+  id               String               @id @default(cuid())
+  requesterUserId  String
+  type             SupportRequestType
+  subject          String
+  body             String
+  status           SupportRequestStatus @default(OPEN)
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  adminNotes       String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  requester        User                 @relation("SupportRequestRequester", fields: [requesterUserId], references: [id], onDelete: Cascade)
+  reviewedBy       User?                @relation("SupportRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([requesterUserId, createdAt])
+  @@index([status, createdAt])
+}
+
+model UserBlock {
+  blockerUserId String
+  blockedUserId String
+  createdAt     DateTime @default(now())
+  blocker       User     @relation("UserBlocksCreated", fields: [blockerUserId], references: [id], onDelete: Cascade)
+  blocked       User     @relation("UserBlocksReceived", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@id([blockerUserId, blockedUserId])
+  @@index([blockedUserId])
+}
+
+model BusinessBlock {
+  blockerUserId    String
+  blockedBusinessId String
+  createdAt        DateTime @default(now())
+  blocker          User     @relation("UserBlockedBusinesses", fields: [blockerUserId], references: [id], onDelete: Cascade)
+  blockedBusiness  Business @relation("BusinessBlockedByUsers", fields: [blockedBusinessId], references: [id], onDelete: Cascade)
+
+  @@id([blockerUserId, blockedBusinessId])
+  @@index([blockedBusinessId])
 }
 
 model JobIndustry {
@@ -893,6 +976,33 @@ enum PremiumStatus {
   ACTIVE
   PAST_DUE
   CANCELED
+}
+
+enum ModerationStatus {
+  VISIBLE
+  QUARANTINED
+}
+
+enum ModerationTargetType {
+  POST
+  ORGANIZATION
+  MARKET_LISTING
+  MARKET_PRODUCT
+}
+
+enum ContentReportStatus {
+  OPEN
+  REVIEWED
+}
+
+enum SupportRequestType {
+  CUSTOMER_SERVICE
+  FEATURE_REQUEST
+}
+
+enum SupportRequestStatus {
+  OPEN
+  REVIEWED
 }
 
 enum BusinessStatus {

@@ -1,7 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useCallback, useMemo, useState } from 'react'
+import ContentModerationMenu from '../../../_components/ContentModerationMenu'
 import DashboardShell from '../../../_components/DashboardShell'
 import { addMarketCartItem, readMarketCart, type MarketCartItem, writeMarketCart } from '../../_lib/cart'
 
@@ -37,6 +39,7 @@ export default function MarketProductPageClient({
   product: Product
   organization: Organization
 }) {
+  const router = useRouter()
   const [adding, setAdding] = useState(false)
 
   const priceLabel = useMemo(() => {
@@ -67,12 +70,29 @@ export default function MarketProductPageClient({
             <h1 className="mt-1 text-2xl font-semibold text-slate-900">{product.name}</h1>
             {orgLocation ? <div className="mt-1 text-sm text-slate-600">{orgLocation}</div> : null}
           </div>
-          <Link
-            href="/market/cart"
-            className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-300"
-          >
-            Cart
-          </Link>
+          <div className="flex shrink-0 items-center gap-2">
+            <ContentModerationMenu
+              reportTarget={{
+                targetType: 'MARKET_PRODUCT',
+                targetId: product.id,
+                targetLabel: product.name,
+              }}
+              blockTarget={{
+                type: 'organization',
+                id: organization.id,
+                label: organization.name,
+              }}
+              buttonClassName="border-slate-200 bg-white text-slate-700 shadow-none backdrop-blur-0 hover:bg-slate-50 hover:text-slate-900"
+              onReported={() => router.push('/market')}
+              onBlocked={() => router.push('/market')}
+            />
+            <Link
+              href="/market/cart"
+              className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-300"
+            >
+              Cart
+            </Link>
+          </div>
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">

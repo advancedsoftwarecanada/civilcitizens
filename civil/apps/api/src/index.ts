@@ -26,6 +26,11 @@ import {
   MessageParticipantRole,
   BusinessRole,
   PollResultsVisibility as PrismaPollResultsVisibility,
+  ModerationStatus,
+  ModerationTargetType,
+  ContentReportStatus,
+  SupportRequestType,
+  SupportRequestStatus,
   ReactionType as PrismaReactionType,
 } from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
@@ -2818,13 +2823,30 @@ function formatMarketplacePrice(cents: number, currency: string): string {
   }
 }
 
-async function canViewerAccessPostForPreview(post: { visibility: string; businessId: string | null }, viewerId: string | null): Promise<boolean> {
+async function canViewerAccessPostForPreview(
+  post: {
+    visibility: string
+    businessId: string | null
+    moderationStatus?: ModerationStatus
+    authorId?: string
+  },
+  viewerId: string | null,
+): Promise<boolean> {
+  const blockState = await loadViewerBlockState(viewerId)
+  if (post.moderationStatus && post.authorId && isPostHiddenFromViewer({
+    moderationStatus: post.moderationStatus,
+    authorId: post.authorId,
+    businessId: post.businessId,
+  }, blockState)) {
+    return false
+  }
   if (post.visibility !== 'members' || !post.businessId) return true
   if (!viewerId) return false
   const business = await prisma.business.findUnique({
     where: { id: post.businessId },
-    select: { ownerId: true },
+    select: { ownerId: true, moderationStatus: true },
   })
+  if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) return false
   if (business?.ownerId === viewerId) return true
   const membership = await prisma.businessMembership.findUnique({
     where: { businessId_userId: { businessId: post.businessId, userId: viewerId } },
@@ -4104,6 +4126,354 @@ async function resolveUserId(req: FastifyRequest): Promise<string | null> {
   return null
 }
 
+type ViewerBlockState = {
+  blockedUserIds: Set<string>
+  blockedBusinessIds: Set<string>
+}
+
+async function loadViewerBlockState(userId: string | null | undefined): Promise<ViewerBlockState> {
+  if (!userId) {
+    return {
+      blockedUserIds: new Set<string>(),
+      blockedBusinessIds: new Set<string>(),
+    }
+  }
+
+  const [userBlocks, businessBlocks] = await Promise.all([
+    prisma.userBlock.findMany({
+      where: { blockerUserId: userId },
+      select: { blockedUserId: true },
+    }),
+    prisma.businessBlock.findMany({
+      where: { blockerUserId: userId },
+      select: { blockedBusinessId: true },
+    }),
+  ])
+
+  return {
+    blockedUserIds: new Set(userBlocks.map((row: { blockedUserId: string }) => row.blockedUserId)),
+    blockedBusinessIds: new Set(businessBlocks.map((row: { blockedBusinessId: string }) => row.blockedBusinessId)),
+  }
+}
+
+function appendWhereAndClause<T extends { AND?: unknown }>(where: T, clause: unknown): T {
+  const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
+  ;(where as T & { AND: unknown[] }).AND = [...existingAnd, clause]
+  return where
+}
+
+function applyViewerBlockFiltersToPostWhere(where: Prisma.PostWhereInput, blockState: ViewerBlockState) {
+  const blockedUserIds = Array.from(blockState.blockedUserIds)
+  const blockedBusinessIds = Array.from(blockState.blockedBusinessIds)
+  if (blockedUserIds.length) {
+    appendWhereAndClause(where, { authorId: { notIn: blockedUserIds } })
+  }
+  if (blockedBusinessIds.length) {
+    appendWhereAndClause(where, {
+      OR: [
+        { businessId: null },
+        { businessId: { notIn: blockedBusinessIds } },
+      ],
+    })
+  }
+  return where
+}
+
+function applyVisibleModerationFiltersToPostWhere(where: Prisma.PostWhereInput, blockState?: ViewerBlockState) {
+  where.moderationStatus = ModerationStatus.VISIBLE
+  appendWhereAndClause(where, {
+    OR: [
+      { businessId: null },
+      { business: { moderationStatus: ModerationStatus.VISIBLE } },
+    ],
+  })
+  if (blockState) {
+    applyViewerBlockFiltersToPostWhere(where, blockState)
+  }
+  return where
+}
+
+function applyViewerBlockFiltersToBusinessWhere(where: Prisma.BusinessWhereInput, blockState: ViewerBlockState) {
+  const blockedBusinessIds = Array.from(blockState.blockedBusinessIds)
+  if (blockedBusinessIds.length) {
+    appendWhereAndClause(where, { id: { notIn: blockedBusinessIds } })
+  }
+  return where
+}
+
+function applyVisibleModerationFiltersToBusinessWhere(where: Prisma.BusinessWhereInput, blockState?: ViewerBlockState) {
+  where.moderationStatus = ModerationStatus.VISIBLE
+  if (blockState) {
+    applyViewerBlockFiltersToBusinessWhere(where, blockState)
+  }
+  return where
+}
+
+function isAuthorOrBusinessBlocked(
+  blockState: ViewerBlockState,
+  args: {
+    authorId?: string | null
+    businessId?: string | null
+  },
+) {
+  if (args.authorId && blockState.blockedUserIds.has(args.authorId)) return true
+  if (args.businessId && blockState.blockedBusinessIds.has(args.businessId)) return true
+  return false
+}
+
+function isVisibleModerationStatus(value: string | null | undefined) {
+  return String(value ?? '').toUpperCase() === 'VISIBLE'
+}
+
+function isPostHiddenFromViewer(
+  post: {
+    moderationStatus: ModerationStatus
+    authorId: string
+    businessId: string | null
+  },
+  blockState: ViewerBlockState,
+) {
+  if (post.moderationStatus !== ModerationStatus.VISIBLE) return true
+  return isAuthorOrBusinessBlocked(blockState, {
+    authorId: post.authorId,
+    businessId: post.businessId,
+  })
+}
+
+function isBusinessHiddenFromViewer(
+  business: {
+    id: string
+    moderationStatus?: ModerationStatus | null
+  },
+  blockState: ViewerBlockState,
+) {
+  if (business.moderationStatus !== ModerationStatus.VISIBLE) return true
+  return blockState.blockedBusinessIds.has(business.id)
+}
+
+function moderationLockedErrorCode(targetType: ModerationTargetType | 'POST' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT') {
+  switch (targetType) {
+    case ModerationTargetType.POST:
+    case 'POST':
+      return 'post_quarantined'
+    case ModerationTargetType.ORGANIZATION:
+    case 'ORGANIZATION':
+      return 'organization_quarantined'
+    case ModerationTargetType.MARKET_LISTING:
+    case 'MARKET_LISTING':
+      return 'listing_quarantined'
+    case ModerationTargetType.MARKET_PRODUCT:
+    case 'MARKET_PRODUCT':
+      return 'product_quarantined'
+    default:
+      return 'content_quarantined'
+  }
+}
+
+type ResolvedModerationTarget = {
+  targetType: ModerationTargetType
+  targetId: string
+  targetLabel: string
+  targetUrl: string | null
+  reportedUserId: string | null
+  reportedBusinessId: string | null
+}
+
+async function resolveModerationTarget(targetType: ModerationTargetType, targetId: string): Promise<ResolvedModerationTarget | null> {
+  if (targetType === ModerationTargetType.POST) {
+    const post = await prisma.post.findUnique({
+      where: { id: targetId },
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        seoSlug: true,
+        authorId: true,
+        businessId: true,
+        provinceCode: true,
+        communitySlug: true,
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+          },
+        },
+        author: {
+          select: {
+            handle: true,
+          },
+        },
+      },
+    })
+    if (!post) return null
+
+    const fallbackSlug = post.seoSlug ?? post.id
+    const targetUrl =
+      post.business && post.business.provinceCode && post.business.communitySlug
+        ? `/${post.business.provinceCode.toLowerCase()}/${post.business.communitySlug.toLowerCase()}/posts/${fallbackSlug}`
+        : post.provinceCode && post.communitySlug
+          ? `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${fallbackSlug}`
+          : `/u/${post.author.handle}/posts/${fallbackSlug}`
+
+    return {
+      targetType,
+      targetId: post.id,
+      targetLabel: (post.title?.trim() || sanitizePlainText(post.body).slice(0, 120) || 'Untitled post').trim(),
+      targetUrl,
+      reportedUserId: post.authorId,
+      reportedBusinessId: post.businessId ?? null,
+    }
+  }
+
+  if (targetType === ModerationTargetType.ORGANIZATION) {
+    const org = await prisma.business.findUnique({
+      where: { id: targetId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        ownerId: true,
+        provinceCode: true,
+        communitySlug: true,
+      },
+    })
+    if (!org) return null
+
+    const targetUrl =
+      org.provinceCode && org.communitySlug
+        ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}`
+        : null
+
+    return {
+      targetType,
+      targetId: org.id,
+      targetLabel: org.name,
+      targetUrl,
+      reportedUserId: org.ownerId,
+      reportedBusinessId: org.id,
+    }
+  }
+
+  if (targetType === ModerationTargetType.MARKET_LISTING) {
+    await ensureCitizenMarketplaceTables()
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string
+        title: string
+        seller_user_id: string
+      }>
+    >`
+      SELECT id, title, seller_user_id
+      FROM citizen_market_listing
+      WHERE id = ${targetId}
+      LIMIT 1
+    `
+    const row = rows[0]
+    if (!row) return null
+
+    return {
+      targetType,
+      targetId: row.id,
+      targetLabel: row.title,
+      targetUrl: `/market/listings/${encodeURIComponent(row.id)}`,
+      reportedUserId: row.seller_user_id,
+      reportedBusinessId: null,
+    }
+  }
+
+  if (targetType === ModerationTargetType.MARKET_PRODUCT) {
+    await ensureOrganizationShopTables()
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string
+        name: string
+        business_id: string
+        business_name: string
+        business_slug: string
+        province_code: string | null
+        community_slug: string | null
+      }>
+    >`
+      SELECT
+        p.id,
+        p.name,
+        p.business_id,
+        b.name AS business_name,
+        b.slug AS business_slug,
+        b."provinceCode" AS province_code,
+        b."communitySlug" AS community_slug
+      FROM organization_shop_product p
+      INNER JOIN "Business" b ON b.id = p.business_id
+      WHERE p.id = ${targetId}
+      LIMIT 1
+    `
+    const row = rows[0]
+    if (!row) return null
+
+    const targetUrl =
+      row.province_code && row.community_slug && row.business_slug
+        ? `/com/${row.province_code.toLowerCase()}/${row.community_slug.toLowerCase()}/orgs/${row.business_slug}/shop?product=${encodeURIComponent(row.id)}`
+        : `/market/products/${encodeURIComponent(row.id)}`
+
+    return {
+      targetType,
+      targetId: row.id,
+      targetLabel: row.name,
+      targetUrl,
+      reportedUserId: null,
+      reportedBusinessId: row.business_id,
+    }
+  }
+
+  return null
+}
+
+async function applyModerationQuarantine(
+  tx: Prisma.TransactionClient,
+  targetType: ModerationTargetType,
+  targetId: string,
+) {
+  if (targetType === ModerationTargetType.POST) {
+    await tx.post.updateMany({
+      where: { id: targetId },
+      data: { moderationStatus: ModerationStatus.QUARANTINED },
+    })
+    return
+  }
+
+  if (targetType === ModerationTargetType.ORGANIZATION) {
+    await tx.business.updateMany({
+      where: { id: targetId },
+      data: { moderationStatus: ModerationStatus.QUARANTINED },
+    })
+    return
+  }
+
+  if (targetType === ModerationTargetType.MARKET_LISTING) {
+    await tx.$executeRaw`
+      UPDATE citizen_market_listing
+      SET moderation_status = ${'quarantined'},
+          is_draft = TRUE,
+          updated_at = NOW()
+      WHERE id = ${targetId}
+    `
+    return
+  }
+
+  if (targetType === ModerationTargetType.MARKET_PRODUCT) {
+    await tx.$executeRaw`
+      UPDATE organization_shop_product
+      SET moderation_status = ${'quarantined'},
+          is_draft = TRUE,
+          updated_at = NOW()
+      WHERE id = ${targetId}
+    `
+  }
+}
+
 function hashMeetingPassword(raw: string): string {
   return createHash('sha256').update(raw).digest('hex')
 }
@@ -4896,6 +5266,7 @@ const POST_INCLUDE = {
       id: true,
       name: true,
       slug: true,
+      moderationStatus: true,
       isVerified: true,
       logoUrl: true,
       coverUrl: true,
@@ -4921,6 +5292,7 @@ const POST_INCLUDE = {
           id: true,
           name: true,
           slug: true,
+          moderationStatus: true,
           isVerified: true,
           logoUrl: true,
           coverUrl: true,
@@ -5319,7 +5691,11 @@ function formatPost(
   const now = options.now ?? new Date()
 
   let sharedPost: FormattedPost | null = null
-  if (post.sharedPost) {
+  if (
+    post.sharedPost &&
+    post.sharedPost.moderationStatus === ModerationStatus.VISIBLE &&
+    (!post.sharedPost.business || post.sharedPost.business.moderationStatus === ModerationStatus.VISIBLE)
+  ) {
     sharedPost = formatPost(post.sharedPost as any)
   }
 
@@ -6627,6 +7003,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       const linkedOrganizations = await prisma.business.findMany({
         where: {
           status: 'ACTIVE',
+          moderationStatus: ModerationStatus.VISIBLE,
           OR: normalizedExperienceOrganizationNames.map((name) => ({
             name: {
               equals: name,
@@ -7140,14 +7517,24 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true } })
     if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
-    let business: { id: string; ownerId: string; provinceCode: string | null; communitySlug: string | null; status: BusinessStatus } | null = null
+    let business: {
+      id: string
+      ownerId: string
+      provinceCode: string | null
+      communitySlug: string | null
+      status: BusinessStatus
+      moderationStatus: ModerationStatus
+    } | null = null
     const businessId = (parse.data as any).businessId as string | undefined
     if (businessId) {
       business = await prisma.business.findUnique({
         where: { id: businessId },
-        select: { id: true, ownerId: true, provinceCode: true, communitySlug: true, status: true },
+        select: { id: true, ownerId: true, provinceCode: true, communitySlug: true, status: true, moderationStatus: true },
       })
       if (!business) return reply.code(404).send({ error: 'organization_not_found' })
+      if (business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+      }
 
       const isOwner = business.ownerId === userId
       const membership = isOwner
@@ -7377,6 +7764,9 @@ app.post('/posts/:id/poll/options', async (req: FastifyRequest, reply: FastifyRe
       include: POST_INCLUDE,
     })
     if (!post || post.type !== 'poll' || !post.poll) return reply.code(404).send({ error: 'poll_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
     if (post.authorId !== userId) return reply.code(403).send({ error: 'forbidden' })
     if (post.poll.endedAt) return reply.code(409).send({ error: 'poll_closed' })
     if (post.poll.options.length >= MAX_POLL_OPTIONS) {
@@ -7429,6 +7819,9 @@ app.post('/posts/:id/poll/end', async (req: FastifyRequest, reply: FastifyReply)
       include: POST_INCLUDE,
     })
     if (!post || post.type !== 'poll' || !post.poll) return reply.code(404).send({ error: 'poll_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
     if (post.authorId !== userId) return reply.code(403).send({ error: 'forbidden' })
 
     if (!post.poll.endedAt) {
@@ -7474,12 +7867,21 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
 
     if (post.visibility === 'members' && post.businessId) {
-      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+      }
       const isOwner = business?.ownerId === userId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -7562,12 +7964,21 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
 
     if (post.visibility === 'members' && post.businessId) {
-      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+      }
       const isOwner = business?.ownerId === userId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -7665,15 +8076,23 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
 
     const post = await prisma.post.findUnique({
       where: { id: params.data.id },
-      select: { id: true, visibility: true, businessId: true },
+      select: { id: true, visibility: true, businessId: true, moderationStatus: true, authorId: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
+    const blockState = await loadViewerBlockState(viewerId)
+    if (isPostHiddenFromViewer(post, blockState)) return reply.code(404).send({ error: 'post_not_found' })
 
     if (post.visibility === 'members' && post.businessId) {
       if (!viewerId) return reply.code(404).send({ error: 'post_not_found' })
-      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+      }
       const isOwner = business?.ownerId === viewerId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -7741,12 +8160,21 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
 
     if (post.visibility === 'members' && post.businessId) {
-      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+      }
       const isOwner = business?.ownerId === userId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -7885,15 +8313,24 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
           },
         },
         post: {
-          select: { id: true, createdAt: true, updatedAt: true, visibility: true, businessId: true },
+          select: { id: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
         },
       },
     })
 
     if (!existing) return reply.code(404).send({ error: 'comment_not_found' })
+    if (existing.post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
 
     if (existing.post.visibility === 'members' && existing.post.businessId) {
-      const business = await prisma.business.findUnique({ where: { id: existing.post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: existing.post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+      }
       const isOwner = business?.ownerId === userId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -7973,8 +8410,14 @@ app.delete('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     const params = z.object({ id: z.string().cuid() }).safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_id' })
 
-    const post = await prisma.post.findUnique({ where: { id: params.data.id }, select: { authorId: true, type: true } })
+    const post = await prisma.post.findUnique({
+      where: { id: params.data.id },
+      select: { authorId: true, type: true, moderationStatus: true },
+    })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
 
     if (post.authorId !== userId) {
       return reply.code(403).send({ error: 'forbidden' })
@@ -8002,6 +8445,7 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       select: {
         authorId: true,
         type: true,
+        moderationStatus: true,
         poll: {
           select: {
             endedAt: true,
@@ -8015,6 +8459,9 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
+    if (post.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
 
     if (post.authorId !== userId) {
       return reply.code(403).send({ error: 'forbidden' })
@@ -9924,6 +10371,144 @@ app.delete('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyRe
 // Auth: logout (client discards token; endpoint for symmetry)
 app.post('/auth/logout', async (_req: FastifyRequest, reply: FastifyReply) => reply.send({ ok: true }))
 
+const DeleteAccountInput = z.object({
+  fullName: z.string().trim().min(1),
+  confirmation: z.string().trim().min(1),
+})
+
+function normalizeDangerConfirmationValue(value: string | null | undefined) {
+  return (value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+}
+
+async function deleteUserAccountData(tx: Prisma.TransactionClient, userId: string) {
+  const [ownedBusinesses, userThreads] = await Promise.all([
+    tx.business.findMany({
+      where: { ownerId: userId },
+      select: { id: true },
+    }),
+    tx.messageParticipant.findMany({
+      where: { userId },
+      select: { threadId: true },
+    }),
+  ])
+
+  const ownedBusinessIds = ownedBusinesses.map((business: { id: string }) => business.id)
+  const postWhere: Prisma.PostWhereInput = ownedBusinessIds.length
+    ? { OR: [{ authorId: userId }, { businessId: { in: ownedBusinessIds } }] }
+    : { authorId: userId }
+
+  const postsToDelete = await tx.post.findMany({
+    where: postWhere,
+    select: { id: true },
+  })
+
+  const postIds = postsToDelete.map((post: { id: string }) => post.id)
+  const affectedThreadIds = Array.from(new Set(userThreads.map((thread: { threadId: string }) => thread.threadId)))
+
+  if (postIds.length > 0) {
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        avatarPostId: null,
+        coverPostId: null,
+      },
+    })
+
+    await tx.post.updateMany({
+      where: { sharedPostId: { in: postIds } },
+      data: { sharedPostId: null },
+    })
+
+    await Promise.all([
+      tx.notification.deleteMany({ where: { postId: { in: postIds } } }),
+      tx.pageView.deleteMany({ where: { postId: { in: postIds } } }),
+      tx.feedEntry.deleteMany({ where: { postId: { in: postIds } } }),
+      tx.postHashtag.deleteMany({ where: { postId: { in: postIds } } }),
+    ])
+
+    await tx.post.deleteMany({ where: { id: { in: postIds } } })
+  }
+
+  await Promise.all([
+    tx.notification.deleteMany({
+      where: {
+        OR: [{ userId }, { actorId: userId }],
+      },
+    }),
+    tx.pageView.deleteMany({ where: { userId } }),
+    tx.feedEntry.deleteMany({ where: { userId } }),
+    tx.stripeWebhookEvent.deleteMany({ where: { userId } }),
+  ])
+
+  await tx.user.delete({ where: { id: userId } })
+
+  if (affectedThreadIds.length > 0) {
+    const threads = await tx.messageThread.findMany({
+      where: { id: { in: affectedThreadIds } },
+      select: {
+        id: true,
+        type: true,
+        _count: {
+          select: {
+            participants: true,
+            messages: true,
+          },
+        },
+      },
+    })
+
+    const staleThreadIds = threads
+      .filter((thread: { type: MessageThreadType; _count: { participants: number; messages: number } }) => {
+        if (thread._count.messages === 0) return true
+        if (thread._count.participants === 0) return true
+        return thread.type === MessageThreadType.direct && thread._count.participants < 2
+      })
+      .map((thread: { id: string }) => thread.id)
+
+    if (staleThreadIds.length > 0) {
+      await tx.messageThread.deleteMany({ where: { id: { in: staleThreadIds } } })
+    }
+  }
+}
+
+app.delete('/account', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const userId = (req as any).user?.id as string | undefined
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = DeleteAccountInput.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    })
+    if (!user) return reply.code(401).send({ error: 'unauthorized' })
+
+    const expectedName = user.name?.trim() || user.email.trim()
+    if (normalizeDangerConfirmationValue(body.data.fullName) !== normalizeDangerConfirmationValue(expectedName)) {
+      return reply.code(400).send({ error: 'name_mismatch' })
+    }
+
+    if (body.data.confirmation.trim().toUpperCase() !== 'YES') {
+      return reply.code(400).send({ error: 'confirmation_mismatch' })
+    }
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await deleteUserAccountData(tx, user.id)
+    })
+
+    return reply.send({ ok: true })
+  }),
+)
+
 // Auth: forgot password (no SMTP yet; generate token and return it for manual testing)
 app.post('/auth/forgot', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = ForgotPasswordInput.safeParse(req.body)
@@ -11322,6 +11907,16 @@ function ensureOrganizationShopTables() {
     `)
 
     await prisma.$executeRawUnsafe(`
+      ALTER TABLE organization_shop_product
+      ADD COLUMN IF NOT EXISTS moderation_status TEXT NOT NULL DEFAULT 'visible';
+    `)
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS organization_shop_product_moderation_status_idx
+      ON organization_shop_product (moderation_status, updated_at DESC);
+    `)
+
+    await prisma.$executeRawUnsafe(`
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -11454,8 +12049,18 @@ function ensureCitizenMarketplaceTables() {
       `)
 
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS moderation_status TEXT NOT NULL DEFAULT 'visible';
+      `)
+
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_market_listing_scope_idx
         ON citizen_market_listing (listing_province_code, listing_community_slug, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_moderation_status_idx
+        ON citizen_market_listing (moderation_status, updated_at DESC);
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -11505,6 +12110,7 @@ type CommunityOrgRecord = {
   address?: string | null
   schedule?: string | null
   status: BusinessStatus
+  moderationStatus?: ModerationStatus
   isVerified: boolean
   logoUrl?: string | null
   coverUrl?: string | null
@@ -12428,6 +13034,7 @@ app.get('/communities/:province/:municipality/orgs', async (req: FastifyRequest,
     if (!community) return reply.code(404).send({ error: 'community_not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
 
     const where: Prisma.BusinessWhereInput = viewerId
       ? {
@@ -12440,6 +13047,8 @@ app.get('/communities/:province/:municipality/orgs', async (req: FastifyRequest,
           communitySlug: community.slug,
           status: 'ACTIVE',
         }
+
+    applyVisibleModerationFiltersToBusinessWhere(where, viewerBlockState)
 
     const orgs = (await prisma.business.findMany({
       where,
@@ -12504,6 +13113,9 @@ app.get('/organizations/directory', async (req: FastifyRequest, reply: FastifyRe
       }
     }>
 
+    const viewerId = (await resolveUserId(req)) ?? undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
+
     const where: Prisma.BusinessWhereInput = {
       status: 'ACTIVE',
       ...(query.data.type ? { type: query.data.type } : {}),
@@ -12516,6 +13128,8 @@ app.get('/organizations/directory', async (req: FastifyRequest, reply: FastifyRe
           }
         : {}),
     }
+
+    applyVisibleModerationFiltersToBusinessWhere(where, viewerBlockState)
 
     const items = await prisma.business.findMany({
       where,
@@ -12592,6 +13206,7 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
         description: true,
         metadata: true,
         status: true,
+        moderationStatus: true,
         isVerified: true,
         logoUrl: true,
         coverUrl: true,
@@ -12604,6 +13219,10 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
+    if (isBusinessHiddenFromViewer(org, viewerBlockState)) {
+      return reply.code(404).send({ error: 'organization_not_found' })
+    }
 
     const viewerRole = viewerId
       ? org.ownerId === viewerId
@@ -12614,7 +13233,7 @@ app.get('/communities/:province/:municipality/orgs/:slug', async (req: FastifyRe
           }))?.role as 'OWNER' | 'MANAGER' | undefined) ?? null
       : null
 
-    if (org.status !== 'ACTIVE' && !viewerRole) {
+    if ((org.status !== 'ACTIVE' || org.moderationStatus !== ModerationStatus.VISIBLE) && !viewerRole) {
       return reply.code(404).send({ error: 'organization_not_found' })
     }
     const viewerFollowed = viewerId
@@ -12766,7 +13385,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/follow', async (req: F
 
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
-      where: { provinceCode: province, communitySlug: community.slug, slug, status: 'ACTIVE' },
+      where: { provinceCode: province, communitySlug: community.slug, slug, status: 'ACTIVE', moderationStatus: ModerationStatus.VISIBLE },
       select: { id: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -12834,10 +13453,13 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug },
-      select: { id: true, ownerId: true, name: true },
+      select: { id: true, ownerId: true, name: true, metadata: true, moderationStatus: true },
     })
 
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -12973,9 +13595,12 @@ app.delete('/communities/:province/:municipality/orgs/:slug', async (req: Fastif
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
     if (org.ownerId !== userId) return reply.code(403).send({ error: 'owner_required_for_delete' })
 
     await prisma.business.delete({ where: { id: org.id } })
@@ -17022,6 +17647,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/audit', asyn
 app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const viewerId = (await resolveUserId(req)) ?? undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
     const params = CommunityOrgSlugParams.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
 
@@ -17032,9 +17658,12 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true, status: true, name: true, slug: true, provinceCode: true, communitySlug: true },
+      select: { id: true, ownerId: true, status: true, moderationStatus: true, name: true, slug: true, provinceCode: true, communitySlug: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (isBusinessHiddenFromViewer(org, viewerBlockState)) {
+      return reply.code(404).send({ error: 'organization_not_found' })
+    }
 
     const [membership, follow] = viewerId
       ? await Promise.all([
@@ -17046,7 +17675,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
     const isOwner = viewerId ? org.ownerId === viewerId : false
     const canManage = Boolean(isOwner || membership?.role === 'MANAGER' || membership?.role === 'OWNER')
     const isAssociated = Boolean(canManage || follow)
-    if (org.status !== 'ACTIVE' && !isAssociated) {
+    if ((org.status !== 'ACTIVE' || org.moderationStatus !== ModerationStatus.VISIBLE) && !isAssociated) {
       return reply.code(404).send({ error: 'organization_not_found' })
     }
 
@@ -17172,7 +17801,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
             FROM organization_shop_product p
             LEFT JOIN organization_shop_inventory i ON i.product_id = p.id
             WHERE p.business_id = ${org.id}
-            GROUP BY p.id
+              AND p.moderation_status = ${'visible'}
+              GROUP BY p.id
             ORDER BY p.created_at DESC
           `
         : prisma.$queryRaw<ShopProductRow[]>`
@@ -17207,6 +17837,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: Fast
             WHERE p.business_id = ${org.id}
               AND p.is_active = TRUE
               AND p.is_draft = FALSE
+              AND p.moderation_status = ${'visible'}
               AND (p.catalog_id IS NULL OR c.enabled = TRUE)
             GROUP BY p.id
             ORDER BY p.created_at DESC
@@ -17326,9 +17957,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/settings', async (
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true, address: true },
+      select: { id: true, ownerId: true, address: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17560,9 +18194,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/warehouses', asyn
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17610,9 +18247,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async 
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17667,9 +18307,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/:catalogI
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17723,9 +18366,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/catalogs/reorder',
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17787,9 +18433,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products/draft', 
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17836,9 +18485,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17850,12 +18502,15 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     await ensureOrganizationShopTables()
 
-    const productRows = await prisma.$queryRaw<Array<{ id: string; fulfillment_type: string; digital_delivery_url: string | null }>>`
-      SELECT id, fulfillment_type, digital_delivery_url FROM organization_shop_product
+    const productRows = await prisma.$queryRaw<Array<{ id: string; fulfillment_type: string; digital_delivery_url: string | null; moderation_status: string }>>`
+      SELECT id, fulfillment_type, digital_delivery_url, moderation_status FROM organization_shop_product
       WHERE id = ${params.data.productId} AND business_id = ${org.id}
       LIMIT 1
     `
     if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+    if (!isVisibleModerationStatus(productRows[0].moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_PRODUCT') })
+    }
 
     const fulfillmentProvided = Object.prototype.hasOwnProperty.call(body.data, 'fulfillmentType')
     const digitalUrlProvided = Object.prototype.hasOwnProperty.call(body.data, 'digitalDeliveryUrl')
@@ -17938,9 +18593,12 @@ app.delete('/communities/:province/:municipality/orgs/:slug/shop/products/:produ
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -17952,13 +18610,16 @@ app.delete('/communities/:province/:municipality/orgs/:slug/shop/products/:produ
 
     await ensureOrganizationShopTables()
 
-    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id
+    const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
+      SELECT id, moderation_status
       FROM organization_shop_product
       WHERE id = ${params.data.productId} AND business_id = ${org.id}
       LIMIT 1
     `
     if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+    if (!isVisibleModerationStatus(productRows[0].moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_PRODUCT') })
+    }
 
     await prisma.$executeRaw`
       UPDATE organization_shop_product
@@ -17989,9 +18650,12 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true, address: true },
+      select: { id: true, ownerId: true, address: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -18086,9 +18750,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -18100,12 +18767,15 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     await ensureOrganizationShopTables()
 
-    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM organization_shop_product
+    const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
+      SELECT id, moderation_status FROM organization_shop_product
       WHERE id = ${params.data.productId} AND business_id = ${org.id}
       LIMIT 1
     `
     if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+    if (!isVisibleModerationStatus(productRows[0].moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_PRODUCT') })
+    }
 
     const warehouseIds = body.data.quantities.map((entry) => entry.warehouseId)
     const warehouseRows = await prisma.$queryRaw<Array<{ id: string }>>`
@@ -18148,9 +18818,12 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('ORGANIZATION') })
+    }
 
     const isOwner = org.ownerId === userId
     const membership = isOwner
@@ -18162,13 +18835,16 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
 
     await ensureOrganizationShopTables()
 
-    const productRows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id
+    const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
+      SELECT id, moderation_status
       FROM organization_shop_product
       WHERE id = ${params.data.productId} AND business_id = ${org.id}
       LIMIT 1
     `
     if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+    if (!isVisibleModerationStatus(productRows[0].moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_PRODUCT') })
+    }
 
     const galleryImageUrls = body.data.galleryImageUrls ?? []
     await prisma.$executeRaw`
@@ -18314,6 +18990,58 @@ const MarketListingUpdateBody = z.object({
   status: z.enum(['draft', 'active', 'pending_sale', 'sold', 'canceled']).optional(),
 })
 
+const ModerationReportReasonValues = [
+  'spam_or_scam',
+  'hate_or_harassment',
+  'violence_or_threats',
+  'sexual_or_explicit',
+  'child_safety',
+  'impersonation',
+  'misinformation',
+  'illegal_goods_or_services',
+  'copyright_or_ip',
+  'other',
+] as const
+
+const ModerationReportBody = z.object({
+  targetType: z.enum(['POST', 'ORGANIZATION', 'MARKET_LISTING', 'MARKET_PRODUCT']),
+  targetId: z.string().trim().min(1).max(191),
+  reasons: z.array(z.enum(ModerationReportReasonValues)).min(1).max(10),
+  details: z.string().trim().max(2000).optional().nullable(),
+})
+
+const UserBlockBody = z.object({
+  userId: z.string().cuid(),
+})
+
+const BusinessBlockBody = z.object({
+  businessId: z.string().cuid(),
+})
+
+const AdminModerationReportsQuery = z.object({
+  status: z.enum(['OPEN', 'REVIEWED', 'ALL']).default('OPEN'),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+})
+
+const AdminModerationReportReviewBody = z.object({
+  reviewNotes: z.string().trim().max(2000).optional().nullable(),
+})
+
+const SupportRequestBody = z.object({
+  type: z.enum(['CUSTOMER_SERVICE', 'FEATURE_REQUEST']),
+  subject: z.string().trim().min(3).max(160),
+  body: z.string().trim().min(10).max(4000),
+})
+
+const AdminSupportRequestsQuery = z.object({
+  status: z.enum(['OPEN', 'REVIEWED', 'ALL']).default('OPEN'),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+})
+
+const AdminSupportRequestReviewBody = z.object({
+  adminNotes: z.string().trim().max(2000).optional().nullable(),
+})
+
 function parseMarketCursor(cursor: string | undefined): null | { createdAt: Date; id: string } {
   if (!cursor) return null
   const [createdAtRaw, id] = cursor.split('|')
@@ -18386,6 +19114,9 @@ app.get('/market/feed', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
     const userId = (await resolveUserId(req)) ?? undefined
+    const viewerBlockState = await loadViewerBlockState(userId)
+    const blockedUserIds = Array.from(viewerBlockState.blockedUserIds)
+    const blockedBusinessIds = Array.from(viewerBlockState.blockedBusinessIds)
     await Promise.all([ensureOrganizationShopTables(), ensureCitizenMarketplaceTables()])
 
     const follows = userId ? await readViewerCommunityFollows(userId) : []
@@ -18434,7 +19165,10 @@ app.get('/market/feed', async (req: FastifyRequest, reply: FastifyReply) =>
       LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
       WHERE p.is_active = TRUE
         AND p.is_draft = FALSE
+        AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
+        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
+        AND (${blockedBusinessIds.length ? Prisma.sql`p.business_id NOT IN (${Prisma.join(blockedBusinessIds)})` : Prisma.sql`TRUE`})
         AND (${useCommunityScope ? Prisma.sql`(UPPER(COALESCE(b."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(b."communitySlug", '')) IN (${Prisma.join(communitySlugs)}))` : Prisma.sql`TRUE`})
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
       ORDER BY p.created_at DESC, p.id DESC
@@ -18490,6 +19224,8 @@ app.get('/market/feed', async (req: FastifyRequest, reply: FastifyReply) =>
       WHERE l.is_active = TRUE
         AND l.is_draft = FALSE
         AND l.status = 'active'
+        AND l.moderation_status = ${'visible'}
+        AND (${blockedUserIds.length ? Prisma.sql`l.seller_user_id NOT IN (${Prisma.join(blockedUserIds)})` : Prisma.sql`TRUE`})
         AND (${useCommunityScope
           ? Prisma.sql`((UPPER(COALESCE(l.listing_province_code, cf_scope."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(l.listing_community_slug, cf_scope."communitySlug", '')) IN (${Prisma.join(communitySlugs)})) OR l.seller_user_id = ${userId})`
           : Prisma.sql`TRUE`})
@@ -18569,6 +19305,9 @@ app.get('/market/products', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
     const cursor = parseMarketCursor(query.data.cursor)
+    const userId = (await resolveUserId(req)) ?? undefined
+    const viewerBlockState = await loadViewerBlockState(userId)
+    const blockedBusinessIds = Array.from(viewerBlockState.blockedBusinessIds)
     await ensureOrganizationShopTables()
 
     type MarketProductRow = {
@@ -18613,7 +19352,10 @@ app.get('/market/products', async (req: FastifyRequest, reply: FastifyReply) =>
       LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
       WHERE p.is_active = TRUE
         AND p.is_draft = FALSE
+        AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
+        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
+        AND (${blockedBusinessIds.length ? Prisma.sql`p.business_id NOT IN (${Prisma.join(blockedBusinessIds)})` : Prisma.sql`TRUE`})
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
         AND (
           ${cursor ? Prisma.sql`(p.created_at < ${cursor.createdAt} OR (p.created_at = ${cursor.createdAt} AND p.id < ${cursor.id}))` : Prisma.sql`TRUE`}
@@ -18678,6 +19420,8 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
     const params = MarketProductParams.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
 
+    const userId = (await resolveUserId(req)) ?? undefined
+    const viewerBlockState = await loadViewerBlockState(userId)
     await ensureOrganizationShopTables()
 
     type MarketProductDetailRow = {
@@ -18742,7 +19486,9 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
       WHERE p.id = ${params.data.productId}
         AND p.is_active = TRUE
         AND p.is_draft = FALSE
+        AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
+        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
       GROUP BY p.id, b.id
       LIMIT 1
@@ -18750,6 +19496,9 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
 
     const row = rows[0]
     if (!row) return reply.code(404).send({ error: 'product_not_found' })
+    if (viewerBlockState.blockedBusinessIds.has(row.business_id)) {
+      return reply.code(404).send({ error: 'product_not_found' })
+    }
 
     return reply.send({
       product: {
@@ -18839,7 +19588,9 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
       WHERE p.id IN (${Prisma.join(productIds)})
         AND p.is_active = TRUE
         AND p.is_draft = FALSE
+        AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
+        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
       GROUP BY p.id, b.id
     `
@@ -19337,6 +20088,8 @@ app.get('/market/listings/public/:listingId', async (req: FastifyRequest, reply:
     const params = MarketListingParams.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
 
+    const userId = (await resolveUserId(req)) ?? undefined
+    const viewerBlockState = await loadViewerBlockState(userId)
     await ensureCitizenMarketplaceTables()
 
     type PublicListingRow = {
@@ -19384,11 +20137,15 @@ app.get('/market/listings/public/:listingId', async (req: FastifyRequest, reply:
         AND l.is_active = TRUE
         AND l.is_draft = FALSE
         AND l.status = 'active'
+        AND l.moderation_status = ${'visible'}
       LIMIT 1
     `
 
     const row = rows[0]
     if (!row) return reply.code(404).send({ error: 'listing_not_found' })
+    if (viewerBlockState.blockedUserIds.has(row.seller_user_id)) {
+      return reply.code(404).send({ error: 'listing_not_found' })
+    }
 
     return reply.send({
       listing: {
@@ -19426,15 +20183,19 @@ app.post('/market/chats/listings/:listingId/thread', async (req: FastifyRequest,
 
     await ensureCitizenMarketplaceTables()
 
-    const listingRows = await prisma.$queryRaw<Array<{ id: string; title: string; status: string; is_draft: boolean; is_active: boolean; seller_user_id: string }>>`
-      SELECT id, title, status, is_draft, is_active, seller_user_id
+    const viewerBlockState = await loadViewerBlockState(userId)
+    const listingRows = await prisma.$queryRaw<Array<{ id: string; title: string; status: string; is_draft: boolean; is_active: boolean; seller_user_id: string; moderation_status: string }>>`
+      SELECT id, title, status, is_draft, is_active, seller_user_id, moderation_status
       FROM citizen_market_listing
       WHERE id = ${params.data.listingId}
       LIMIT 1
     `
 
     const listing = listingRows[0]
-    if (!listing || !listing.is_active || listing.is_draft || String(listing.status || '').toLowerCase() !== 'active') {
+    if (!listing || !listing.is_active || listing.is_draft || !isVisibleModerationStatus(listing.moderation_status) || String(listing.status || '').toLowerCase() !== 'active') {
+      return reply.code(404).send({ error: 'listing_not_found' })
+    }
+    if (viewerBlockState.blockedUserIds.has(listing.seller_user_id)) {
       return reply.code(404).send({ error: 'listing_not_found' })
     }
 
@@ -19846,8 +20607,8 @@ app.post('/market/chats/item/:listingId/relist', async (req: FastifyRequest, rep
 
     await ensureCitizenMarketplaceTables()
 
-    const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; is_active: boolean }>>`
-      SELECT id, seller_user_id, status, is_active
+    const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; is_active: boolean; moderation_status: string }>>`
+      SELECT id, seller_user_id, status, is_active, moderation_status
       FROM citizen_market_listing
       WHERE id = ${params.data.listingId}
       LIMIT 1
@@ -19855,6 +20616,9 @@ app.post('/market/chats/item/:listingId/relist', async (req: FastifyRequest, rep
     const listing = listingRows[0]
     if (!listing || !listing.is_active) return reply.code(404).send({ error: 'listing_not_found' })
     if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
+    if (!isVisibleModerationStatus(listing.moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_LISTING') })
+    }
 
     await prisma.$executeRaw`
       UPDATE citizen_market_listing
@@ -19943,9 +20707,9 @@ app.post('/market/chats/item/:listingId/select-buyer', async (req: FastifyReques
     await ensureCitizenMarketplaceTables()
 
     const listingRows = await prisma.$queryRaw<
-      Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; is_active: boolean }>
+      Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; is_active: boolean; moderation_status: string }>
     >`
-      SELECT id, seller_user_id, status, selected_buyer_user_id, is_active
+      SELECT id, seller_user_id, status, selected_buyer_user_id, is_active, moderation_status
       FROM citizen_market_listing
       WHERE id = ${params.data.listingId}
       LIMIT 1
@@ -19954,6 +20718,9 @@ app.post('/market/chats/item/:listingId/select-buyer', async (req: FastifyReques
     const listing = listingRows[0]
     if (!listing || !listing.is_active) return reply.code(404).send({ error: 'listing_not_found' })
     if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
+    if (!isVisibleModerationStatus(listing.moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_LISTING') })
+    }
     if (listing.selected_buyer_user_id) return reply.code(400).send({ error: 'buyer_already_selected' })
 
     const selectedThread = await prisma.messageThread.findFirst({
@@ -20305,8 +21072,8 @@ app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
 
     await ensureCitizenMarketplaceTables()
 
-    const listingRows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id
+    const listingRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
+      SELECT id, moderation_status
       FROM citizen_market_listing
       WHERE id = ${params.data.listingId}
         AND seller_user_id = ${userId}
@@ -20314,6 +21081,9 @@ app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
       LIMIT 1
     `
     if (!listingRows[0]) return reply.code(404).send({ error: 'listing_not_found' })
+    if (!isVisibleModerationStatus(listingRows[0].moderation_status)) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('MARKET_LISTING') })
+    }
 
     const nextDescription =
       'description' in body.data ? (body.data.description?.trim() ? sanitizePlainText(body.data.description).trim() : null) : null
@@ -20376,6 +21146,257 @@ app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
     `
 
     return reply.send({ success: true })
+  }),
+)
+
+app.post('/moderation/reports', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const reporterUserId = (await resolveUserId(req)) ?? undefined
+    if (!reporterUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = ModerationReportBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const targetType = body.data.targetType as ModerationTargetType
+    const target = await resolveModerationTarget(targetType, body.data.targetId)
+    if (!target) return reply.code(404).send({ error: 'target_not_found' })
+
+    const reasons = Array.from(new Set(body.data.reasons))
+    const details = body.data.details?.trim() ? sanitizePlainText(body.data.details).trim() : null
+    const now = new Date()
+
+    const report = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const created = await tx.contentReport.create({
+        data: {
+          reporterUserId,
+          targetType,
+          targetId: target.targetId,
+          targetLabel: target.targetLabel,
+          targetUrl: target.targetUrl,
+          reportedUserId: target.reportedUserId,
+          reportedBusinessId: target.reportedBusinessId,
+          reasons,
+          details,
+          status: ContentReportStatus.OPEN,
+          quarantineAppliedAt: now,
+        },
+        select: { id: true },
+      })
+
+      await applyModerationQuarantine(tx, targetType, target.targetId)
+      return created
+    })
+
+    return reply.code(201).send({ ok: true, reportId: report.id })
+  }),
+)
+
+app.post('/moderation/blocks/users', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const blockerUserId = (await resolveUserId(req)) ?? undefined
+    if (!blockerUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = UserBlockBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+    if (body.data.userId === blockerUserId) return reply.code(400).send({ error: 'cannot_block_self' })
+
+    const blockedUser = await prisma.user.findUnique({
+      where: { id: body.data.userId },
+      select: { id: true },
+    })
+    if (!blockedUser) return reply.code(404).send({ error: 'user_not_found' })
+
+    await prisma.userBlock.upsert({
+      where: {
+        blockerUserId_blockedUserId: {
+          blockerUserId,
+          blockedUserId: blockedUser.id,
+        },
+      },
+      update: {},
+      create: {
+        blockerUserId,
+        blockedUserId: blockedUser.id,
+      },
+    })
+
+    return reply.send({ ok: true })
+  }),
+)
+
+app.post('/moderation/blocks/organizations', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const blockerUserId = (await resolveUserId(req)) ?? undefined
+    if (!blockerUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = BusinessBlockBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const business = await prisma.business.findUnique({
+      where: { id: body.data.businessId },
+      select: { id: true },
+    })
+    if (!business) return reply.code(404).send({ error: 'organization_not_found' })
+
+    await prisma.businessBlock.upsert({
+      where: {
+        blockerUserId_blockedBusinessId: {
+          blockerUserId,
+          blockedBusinessId: business.id,
+        },
+      },
+      update: {},
+      create: {
+        blockerUserId,
+        blockedBusinessId: business.id,
+      },
+    })
+
+    return reply.send({ ok: true })
+  }),
+)
+
+app.get('/support/overview', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const requesterUserId = (await resolveUserId(req)) ?? undefined
+    if (!requesterUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const [supportRequests, contentReports] = await Promise.all([
+      prisma.supportRequest.findMany({
+        where: { requesterUserId },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 100,
+        include: {
+          reviewedBy: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+            },
+          },
+        },
+      }),
+      prisma.contentReport.findMany({
+        where: { reporterUserId: requesterUserId },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 100,
+        include: {
+          reportedUser: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              coverUrl: true,
+            },
+          },
+          reportedBusiness: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logoUrl: true,
+              coverUrl: true,
+              provinceCode: true,
+              communitySlug: true,
+            },
+          },
+          reviewedBy: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+            },
+          },
+        },
+      }),
+    ])
+
+    return reply.send({
+      supportRequests: supportRequests.map((request: (typeof supportRequests)[number]) => ({
+        id: request.id,
+        type: request.type,
+        subject: request.subject,
+        body: request.body,
+        status: request.status,
+        adminNotes: request.adminNotes ?? null,
+        createdAt: request.createdAt.toISOString(),
+        updatedAt: request.updatedAt.toISOString(),
+        reviewedAt: request.reviewedAt?.toISOString() ?? null,
+        reviewedBy: request.reviewedBy
+          ? {
+              id: request.reviewedBy.id,
+              handle: request.reviewedBy.handle,
+              name: request.reviewedBy.name,
+            }
+          : null,
+      })),
+      contentReports: contentReports.map((report: (typeof contentReports)[number]) => ({
+        id: report.id,
+        targetType: report.targetType,
+        targetId: report.targetId,
+        targetLabel: report.targetLabel,
+        targetUrl: report.targetUrl,
+        reasons: report.reasons,
+        details: report.details,
+        status: report.status,
+        quarantineAppliedAt: report.quarantineAppliedAt?.toISOString() ?? null,
+        reviewedAt: report.reviewedAt?.toISOString() ?? null,
+        reviewNotes: report.reviewNotes ?? null,
+        createdAt: report.createdAt.toISOString(),
+        updatedAt: report.updatedAt.toISOString(),
+        reviewedBy: report.reviewedBy
+          ? {
+              id: report.reviewedBy.id,
+              handle: report.reviewedBy.handle,
+              name: report.reviewedBy.name,
+            }
+          : null,
+        reportedUser: report.reportedUser
+          ? {
+              id: report.reportedUser.id,
+              handle: report.reportedUser.handle,
+              name: report.reportedUser.name,
+              avatarUrl: normalizeMediaUrl(report.reportedUser.avatarUrl ?? null),
+              coverUrl: normalizeMediaUrl(report.reportedUser.coverUrl ?? null),
+            }
+          : null,
+        reportedBusiness: report.reportedBusiness
+          ? {
+              id: report.reportedBusiness.id,
+              name: report.reportedBusiness.name,
+              slug: report.reportedBusiness.slug,
+              logoUrl: normalizeMediaUrl(report.reportedBusiness.logoUrl ?? null),
+              coverUrl: normalizeMediaUrl(report.reportedBusiness.coverUrl ?? null),
+              provinceCode: report.reportedBusiness.provinceCode,
+              communitySlug: report.reportedBusiness.communitySlug,
+            }
+          : null,
+      })),
+    })
+  }),
+)
+
+app.post('/support/requests', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const requesterUserId = (await resolveUserId(req)) ?? undefined
+    if (!requesterUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = SupportRequestBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const created = await prisma.supportRequest.create({
+      data: {
+        requesterUserId,
+        type: body.data.type as SupportRequestType,
+        subject: sanitizePlainText(body.data.subject).trim(),
+        body: sanitizePlainText(body.data.body).trim(),
+        status: SupportRequestStatus.OPEN,
+      },
+      select: { id: true },
+    })
+
+    return reply.code(201).send({ ok: true, requestId: created.id })
   }),
 )
 
@@ -21632,9 +22653,12 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
     const slug = params.data.slug.trim().toLowerCase()
     const org = await prisma.business.findFirst({
       where: { provinceCode: province, communitySlug: community.slug, slug },
-      select: { id: true, ownerId: true },
+      select: { id: true, ownerId: true, moderationStatus: true },
     })
     if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+    if (org.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(404).send({ error: 'organization_not_found' })
+    }
 
     const { cursor, limit, jurisdiction, sort } = query.data
     const sortMode = sort ?? 'new'
@@ -21645,6 +22669,11 @@ app.get('/communities/:province/:municipality/orgs/:slug/posts', async (req: Fas
     }
 
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
+    if (viewerBlockState.blockedBusinessIds.has(org.id)) {
+      return reply.code(404).send({ error: 'organization_not_found' })
+    }
+    applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
 
     if (viewerId) {
       const isOwner = org.ownerId === viewerId
@@ -21720,10 +22749,21 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     if (!post) return reply.code(404).send({ error: 'not found' })
 
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
+    if (isPostHiddenFromViewer(post, viewerBlockState)) return reply.code(404).send({ error: 'not found' })
+    if (post.business && post.business.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(404).send({ error: 'not found' })
+    }
 
     if (post.visibility === 'members' && post.businessId) {
       if (!viewerId) return reply.code(404).send({ error: 'not found' })
-      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(404).send({ error: 'not found' })
+      }
       const isOwner = business?.ownerId === viewerId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -21803,10 +22843,21 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     })
     if (!post) return reply.code(404).send({ error: 'not found' })
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
+    if (isPostHiddenFromViewer(post, viewerBlockState)) return reply.code(404).send({ error: 'not found' })
+    if (post.business && post.business.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(404).send({ error: 'not found' })
+    }
 
     if (post.visibility === 'members' && post.businessId) {
       if (!viewerId) return reply.code(404).send({ error: 'not found' })
-      const business = await prisma.business.findUnique({ where: { id: post.businessId }, select: { ownerId: true } })
+      const business = await prisma.business.findUnique({
+        where: { id: post.businessId },
+        select: { ownerId: true, moderationStatus: true },
+      })
+      if (!business || business.moderationStatus !== ModerationStatus.VISIBLE) {
+        return reply.code(404).send({ error: 'not found' })
+      }
       const isOwner = business?.ownerId === viewerId
       const membership = isOwner
         ? { role: 'OWNER' as const }
@@ -21909,6 +22960,8 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
+    applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
 
     // Privacy: members-only business posts should never leak into public feeds.
     // - Community-filtered views are public.
@@ -22379,6 +23432,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       municipality,
     } = query.data
     const viewerId = (req as any).user?.id as string | undefined
+    const viewerBlockState = await loadViewerBlockState(viewerId)
     let relationship: {
       friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
       friendshipId: string | null
@@ -22467,6 +23521,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       authorId: user.id,
       ...(jurisdiction ? { jurisdiction } : {}),
     }
+    applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
 
     if (relationship.friendshipStatus !== 'self') {
       const allowedAudiences: string[] = []
@@ -24089,6 +25144,236 @@ app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) =>
     req.log.error({ err }, 'track_view_failed')
     return reply.code(500).send({ error: 'tracking_failed' })
   }
+  return reply.send({ ok: true })
+})
+
+app.get('/admin/moderation/reports', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const query = AdminModerationReportsQuery.safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const where =
+    query.data.status === 'ALL'
+      ? {}
+      : {
+          status: query.data.status as ContentReportStatus,
+        }
+
+  const reports = await prisma.contentReport.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }],
+    take: query.data.limit,
+    include: {
+      reporter: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+          avatarUrl: true,
+          coverUrl: true,
+        },
+      },
+      reviewedBy: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+        },
+      },
+      reportedUser: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+          avatarUrl: true,
+          coverUrl: true,
+        },
+      },
+      reportedBusiness: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          logoUrl: true,
+          coverUrl: true,
+          provinceCode: true,
+          communitySlug: true,
+        },
+      },
+    },
+  })
+
+  return reply.send({
+    items: reports.map((report: (typeof reports)[number]) => ({
+      id: report.id,
+      targetType: report.targetType,
+      targetId: report.targetId,
+      targetLabel: report.targetLabel,
+      targetUrl: report.targetUrl,
+      reasons: report.reasons,
+      details: report.details,
+      status: report.status,
+      quarantineAppliedAt: report.quarantineAppliedAt?.toISOString() ?? null,
+      reviewedAt: report.reviewedAt?.toISOString() ?? null,
+      reviewNotes: report.reviewNotes ?? null,
+      createdAt: report.createdAt.toISOString(),
+      updatedAt: report.updatedAt.toISOString(),
+      reporter: {
+        id: report.reporter.id,
+        handle: report.reporter.handle,
+        name: report.reporter.name,
+        avatarUrl: normalizeMediaUrl(report.reporter.avatarUrl ?? null),
+        coverUrl: normalizeMediaUrl(report.reporter.coverUrl ?? null),
+      },
+      reviewedBy: report.reviewedBy
+        ? {
+            id: report.reviewedBy.id,
+            handle: report.reviewedBy.handle,
+            name: report.reviewedBy.name,
+          }
+        : null,
+      reportedUser: report.reportedUser
+        ? {
+            id: report.reportedUser.id,
+            handle: report.reportedUser.handle,
+            name: report.reportedUser.name,
+            avatarUrl: normalizeMediaUrl(report.reportedUser.avatarUrl ?? null),
+            coverUrl: normalizeMediaUrl(report.reportedUser.coverUrl ?? null),
+          }
+        : null,
+      reportedBusiness: report.reportedBusiness
+        ? {
+            id: report.reportedBusiness.id,
+            name: report.reportedBusiness.name,
+            slug: report.reportedBusiness.slug,
+            logoUrl: normalizeMediaUrl(report.reportedBusiness.logoUrl ?? null),
+            coverUrl: normalizeMediaUrl(report.reportedBusiness.coverUrl ?? null),
+            provinceCode: report.reportedBusiness.provinceCode,
+            communitySlug: report.reportedBusiness.communitySlug,
+          }
+        : null,
+    })),
+  })
+})
+
+app.post('/admin/moderation/reports/:reportId/review', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const params = z.object({ reportId: z.string().cuid() }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+  const body = AdminModerationReportReviewBody.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const updated = await prisma.contentReport.updateMany({
+    where: { id: params.data.reportId },
+    data: {
+      status: ContentReportStatus.REVIEWED,
+      reviewedAt: new Date(),
+      reviewedByUserId: user.id,
+      reviewNotes: body.data.reviewNotes?.trim() || null,
+      updatedAt: new Date(),
+    },
+  })
+
+  if (!updated.count) return reply.code(404).send({ error: 'report_not_found' })
+
+  return reply.send({ ok: true })
+})
+
+app.get('/admin/support/requests', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const query = AdminSupportRequestsQuery.safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const where =
+    query.data.status === 'ALL'
+      ? {}
+      : {
+          status: query.data.status as SupportRequestStatus,
+        }
+
+  const requests = await prisma.supportRequest.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }],
+    take: query.data.limit,
+    include: {
+      requester: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+          avatarUrl: true,
+          coverUrl: true,
+        },
+      },
+      reviewedBy: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+        },
+      },
+    },
+  })
+
+  return reply.send({
+    items: requests.map((request: (typeof requests)[number]) => ({
+      id: request.id,
+      type: request.type,
+      subject: request.subject,
+      body: request.body,
+      status: request.status,
+      adminNotes: request.adminNotes ?? null,
+      createdAt: request.createdAt.toISOString(),
+      updatedAt: request.updatedAt.toISOString(),
+      reviewedAt: request.reviewedAt?.toISOString() ?? null,
+      requester: {
+        id: request.requester.id,
+        handle: request.requester.handle,
+        name: request.requester.name,
+        avatarUrl: normalizeMediaUrl(request.requester.avatarUrl ?? null),
+        coverUrl: normalizeMediaUrl(request.requester.coverUrl ?? null),
+      },
+      reviewedBy: request.reviewedBy
+        ? {
+            id: request.reviewedBy.id,
+            handle: request.reviewedBy.handle,
+            name: request.reviewedBy.name,
+          }
+        : null,
+    })),
+  })
+})
+
+app.post('/admin/support/requests/:requestId/review', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const params = z.object({ requestId: z.string().cuid() }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+  const body = AdminSupportRequestReviewBody.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const updated = await prisma.supportRequest.updateMany({
+    where: { id: params.data.requestId },
+    data: {
+      status: SupportRequestStatus.REVIEWED,
+      reviewedAt: new Date(),
+      reviewedByUserId: user.id,
+      adminNotes: body.data.adminNotes?.trim() || null,
+      updatedAt: new Date(),
+    },
+  })
+
+  if (!updated.count) return reply.code(404).send({ error: 'support_request_not_found' })
+
   return reply.send({ ok: true })
 })
 

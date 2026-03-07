@@ -4,8 +4,10 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
+import { HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import CivilCard from '../../../../../_components/CivilCard'
+import ContentModerationMenu from '../../../../../_components/ContentModerationMenu'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
@@ -15,6 +17,7 @@ import PollCard from '../../../../../_components/PollCard'
 import ThreadBottomCommentComposer from '../../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
+import { pushToast } from '../../../../../_components/useToasts'
 import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
@@ -24,6 +27,7 @@ import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../../_lib/text'
 import { buildApiUrl } from '../../../../../_lib/api'
+import { getStoredToken } from '../../../../../_lib/tokenStorage'
 import DashboardShell from '../../../../../_components/DashboardShell'
 import { useRegisterPageView } from '../../../../../_components/AnalyticsTracker'
 
@@ -505,6 +509,61 @@ export default function ChamberPostPage({ params }: PageProps) {
       : '/home'
   const headerCoverUrl = postOrganization?.coverUrl ?? post?.author.coverUrl ?? null
   const breadcrumbCommunityName = communityDisplayName
+  const isAuthor = Boolean(viewer?.id && post?.author.id && viewer.id === post.author.id)
+  const reportTargetLabel = post?.title?.trim() || postOrganization?.name || postAuthorDisplayName || 'Post'
+  const blockTarget = post
+    ? postOrganization
+      ? {
+          type: 'organization' as const,
+          id: postOrganization.id,
+          label: postOrganization.name,
+        }
+      : {
+          type: 'user' as const,
+          id: post.author.id,
+          label: postAuthorDisplayName || post.author.handle,
+        }
+    : null
+  const postDeletedRedirectHref = `/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`
+  const postSettingsActions = isAuthor
+    ? [
+        {
+          key: 'delete',
+          label: 'Delete',
+          icon: HiTrash,
+          tone: 'danger' as const,
+          onSelect: async () => {
+            if (!post) return
+            if (!window.confirm('Are you sure you want to delete this post?')) return
+
+            const token = getStoredToken()
+            if (!token) {
+              redirectToAuthModal('login')
+              return
+            }
+
+            try {
+              const response = await fetch(buildApiUrl(`/posts/${encodeURIComponent(post.id)}`), {
+                method: 'DELETE',
+                headers: {
+                  authorization: `Bearer ${token}`,
+                },
+              })
+
+              if (!response.ok) {
+                pushToast('Failed to delete post.', 'error')
+                return
+              }
+
+              pushToast('Post deleted.', 'success')
+              router.push(postDeletedRedirectHref)
+            } catch {
+              pushToast('Failed to delete post.', 'error')
+            }
+          },
+        },
+      ]
+    : []
 
   return (
     <DashboardShell
@@ -534,7 +593,7 @@ export default function ChamberPostPage({ params }: PageProps) {
             <span className="text-gray-700">Post</span>
           </nav>
 
-          <header className="space-y-4 border-b border-gray-100 pb-4">
+          <header className="relative space-y-4 border-b border-gray-100 pb-4">
             <CivilCard
               size="banner"
               name={postOrganization?.name ?? postAuthorDisplayName}
@@ -562,7 +621,26 @@ export default function ChamberPostPage({ params }: PageProps) {
               coverUrl={headerCoverUrl}
               isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
               isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
+              contentClassName="pr-14"
             />
+            <div className="absolute right-3 top-3 z-20">
+              <ContentModerationMenu
+                actions={postSettingsActions}
+                reportTarget={
+                  post && !isAuthor
+                    ? {
+                        targetType: 'POST',
+                        targetId: post.id,
+                        targetLabel: reportTargetLabel,
+                      }
+                    : null
+                }
+                blockTarget={post && !isAuthor ? blockTarget : null}
+                buttonLabel={isAuthor ? 'Post actions' : 'Post settings'}
+                onReported={() => router.push(postDeletedRedirectHref)}
+                onBlocked={() => router.push(postDeletedRedirectHref)}
+              />
+            </div>
 
             <div className="space-y-4 text-[16px] leading-7 text-gray-900">
               {post.mediaUrl ? (

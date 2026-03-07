@@ -1,7 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import ContentModerationMenu from '../_components/ContentModerationMenu'
 import DashboardShell from '../_components/DashboardShell'
 import { buildApiUrl } from '../_lib/api'
 import MarketRightRail from './_components/MarketRightRail'
@@ -68,6 +70,7 @@ function buildListingHref(product: MarketProduct): string {
 }
 
 export default function MarketPageClient() {
+  const router = useRouter()
   const [items, setItems] = useState<MarketProduct[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -154,7 +157,6 @@ export default function MarketPageClient() {
                 <>
                   <div className="aspect-[16/10] w-full bg-slate-50">
                     {product.primaryImageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img src={product.primaryImageUrl} alt={product.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : null}
                   </div>
@@ -169,13 +171,64 @@ export default function MarketPageClient() {
                 </>
               )
               return (
-                <Link
-                  key={`${product.kind}:${product.id}`}
-                  href={buildListingHref(product)}
-                  className="group overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300"
-                >
-                  {cardBody}
-                </Link>
+                <div key={`${product.kind}:${product.id}`} className="relative">
+                  {product.kind === 'organization_product' && product.organization ? (
+                    <div className="absolute right-3 top-3 z-20">
+                      <ContentModerationMenu
+                        reportTarget={{
+                          targetType: 'MARKET_PRODUCT',
+                          targetId: product.id,
+                          targetLabel: product.title,
+                        }}
+                        blockTarget={{
+                          type: 'organization',
+                          id: product.organization.id,
+                          label: product.organization.name,
+                        }}
+                        buttonClassName="h-9 w-9 border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-white"
+                        onReported={() => {
+                          setItems((prev) => prev.filter((item) => item.id !== product.id))
+                          router.refresh()
+                        }}
+                        onBlocked={() => {
+                          setItems((prev) => prev.filter((item) => item.organization?.id !== product.organization?.id))
+                          router.refresh()
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {product.kind === 'citizen_listing' && product.seller ? (
+                    <div className="absolute right-3 top-3 z-20">
+                      <ContentModerationMenu
+                        reportTarget={{
+                          targetType: 'MARKET_LISTING',
+                          targetId: product.id,
+                          targetLabel: product.title,
+                        }}
+                        blockTarget={{
+                          type: 'user',
+                          id: product.seller.id,
+                          label: product.seller.name || (product.seller.handle ? `@${product.seller.handle}` : 'Seller'),
+                        }}
+                        buttonClassName="h-9 w-9 border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-white"
+                        onReported={() => {
+                          setItems((prev) => prev.filter((item) => item.id !== product.id))
+                          router.refresh()
+                        }}
+                        onBlocked={() => {
+                          setItems((prev) => prev.filter((item) => item.seller?.id !== product.seller?.id))
+                          router.refresh()
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  <Link
+                    href={buildListingHref(product)}
+                    className="group block overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:border-slate-300"
+                  >
+                    {cardBody}
+                  </Link>
+                </div>
               )
             })}
             </div>
