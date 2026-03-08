@@ -29,14 +29,16 @@ import MessagesNavBlock from './MessagesNavBlock'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
 
 const NAV_BUTTONS: Array<{
-  key: 'home' | 'cart' | 'messages' | 'notifications' | 'more'
+  key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more'
   label: string
-  icon: IconType
+  icon?: IconType
+  imageSrc?: string
 }> = [
   { key: 'home', label: 'Menu', icon: HiOutlineBars3 },
   { key: 'cart', label: 'Cart', icon: HiOutlineShoppingCart },
   { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
+  { key: 'ai', label: 'Civil AI', imageSrc: '/PWA-ICON.png?v=20260306' },
   { key: 'more', label: 'More', icon: HiOutlineBars3 },
 ] as const
 
@@ -129,6 +131,7 @@ export default function MobileDock() {
   const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
   const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const [menuSearchFocused, setMenuSearchFocused] = useState(false)
+  const [civilAiOpen, setCivilAiOpen] = useState(false)
   const menuSearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const moreCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -339,6 +342,16 @@ export default function MobileDock() {
     [],
   )
 
+  useEffect(() => {
+    const handleCivilAiState = (event: Event) => {
+      const nextOpen = Boolean((event as CustomEvent<{ open?: boolean }>).detail?.open)
+      setCivilAiOpen(nextOpen)
+    }
+
+    window.addEventListener('civil-ai:state', handleCivilAiState)
+    return () => window.removeEventListener('civil-ai:state', handleCivilAiState)
+  }, [])
+
   const handleMenuSearchFocus = useCallback(() => {
     if (menuSearchBlurTimeoutRef.current) {
       clearTimeout(menuSearchBlurTimeoutRef.current)
@@ -366,6 +379,10 @@ export default function MobileDock() {
       }
       if (key === 'notifications') {
         router.push('/notifications')
+        return
+      }
+      if (key === 'ai') {
+        window.dispatchEvent(new CustomEvent('civil-ai:open'))
         return
       }
       if (key === 'messages') {
@@ -498,6 +515,7 @@ export default function MobileDock() {
               (item.key === 'cart' && (pathname?.startsWith('/market/cart') || pathname?.startsWith('/market/checkout'))) ||
               (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
               (item.key === 'messages' && (pathname?.startsWith('/messages') || pathname?.startsWith('/channels'))) ||
+              (item.key === 'ai' && civilAiOpen) ||
               (item.key === 'more' && moreOpen)
             
             const count =
@@ -523,7 +541,11 @@ export default function MobileDock() {
                 aria-label={item.label}
               >
                 <div className="relative">
-                  <Icon className="text-xl leading-none" />
+                  {item.imageSrc ? (
+                    <img src={item.imageSrc} alt="" className="h-6 w-6 rounded-lg" />
+                  ) : Icon ? (
+                    <Icon className="text-xl leading-none" />
+                  ) : null}
                   {count > 0 ? (
                     <span className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white ring-2 ring-white">
                       {count > 99 ? '99+' : count}

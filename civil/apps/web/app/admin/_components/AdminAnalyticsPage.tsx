@@ -44,6 +44,19 @@ type AdminUser = {
   coverUrl: string | null
 }
 
+type CommunitySummaryItem = {
+  provinceCode: string
+  communitySlug: string
+  home: boolean
+  label: string
+  href: string | null
+}
+
+type CommunitySummary = {
+  count: number
+  items: CommunitySummaryItem[]
+}
+
 type DetailResponse = {
   metric: DetailMetric
   generatedAt: string
@@ -51,9 +64,11 @@ type DetailResponse = {
 }
 
 type UserRow = AdminUser & {
+  email: string
   createdAt: string
   lastLoginAt: string | null
   premiumStatus: string
+  communities: CommunitySummary
   postCount: number
   commentCount: number
   organizationsOwned: number
@@ -313,6 +328,18 @@ function toCount(value: unknown) {
   return Number.isFinite(count) ? count : 0
 }
 
+function formatPremiumStatus(value: string) {
+  if (!value || value === 'NONE') return null
+  return value.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (char) => char.toUpperCase())
+}
+
+function formatCommunitySummary(communities: CommunitySummary) {
+  if (!communities.count) return 'No communities'
+  const labels = communities.items.map((item) => item.label)
+  if (communities.count > communities.items.length) labels.push(`+${communities.count - communities.items.length} more`)
+  return labels.join(' · ')
+}
+
 function MetricCardButton({
   title,
   total,
@@ -404,6 +431,8 @@ export default function AdminAnalyticsPage() {
   const [activeMetric, setActiveMetric] = useState<DetailMetric>('posts')
   const [flagReason, setFlagReason] = useState<(typeof FLAG_REASON_OPTIONS)[number]>('ALL')
   const [inspectUserId, setInspectUserId] = useState<string | null>(null)
+  const [userSearch, setUserSearch] = useState('')
+  const [selectedPostAuthor, setSelectedPostAuthor] = useState<AdminUser | null>(null)
 
   const activeMetricDefinition = useMemo(
     () =>
@@ -414,6 +443,8 @@ export default function AdminAnalyticsPage() {
       },
     [activeMetric],
   )
+
+  const normalizedUserSearch = useMemo(() => userSearch.trim(), [userSearch])
 
   const loadSummary = useCallback(
     async (rangeStart: string, rangeEnd: string, signal?: AbortSignal) => {
@@ -468,7 +499,15 @@ export default function AdminAnalyticsPage() {
   )
 
   const loadDetail = useCallback(
-    async (metric: DetailMetric, rangeStart: string, rangeEnd: string, nextFlagReason: (typeof FLAG_REASON_OPTIONS)[number], signal?: AbortSignal) => {
+    async (
+      metric: DetailMetric,
+      rangeStart: string,
+      rangeEnd: string,
+      nextFlagReason: (typeof FLAG_REASON_OPTIONS)[number],
+      nextUserSearch: string,
+      nextSelectedPostAuthor: AdminUser | null,
+      signal?: AbortSignal,
+    ) => {
       const authToken = token ?? (typeof window !== 'undefined' ? window.localStorage.getItem('token') : null)
       if (!authToken) {
         redirectToAuthModal('login')
@@ -486,6 +525,8 @@ export default function AdminAnalyticsPage() {
       if (rangeStart) params.set('start', rangeStart)
       if (rangeEnd) params.set('end', rangeEnd)
       if (metric === 'posts' && nextFlagReason !== 'ALL') params.set('flagReason', nextFlagReason)
+      if (metric === 'users' && nextUserSearch) params.set('search', nextUserSearch)
+      if (metric === 'posts' && nextSelectedPostAuthor?.id) params.set('authorId', nextSelectedPostAuthor.id)
 
       try {
         const response = await fetch(`${buildApiUrl('/admin/reports/detail')}?${params.toString()}`, {
@@ -535,9 +576,9 @@ export default function AdminAnalyticsPage() {
   useEffect(() => {
     if (accessLoading || !isSuperAdmin) return
     const controller = new AbortController()
-    void loadDetail(activeMetric, startDate, endDate, flagReason, controller.signal)
+    void loadDetail(activeMetric, startDate, endDate, flagReason, normalizedUserSearch, selectedPostAuthor, controller.signal)
     return () => controller.abort()
-  }, [accessLoading, activeMetric, endDate, flagReason, isSuperAdmin, loadDetail, startDate])
+  }, [accessLoading, activeMetric, endDate, flagReason, isSuperAdmin, loadDetail, normalizedUserSearch, selectedPostAuthor, startDate])
 
   const handleExportCsv = useCallback(async () => {
     const authToken = token ?? (typeof window !== 'undefined' ? window.localStorage.getItem('token') : null)
@@ -568,6 +609,17 @@ export default function AdminAnalyticsPage() {
     }
   }, [endDate, startDate, token])
 
+  const handleMetricSelect = useCallback((metric: DetailMetric) => {
+    setActiveMetric(metric)
+    if (metric !== 'posts') setSelectedPostAuthor(null)
+  }, [])
+
+  const handleOpenUserPosts = useCallback((user: AdminUser, postCount: number) => {
+    if (postCount <= 0) return
+    setSelectedPostAuthor(user)
+    setActiveMetric('posts')
+  }, [])
+
   const renderDetailTable = () => {
     if (detailStatus === 'loading' || detailStatus === 'idle') {
       return <div className="rounded-3xl border border-slate-200 bg-slate-50 px-6 py-8 text-sm text-slate-500">Loading {activeMetricDefinition.title.toLowerCase()}…</div>
@@ -588,6 +640,7 @@ export default function AdminAnalyticsPage() {
               <tr>
                 <th className="px-4 py-3">User</th>
                 <th className="px-4 py-3">Joined</th>
+                <th className="px-4 py-3">Communities</th>
                 <th className="px-4 py-3 text-right">Posts</th>
                 <th className="px-4 py-3 text-right">Comments</th>
                 <th className="px-4 py-3 text-right">Reports Filed</th>
@@ -600,10 +653,36 @@ export default function AdminAnalyticsPage() {
                 <tr key={row.id} className="border-t border-slate-100 align-top">
                   <td className="px-4 py-3">
                     <UserInspectButton user={row} onInspect={setInspectUserId} />
-                    <p className="mt-1 text-xs text-slate-500">{row.premiumStatus} · last login {formatDateTime(row.lastLoginAt)}</p>
+                    <p className="mt-1 text-xs text-slate-500">{row.email}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {formatPremiumStatus(row.premiumStatus) ? `${formatPremiumStatus(row.premiumStatus)} · ` : ''}
+                      last login {formatDateTime(row.lastLoginAt)}
+                    </p>
                   </td>
                   <td className="px-4 py-3 text-slate-600">{formatDateTime(row.createdAt)}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">{toCount(row.postCount).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-slate-600">
+                    {row.communities.count ? (
+                      <div className="space-y-1">
+                        {row.communities.items.map((community) => (
+                          <div key={`${row.id}:${community.provinceCode}:${community.communitySlug}`}>
+                            {community.href ? <Link href={community.href} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">{community.label}</Link> : <span className="text-xs font-semibold text-slate-700">{community.label}</span>}
+                          </div>
+                        ))}
+                        {row.communities.count > row.communities.items.length ? <p className="text-xs text-slate-400">+{row.communities.count - row.communities.items.length} more</p> : null}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-400">No communities</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                    {toCount(row.postCount) > 0 ? (
+                      <button type="button" onClick={() => handleOpenUserPosts(row, toCount(row.postCount))} className="text-[var(--cc-primary)] hover:underline">
+                        {toCount(row.postCount).toLocaleString()}
+                      </button>
+                    ) : (
+                      toCount(row.postCount).toLocaleString()
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">{toCount(row.commentCount).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">{toCount(row.reportsFiled).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right font-semibold text-slate-900">{toCount(row.reportsAgainst).toLocaleString()}</td>
@@ -988,15 +1067,15 @@ export default function AdminAnalyticsPage() {
         </section>
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <MetricCardButton title="Users" total={summary.users.total} today={summary.users.today} active={activeMetric === 'users'} onClick={() => setActiveMetric('users')} />
-          <MetricCardButton title="Posts" total={summary.posts.total} today={summary.posts.today} active={activeMetric === 'posts'} onClick={() => setActiveMetric('posts')} />
-          <MetricCardButton title="Comments" total={summary.comments.total} today={summary.comments.today} active={activeMetric === 'comments'} onClick={() => setActiveMetric('comments')} />
-          <MetricCardButton title="Reactions" total={summary.reactions.total} today={summary.reactions.today} active={activeMetric === 'reactions'} onClick={() => setActiveMetric('reactions')} />
-          <MetricCardButton title="Follows" total={summary.follows.total} today={summary.follows.today} active={activeMetric === 'follows'} onClick={() => setActiveMetric('follows')} />
-          <MetricCardButton title="Jobs added" total={summary.jobs.added.total} today={summary.jobs.added.today} active={activeMetric === 'jobsAdded'} onClick={() => setActiveMetric('jobsAdded')} />
-          <MetricCardButton title="Applicants" total={summary.jobs.applicants.total} today={summary.jobs.applicants.today} active={activeMetric === 'applicants'} onClick={() => setActiveMetric('applicants')} />
-          <MetricCardButton title="Org application views" total={summary.jobs.applicationsViewed.organizations.total} today={summary.jobs.applicationsViewed.organizations.today} active={activeMetric === 'applicationsViewed'} onClick={() => setActiveMetric('applicationsViewed')} />
-          <MetricCardButton title="Applicants hired" total={summary.jobs.hired.total} today={summary.jobs.hired.today} active={activeMetric === 'hired'} onClick={() => setActiveMetric('hired')} />
+          <MetricCardButton title="Users" total={summary.users.total} today={summary.users.today} active={activeMetric === 'users'} onClick={() => handleMetricSelect('users')} />
+          <MetricCardButton title="Posts" total={summary.posts.total} today={summary.posts.today} active={activeMetric === 'posts'} onClick={() => handleMetricSelect('posts')} />
+          <MetricCardButton title="Comments" total={summary.comments.total} today={summary.comments.today} active={activeMetric === 'comments'} onClick={() => handleMetricSelect('comments')} />
+          <MetricCardButton title="Reactions" total={summary.reactions.total} today={summary.reactions.today} active={activeMetric === 'reactions'} onClick={() => handleMetricSelect('reactions')} />
+          <MetricCardButton title="Follows" total={summary.follows.total} today={summary.follows.today} active={activeMetric === 'follows'} onClick={() => handleMetricSelect('follows')} />
+          <MetricCardButton title="Jobs added" total={summary.jobs.added.total} today={summary.jobs.added.today} active={activeMetric === 'jobsAdded'} onClick={() => handleMetricSelect('jobsAdded')} />
+          <MetricCardButton title="Applicants" total={summary.jobs.applicants.total} today={summary.jobs.applicants.today} active={activeMetric === 'applicants'} onClick={() => handleMetricSelect('applicants')} />
+          <MetricCardButton title="Org application views" total={summary.jobs.applicationsViewed.organizations.total} today={summary.jobs.applicationsViewed.organizations.today} active={activeMetric === 'applicationsViewed'} onClick={() => handleMetricSelect('applicationsViewed')} />
+          <MetricCardButton title="Applicants hired" total={summary.jobs.hired.total} today={summary.jobs.hired.today} active={activeMetric === 'hired'} onClick={() => handleMetricSelect('hired')} />
         </section>
 
         <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-subtle">
@@ -1006,22 +1085,46 @@ export default function AdminAnalyticsPage() {
               <h2 className="mt-1 text-xl font-semibold text-slate-900">{activeMetricDefinition.title}</h2>
               <p className="mt-2 text-sm text-slate-600">{activeMetricDefinition.description}</p>
             </div>
-            {activeMetric === 'posts' ? (
-              <label className="space-y-1 text-xs uppercase tracking-wide text-slate-500">
-                Flag type
-                <select
-                  value={flagReason}
-                  onChange={(event) => setFlagReason(event.target.value as (typeof FLAG_REASON_OPTIONS)[number])}
-                  className="block rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
-                >
-                  {FLAG_REASON_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option === 'ALL' ? 'All posts' : formatReasonLabel(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
+            <div className="flex flex-wrap items-end gap-3">
+              {activeMetric === 'users' ? (
+                <label className="space-y-1 text-xs uppercase tracking-wide text-slate-500">
+                  Search users
+                  <input
+                    type="search"
+                    value={userSearch}
+                    onChange={(event) => setUserSearch(event.target.value)}
+                    placeholder="Name, handle, or email"
+                    className="block w-64 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                  />
+                </label>
+              ) : null}
+              {activeMetric === 'posts' ? (
+                <>
+                  <label className="space-y-1 text-xs uppercase tracking-wide text-slate-500">
+                    Flag type
+                    <select
+                      value={flagReason}
+                      onChange={(event) => setFlagReason(event.target.value as (typeof FLAG_REASON_OPTIONS)[number])}
+                      className="block rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+                    >
+                      {FLAG_REASON_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option === 'ALL' ? 'All posts' : formatReasonLabel(option)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedPostAuthor ? (
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                      <p className="font-semibold">Showing posts by {formatUserLabel(selectedPostAuthor)}</p>
+                      <button type="button" onClick={() => setSelectedPostAuthor(null)} className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700 hover:underline">
+                        Clear filter
+                      </button>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
           </div>
           {renderDetailTable()}
         </section>

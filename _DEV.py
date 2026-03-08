@@ -58,6 +58,8 @@ MEETING_RTC_PORT = int(os.environ.get("CIVIL_MEETING_RTC_PORT", "8788"))
 CYBERTRON_POSTGRES_PORT = int(os.environ.get("CYBERTRON_POSTGRES_PORT", "5542"))
 CYBERTRON_REDIS_PORT = int(os.environ.get("CYBERTRON_REDIS_PORT", "6579"))
 CYBERTRON_MINIO_PORT = int(os.environ.get("CYBERTRON_MINIO_PORT", "9102"))
+AI_SERVERS_FILE = CIVIL_DIR / "ai_servers.json"
+AI_INSTRUCTIONS_FILE = CIVIL_DIR / "CIVIL_AI.md"
 
 WEB_PID_FILE = Path("/tmp/civil-dev-web.pid")
 API_PID_FILE = Path("/tmp/civil-dev-api.pid")
@@ -411,6 +413,8 @@ def start() -> int:
     env.setdefault("MEETING_RTC_WS_URL", f"wss://{env['CIVIL_PUBLIC_HOST']}/rtc/v1/ws")
     env.setdefault("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
     env.setdefault("MEETING_RTC_ICE_SERVERS_JSON", '[{"urls":["stun:stun.l.google.com:19302"]}]')
+    env.setdefault("CIVIL_AI_SERVERS_FILE", str(AI_SERVERS_FILE))
+    env.setdefault("CIVIL_AI_INSTRUCTIONS_FILE", str(AI_INSTRUCTIONS_FILE))
 
     # Ensure CybertronDev infra is up (postgres/redis/nginx/minio)
     try:
@@ -588,6 +592,11 @@ def doctor() -> int:
         "MEETING_RTC_WS_URL",
         file_env.get("MEETING_RTC_WS_URL", f"wss://{public_host}/rtc/v1/ws"),
     )
+    civil_ai_servers_file = os.environ.get("CIVIL_AI_SERVERS_FILE", file_env.get("CIVIL_AI_SERVERS_FILE", str(AI_SERVERS_FILE)))
+    civil_ai_instructions_file = os.environ.get(
+        "CIVIL_AI_INSTRUCTIONS_FILE",
+        file_env.get("CIVIL_AI_INSTRUCTIONS_FILE", str(AI_INSTRUCTIONS_FILE)),
+    )
 
     print("== Effective dev configuration ==")
     print("- NOTE: CybertronDev Postgres/Redis are shared local dev services, not disposable test targets")
@@ -600,6 +609,8 @@ def doctor() -> int:
     print(f"- NEXT_PUBLIC_API_BASE={api_base}")
     print(f"- NEXT_PUBLIC_BASE_URL={base_url}")
     print(f"- NEXT_PUBLIC_MEDIA_BASE_URL={media_base}")
+    print(f"- CIVIL_AI_SERVERS_FILE={civil_ai_servers_file}")
+    print(f"- CIVIL_AI_INSTRUCTIONS_FILE={civil_ai_instructions_file}")
     test_database_url = None
     try:
         parsed = re.match(r"^(postgresql://[^/]+/)([^?]+)(.*)$", database_url)
@@ -615,6 +626,8 @@ def doctor() -> int:
     print(f"- MEETING_RTC_SERVICE_URL={meeting_rtc_service_url}")
     print(f"- MEETING_RTC_WS_URL={meeting_rtc_ws_url}")
     print(f"- CIVIL_MEETING_RTC_PORT={MEETING_RTC_PORT}")
+    print(f"- ai_servers.json exists={Path(civil_ai_servers_file).exists()}")
+    print(f"- CIVIL_AI.md exists={Path(civil_ai_instructions_file).exists()}")
     print()
 
     print("== Connectivity ==")
