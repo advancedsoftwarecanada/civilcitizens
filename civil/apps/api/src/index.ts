@@ -3010,6 +3010,8 @@ const contentAiScanQueue = new Queue('content-ai-scan', {
   },
 })
 
+const CONTENT_AI_IMAGE_SCAN_DELAY_MS = 45_000
+
 const FRIEND_USER_SELECT = {
   id: true,
   handle: true,
@@ -22419,6 +22421,7 @@ const AdminAnalyticsDetailQuery = z.object({
   start: z.string().trim().optional(),
   end: z.string().trim().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
+  page: z.coerce.number().int().min(1).max(500).default(1),
   flagReason: z.enum(ModerationReportReasonValues).optional(),
   search: z.string().trim().min(1).max(120).optional(),
   authorId: z.string().cuid().optional(),
@@ -22426,6 +22429,11 @@ const AdminAnalyticsDetailQuery = z.object({
 
 const AdminInspectUserParams = z.object({
   userId: z.string().cuid(),
+})
+
+const AdminContentAiScanRetryBody = z.object({
+  targetType: z.enum(['post', 'comment', 'market_listing', 'market_product', 'organization_event', 'organization']),
+  targetId: z.string().trim().min(1).max(191),
 })
 
 function parseMarketCursor(cursor: string | undefined): null | { createdAt: Date; id: string } {
@@ -22467,6 +22475,15 @@ function buildContentAiScanSearchText(sourceText: string | null | undefined, lab
 
 function buildOrganizationEventScanTargetId(orgId: string, eventId: string) {
   return `${orgId}:${eventId}`
+}
+
+function parseOrganizationEventScanTargetId(targetId: string) {
+  const separatorIndex = targetId.indexOf(':')
+  if (separatorIndex <= 0) return null
+  const orgId = targetId.slice(0, separatorIndex).trim()
+  const eventId = targetId.slice(separatorIndex + 1).trim()
+  if (!orgId || !eventId) return null
+  return { orgId, eventId }
 }
 
 function buildContentAiScanDefaultSummary(): ContentAiScanSummary {
@@ -22609,6 +22626,14 @@ async function upsertContentAiScanRecord(args: {
 
   if (!shouldQueue) return
 
+  const existingJob = await contentAiScanQueue.getJob(`content-ai-scan:${args.targetType}:${args.targetId}`)
+  if (existingJob) {
+    const state = await existingJob.getState()
+    if (state === 'failed' || state === 'completed') {
+      await existingJob.remove().catch(() => undefined)
+    }
+  }
+
   await contentAiScanQueue.add(
     'scan',
     { targetType: args.targetType, targetId: args.targetId },
@@ -22617,6 +22642,7 @@ async function upsertContentAiScanRecord(args: {
       removeOnComplete: true,
       attempts: 3,
       backoff: { type: 'exponential', delay: 3000 },
+      delay: hasImages ? CONTENT_AI_IMAGE_SCAN_DELAY_MS : 0,
     },
   )
 }
@@ -22752,6 +22778,114 @@ async function enqueueContentAiScanForOrganization(org: Pick<CommunityOrgRecord,
     sourceText,
     imageUrls,
   })
+}
+
+async function retryContentAiScanTarget(args: { targetType: ContentAiScanTargetType; targetId: string }) {
+  const existingJob = await contentAiScanQueue.getJob(`content-ai-scan:${args.targetType}:${args.targetId}`)
+  if (existingJob) {
+    await existingJob.remove().catch(() => undefined)
+  }
+
+  if (args.targetType === 'post') {
+    const post = await prisma.post.findUnique({
+      where: { id: args.targetId },
+      select: {
+        id: true,
+        authorId: true,
+        title: true,
+        body: true,
+        mediaUrl: true,
+        images: true,
+      },
+    })
+    if (!post) return false
+    await enqueueContentAiScanForPost(post)
+    return true
+  }
+
+  if (args.targetType === 'comment') {
+    const comment = await prisma.comment.findUnique({
+      where: { id: args.targetId },
+      select: {
+        id: true,
+        userId: true,
+        body: true,
+      },
+    })
+    if (!comment) return false
+    await enqueueContentAiScanForComment(comment)
+    return true
+  }
+
+  if (args.targetType === 'market_listing') {
+    await ensureCitizenMarketplaceTables()
+    const listing = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM citizen_market_listing
+      WHERE id = ${args.targetId}
+        AND is_active = TRUE
+      LIMIT 1
+    `
+    if (!listing[0]) return false
+    await enqueueContentAiScanForMarketListing(args.targetId)
+    return true
+  }
+
+  if (args.targetType === 'market_product') {
+    await ensureOrganizationShopTables()
+    const product = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id
+      FROM organization_shop_product
+      WHERE id = ${args.targetId}
+        AND is_active = TRUE
+      LIMIT 1
+    `
+    if (!product[0]) return false
+    await enqueueContentAiScanForMarketProduct(args.targetId)
+    return true
+  }
+
+  if (args.targetType === 'organization_event') {
+    const parsed = parseOrganizationEventScanTargetId(args.targetId)
+    if (!parsed) return false
+
+    const org = await prisma.business.findUnique({
+      where: { id: parsed.orgId },
+      select: {
+        id: true,
+        ownerId: true,
+        metadata: true,
+      },
+    })
+    if (!org) return false
+
+    const system = readOrganizationSystemState(org.metadata)
+    const event = system.events.find((entry) => entry.id === parsed.eventId)
+    if (!event) return false
+
+    await enqueueContentAiScanForOrganizationEvent({
+      orgId: org.id,
+      ownerUserId: org.ownerId,
+      event,
+    })
+    return true
+  }
+
+  const org = await prisma.business.findUnique({
+    where: { id: args.targetId },
+    select: {
+      id: true,
+      ownerId: true,
+      name: true,
+      description: true,
+      metadata: true,
+      logoUrl: true,
+      coverUrl: true,
+    },
+  })
+  if (!org) return false
+  await enqueueContentAiScanForOrganization(org)
+  return true
 }
 
 function readStringList(raw: unknown): string[] {
@@ -29641,20 +29775,33 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
 
   if (query.data.metric === 'posts') {
     await ensureContentAiScanTables()
+    await ensureCitizenMarketplaceTables()
+
+    const page = query.data.page
+    const pageSize = query.data.limit
+    const offset = (page - 1) * pageSize
+    const sourceTake = Math.min(offset + pageSize + 1, 600)
 
     let flaggedPostIds: string[] | null = null
+    let flaggedListingIds: string[] | null = null
+
     if (query.data.flagReason) {
       const flaggedReports = await prisma.contentReport.findMany({
         where: {
-          targetType: ModerationTargetType.POST,
+          targetType: { in: [ModerationTargetType.POST, ModerationTargetType.MARKET_LISTING] },
           reasons: { has: query.data.flagReason },
         },
-        select: { targetId: true },
+        select: { targetId: true, targetType: true },
         take: 500,
       })
-      flaggedPostIds = Array.from(new Set(flaggedReports.map((entry: any) => entry.targetId)))
-      if (!flaggedPostIds.length) {
-        return reply.send({ metric: query.data.metric, generatedAt: new Date().toISOString(), items: [] })
+      flaggedPostIds = Array.from(
+        new Set(flaggedReports.filter((entry: any) => entry.targetType === ModerationTargetType.POST).map((entry: any) => entry.targetId)),
+      )
+      flaggedListingIds = Array.from(
+        new Set(flaggedReports.filter((entry: any) => entry.targetType === ModerationTargetType.MARKET_LISTING).map((entry: any) => entry.targetId)),
+      )
+      if (!flaggedPostIds.length && !flaggedListingIds.length) {
+        return reply.send({ metric: query.data.metric, generatedAt: new Date().toISOString(), items: [], page, hasMore: false })
       }
     }
 
@@ -29674,8 +29821,8 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
             }
           : {}),
       },
-      orderBy: [{ createdAt: 'desc' }],
-      take: limit,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: sourceTake,
       select: {
         id: true,
         title: true,
@@ -29711,14 +29858,135 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
       },
     })
 
-    const reportRows = posts.length
+    const listingSearchLike = `%${normalizedSearch}%`
+    const listingHandleLike = `%${normalizedSearch.replace(/^@/, '')}%`
+    const listingWhereClauses: Prisma.Sql[] = [
+      Prisma.sql`l.is_active = TRUE`,
+    ]
+
+    if (query.data.authorId) {
+      listingWhereClauses.push(Prisma.sql`l.seller_user_id = ${query.data.authorId}`)
+    } else {
+      listingWhereClauses.push(Prisma.sql`l.created_at >= ${range.start}`)
+      listingWhereClauses.push(Prisma.sql`l.created_at < ${range.end}`)
+    }
+
+    if (flaggedListingIds) {
+      listingWhereClauses.push(Prisma.sql`l.id IN (${Prisma.join(flaggedListingIds)})`)
+    }
+
+    if (normalizedSearch) {
+      listingWhereClauses.push(Prisma.sql`
+        (
+          LOWER(COALESCE(l.title, '')) LIKE ${listingSearchLike}
+          OR LOWER(COALESCE(l.description, '')) LIKE ${listingSearchLike}
+          OR LOWER(COALESCE(u.handle, '')) LIKE ${listingHandleLike}
+          OR LOWER(COALESCE(u.name, '')) LIKE ${listingSearchLike}
+        )
+      `)
+    }
+
+    const listings = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        l.id,
+        l.seller_user_id,
+        l.title,
+        l.description,
+        l.price_cents,
+        l.currency,
+        l.pickup_city,
+        l.pickup_province,
+        l.listing_province_code,
+        l.listing_community_slug,
+        l.moderation_status,
+        l.status,
+        l.created_at,
+        u.handle AS seller_handle,
+        u.name AS seller_name,
+        u."avatarUrl" AS seller_avatar_url,
+        u."coverUrl" AS seller_cover_url
+      FROM citizen_market_listing l
+      INNER JOIN "User" u ON u.id = l.seller_user_id
+      WHERE ${Prisma.join(listingWhereClauses, ' AND ')}
+      ORDER BY l.created_at DESC, l.id DESC
+      LIMIT ${sourceTake}
+    `)) as Array<{
+      id: string
+      seller_user_id: string
+      title: string
+      description: string | null
+      price_cents: number
+      currency: string
+      pickup_city: string | null
+      pickup_province: string | null
+      listing_province_code: string | null
+      listing_community_slug: string | null
+      moderation_status: string
+      status: string
+      created_at: Date
+      seller_handle: string
+      seller_name: string | null
+      seller_avatar_url: string | null
+      seller_cover_url: string | null
+    }>
+
+    const eventBusinesses = await prisma.business.findMany({
+      where: query.data.authorId ? { ownerId: query.data.authorId } : undefined,
+      select: {
+        id: true,
+        ownerId: true,
+        name: true,
+        slug: true,
+        provinceCode: true,
+        communitySlug: true,
+        metadata: true,
+        owner: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+      },
+    })
+
+    const eventRows: Array<{ business: (typeof eventBusinesses)[number]; event: OrgEventDefinition }> = eventBusinesses
+      .flatMap((business: (typeof eventBusinesses)[number]) => {
+        const system = readOrganizationSystemState(business.metadata)
+        return system.events.map((event) => ({ business, event }))
+      })
+      .filter(({ event }: { event: OrgEventDefinition }) => {
+        const createdAt = new Date(event.createdAt)
+        if (Number.isNaN(createdAt.getTime())) return false
+        if (!query.data.authorId && (createdAt < range.start || createdAt >= range.end)) return false
+        if (!normalizedSearch) return true
+        const haystack = buildSearchableText(event.title, stripHtmlToPlainText(event.description ?? ''))
+        return haystack.includes(normalizedSearch)
+      })
+      .sort((left: { business: (typeof eventBusinesses)[number]; event: OrgEventDefinition }, right: { business: (typeof eventBusinesses)[number]; event: OrgEventDefinition }) => {
+        const leftTime = new Date(left.event.createdAt).getTime()
+        const rightTime = new Date(right.event.createdAt).getTime()
+        if (rightTime !== leftTime) return rightTime - leftTime
+        return left.event.id.localeCompare(right.event.id)
+      })
+      .slice(0, sourceTake)
+
+    const postIds = posts.map((entry: any) => entry.id)
+    const listingIds = listings.map((entry: (typeof listings)[number]) => entry.id)
+
+    const reportRows = postIds.length || listingIds.length
       ? await prisma.contentReport.findMany({
           where: {
-            targetType: ModerationTargetType.POST,
-            targetId: { in: posts.map((entry: any) => entry.id) },
+            OR: [
+              ...(postIds.length ? [{ targetType: ModerationTargetType.POST, targetId: { in: postIds } }] : []),
+              ...(listingIds.length ? [{ targetType: ModerationTargetType.MARKET_LISTING, targetId: { in: listingIds } }] : []),
+            ],
           },
           orderBy: [{ createdAt: 'desc' }],
           select: {
+            targetType: true,
             targetId: true,
             reasons: true,
             status: true,
@@ -29727,14 +29995,14 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
         })
       : []
 
-    const reportsByPostId = new Map<string, Array<{ reasons: string[]; status: ContentReportStatus; createdAt: Date }>>()
+    const reportsByTargetKey = new Map<string, Array<{ reasons: string[]; status: ContentReportStatus; createdAt: Date }>>()
     reportRows.forEach((report: any) => {
-      const bucket = reportsByPostId.get(report.targetId) ?? []
+      const bucket = reportsByTargetKey.get(`${report.targetType}:${report.targetId}`) ?? []
       bucket.push(report)
-      reportsByPostId.set(report.targetId, bucket)
+      reportsByTargetKey.set(`${report.targetType}:${report.targetId}`, bucket)
     })
 
-    const scanRows = posts.length
+    const postScanRows = postIds.length
       ? await prisma.$queryRaw<Array<{
           target_id: string
           status: string
@@ -29749,12 +30017,51 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
           SELECT target_id, status, moderation_state, label_summary, labels, moderation_flags, error_text, updated_at, completed_at
           FROM content_ai_scan
           WHERE target_type = ${'post'}
-            AND target_id IN (${Prisma.join(posts.map((entry: any) => entry.id))})
+            AND target_id IN (${Prisma.join(postIds)})
         `
       : []
 
-    const scansByPostId = new Map<string, ContentAiScanSummary>()
-    scanRows.forEach((scan: {
+    const listingScanRows = listingIds.length
+      ? await prisma.$queryRaw<Array<{
+          target_id: string
+          status: string
+          moderation_state: string | null
+          label_summary: string | null
+          labels: unknown
+          moderation_flags: unknown
+          error_text: string | null
+          updated_at: Date | null
+          completed_at: Date | null
+        }>>`
+          SELECT target_id, status, moderation_state, label_summary, labels, moderation_flags, error_text, updated_at, completed_at
+          FROM content_ai_scan
+          WHERE target_type = ${'market_listing'}
+            AND target_id IN (${Prisma.join(listingIds)})
+        `
+      : []
+
+    const eventScanTargetIds = eventRows.map(({ business, event }: { business: (typeof eventBusinesses)[number]; event: OrgEventDefinition }) => buildOrganizationEventScanTargetId(business.id, event.id))
+    const eventScanRows = eventScanTargetIds.length
+      ? await prisma.$queryRaw<Array<{
+          target_id: string
+          status: string
+          moderation_state: string | null
+          label_summary: string | null
+          labels: unknown
+          moderation_flags: unknown
+          error_text: string | null
+          updated_at: Date | null
+          completed_at: Date | null
+        }>>`
+          SELECT target_id, status, moderation_state, label_summary, labels, moderation_flags, error_text, updated_at, completed_at
+          FROM content_ai_scan
+          WHERE target_type = ${'organization_event'}
+            AND target_id IN (${Prisma.join(eventScanTargetIds)})
+        `
+      : []
+
+    const scansByTargetKey = new Map<string, ContentAiScanSummary>()
+    const ingestScanRows = (targetType: ContentAiScanTargetType, rows: Array<{
       target_id: string
       status: string
       moderation_state: string | null
@@ -29764,29 +30071,39 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
       error_text: string | null
       updated_at: Date | null
       completed_at: Date | null
-    }) => {
-      scansByPostId.set(scan.target_id, {
-        status: scan.status,
-        moderationState: scan.moderation_state,
-        labelSummary: scan.label_summary,
-        labels: readStringList(scan.labels),
-        moderationFlags: readStringList(scan.moderation_flags),
-        errorText: scan.error_text,
-        updatedAt: scan.updated_at?.toISOString() ?? null,
-        completedAt: scan.completed_at?.toISOString() ?? null,
+    }>) => {
+      rows.forEach((scan) => {
+        scansByTargetKey.set(`${targetType}:${scan.target_id}`, {
+          status: scan.status,
+          moderationState: scan.moderation_state,
+          labelSummary: scan.label_summary,
+          labels: readStringList(scan.labels),
+          moderationFlags: readStringList(scan.moderation_flags),
+          errorText: scan.error_text,
+          updatedAt: scan.updated_at?.toISOString() ?? null,
+          completedAt: scan.completed_at?.toISOString() ?? null,
+        })
       })
-    })
+    }
 
-    const items = posts
-      .map((post: any) => {
-        const reportSummary = summarizeReportReasons(reportsByPostId.get(post.id) ?? [])
+    ingestScanRows('post', postScanRows)
+    ingestScanRows('market_listing', listingScanRows)
+    ingestScanRows('organization_event', eventScanRows)
+
+    const items = [
+      ...posts.map((post: any) => {
+        const reportSummary = summarizeReportReasons(reportsByTargetKey.get(`${ModerationTargetType.POST}:${post.id}`) ?? [])
         return {
-          id: post.id,
+          id: `post:${post.id}`,
+          aiScanTargetType: 'post',
+          aiScanTargetId: post.id,
           createdAt: post.createdAt.toISOString(),
+          contentType: 'social_post',
           title: post.title?.trim() || null,
           preview: sanitizePlainText(post.body).slice(0, 220).trim(),
           url: buildPostHrefForAdmin(post),
-          jurisdiction: post.jurisdiction,
+          sourceLabel: post.business ? 'Organization post' : post.communitySlug ? 'Community post' : 'Citizen post',
+          metaLine: post.jurisdiction,
           moderationStatus: post.moderationStatus,
           commentCount: post.commentCount,
           reactionCount: post.reactionTotal,
@@ -29801,24 +30118,92 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
               }
             : null,
           flags: reportSummary,
-          aiScan: scansByPostId.get(post.id) ?? {
-            status: 'not_queued',
-            moderationState: null,
-            labelSummary: null,
-            labels: [],
-            moderationFlags: [],
-            errorText: null,
-            updatedAt: null,
-            completedAt: null,
-          },
+          aiScan: scansByTargetKey.get(`post:${post.id}`) ?? buildContentAiScanDefaultSummary(),
         }
+      }),
+      ...listings.map((listing: (typeof listings)[number]) => {
+        const reportSummary = summarizeReportReasons(reportsByTargetKey.get(`${ModerationTargetType.MARKET_LISTING}:${listing.id}`) ?? [])
+        const locationLabel = [listing.pickup_city, listing.pickup_province].filter(Boolean).join(', ')
+        let priceLabel = `${((Number(listing.price_cents) || 0) / 100).toFixed(2)} ${listing.currency}`
+        try {
+          priceLabel = new Intl.NumberFormat('en-CA', { style: 'currency', currency: String(listing.currency || 'CAD').toUpperCase() }).format((Number(listing.price_cents) || 0) / 100)
+        } catch {
+          priceLabel = `${((Number(listing.price_cents) || 0) / 100).toFixed(2)} ${listing.currency}`
+        }
+        return {
+          id: `market_listing:${listing.id}`,
+          aiScanTargetType: 'market_listing',
+          aiScanTargetId: listing.id,
+          createdAt: listing.created_at.toISOString(),
+          contentType: 'market_listing',
+          title: listing.title?.trim() || null,
+          preview: sanitizePlainText(listing.description ?? '').slice(0, 220).trim(),
+          url: `/market/listings/${encodeURIComponent(listing.id)}`,
+          sourceLabel: 'Market listing',
+          metaLine: [priceLabel, locationLabel].filter(Boolean).join(' · ') || null,
+          moderationStatus: listing.moderation_status,
+          commentCount: 0,
+          reactionCount: 0,
+          score: 0,
+          author: formatAdminUserSummary({
+            id: listing.seller_user_id,
+            handle: listing.seller_handle,
+            name: listing.seller_name,
+            avatarUrl: listing.seller_avatar_url,
+            coverUrl: listing.seller_cover_url,
+          }),
+          organization: null,
+          flags: reportSummary,
+          aiScan: scansByTargetKey.get(`market_listing:${listing.id}`) ?? buildContentAiScanDefaultSummary(),
+        }
+      }),
+      ...eventRows.map(({ business, event }: { business: (typeof eventBusinesses)[number]; event: OrgEventDefinition }) => ({
+        id: `organization_event:${event.id}`,
+        aiScanTargetType: 'organization_event',
+        aiScanTargetId: buildOrganizationEventScanTargetId(business.id, event.id),
+        createdAt: new Date(event.createdAt).toISOString(),
+        contentType: 'organization_event',
+        title: event.title?.trim() || null,
+        preview: sanitizePlainText(event.description ?? '').slice(0, 220).trim(),
+        url:
+          business.provinceCode && business.communitySlug && business.slug
+            ? `/com/${encodeURIComponent(business.provinceCode.toLowerCase())}/${encodeURIComponent(business.communitySlug.toLowerCase())}/orgs/${encodeURIComponent(business.slug)}/events/${encodeURIComponent(event.id)}`
+            : null,
+        sourceLabel: 'Organization event',
+        metaLine: event.startsAt ? `Starts ${new Date(event.startsAt).toLocaleString()}` : null,
+        moderationStatus: event.status ?? 'PUBLISHED',
+        commentCount: 0,
+        reactionCount: 0,
+        score: 0,
+        author: formatAdminUserSummary(business.owner),
+        organization: {
+          id: business.id,
+          name: business.name,
+          slug: business.slug,
+          href: buildBusinessHrefForAdmin(business),
+        },
+        flags: summarizeReportReasons([]),
+        aiScan:
+          scansByTargetKey.get(`organization_event:${buildOrganizationEventScanTargetId(business.id, event.id)}`) ??
+          buildContentAiScanDefaultSummary(),
+      })),
+    ]
+      .sort((left, right) => {
+        const leftTime = new Date(left.createdAt).getTime()
+        const rightTime = new Date(right.createdAt).getTime()
+        if (rightTime !== leftTime) return rightTime - leftTime
+        return left.id.localeCompare(right.id)
       })
-      .filter((item: any) => (query.data.flagReason ? item.flags.reasons.includes(query.data.flagReason) : true))
+
+    const pagedItems = items.slice(offset, offset + pageSize)
+    const hasMore = offset + pageSize < items.length
 
     return reply.send({
       metric: query.data.metric,
       generatedAt: new Date().toISOString(),
-      items,
+      items: pagedItems,
+      page,
+      hasMore,
     })
   }
 
@@ -29915,6 +30300,8 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
       generatedAt: new Date().toISOString(),
       items: comments.map((entry: any) => ({
         id: entry.id,
+        aiScanTargetType: 'comment',
+        aiScanTargetId: entry.id,
         createdAt: entry.createdAt.toISOString(),
         body: sanitizePlainText(entry.body).slice(0, 220).trim(),
         moderationStatus: entry.moderationStatus,
@@ -30289,6 +30676,19 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
   }
 
   return reply.code(400).send({ error: 'unsupported_metric' })
+})
+
+app.post('/admin/content-ai-scans/retry', async (req: FastifyRequest, reply: FastifyReply) => {
+  const adminUser = await loadAdminUserOrReply(req, reply)
+  if (!adminUser) return
+
+  const body = AdminContentAiScanRetryBody.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  const retried = await retryContentAiScanTarget(body.data)
+  if (!retried) return reply.code(404).send({ error: 'content_ai_scan_target_not_found' })
+
+  return reply.send({ queued: true })
 })
 
 app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: FastifyReply) => {

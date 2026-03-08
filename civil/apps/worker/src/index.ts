@@ -278,6 +278,68 @@ function extractJsonObject(text: string) {
   }
 }
 
+function inferImageMimeTypeFromBytes(bytes: Buffer) {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes.length >= 6) {
+    const header = bytes.subarray(0, 6).toString('ascii')
+    if (header === 'GIF87a' || header === 'GIF89a') return 'image/gif'
+  }
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp'
+  }
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp'
+  if (bytes.length >= 4 && bytes[0] === 0x00 && bytes[1] === 0x00 && bytes[2] === 0x01 && bytes[3] === 0x00) return 'image/x-icon'
+
+  const sniff = bytes.subarray(0, Math.min(bytes.length, 256)).toString('utf8').trim().toLowerCase()
+  if (sniff.startsWith('<svg') || sniff.startsWith('<?xml') || sniff.includes('<svg')) return 'image/svg+xml'
+  return null
+}
+
+async function toVisionImageUrl(url: string) {
+  if (/^data:image\//i.test(url)) return url
+
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`image_fetch_failed_${response.status}`)
+  }
+
+  const contentType = response.headers.get('content-type')
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (!bytes.length) {
+    throw new Error('image_fetch_empty_response')
+  }
+
+  const normalizedContentType = (contentType || '').split(';')[0]?.trim().toLowerCase() || null
+  const detectedMimeType = inferImageMimeTypeFromBytes(bytes)
+  const effectiveMimeType = detectedMimeType || (normalizedContentType && normalizedContentType.startsWith('image/') ? normalizedContentType : null)
+  if (!effectiveMimeType) {
+    throw new Error(`image_fetch_not_image:${normalizedContentType || 'unknown'}`)
+  }
+
+  let metadata: sharp.Metadata
+  try {
+    metadata = await sharp(bytes, { animated: false }).metadata()
+  } catch {
+    throw new Error(`image_decode_failed:${effectiveMimeType}`)
+  }
+
+  const width = metadata.width ?? 0
+  const height = metadata.height ?? 0
+  if (width < 48 || height < 48) {
+    throw new Error(`image_too_small:${width}x${height}`)
+  }
+
+  const normalizedBytes = await sharp(bytes, { animated: false })
+    .rotate()
+    .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+    .png({ compressionLevel: 9, adaptiveFiltering: true, palette: false })
+    .toBuffer()
+
+  const base64 = normalizedBytes.toString('base64')
+  return `data:image/png;base64,${base64}`
+}
+
 async function resolveVisionModel(server: CivilAiServerConfig) {
   if (CIVIL_AI_VISION_MODEL) return CIVIL_AI_VISION_MODEL
   try {
@@ -310,6 +372,18 @@ async function analyzeImagesWithVision(args: { server: CivilAiServerConfig; mode
     .filter(Boolean)
     .join('\n')
 
+  const conversionResults = await Promise.allSettled(args.imageUrls.slice(0, 4).map(async (url) => ({ sourceUrl: url, dataUrl: await toVisionImageUrl(url) })))
+  const visionImageUrls = conversionResults
+    .filter((result): result is PromiseFulfilledResult<{ sourceUrl: string; dataUrl: string }> => result.status === 'fulfilled')
+    .map((result) => result.value.dataUrl)
+  const skippedImages = conversionResults
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map((result) => (result.reason instanceof Error ? result.reason.message : String(result.reason)))
+
+  if (!visionImageUrls.length && !args.sourceText?.trim()) {
+    throw new Error(skippedImages[0] || 'no_valid_images_or_text_available')
+  }
+
   const body = {
     model: args.model,
     temperature: 0.1,
@@ -319,7 +393,7 @@ async function analyzeImagesWithVision(args: { server: CivilAiServerConfig; mode
         role: 'user',
         content: [
           { type: 'text', text: prompt },
-          ...args.imageUrls.slice(0, 4).map((url) => ({ type: 'image_url', image_url: { url } })),
+          ...visionImageUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
         ],
       },
     ],
@@ -351,7 +425,14 @@ async function analyzeImagesWithVision(args: { server: CivilAiServerConfig; mode
     throw new Error('vision_invalid_json_response')
   }
 
-  return { parsed, raw: json ?? rawText }
+  return {
+    parsed,
+    raw: {
+      skippedImages,
+      imageCount: visionImageUrls.length,
+      response: json ?? rawText,
+    },
+  }
 }
 
 function readOrganizationSystemState(metadata: unknown): OrganizationSystemState {
