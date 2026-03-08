@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, KeyboardEvent, ReactNode, useEffect, useRef, useState } from 'react'
+import { Fragment, ReactNode, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { HiOutlineArrowUp, HiOutlineSparkles, HiOutlineXMark } from 'react-icons/hi2'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -176,7 +176,7 @@ export default function CivilAiLauncher() {
 
   useEffect(() => {
     if (!open) return
-    const onKeyDown = (event: KeyboardEvent) => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false)
     }
     window.addEventListener('keydown', onKeyDown)
@@ -261,7 +261,7 @@ export default function CivilAiLauncher() {
     }
   }
 
-  function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+  function handleDraftKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== 'Enter' || event.shiftKey) return
     event.preventDefault()
     void handleSend()
