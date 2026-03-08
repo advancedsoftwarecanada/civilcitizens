@@ -1,7 +1,7 @@
 "use client"
 
-import AdminReportsPage from '../reports/page'
+import AdminAnalyticsPage from '../_components/AdminAnalyticsPage'
 
-export default function AdminAnalyticsPage() {
-  return <AdminReportsPage />
+export default function AdminAnalyticsRoute() {
+  return <AdminAnalyticsPage />
 }

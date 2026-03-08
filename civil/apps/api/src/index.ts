@@ -4431,6 +4431,77 @@ async function resolveModerationTarget(targetType: ModerationTargetType, targetI
   return null
 }
 
+function buildCommunityHref(provinceCode?: string | null, communitySlug?: string | null) {
+  if (!provinceCode || !communitySlug) return null
+  return `/${provinceCode.toLowerCase()}/${communitySlug.toLowerCase()}`
+}
+
+function buildBusinessHrefForAdmin(business?: { provinceCode?: string | null; communitySlug?: string | null; slug?: string | null } | null) {
+  if (!business?.provinceCode || !business.communitySlug || !business.slug) return null
+  return `/com/${business.provinceCode.toLowerCase()}/${business.communitySlug.toLowerCase()}/orgs/${business.slug}`
+}
+
+function buildPostHrefForAdmin(post: {
+  id: string
+  seoSlug?: string | null
+  provinceCode?: string | null
+  communitySlug?: string | null
+  author?: { handle?: string | null } | null
+  business?: { provinceCode?: string | null; communitySlug?: string | null } | null
+}) {
+  const slug = post.seoSlug ?? post.id
+  if (post.business?.provinceCode && post.business.communitySlug) {
+    return `/${post.business.provinceCode.toLowerCase()}/${post.business.communitySlug.toLowerCase()}/posts/${slug}`
+  }
+  if (post.provinceCode && post.communitySlug) {
+    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
+  }
+  if (post.author?.handle) {
+    return `/u/${post.author.handle}/posts/${slug}`
+  }
+  return null
+}
+
+function summarizeReportReasons(reports: Array<{ reasons: string[]; status: ContentReportStatus; createdAt: Date }>) {
+  const reasonSet = new Set<string>()
+  let openCount = 0
+  let reviewedCount = 0
+  let latestReportedAt: string | null = null
+
+  reports.forEach((report) => {
+    report.reasons.forEach((reason) => reasonSet.add(reason))
+    if (report.status === ContentReportStatus.OPEN) openCount += 1
+    if (report.status === ContentReportStatus.REVIEWED) reviewedCount += 1
+    if (!latestReportedAt || report.createdAt.toISOString() > latestReportedAt) {
+      latestReportedAt = report.createdAt.toISOString()
+    }
+  })
+
+  return {
+    count: reports.length,
+    reasons: Array.from(reasonSet),
+    openCount,
+    reviewedCount,
+    latestReportedAt,
+  }
+}
+
+function formatAdminUserSummary(user: {
+  id: string
+  handle: string
+  name: string | null
+  avatarUrl: string | null
+  coverUrl: string | null
+}) {
+  return {
+    id: user.id,
+    handle: user.handle,
+    name: user.name,
+    avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+    coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
+  }
+}
+
 async function applyModerationQuarantine(
   tx: Prisma.TransactionClient,
   targetType: ModerationTargetType,
@@ -5817,6 +5888,11 @@ type RankedFeedCandidate = {
   category: FeedCategory
 }
 
+type FeedRankCursorState = {
+  offset: number
+  seed: number | null
+}
+
 const HOME_FEED_CATEGORY_WEIGHTS: Record<FeedCategory, number> = {
   friends: 30,
   network: 20,
@@ -5829,23 +5905,55 @@ const HOME_FEED_CATEGORY_WEIGHTS: Record<FeedCategory, number> = {
 
 const FEED_RANK_CURSOR_PREFIX = 'rank:'
 
+function normalizeFeedRankSeed(seed: number): number {
+  if (!Number.isFinite(seed)) return 1
+  const normalized = Math.abs(Math.floor(seed)) % 2147483647
+  return normalized === 0 ? 1 : normalized
+}
+
+function createFeedRankSeed(): number {
+  return normalizeFeedRankSeed(Math.floor(Math.random() * 2147483647))
+}
+
+function createSeededRandom(seed: number): () => number {
+  let state = normalizeFeedRankSeed(seed)
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
 function toCommunityKey(provinceCode: string | null | undefined, communitySlug: string | null | undefined): string | null {
   if (!provinceCode || !communitySlug) return null
   return `${provinceCode.toUpperCase()}:${communitySlug.toLowerCase()}`
 }
 
-function parseFeedRankCursor(cursor?: string): number {
-  if (!cursor) return 0
+function parseFeedRankCursor(cursor?: string): FeedRankCursorState {
+  if (!cursor) return { offset: 0, seed: null }
   const trimmed = cursor.trim()
-  if (!trimmed.startsWith(FEED_RANK_CURSOR_PREFIX)) return 0
+  if (!trimmed.startsWith(FEED_RANK_CURSOR_PREFIX)) return { offset: 0, seed: null }
   const raw = trimmed.slice(FEED_RANK_CURSOR_PREFIX.length)
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+  const parts = raw.split(':')
+
+  if (parts.length === 1) {
+    const offset = Number.parseInt(parts[0] ?? '', 10)
+    return {
+      offset: Number.isFinite(offset) && offset > 0 ? offset : 0,
+      seed: null,
+    }
+  }
+
+  const seed = Number.parseInt(parts[0] ?? '', 10)
+  const offset = Number.parseInt(parts[1] ?? '', 10)
+  return {
+    offset: Number.isFinite(offset) && offset > 0 ? offset : 0,
+    seed: Number.isFinite(seed) ? normalizeFeedRankSeed(seed) : null,
+  }
 }
 
-function buildFeedRankCursor(offset: number): string {
+function buildFeedRankCursor(offset: number, seed: number): string {
   const normalized = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0
-  return `${FEED_RANK_CURSOR_PREFIX}${normalized}`
+  return `${FEED_RANK_CURSOR_PREFIX}${normalizeFeedRankSeed(seed)}:${normalized}`
 }
 
 async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContext> {
@@ -6008,14 +6116,40 @@ function scoreFeedCandidate(args: {
   return unseenBoost + freshnessScore + engagementScore + geoBoost + interactionBoost + viewerAuthorBoost - seenPenalty
 }
 
-function mixHomeFeedCandidates(candidates: RankedFeedCandidate[]): RankedFeedCandidate[] {
+function pickWeightedFeedCategory(
+  choices: Array<{ category: FeedCategory; weight: number }>,
+  random: () => number,
+): FeedCategory | null {
+  const totalWeight = choices.reduce((sum, choice) => sum + choice.weight, 0)
+  if (totalWeight <= 0) return choices[0]?.category ?? null
+
+  let threshold = random() * totalWeight
+  for (const choice of choices) {
+    threshold -= choice.weight
+    if (threshold <= 0) return choice.category
+  }
+
+  return choices[choices.length - 1]?.category ?? null
+}
+
+function mixHomeFeedCandidates(candidates: RankedFeedCandidate[], seed: number): RankedFeedCandidate[] {
   if (candidates.length <= 1) return candidates
+
+  const random = createSeededRandom(seed)
 
   const buckets = new Map<FeedCategory, RankedFeedCandidate[]>()
   for (const candidate of candidates) {
     const bucket = buckets.get(candidate.category) ?? []
     bucket.push(candidate)
     buckets.set(candidate.category, bucket)
+  }
+
+  for (const bucket of buckets.values()) {
+    bucket.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (b.createdAtMs !== a.createdAtMs) return b.createdAtMs - a.createdAtMs
+      return b.postId.localeCompare(a.postId)
+    })
   }
 
   const availableCategories = Array.from(buckets.keys())
@@ -6034,24 +6168,23 @@ function mixHomeFeedCandidates(candidates: RankedFeedCandidate[]): RankedFeedCan
 
   const mixed: RankedFeedCandidate[] = []
   while (mixed.length < candidates.length) {
-    let bestCategory: FeedCategory | null = null
-    let bestDeficit = Number.NEGATIVE_INFINITY
-    let bestNextScore = Number.NEGATIVE_INFINITY
+    const lastCategory = mixed[mixed.length - 1]?.category ?? null
+    const beforeLastCategory = mixed[mixed.length - 2]?.category ?? null
+    const weightedChoices: Array<{ category: FeedCategory; weight: number }> = []
 
     for (const category of availableCategories) {
       const queue = buckets.get(category)
       if (!queue?.length) continue
       const expected = (mixed.length + 1) * (normalizedWeights.get(category) ?? 0)
       const actual = consumed.get(category) ?? 0
-      const deficit = expected - actual
-      const nextScore = queue[0]?.score ?? Number.NEGATIVE_INFINITY
-      if (deficit > bestDeficit || (deficit === bestDeficit && nextScore > bestNextScore)) {
-        bestDeficit = deficit
-        bestNextScore = nextScore
-        bestCategory = category
-      }
+      const deficit = Math.max(0.45, expected - actual + 1)
+      let effectiveWeight = (HOME_FEED_CATEGORY_WEIGHTS[category] ?? 0) * deficit
+      if (category === lastCategory) effectiveWeight *= 0.35
+      if (category === lastCategory && category === beforeLastCategory) effectiveWeight *= 0.2
+      weightedChoices.push({ category, weight: effectiveWeight })
     }
 
+    const bestCategory = pickWeightedFeedCategory(weightedChoices, random)
     if (!bestCategory) break
     const queue = buckets.get(bestCategory)
     const next = queue?.shift()
@@ -6108,7 +6241,9 @@ async function rankFeedPosts(args: {
   context: ViewerFeedContext | null
   limit: number
 }) {
-  const offset = parseFeedRankCursor(args.cursor)
+  const rankCursor = parseFeedRankCursor(args.cursor)
+  const offset = rankCursor.offset
+  const rankingSeed = rankCursor.seed ?? createFeedRankSeed()
   if (!args.posts.length) {
     return { items: [] as PostWithAuthor[], nextCursor: undefined as string | undefined }
   }
@@ -6169,7 +6304,7 @@ async function rankFeedPosts(args: {
     return b.postId.localeCompare(a.postId)
   })
 
-  const orderedCandidates = args.scope === 'all' ? mixHomeFeedCandidates(rankedCandidates) : rankedCandidates
+  const orderedCandidates = args.scope === 'all' ? mixHomeFeedCandidates(rankedCandidates, rankingSeed) : rankedCandidates
   const postById = new Map(args.posts.map((post) => [post.id, post] as const))
   const rankedPosts = orderedCandidates
     .map((candidate) => postById.get(candidate.postId))
@@ -6177,7 +6312,7 @@ async function rankFeedPosts(args: {
 
   const pagedItems = rankedPosts.slice(offset, offset + args.limit)
   const nextOffset = offset + args.limit
-  const nextCursor = nextOffset < rankedPosts.length ? buildFeedRankCursor(nextOffset) : undefined
+  const nextCursor = nextOffset < rankedPosts.length ? buildFeedRankCursor(nextOffset, rankingSeed) : undefined
   return { items: pagedItems, nextCursor }
 }
 
@@ -19042,6 +19177,30 @@ const AdminSupportRequestReviewBody = z.object({
   adminNotes: z.string().trim().max(2000).optional().nullable(),
 })
 
+const AdminAnalyticsDetailMetricValues = [
+  'users',
+  'posts',
+  'comments',
+  'reactions',
+  'follows',
+  'jobsAdded',
+  'applicants',
+  'applicationsViewed',
+  'hired',
+] as const
+
+const AdminAnalyticsDetailQuery = z.object({
+  metric: z.enum(AdminAnalyticsDetailMetricValues),
+  start: z.string().trim().optional(),
+  end: z.string().trim().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  flagReason: z.enum(ModerationReportReasonValues).optional(),
+})
+
+const AdminInspectUserParams = z.object({
+  userId: z.string().cuid(),
+})
+
 function parseMarketCursor(cursor: string | undefined): null | { createdAt: Date; id: string } {
   if (!cursor) return null
   const [createdAtRaw, id] = cursor.split('|')
@@ -23163,7 +23322,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     if (sortMode === 'hot') {
-      const rankOffset = parseFeedRankCursor(cursor)
+      const rankOffset = parseFeedRankCursor(cursor).offset
       const candidateTake = Math.min(1500, Math.max(limit * 10, rankOffset + limit + 180, scope === 'all' ? 260 : 200))
       const candidates = await prisma.post.findMany({
         where,
@@ -25654,6 +25813,756 @@ app.get('/admin/reports/summary', async (req: FastifyRequest, reply: FastifyRepl
   }
 
   return reply.send(responsePayload)
+})
+
+app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply) => {
+  const user = await loadAdminUserOrReply(req, reply)
+  if (!user) return
+
+  const query = AdminAnalyticsDetailQuery.safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const range = parseRange(query.data.start, query.data.end)
+  const limit = query.data.limit
+
+  if (query.data.metric === 'users') {
+    const users = await prisma.user.findMany({
+      where: { createdAt: { gte: range.start, lt: range.end } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        coverUrl: true,
+        createdAt: true,
+        lastLoginAt: true,
+        premiumStatus: true,
+        _count: {
+          select: {
+            posts: true,
+            comments: true,
+            businesses: true,
+            contentReportsFiled: true,
+            contentReportsTargeting: true,
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: users.map((entry: any) => ({
+        ...formatAdminUserSummary(entry),
+        createdAt: entry.createdAt.toISOString(),
+        lastLoginAt: entry.lastLoginAt?.toISOString() ?? null,
+        premiumStatus: entry.premiumStatus,
+        postCount: entry._count.posts,
+        commentCount: entry._count.comments,
+        organizationsOwned: entry._count.businesses,
+        reportsFiled: entry._count.contentReportsFiled,
+        reportsAgainst: entry._count.contentReportsTargeting,
+      })),
+    })
+  }
+
+  if (query.data.metric === 'posts') {
+    let flaggedPostIds: string[] | null = null
+    if (query.data.flagReason) {
+      const flaggedReports = await prisma.contentReport.findMany({
+        where: {
+          targetType: ModerationTargetType.POST,
+          reasons: { has: query.data.flagReason },
+        },
+        select: { targetId: true },
+        take: 500,
+      })
+      flaggedPostIds = Array.from(new Set(flaggedReports.map((entry: any) => entry.targetId)))
+      if (!flaggedPostIds.length) {
+        return reply.send({ metric: query.data.metric, generatedAt: new Date().toISOString(), items: [] })
+      }
+    }
+
+    const posts = await prisma.post.findMany({
+      where: {
+        createdAt: { gte: range.start, lt: range.end },
+        ...(flaggedPostIds ? { id: { in: flaggedPostIds } } : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        createdAt: true,
+        seoSlug: true,
+        provinceCode: true,
+        communitySlug: true,
+        jurisdiction: true,
+        moderationStatus: true,
+        commentCount: true,
+        upvotes: true,
+        downvotes: true,
+        reactionTotal: true,
+        author: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+          },
+        },
+      },
+    })
+
+    const reportRows = posts.length
+      ? await prisma.contentReport.findMany({
+          where: {
+            targetType: ModerationTargetType.POST,
+            targetId: { in: posts.map((entry: any) => entry.id) },
+          },
+          orderBy: [{ createdAt: 'desc' }],
+          select: {
+            targetId: true,
+            reasons: true,
+            status: true,
+            createdAt: true,
+          },
+        })
+      : []
+
+    const reportsByPostId = new Map<string, Array<{ reasons: string[]; status: ContentReportStatus; createdAt: Date }>>()
+    reportRows.forEach((report: any) => {
+      const bucket = reportsByPostId.get(report.targetId) ?? []
+      bucket.push(report)
+      reportsByPostId.set(report.targetId, bucket)
+    })
+
+    const items = posts
+      .map((post: any) => {
+        const reportSummary = summarizeReportReasons(reportsByPostId.get(post.id) ?? [])
+        return {
+          id: post.id,
+          createdAt: post.createdAt.toISOString(),
+          title: post.title?.trim() || null,
+          preview: sanitizePlainText(post.body).slice(0, 220).trim(),
+          url: buildPostHrefForAdmin(post),
+          jurisdiction: post.jurisdiction,
+          moderationStatus: post.moderationStatus,
+          commentCount: post.commentCount,
+          reactionCount: post.reactionTotal,
+          score: post.upvotes - post.downvotes,
+          author: formatAdminUserSummary(post.author),
+          organization: post.business
+            ? {
+                id: post.business.id,
+                name: post.business.name,
+                slug: post.business.slug,
+                href: buildBusinessHrefForAdmin(post.business),
+              }
+            : null,
+          flags: reportSummary,
+        }
+      })
+      .filter((item: any) => (query.data.flagReason ? item.flags.reasons.includes(query.data.flagReason) : true))
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items,
+    })
+  }
+
+  if (query.data.metric === 'comments') {
+    const comments = await prisma.comment.findMany({
+      where: { createdAt: { gte: range.start, lt: range.end } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        body: true,
+        createdAt: true,
+        upvotes: true,
+        downvotes: true,
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+        post: {
+          select: {
+            id: true,
+            title: true,
+            body: true,
+            seoSlug: true,
+            provinceCode: true,
+            communitySlug: true,
+            business: {
+              select: {
+                provinceCode: true,
+                communitySlug: true,
+              },
+            },
+            author: {
+              select: {
+                handle: true,
+              },
+            },
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: comments.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        body: sanitizePlainText(entry.body).slice(0, 220).trim(),
+        score: entry.upvotes - entry.downvotes,
+        author: formatAdminUserSummary(entry.user),
+        post: {
+          id: entry.post.id,
+          title: entry.post.title?.trim() || sanitizePlainText(entry.post.body).slice(0, 90) || 'Untitled post',
+          url: buildPostHrefForAdmin(entry.post),
+        },
+      })),
+    })
+  }
+
+  if (query.data.metric === 'reactions') {
+    const reactions = await prisma.postReaction.findMany({
+      where: { createdAt: { gte: range.start, lt: range.end } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        createdAt: true,
+        type: true,
+        user: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+        post: {
+          select: {
+            id: true,
+            title: true,
+            body: true,
+            seoSlug: true,
+            provinceCode: true,
+            communitySlug: true,
+            business: {
+              select: {
+                provinceCode: true,
+                communitySlug: true,
+              },
+            },
+            author: {
+              select: {
+                handle: true,
+              },
+            },
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: reactions.map((entry: any) => ({
+        createdAt: entry.createdAt.toISOString(),
+        type: entry.type,
+        user: formatAdminUserSummary(entry.user),
+        post: {
+          id: entry.post.id,
+          title: entry.post.title?.trim() || sanitizePlainText(entry.post.body).slice(0, 90) || 'Untitled post',
+          url: buildPostHrefForAdmin(entry.post),
+        },
+      })),
+    })
+  }
+
+  if (query.data.metric === 'follows') {
+    const [communityFollows, businessFollows] = await Promise.all([
+      prisma.communityFollow.findMany({
+        where: { createdAt: { gte: range.start, lt: range.end } },
+        orderBy: [{ createdAt: 'desc' }],
+        take: limit,
+        select: {
+          id: true,
+          createdAt: true,
+          provinceCode: true,
+          communitySlug: true,
+          user: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              coverUrl: true,
+            },
+          },
+        },
+      }),
+      prisma.businessFollow.findMany({
+        where: { createdAt: { gte: range.start, lt: range.end } },
+        orderBy: [{ createdAt: 'desc' }],
+        take: limit,
+        select: {
+          id: true,
+          createdAt: true,
+          user: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              coverUrl: true,
+            },
+          },
+          business: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              provinceCode: true,
+              communitySlug: true,
+            },
+          },
+        },
+      }),
+    ])
+
+    const items = [
+      ...communityFollows.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        type: 'community',
+        user: formatAdminUserSummary(entry.user),
+        label: `${entry.provinceCode.toUpperCase()} / ${entry.communitySlug}`,
+        href: buildCommunityHref(entry.provinceCode, entry.communitySlug),
+      })),
+      ...businessFollows.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        type: 'organization',
+        user: formatAdminUserSummary(entry.user),
+        label: entry.business.name,
+        href: buildBusinessHrefForAdmin(entry.business),
+      })),
+    ]
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, limit)
+
+    return reply.send({ metric: query.data.metric, generatedAt: new Date().toISOString(), items })
+  }
+
+  if (query.data.metric === 'jobsAdded') {
+    const jobs = await prisma.jobPosting.findMany({
+      where: { createdAt: { gte: range.start, lt: range.end } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        title: true,
+        createdAt: true,
+        status: true,
+        applicantCount: true,
+        publishedAt: true,
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+          },
+        },
+        createdBy: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: jobs.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        title: entry.title,
+        status: entry.status,
+        publishedAt: entry.publishedAt?.toISOString() ?? null,
+        applicantCount: entry.applicantCount,
+        organization: {
+          id: entry.business.id,
+          name: entry.business.name,
+          href: buildBusinessHrefForAdmin(entry.business),
+        },
+        createdBy: formatAdminUserSummary(entry.createdBy),
+      })),
+    })
+  }
+
+  if (query.data.metric === 'applicants') {
+    const applicants = await prisma.jobApplication.findMany({
+      where: { createdAt: { gte: range.start, lt: range.end } },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        applicant: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+        jobPosting: {
+          select: {
+            id: true,
+            title: true,
+            status: true,
+            business: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                provinceCode: true,
+                communitySlug: true,
+              },
+            },
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: applicants.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        status: entry.status,
+        applicant: formatAdminUserSummary(entry.applicant),
+        job: {
+          id: entry.jobPosting.id,
+          title: entry.jobPosting.title,
+          status: entry.jobPosting.status,
+        },
+        organization: {
+          id: entry.jobPosting.business.id,
+          name: entry.jobPosting.business.name,
+          href: buildBusinessHrefForAdmin(entry.jobPosting.business),
+        },
+      })),
+    })
+  }
+
+  if (query.data.metric === 'applicationsViewed') {
+    const views = await prisma.jobAnalyticsEvent.findMany({
+      where: {
+        kind: 'applications_viewed',
+        createdAt: { gte: range.start, lt: range.end },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        createdAt: true,
+        actor: {
+          select: {
+            id: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+          },
+        },
+        jobPosting: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: views.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        viewer: entry.actor ? formatAdminUserSummary(entry.actor) : null,
+        job: entry.jobPosting ? { id: entry.jobPosting.id, title: entry.jobPosting.title } : null,
+        organization: {
+          id: entry.business.id,
+          name: entry.business.name,
+          href: buildBusinessHrefForAdmin(entry.business),
+        },
+      })),
+    })
+  }
+
+  if (query.data.metric === 'hired') {
+    const hires = await prisma.jobAnalyticsEvent.findMany({
+      where: {
+        kind: 'applicant_hired',
+        createdAt: { gte: range.start, lt: range.end },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        createdAt: true,
+        jobPosting: {
+          select: {
+            id: true,
+            title: true,
+          },
+        },
+        jobApplication: {
+          select: {
+            applicant: {
+              select: {
+                id: true,
+                handle: true,
+                name: true,
+                avatarUrl: true,
+                coverUrl: true,
+              },
+            },
+          },
+        },
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+          },
+        },
+      },
+    })
+
+    return reply.send({
+      metric: query.data.metric,
+      generatedAt: new Date().toISOString(),
+      items: hires.map((entry: any) => ({
+        id: entry.id,
+        createdAt: entry.createdAt.toISOString(),
+        applicant: entry.jobApplication?.applicant ? formatAdminUserSummary(entry.jobApplication.applicant) : null,
+        job: entry.jobPosting ? { id: entry.jobPosting.id, title: entry.jobPosting.title } : null,
+        organization: {
+          id: entry.business.id,
+          name: entry.business.name,
+          href: buildBusinessHrefForAdmin(entry.business),
+        },
+      })),
+    })
+  }
+
+  return reply.code(400).send({ error: 'unsupported_metric' })
+})
+
+app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: FastifyReply) => {
+  const adminUser = await loadAdminUserOrReply(req, reply)
+  if (!adminUser) return
+
+  const params = AdminInspectUserParams.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const inspectedUser = await prisma.user.findUnique({
+    where: { id: params.data.userId },
+    select: {
+      id: true,
+      email: true,
+      handle: true,
+      name: true,
+      bio: true,
+      avatarUrl: true,
+      coverUrl: true,
+      createdAt: true,
+      lastLoginAt: true,
+      premiumStatus: true,
+      _count: {
+        select: {
+          posts: true,
+          comments: true,
+          businesses: true,
+          contentReportsFiled: true,
+          contentReportsTargeting: true,
+          jobApplications: true,
+          jobPostingsCreated: true,
+        },
+      },
+    },
+  })
+
+  if (!inspectedUser) return reply.code(404).send({ error: 'user_not_found' })
+
+  const [recentPosts, recentComments, recentReports] = await Promise.all([
+    prisma.post.findMany({
+      where: { authorId: inspectedUser.id },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 5,
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        createdAt: true,
+        moderationStatus: true,
+        seoSlug: true,
+        provinceCode: true,
+        communitySlug: true,
+        business: {
+          select: {
+            provinceCode: true,
+            communitySlug: true,
+          },
+        },
+        author: {
+          select: {
+            handle: true,
+          },
+        },
+      },
+    }),
+    prisma.comment.findMany({
+      where: { userId: inspectedUser.id },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 5,
+      select: {
+        id: true,
+        body: true,
+        createdAt: true,
+        post: {
+          select: {
+            id: true,
+            title: true,
+            body: true,
+            seoSlug: true,
+            provinceCode: true,
+            communitySlug: true,
+            business: {
+              select: {
+                provinceCode: true,
+                communitySlug: true,
+              },
+            },
+            author: {
+              select: {
+                handle: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.contentReport.findMany({
+      where: { reportedUserId: inspectedUser.id },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 5,
+      select: {
+        id: true,
+        targetType: true,
+        targetLabel: true,
+        targetUrl: true,
+        reasons: true,
+        status: true,
+        createdAt: true,
+      },
+    }),
+  ])
+
+  return reply.send({
+    user: {
+      ...formatAdminUserSummary(inspectedUser),
+      email: inspectedUser.email,
+      bio: inspectedUser.bio ? sanitizePlainText(inspectedUser.bio) : null,
+      createdAt: inspectedUser.createdAt.toISOString(),
+      lastLoginAt: inspectedUser.lastLoginAt?.toISOString() ?? null,
+      premiumStatus: inspectedUser.premiumStatus,
+    },
+    stats: {
+      posts: inspectedUser._count.posts,
+      comments: inspectedUser._count.comments,
+      organizationsOwned: inspectedUser._count.businesses,
+      reportsFiled: inspectedUser._count.contentReportsFiled,
+      reportsAgainst: inspectedUser._count.contentReportsTargeting,
+      jobApplications: inspectedUser._count.jobApplications,
+      jobsCreated: inspectedUser._count.jobPostingsCreated,
+    },
+    recentPosts: recentPosts.map((entry: any) => ({
+      id: entry.id,
+      title: entry.title?.trim() || sanitizePlainText(entry.body).slice(0, 90) || 'Untitled post',
+      createdAt: entry.createdAt.toISOString(),
+      moderationStatus: entry.moderationStatus,
+      url: buildPostHrefForAdmin(entry),
+    })),
+    recentComments: recentComments.map((entry: any) => ({
+      id: entry.id,
+      body: sanitizePlainText(entry.body).slice(0, 160).trim(),
+      createdAt: entry.createdAt.toISOString(),
+      post: {
+        id: entry.post.id,
+        title: entry.post.title?.trim() || sanitizePlainText(entry.post.body).slice(0, 90) || 'Untitled post',
+        url: buildPostHrefForAdmin(entry.post),
+      },
+    })),
+    recentReports: recentReports.map((entry: any) => ({
+      id: entry.id,
+      targetType: entry.targetType,
+      targetLabel: entry.targetLabel,
+      targetUrl: entry.targetUrl,
+      reasons: entry.reasons,
+      status: entry.status,
+      createdAt: entry.createdAt.toISOString(),
+    })),
+  })
 })
 
 app.get('/notifications', async (req: FastifyRequest, reply: FastifyReply) =>

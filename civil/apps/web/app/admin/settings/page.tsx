@@ -1,11 +1,10 @@
 "use client"
 
 import { useEffect, useMemo, useState } from 'react'
-import DashboardShell from '../../_components/DashboardShell'
+import AdminWideShell from '../_components/AdminWideShell'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { clearAuthSession } from '../../_lib/authSession'
-import type { ReactNode } from 'react'
 import { useAdminAccess } from '../_hooks/useAdminAccess'
 
 type EnvChecklistItem = {
@@ -102,25 +101,6 @@ export default function AdminSettingsPage() {
     }
     return items
   }, [diagnostics])
-
-  const rightRail = useMemo<ReactNode>(() => {
-    if (!token) return null
-    return (
-      <div className="space-y-4 text-sm text-slate-600">
-        <section className="surface-card space-y-2 px-5 py-4">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Quick tools</h2>
-          <ul className="space-y-2">
-            <li>Confirm Stripe keys before enabling checkout.</li>
-            <li>Restart the API container after editing env files.</li>
-          </ul>
-        </section>
-        <section className="surface-card space-y-2 px-5 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Bearer token</p>
-          <p className="font-mono text-xs text-slate-900">{token.slice(0, 12)}…</p>
-        </section>
-      </div>
-    )
-  }, [token])
 
   const renderMain = () => {
     if (accessLoading) {
@@ -227,12 +207,8 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <DashboardShell
-      className="bg-slate-50"
-      rightRail={rightRail}
-      mainClassName="space-y-6"
-    >
+    <AdminWideShell className="bg-slate-50" mainClassName="space-y-6">
       {renderMain()}
-    </DashboardShell>
+    </AdminWideShell>
   )
 }

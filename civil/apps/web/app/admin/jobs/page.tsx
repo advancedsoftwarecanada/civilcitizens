@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import DashboardShell from '../../_components/DashboardShell'
+import AdminWideShell from '../_components/AdminWideShell'
 import { buildApiUrl } from '../../_lib/api'
 import { useAdminAccess } from '../_hooks/useAdminAccess'
 
@@ -478,8 +478,8 @@ export default function AdminJobsPage() {
   ])
 
   return (
-    <DashboardShell className="bg-slate-50" mainClassName="space-y-6">
+    <AdminWideShell className="bg-slate-50" mainClassName="space-y-6">
       {main}
-    </DashboardShell>
+    </AdminWideShell>
   )
 }
