@@ -15,7 +15,7 @@ type AiMessage = {
 }
 
 type CivilAiReference = {
-  kind: 'community' | 'event' | 'job' | 'organization' | 'post'
+  kind: 'community' | 'event' | 'job' | 'market' | 'organization' | 'post'
   id: string
   title: string
   subtitle: string | null
@@ -58,9 +58,15 @@ const QUICK_PROMPTS = [
 
 const CIVIL_AI_OPEN_STORAGE_KEY = 'civil-ai-open'
 const CIVIL_AI_CONVERSATION_STORAGE_KEY = 'civil-ai-conversation-id'
+const CIVIL_AI_MAX_VISIBLE_MESSAGES = 8
 
 function nextMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function pruneCivilAiMessages(messages: AiMessage[]) {
+  const trimmed = messages.filter((message) => message.id !== STARTER_MESSAGE.id).slice(-CIVIL_AI_MAX_VISIBLE_MESSAGES)
+  return trimmed.length ? trimmed : [STARTER_MESSAGE]
 }
 
 function isCivilInternalHref(href: string) {
@@ -94,8 +100,9 @@ function createCivilAiConversationId() {
 
 function buildCivilAiLoadingSteps(question: string) {
   const normalized = question.trim().toLowerCase()
-  const wantsEvents = /(event|events|happening|going on|tonight|today|this weekend|this month)/.test(normalized)
+  const wantsEvents = /(event|events|meetup|meetups|metup|metups|networking|networking event|networking events|happening|going on|tonight|today|this weekend|this month|attend)/.test(normalized)
   const wantsJobs = /(job|jobs|hiring|employment|position|positions|work)/.test(normalized)
+  const wantsMarket = /(buy|buying|looking for|looking to buy|where can i buy|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalized)
   const wantsPosts = /(post|posts|people saying|talking about|discussion|discussions|conversation|conversations|debate|debates)/.test(normalized)
   const wantsOrganizations = /(organization|organizations|group|groups|association|associations)/.test(normalized)
   const wantsProfile = /(my name|who am i|do you know my name|my profile|my experience|my organizations|i belong to)/.test(normalized)
@@ -124,6 +131,14 @@ function buildCivilAiLoadingSteps(question: string) {
       'Checking your local communities and organizations.',
       'Looking up active jobs nearby.',
       'Considering organization and location matches together.',
+    ]
+  }
+
+  if (wantsMarket) {
+    return [
+      'Checking Civil marketplace listings first.',
+      'Matching the product terms against active listings.',
+      'Keeping the answer anchored to listings that exist right now.',
     ]
   }
 
@@ -376,7 +391,7 @@ export default function CivilAiLauncher() {
       setMessages((current) => {
         const hasLiveConversation = current.some((message) => message.id !== STARTER_MESSAGE.id && !message.id.startsWith('history-'))
         if (sendLoadingRef.current || hasLiveConversation) return current
-        return historyMessages
+        return pruneCivilAiMessages(historyMessages)
       })
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load Civil AI history right now.')
@@ -394,7 +409,7 @@ export default function CivilAiLauncher() {
       role: 'user',
       content,
     }
-    const nextMessages = [...messages, nextUserMessage]
+    const nextMessages = pruneCivilAiMessages([...messages, nextUserMessage])
 
     setMessages(nextMessages)
     setDraft('')
@@ -426,7 +441,7 @@ export default function CivilAiLauncher() {
         window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, json.conversationId)
         setConversationId(json.conversationId)
       }
-      setMessages((current) => [
+      setMessages((current) => pruneCivilAiMessages([
         ...current,
         {
           id: nextMessageId('assistant'),
@@ -434,7 +449,7 @@ export default function CivilAiLauncher() {
           content: json.message?.content || 'No response returned.',
           references: Array.isArray(json.message?.references) ? json.message?.references : [],
         },
-      ])
+      ]))
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : 'Civil AI could not answer right now.')
     } finally {

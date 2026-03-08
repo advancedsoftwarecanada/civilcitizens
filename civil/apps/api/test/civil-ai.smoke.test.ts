@@ -245,6 +245,7 @@ let planCivilAiRetrieval: (question: string) => {
   wantsProfile: boolean
   wantsEvents: boolean
   wantsJobs: boolean
+  wantsMarket: boolean
   wantsOrganizations: boolean
   wantsPosts: boolean
   todayOnly: boolean
@@ -296,10 +297,12 @@ let buildCivilAiGroundedAnswer: (question: string, bundle: {
   retrievalPlan: {
     wantsEvents: boolean
     wantsJobs: boolean
+    wantsMarket: boolean
     wantsOrganizations: boolean
     wantsPosts: boolean
     todayOnly: boolean
   }
+  searchPass?: 1 | 2
   targetCommunities: Array<{ id: string; communityName: string; provinceName: string; communitySlug: string; provinceCode: string; href: string }>
   events: Array<{
     id: string
@@ -318,6 +321,15 @@ let buildCivilAiGroundedAnswer: (question: string, bundle: {
     }
   }>
   jobs: Array<unknown>
+  market: Array<{
+    id: string
+    title: string
+    description: string | null
+    imageUrl: string | null
+    priceLabel: string
+    locationLabel: string | null
+    href: string
+  }>
   organizations: Array<unknown>
   posts: Array<unknown>
 }) => { content: string; references: Array<{ kind: string; title: string }> } | null
@@ -411,6 +423,25 @@ describe('Civil AI smoke', () => {
     expect(plan.wantsJobs).toBe(false)
     expect(plan.wantsOrganizations).toBe(false)
     expect(plan.wantsPosts).toBe(false)
+  })
+
+  test('planner routes buying questions to marketplace instead of local posts', () => {
+    const plan = planCivilAiRetrieval('I want to buy a skateboard')
+
+    expect(plan.wantsMarket).toBe(true)
+    expect(plan.topicQuery).toContain('skateboard')
+    expect(plan.wantsPosts).toBe(false)
+    expect(plan.wantsOrganizations).toBe(false)
+    expect(plan.wantsEvents).toBe(false)
+  })
+
+  test('planner treats business meetup intent as an event search even with metup typo', () => {
+    const plan = planCivilAiRetrieval('I want to attend a business metup')
+
+    expect(plan.wantsEvents).toBe(true)
+    expect(plan.wantsPosts).toBe(false)
+    expect(plan.wantsOrganizations).toBe(false)
+    expect(plan.wantsMarket).toBe(false)
   })
 
   test('response sanitizer removes duplicate raw Civil URLs when a card already exists', () => {
@@ -535,6 +566,7 @@ describe('Civil AI smoke', () => {
       ],
       events: [],
       jobs: [],
+      market: [],
       organizations: [],
       posts: [],
     })
@@ -583,6 +615,7 @@ describe('Civil AI smoke', () => {
         },
       ],
       jobs: [],
+      market: [],
       organizations: [],
       posts: [],
     })
@@ -594,6 +627,64 @@ describe('Civil AI smoke', () => {
     expect(grounded?.references).toHaveLength(1)
     expect(grounded?.references[0]?.kind).toBe('event')
     expect(grounded?.references[0]?.title).toBe('Community Budget Night')
+  })
+
+  test('grounded event answer strips html descriptions and uses a compact multi-community scope label', () => {
+    const grounded = buildCivilAiGroundedAnswer('What events are happening near me today?', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('What events are happening near me today?'),
+        wantsJobs: false,
+        wantsOrganizations: false,
+        wantsPosts: false,
+      },
+      searchPass: 1,
+      targetCommunities: [
+        {
+          id: 'ON:york-durham',
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          communitySlug: 'york-durham',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/york-durham',
+        },
+        {
+          id: 'ON:newmarket-aurora',
+          communityName: 'Newmarket-Aurora',
+          provinceName: 'Ontario',
+          communitySlug: 'newmarket-aurora',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/newmarket-aurora',
+        },
+      ],
+      events: [
+        {
+          id: 'event_html',
+          title: 'Civil Citizens Meetup',
+          description: '<p>Join us for connection, conversation, and community.</p><p><br></p><p>Bring business cards.</p>',
+          startsAt: '2026-03-25T22:30:00.000Z',
+          primaryPhotoUrl: null,
+          organization: {
+            id: 'org_1',
+            name: 'Civil Citizens of Newmarket Aurora',
+            slug: 'civil-citizens-of-newmarket-aurora',
+            provinceCode: 'ON',
+            communitySlug: 'newmarket-aurora',
+            logoUrl: null,
+            isVerified: true,
+          },
+        },
+      ],
+      jobs: [],
+      market: [],
+      organizations: [],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I found 1 event in current Civil data for your searched Civil communities today:')
+    expect(grounded?.content).toContain('Join us for connection, conversation, and community.')
+    expect(grounded?.content).not.toContain('<p>')
+    expect(grounded?.content).not.toContain('<span')
   })
 
   test('grounded answer says when no Civil jobs were found', () => {
@@ -616,6 +707,7 @@ describe('Civil AI smoke', () => {
       ],
       events: [],
       jobs: [],
+      market: [],
       organizations: [],
       posts: [],
     })
@@ -645,6 +737,7 @@ describe('Civil AI smoke', () => {
       ],
       events: [],
       jobs: [],
+      market: [],
       organizations: [
         {
           id: 'org_1',
@@ -690,6 +783,7 @@ describe('Civil AI smoke', () => {
       ],
       events: [],
       jobs: [],
+      market: [],
       organizations: [],
       posts: [
         {
@@ -715,6 +809,65 @@ describe('Civil AI smoke', () => {
     expect(grounded?.content).toContain('Housing pressure in the east end')
     expect(grounded?.references).toHaveLength(1)
     expect(grounded?.references[0]?.kind).toBe('post')
+  })
+
+  test('grounded answer lists only exact marketplace listings returned', () => {
+    const grounded = buildCivilAiGroundedAnswer('I want to buy a skateboard', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('I want to buy a skateboard'),
+        wantsEvents: false,
+        wantsJobs: false,
+        wantsOrganizations: false,
+        wantsPosts: false,
+      },
+      searchPass: 1,
+      targetCommunities: [],
+      events: [],
+      jobs: [],
+      market: [
+        {
+          id: 'listing_1',
+          title: 'Element Street Skateboard',
+          description: 'Complete board in solid condition.',
+          imageUrl: null,
+          priceLabel: 'CAD 80',
+          locationLabel: 'Newmarket, ON',
+          href: '/market/listings/listing_1',
+        },
+      ],
+      organizations: [],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I found 1 active marketplace listing in current Civil data:')
+    expect(grounded?.content).toContain('Element Street Skateboard')
+    expect(grounded?.content).toContain('CAD 80')
+    expect(grounded?.references).toHaveLength(1)
+    expect(grounded?.references[0]?.kind).toBe('market')
+  })
+
+  test('grounded answer says when no marketplace listings were found', () => {
+    const grounded = buildCivilAiGroundedAnswer('I want to buy a skateboard', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('I want to buy a skateboard'),
+        wantsEvents: false,
+        wantsJobs: false,
+        wantsOrganizations: false,
+        wantsPosts: false,
+      },
+      searchPass: 1,
+      targetCommunities: [],
+      events: [],
+      jobs: [],
+      market: [],
+      organizations: [],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I do not see any active marketplace listings in current Civil data that match this search.')
+    expect(grounded?.content).toContain('I will not invent listings that are not in the database')
   })
 
   ;(canRunDbSmoke() ? test : test.skip)('AI endpoints and /ai/chat stay anchored to local Civil data', async () => {
