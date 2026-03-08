@@ -251,6 +251,17 @@ let planCivilAiRetrieval: (question: string) => {
   todayOnly: boolean
   topicQuery: string
 }
+let buildCivilAiMarketSearchScope: (args: {
+  searchPass: 1 | 2
+  targetCommunities: Array<{ provinceCode: string; communitySlug: string }>
+  defaultCommunities: Array<{ provinceCode: string; communitySlug: string }>
+}) => {
+  mode: 'global' | 'community' | 'province'
+  communities: Array<{ provinceCode: string; communitySlug: string }>
+  provinceCodes: string[]
+}
+let scoreSearchTextMatch: (text: string, query: string) => number
+let buildCivilAiEffectiveQuestion: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string
 let sanitizeCivilAiResponseContent: (content: string, references: Array<{ href: string }>) => string
 let buildCivilAiPromptInput: (systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string
 let buildCivilAiDirectAnswer: (question: string, viewerContext: {
@@ -369,6 +380,9 @@ beforeAll(async () => {
   const mod = await import('../src/index.js')
   app = mod.app as FastifyInstance
   planCivilAiRetrieval = mod.planCivilAiRetrieval as typeof planCivilAiRetrieval
+  buildCivilAiMarketSearchScope = mod.buildCivilAiMarketSearchScope as typeof buildCivilAiMarketSearchScope
+  scoreSearchTextMatch = mod.scoreSearchTextMatch as typeof scoreSearchTextMatch
+  buildCivilAiEffectiveQuestion = mod.buildCivilAiEffectiveQuestion as typeof buildCivilAiEffectiveQuestion
   sanitizeCivilAiResponseContent = mod.sanitizeCivilAiResponseContent as typeof sanitizeCivilAiResponseContent
   buildCivilAiPromptInput = mod.buildCivilAiPromptInput as typeof buildCivilAiPromptInput
   buildCivilAiDirectAnswer = mod.buildCivilAiDirectAnswer as typeof buildCivilAiDirectAnswer
@@ -442,6 +456,49 @@ describe('Civil AI smoke', () => {
     expect(plan.wantsPosts).toBe(false)
     expect(plan.wantsOrganizations).toBe(false)
     expect(plan.wantsMarket).toBe(false)
+  })
+
+  test('market scoring matches joined skateboard queries against spaced listing titles', () => {
+    expect(scoreSearchTextMatch('Skate Boards', 'skateboards')).toBeGreaterThan(0)
+    expect(scoreSearchTextMatch('Skate Boards', 'Yeah looking for skateboards')).toBeGreaterThan(0)
+  })
+
+  test('market scope widens from community to province on the second pass', () => {
+    const firstPass = buildCivilAiMarketSearchScope({
+      searchPass: 1,
+      targetCommunities: [{ provinceCode: 'ON', communitySlug: 'york-durham' }],
+      defaultCommunities: [{ provinceCode: 'ON', communitySlug: 'york-durham' }],
+    })
+    const secondPass = buildCivilAiMarketSearchScope({
+      searchPass: 2,
+      targetCommunities: [{ provinceCode: 'ON', communitySlug: 'york-durham' }],
+      defaultCommunities: [{ provinceCode: 'ON', communitySlug: 'york-durham' }],
+    })
+
+    expect(firstPass.mode).toBe('community')
+    expect(firstPass.communities).toHaveLength(1)
+    expect(secondPass.mode).toBe('province')
+    expect(secondPass.provinceCodes).toContain('on')
+  })
+
+  test('effective question keeps short refinement follow-ups attached to the prior user request', () => {
+    const effective = buildCivilAiEffectiveQuestion([
+      { role: 'user', content: "I'm looking for a used car" },
+      { role: 'assistant', content: 'I could not find any active marketplace listings that match that search right now.' },
+      { role: 'user', content: 'Honda' },
+    ])
+
+    expect(effective).toBe("I'm looking for a used car Honda")
+  })
+
+  test('effective question drops old context for a new standalone question', () => {
+    const effective = buildCivilAiEffectiveQuestion([
+      { role: 'user', content: "I'm looking for a used car" },
+      { role: 'assistant', content: 'I could not find any active marketplace listings that match that search right now.' },
+      { role: 'user', content: 'What is my name?' },
+    ])
+
+    expect(effective).toBe('What is my name?')
   })
 
   test('response sanitizer removes duplicate raw Civil URLs when a card already exists', () => {
