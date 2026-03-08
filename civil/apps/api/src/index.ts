@@ -19834,7 +19834,7 @@ app.get('/market/feed', async (req: FastifyRequest, reply: FastifyReply) =>
         AND p.is_draft = FALSE
         AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
-        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
+        AND b."moderationStatus" = CAST(${ModerationStatus.VISIBLE} AS "ModerationStatus")
         AND (${blockedBusinessIds.length ? Prisma.sql`p.business_id NOT IN (${Prisma.join(blockedBusinessIds)})` : Prisma.sql`TRUE`})
         AND (${useCommunityScope ? Prisma.sql`(UPPER(COALESCE(b."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(b."communitySlug", '')) IN (${Prisma.join(communitySlugs)}))` : Prisma.sql`TRUE`})
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
@@ -20021,7 +20021,7 @@ app.get('/market/products', async (req: FastifyRequest, reply: FastifyReply) =>
         AND p.is_draft = FALSE
         AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
-        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
+        AND b."moderationStatus" = CAST(${ModerationStatus.VISIBLE} AS "ModerationStatus")
         AND (${blockedBusinessIds.length ? Prisma.sql`p.business_id NOT IN (${Prisma.join(blockedBusinessIds)})` : Prisma.sql`TRUE`})
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
         AND (
@@ -20155,7 +20155,7 @@ app.get('/market/products/:productId', async (req: FastifyRequest, reply: Fastif
         AND p.is_draft = FALSE
         AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
-        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
+        AND b."moderationStatus" = CAST(${ModerationStatus.VISIBLE} AS "ModerationStatus")
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
       GROUP BY p.id, b.id
       LIMIT 1
@@ -20257,7 +20257,7 @@ app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
         AND p.is_draft = FALSE
         AND p.moderation_status = ${'visible'}
         AND b.status = 'ACTIVE'
-        AND b."moderationStatus" = ${ModerationStatus.VISIBLE}
+        AND b."moderationStatus" = CAST(${ModerationStatus.VISIBLE} AS "ModerationStatus")
         AND (p.catalog_id IS NULL OR c.enabled = TRUE)
       GROUP BY p.id, b.id
     `
