@@ -3,6 +3,14 @@
 
 Goal: fast iteration without Docker rebuild loops.
 
+This manages on-host dev processes behind the CybertronDev nginx proxy.
+
+Important storage rule:
+- CybertronDev Postgres/Redis/MinIO are the shared local dev services.
+- They back the normal app/dev experience and should be treated as persistent.
+- Destructive test suites must use a dedicated test database, never the
+    CybertronDev `civil` database.
+
 This manages on-host dev processes behind the CybertronDev nginx proxy:
 - dev.civilcitizens.ca -> nginx_mariadb_redis -> host:3900 -> CybertronDev nginx
 - /      -> Next dev server (host :33101 by default)
@@ -384,7 +392,9 @@ def start() -> int:
     for k, v in file_env.items():
         env.setdefault(k, v)
 
-    # Force Cybertron infra targets
+    # Force Cybertron shared dev infra targets.
+    # WARNING: this DATABASE_URL points at the persistent local dev database.
+    # Do not aim destructive test suites at this target.
     env["DATABASE_URL"] = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
     env["REDIS_URL"] = f"redis://localhost:{CYBERTRON_REDIS_PORT}"
     env.setdefault("JWT_SECRET", "dev_secret")
@@ -580,6 +590,7 @@ def doctor() -> int:
     )
 
     print("== Effective dev configuration ==")
+    print("- NOTE: CybertronDev Postgres/Redis are shared local dev services, not disposable test targets")
     print(f"- CIVIL_WEB_PORT={WEB_PORT}")
     print(f"- CIVIL_API_PORT={API_PORT}")
     print(f"- CYBERTRON_POSTGRES_PORT={CYBERTRON_POSTGRES_PORT}")
@@ -589,7 +600,17 @@ def doctor() -> int:
     print(f"- NEXT_PUBLIC_API_BASE={api_base}")
     print(f"- NEXT_PUBLIC_BASE_URL={base_url}")
     print(f"- NEXT_PUBLIC_MEDIA_BASE_URL={media_base}")
+    test_database_url = None
+    try:
+        parsed = re.match(r"^(postgresql://[^/]+/)([^?]+)(.*)$", database_url)
+        if parsed:
+            test_database_url = f"{parsed.group(1)}civil_test{parsed.group(3)}"
+    except Exception:
+        test_database_url = None
+
     print(f"- DATABASE_URL={database_url}")
+    if test_database_url:
+        print(f"- RECOMMENDED_TEST_DATABASE_URL={test_database_url}")
     print(f"- REDIS_URL={redis_url}")
     print(f"- MEETING_RTC_SERVICE_URL={meeting_rtc_service_url}")
     print(f"- MEETING_RTC_WS_URL={meeting_rtc_ws_url}")
@@ -616,6 +637,17 @@ def doctor() -> int:
                 port = -1
             if port > 0:
                 print(f"- packages/db/.env -> {host}:{port} open={_port_open(host, port)}")
+
+    if test_database_url:
+        m = re.search(r"@([^:/]+):(\d+)", test_database_url)
+        if m:
+            host, port_s = m.group(1), m.group(2)
+            try:
+                port = int(port_s)
+            except ValueError:
+                port = -1
+            if port > 0:
+                print(f"- recommended test db host/port -> {host}:{port} open={_port_open(host, port)}")
 
     return 0
 

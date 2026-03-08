@@ -1,10 +1,9 @@
 "use client"
 
 import Link from 'next/link'
-import { useMemo } from 'react'
 import { HiOutlineBriefcase, HiOutlineCog8Tooth, HiOutlineFlag, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
-import DashboardShell from '../_components/DashboardShell'
+import AdminWideShell from './_components/AdminWideShell'
 import { useAdminAccess } from './_hooks/useAdminAccess'
 
 type AdminAction = {
@@ -55,19 +54,6 @@ const ACTIONS: AdminAction[] = [
 
 export default function AdminPage() {
   const { token, loading, error, isSuperAdmin } = useAdminAccess()
-
-  const rightRailContent = useMemo(() => {
-    if (!token) return null
-    return (
-      <div className="space-y-3">
-        <section className="surface-card space-y-2 px-5 py-4 text-sm text-slate-600">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Session</p>
-          <p>Bearer token (first 12 chars)</p>
-          <p className="font-mono text-xs text-slate-900">{token.slice(0, 12)}…</p>
-        </section>
-      </div>
-    )
-  }, [token])
 
   const body = () => {
     if (loading) {
@@ -125,12 +111,8 @@ export default function AdminPage() {
   }
 
   return (
-    <DashboardShell
-      className="bg-slate-50"
-      rightRail={rightRailContent}
-      mainClassName="space-y-6"
-    >
+    <AdminWideShell className="bg-slate-50" mainClassName="space-y-6">
       {body()}
-    </DashboardShell>
+    </AdminWideShell>
   )
 }

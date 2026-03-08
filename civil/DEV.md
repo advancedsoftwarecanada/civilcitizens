@@ -2,6 +2,14 @@
 
 This override runs web (Next.js) and api (Fastify) in dev mode with bind mounts and file watching for hot reload.
 
+## Shared dev infra vs test infra
+
+- `_DEV.py` points the app at CybertronDev Postgres and Redis for normal local development.
+- Treat that `civil` database as persistent shared dev state.
+- Destructive API tests must use a dedicated test database such as `civil_test`.
+- `pnpm --filter @civil/api test` now rewrites `DATABASE_URL` to a safe test target automatically.
+- Override with `API_TEST_DATABASE_URL=postgresql://.../civil_test` if you need a different test database.
+
 ## Start infra + dev app stack
 
 ```bash
