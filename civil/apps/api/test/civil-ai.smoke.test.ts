@@ -572,8 +572,7 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I do not see any events in current Civil data for York-Durham today.')
-    expect(grounded?.content).toContain('I will not invent events that are not in the database')
+    expect(grounded?.content).toContain('I could not find any events for York-Durham today.')
     expect(grounded?.references).toHaveLength(0)
   })
 
@@ -621,9 +620,8 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I found 1 event in current Civil data for York-Durham today:')
-    expect(grounded?.content).toContain('Community Budget Night')
-    expect(grounded?.content).toContain('York-Durham Civic League')
+    expect(grounded?.content).toContain('I found 1 event for York-Durham today. It is linked below.')
+    expect(grounded?.content).not.toContain('Community Budget Night')
     expect(grounded?.references).toHaveLength(1)
     expect(grounded?.references[0]?.kind).toBe('event')
     expect(grounded?.references[0]?.title).toBe('Community Budget Night')
@@ -681,10 +679,13 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I found 1 event in current Civil data for your searched Civil communities today:')
-    expect(grounded?.content).toContain('Join us for connection, conversation, and community.')
+  expect(grounded?.content).toContain('I found 1 event for your searched Civil communities today. It is linked below.')
+  expect(grounded?.content).not.toContain('Join us for connection, conversation, and community.')
     expect(grounded?.content).not.toContain('<p>')
     expect(grounded?.content).not.toContain('<span')
+    expect(grounded?.references[0]?.summary).toContain('Join us for connection, conversation, and community.')
+    expect(grounded?.references[0]?.summary).not.toContain('<p>')
+    expect(grounded?.references[0]?.summary).not.toContain('<span')
   })
 
   test('grounded answer says when no Civil jobs were found', () => {
@@ -713,8 +714,7 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I do not see any active jobs in current Civil data for York-Durham.')
-    expect(grounded?.content).toContain('I will not invent openings that are not in the database')
+    expect(grounded?.content).toContain('I could not find any active jobs for York-Durham right now.')
   })
 
   test('grounded answer lists only the exact matching organizations returned', () => {
@@ -757,8 +757,8 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I found 1 matching organization in current Civil data for York-Durham:')
-    expect(grounded?.content).toContain('Housing Action Network')
+    expect(grounded?.content).toContain('I found 1 matching organization for York-Durham. It is linked below.')
+    expect(grounded?.content).not.toContain('Housing Action Network')
     expect(grounded?.references).toHaveLength(1)
     expect(grounded?.references[0]?.kind).toBe('organization')
   })
@@ -805,8 +805,8 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I found 1 matching local post in current Civil data for York-Durham:')
-    expect(grounded?.content).toContain('Housing pressure in the east end')
+    expect(grounded?.content).toContain('I found 1 matching local post for York-Durham. It is linked below.')
+    expect(grounded?.content).not.toContain('Housing pressure in the east end')
     expect(grounded?.references).toHaveLength(1)
     expect(grounded?.references[0]?.kind).toBe('post')
   })
@@ -840,9 +840,8 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I found 1 active marketplace listing in current Civil data:')
-    expect(grounded?.content).toContain('Element Street Skateboard')
-    expect(grounded?.content).toContain('CAD 80')
+    expect(grounded?.content).toContain('I found 1 matching listing. The best match is linked below.')
+    expect(grounded?.content).not.toContain('Element Street Skateboard')
     expect(grounded?.references).toHaveLength(1)
     expect(grounded?.references[0]?.kind).toBe('market')
   })
@@ -866,8 +865,7 @@ describe('Civil AI smoke', () => {
     })
 
     expect(grounded).not.toBeNull()
-    expect(grounded?.content).toContain('I do not see any active marketplace listings in current Civil data that match this search.')
-    expect(grounded?.content).toContain('I will not invent listings that are not in the database')
+    expect(grounded?.content).toContain('I could not find any active marketplace listings that match that search right now.')
   })
 
   ;(canRunDbSmoke() ? test : test.skip)('AI endpoints and /ai/chat stay anchored to local Civil data', async () => {
