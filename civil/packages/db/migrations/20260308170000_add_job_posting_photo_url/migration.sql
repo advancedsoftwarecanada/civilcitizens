@@ -1,0 +1,2 @@
+ALTER TABLE "JobPosting"
+ADD COLUMN IF NOT EXISTS "photoUrl" TEXT;
