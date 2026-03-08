@@ -1,6 +1,6 @@
 'use client'
 
-import { KeyboardEvent, useEffect, useRef, useState } from 'react'
+import { Fragment, KeyboardEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { HiOutlineArrowUp, HiOutlineSparkles, HiOutlineXMark } from 'react-icons/hi2'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -44,6 +44,97 @@ const CIVIL_AI_OPEN_STORAGE_KEY = 'civil-ai-open'
 
 function nextMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function renderInlineCivilAiMarkdown(text: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)]+)\))/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index))
+    }
+
+    if (match[2]) {
+      nodes.push(<strong key={`strong-${match.index}`} className="font-semibold">{match[2]}</strong>)
+    } else if (match[3]) {
+      nodes.push(
+        <code key={`code-${match.index}`} className="rounded bg-slate-900/8 px-1.5 py-0.5 text-[0.92em]">
+          {match[3]}
+        </code>,
+      )
+    } else if (match[4] && match[5]) {
+      nodes.push(
+        <a
+          key={`link-${match.index}`}
+          href={match[5]}
+          className="font-semibold text-[var(--cc-primary)] underline underline-offset-2"
+          target="_blank"
+          rel="noreferrer"
+        >
+          {match[4]}
+        </a>,
+      )
+    }
+
+    lastIndex = pattern.lastIndex
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex))
+  }
+
+  return nodes
+}
+
+function renderCivilAiBlock(block: string, index: number) {
+  const trimmed = block.trim()
+  if (!trimmed) return null
+
+  if (trimmed.startsWith('### ')) {
+    return <h3 key={`h3-${index}`} className="mb-2 text-sm font-semibold leading-tight last:mb-0">{renderInlineCivilAiMarkdown(trimmed.slice(4))}</h3>
+  }
+  if (trimmed.startsWith('## ')) {
+    return <h2 key={`h2-${index}`} className="mb-2 text-[15px] font-semibold leading-tight last:mb-0">{renderInlineCivilAiMarkdown(trimmed.slice(3))}</h2>
+  }
+  if (trimmed.startsWith('# ')) {
+    return <h1 key={`h1-${index}`} className="mb-2 text-base font-semibold leading-tight last:mb-0">{renderInlineCivilAiMarkdown(trimmed.slice(2))}</h1>
+  }
+
+  const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean)
+  const bulletLines = lines.filter((line) => /^[-*]\s+/.test(line))
+  if (lines.length > 0 && bulletLines.length === lines.length) {
+    return (
+      <ul key={`ul-${index}`} className="mb-3 list-disc space-y-1 pl-5 last:mb-0">
+        {lines.map((line, lineIndex) => (
+          <li key={`li-${index}-${lineIndex}`} className="pl-1">
+            {renderInlineCivilAiMarkdown(line.replace(/^[-*]\s+/, ''))}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  const numberedLines = lines.filter((line) => /^\d+\.\s+/.test(line))
+  if (lines.length > 0 && numberedLines.length === lines.length) {
+    return (
+      <ol key={`ol-${index}`} className="mb-3 list-decimal space-y-1 pl-5 last:mb-0">
+        {lines.map((line, lineIndex) => (
+          <li key={`oli-${index}-${lineIndex}`} className="pl-1">
+            {renderInlineCivilAiMarkdown(line.replace(/^\d+\.\s+/, ''))}
+          </li>
+        ))}
+      </ol>
+    )
+  }
+
+  return <p key={`p-${index}`} className="mb-3 last:mb-0">{renderInlineCivilAiMarkdown(trimmed)}</p>
+}
+
+function CivilAiMessageBody({ content }: { content: string }) {
+  return <Fragment>{content.split(/\n\s*\n/).map((block, index) => renderCivilAiBlock(block, index))}</Fragment>
 }
 
 export default function CivilAiLauncher() {
@@ -186,7 +277,7 @@ export default function CivilAiLauncher() {
       >
         <span className="cc-civil-ai-launcher__border" aria-hidden="true" />
         <span className="cc-civil-ai-launcher__surface">
-          <img src="/PWA-ICON.png?v=20260306" alt="Civil AI" className="h-11 w-11 object-contain" />
+          <img src="/PWA-ICON.png?v=20260306" alt="Civil AI" className="h-[3.2rem] w-[3.2rem] object-contain" />
         </span>
       </button>
 
@@ -245,7 +336,7 @@ export default function CivilAiLauncher() {
                           : 'border border-slate-200 bg-white text-slate-800',
                       )}
                     >
-                      {message.content}
+                      <CivilAiMessageBody content={message.content} />
                     </div>
                   </div>
                 ))}
