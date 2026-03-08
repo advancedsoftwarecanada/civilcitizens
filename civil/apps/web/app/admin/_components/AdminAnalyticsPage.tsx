@@ -96,15 +96,36 @@ type PostRow = {
     reviewedCount: number
     latestReportedAt: string | null
   }
+  aiScan: {
+    status: string
+    moderationState: string | null
+    labelSummary: string | null
+    labels: string[]
+    moderationFlags: string[]
+    errorText: string | null
+    updatedAt: string | null
+    completedAt: string | null
+  }
 }
 
 type CommentRow = {
   id: string
   createdAt: string
   body: string
+  moderationStatus: string
   score: number
   author: AdminUser
   post: { id: string; title: string; url: string | null }
+  aiScan: {
+    status: string
+    moderationState: string | null
+    labelSummary: string | null
+    labels: string[]
+    moderationFlags: string[]
+    errorText: string | null
+    updatedAt: string | null
+    completedAt: string | null
+  }
 }
 
 type ReactionRow = {
@@ -317,6 +338,10 @@ function formatReasonLabel(value: string) {
 
 function formatReactionType(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function formatAiScanStatus(value: string) {
+  return value.replace(/_/g, ' ')
 }
 
 function formatUserLabel(user: AdminUser) {
@@ -705,6 +730,7 @@ export default function AdminAnalyticsPage() {
                 <th className="px-4 py-3">Posted</th>
                 <th className="px-4 py-3">Author</th>
                 <th className="px-4 py-3">Content</th>
+                <th className="px-4 py-3">AI Scan</th>
                 <th className="px-4 py-3">Jurisdiction</th>
                 <th className="px-4 py-3 text-right">Engagement</th>
                 <th className="px-4 py-3">Flags</th>
@@ -729,6 +755,15 @@ export default function AdminAnalyticsPage() {
                     <p className="font-semibold text-slate-900">{row.title || 'Untitled post'}</p>
                     <p className="mt-1 max-w-xl text-slate-600">{row.preview || 'No body text.'}</p>
                     {row.url ? <Link href={row.url} className="mt-2 inline-flex text-xs font-semibold text-[var(--cc-primary)] hover:underline">Open post</Link> : null}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600">
+                    <p className="font-semibold text-slate-900">{formatAiScanStatus(row.aiScan.status)}</p>
+                    {row.aiScan.moderationState ? <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">{row.aiScan.moderationState}</p> : null}
+                    {row.aiScan.labelSummary ? <p className="mt-2 max-w-xs text-xs text-slate-500">{row.aiScan.labelSummary}</p> : null}
+                    {row.aiScan.labels.length ? <p className="mt-2 text-xs text-slate-500">{row.aiScan.labels.slice(0, 4).join(' · ')}</p> : null}
+                    {row.aiScan.moderationFlags.length ? <p className="mt-2 text-xs font-semibold text-amber-700">{row.aiScan.moderationFlags.map(formatReasonLabel).join(' · ')}</p> : null}
+                    {row.aiScan.errorText ? <p className="mt-2 text-xs text-rose-600">{row.aiScan.errorText}</p> : null}
+                    {row.aiScan.updatedAt ? <p className="mt-2 text-[11px] text-slate-400">Updated {formatDateTime(row.aiScan.updatedAt)}</p> : null}
                   </td>
                   <td className="px-4 py-3 text-slate-600">{row.jurisdiction}</td>
                   <td className="px-4 py-3 text-right text-slate-600">
@@ -772,6 +807,7 @@ export default function AdminAnalyticsPage() {
                 <th className="px-4 py-3">Commented</th>
                 <th className="px-4 py-3">Author</th>
                 <th className="px-4 py-3">Comment</th>
+                <th className="px-4 py-3">AI Scan</th>
                 <th className="px-4 py-3">Post</th>
                 <th className="px-4 py-3 text-right">Score</th>
               </tr>
@@ -779,9 +815,21 @@ export default function AdminAnalyticsPage() {
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100 align-top">
-                  <td className="px-4 py-3 text-slate-600">{formatDateTime(row.createdAt)}</td>
+                  <td className="px-4 py-3 text-slate-600">
+                    <p>{formatDateTime(row.createdAt)}</p>
+                    <p className="mt-1 text-xs uppercase tracking-wide text-slate-400">{row.moderationStatus}</p>
+                  </td>
                   <td className="px-4 py-3"><UserInspectButton user={row.author} onInspect={setInspectUserId} /></td>
                   <td className="px-4 py-3 text-slate-600">{row.body}</td>
+                  <td className="px-4 py-3 text-slate-600">
+                    <p className="font-semibold text-slate-900">{formatAiScanStatus(row.aiScan.status)}</p>
+                    {row.aiScan.moderationState ? <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">{row.aiScan.moderationState}</p> : null}
+                    {row.aiScan.labelSummary ? <p className="mt-2 max-w-xs text-xs text-slate-500">{row.aiScan.labelSummary}</p> : null}
+                    {row.aiScan.labels.length ? <p className="mt-2 text-xs text-slate-500">{row.aiScan.labels.slice(0, 4).join(' · ')}</p> : null}
+                    {row.aiScan.moderationFlags.length ? <p className="mt-2 text-xs font-semibold text-amber-700">{row.aiScan.moderationFlags.map(formatReasonLabel).join(' · ')}</p> : null}
+                    {row.aiScan.errorText ? <p className="mt-2 text-xs text-rose-600">{row.aiScan.errorText}</p> : null}
+                    {row.aiScan.updatedAt ? <p className="mt-2 text-[11px] text-slate-400">Updated {formatDateTime(row.aiScan.updatedAt)}</p> : null}
+                  </td>
                   <td className="px-4 py-3">
                     {row.post.url ? <Link href={row.post.url} className="font-semibold text-[var(--cc-primary)] hover:underline">{row.post.title}</Link> : <span className="font-semibold text-slate-900">{row.post.title}</span>}
                   </td>

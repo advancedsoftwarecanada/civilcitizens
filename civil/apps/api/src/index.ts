@@ -317,6 +317,7 @@ const CIVIL_AI_HISTORY_LIMIT = CIVIL_AI_MEMORY_USER_TURN_LIMIT * 2
 const CIVIL_AI_DATA_KEY = (process.env.CIVIL_AI_DATA_KEY || '').trim()
 
 let civilAiDebugTablesReady: Promise<void> | null = null
+let contentAiScanTablesReady: Promise<void> | null = null
 const CIVIL_AI_SERVER_TIMEOUT_MS = 45000
 const CIVIL_AI_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 const CIVIL_AI_MAX_PROMPT_CHARS = 12000
@@ -369,6 +370,68 @@ function trimCivilAiConversationEntries<T extends { role: 'user' | 'assistant' }
   }
 
   return next
+}
+
+function getCivilAiLatestUserMessage(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  return [...messages].reverse().find((message) => message.role === 'user') ?? null
+}
+
+function getCivilAiPreviousUserMessage(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  let foundLatest = false
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message) continue
+    if (message.role !== 'user') continue
+    if (!foundLatest) {
+      foundLatest = true
+      continue
+    }
+    return message
+  }
+  return null
+}
+
+function isCivilAiContinuationMessage(message: string) {
+  const normalized = normalizeSearchTerm(message).toLowerCase()
+  if (!normalized) return false
+
+  if (/^(yes|yeah|yep|sure|ok|okay|continue|go on|keep going|try again|broaden|broaden it|widen it|more|another|another one)$/.test(normalized)) {
+    return true
+  }
+
+  if (/[?]/.test(normalized)) return false
+
+  const tokens = normalized.split(' ').filter(Boolean)
+  if (!tokens.length || tokens.length > 4) return false
+  if (/^(what|who|when|where|why|how|is|are|do|does|did|can|could|would|should|will|show|find|search|look|tell|explain|summarize|list|help|i want|i need|i am|i'm)/.test(normalized)) {
+    return false
+  }
+
+  return true
+}
+
+function selectCivilAiActiveMessages(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const nonSystemMessages = messages.filter((message): message is { role: 'user' | 'assistant'; content: string } => message.role !== 'system')
+  const trimmed = trimCivilAiConversationEntries(nonSystemMessages, CIVIL_AI_MEMORY_USER_TURN_LIMIT)
+  const latestUser = getCivilAiLatestUserMessage(trimmed)
+  if (!latestUser) return trimmed
+
+  if (!isCivilAiContinuationMessage(latestUser.content)) {
+    return [{ role: 'user', content: latestUser.content }]
+  }
+
+  return trimmed.slice(-4)
+}
+
+export function buildCivilAiEffectiveQuestion(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  const latestUser = getCivilAiLatestUserMessage(messages)
+  if (!latestUser) return ''
+  if (!isCivilAiContinuationMessage(latestUser.content)) return latestUser.content.trim()
+
+  const previousUser = getCivilAiPreviousUserMessage(messages)
+  if (!previousUser) return latestUser.content.trim()
+
+  return `${previousUser.content.trim()} ${latestUser.content.trim()}`.trim()
 }
 
 function readCivilAiHistory(meta: Prisma.JsonValue | null | undefined): CivilAiHistoryEntry[] {
@@ -554,8 +617,7 @@ function truncateCivilAiMessageText(value: string, maxChars: number) {
 }
 
 function selectRecentCivilAiPromptMessages(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
-  const nonSystemMessages = messages.filter((message): message is { role: 'user' | 'assistant'; content: string } => message.role !== 'system')
-  return trimCivilAiConversationEntries(nonSystemMessages, CIVIL_AI_MEMORY_USER_TURN_LIMIT)
+  return selectCivilAiActiveMessages(messages)
 }
 
 export function buildCivilAiPromptInput(systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
@@ -683,6 +745,57 @@ async function ensureCivilAiDebugTables() {
   await civilAiDebugTablesReady
 }
 
+async function ensureContentAiScanTables() {
+  if (!contentAiScanTablesReady) {
+    contentAiScanTablesReady = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS content_ai_scan (
+          id TEXT PRIMARY KEY,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          owner_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          source_text TEXT,
+          image_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+          status TEXT NOT NULL DEFAULT 'queued',
+          moderation_state TEXT,
+          label_summary TEXT,
+          search_text TEXT,
+          labels JSONB NOT NULL DEFAULT '[]'::jsonb,
+          moderation_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+          confidence_score DOUBLE PRECISION,
+          server_id TEXT,
+          model TEXT,
+          error_text TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          started_at TIMESTAMPTZ,
+          completed_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          raw_response JSONB
+        )
+      `)
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS content_ai_scan_target_idx
+        ON content_ai_scan (target_type, target_id)
+      `)
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS content_ai_scan_status_idx
+        ON content_ai_scan (status, updated_at DESC)
+      `)
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS content_ai_scan_owner_idx
+        ON content_ai_scan (owner_user_id, updated_at DESC)
+      `)
+    })().catch((error) => {
+      contentAiScanTablesReady = null
+      throw error
+    })
+  }
+
+  await contentAiScanTablesReady
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -743,6 +856,12 @@ type CivilAiGroundingBundle = {
   market: MarketSearchResultPayload[]
   organizations: CivilAiOrganizationDataItem[]
   posts: CivilAiPostDataItem[]
+}
+
+type CivilAiMarketSearchScope = {
+  mode: 'global' | 'community' | 'province'
+  communities: Array<{ provinceCode: string; communitySlug: string }>
+  provinceCodes: string[]
 }
 
 function detectCivilAiProfileIntent(question: string) {
@@ -1910,6 +2029,50 @@ function matchCivilAiRequestedCommunities(question: string, viewerContext: Civil
   return Array.from(unique.values())
 }
 
+export function buildCivilAiMarketSearchScope(args: {
+  searchPass: 1 | 2
+  targetCommunities: Array<{ provinceCode: string; communitySlug: string }>
+  defaultCommunities: Array<{ provinceCode: string; communitySlug: string }>
+}) {
+  const normalizedTargetCommunities = args.targetCommunities
+    .map((community) => ({
+      provinceCode: normalizeProvinceCode(community.provinceCode) ?? community.provinceCode.trim().toUpperCase(),
+      communitySlug: community.communitySlug.trim().toLowerCase(),
+    }))
+    .filter((community) => community.provinceCode && community.communitySlug)
+    .filter((community, index, collection) => collection.findIndex((entry) => entry.provinceCode === community.provinceCode && entry.communitySlug === community.communitySlug) === index)
+
+  if (args.searchPass === 1 && normalizedTargetCommunities.length) {
+    return {
+      mode: 'community' as const,
+      communities: normalizedTargetCommunities,
+      provinceCodes: Array.from(new Set(normalizedTargetCommunities.map((community) => community.provinceCode))),
+    }
+  }
+
+  const provinceCodes = Array.from(
+    new Set(
+      args.defaultCommunities
+        .map((community) => normalizeProvinceCode(community.provinceCode) ?? community.provinceCode.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  )
+
+  if (provinceCodes.length) {
+    return {
+      mode: 'province' as const,
+      communities: [],
+      provinceCodes,
+    }
+  }
+
+  return {
+    mode: 'global' as const,
+    communities: [],
+    provinceCodes: [],
+  }
+}
+
 function shouldCivilAiRunSecondSearch(question: string, bundle: Awaited<ReturnType<typeof buildCivilAiRetrievalBundle>>) {
   const profileIntent = detectCivilAiProfileIntent(question)
   if (profileIntent.wantsProfile) return false
@@ -1921,8 +2084,9 @@ function shouldCivilAiRunSecondSearch(question: string, bundle: Awaited<ReturnTy
 
   const retrievalPlan = bundle.debug.retrievalPlan as CivilAiRetrievalPlan
   const hasBroaderCommunities = !retrievalPlan.wantsMarket && bundle.debug.availableCommunityCount > bundle.debug.targetCommunities.length
+  const canBroadenMarketScope = retrievalPlan.wantsMarket && bundle.debug.marketScopeMode === 'community'
   const canRelaxTopicQuery = Boolean(retrievalPlan.topicQuery && (retrievalPlan.wantsOrganizations || retrievalPlan.wantsPosts))
-  return hasBroaderCommunities || canRelaxTopicQuery
+  return hasBroaderCommunities || canBroadenMarketScope || canRelaxTopicQuery
 }
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { createHash, randomInt, randomUUID } from 'crypto'
@@ -2835,6 +2999,12 @@ const redis = new IORedis(REDIS_URL)
 void redis
 
 const mediaQueue = new Queue('media', {
+  connection: {
+    url: REDIS_URL,
+  },
+})
+
+const contentAiScanQueue = new Queue('content-ai-scan', {
   connection: {
     url: REDIS_URL,
   },
@@ -4683,7 +4853,7 @@ function formatEventPreviewDate(value: string | null | undefined): string | null
 
 function canViewerAccessEventForPreview(event: OrganizationEventSnapshot, system: OrganizationSystemSnapshot, viewerId: string | null): boolean {
   const status = String(event.status ?? 'PUBLISHED').toUpperCase()
-  if (status === 'DRAFT') return false
+  if (status !== 'PUBLISHED') return false
   if (event.access !== 'RESTRICTED') return true
   if (!viewerId) return false
 
@@ -5173,6 +5343,19 @@ type MarketSearchResultPayload = {
   href: string
 }
 
+type ContentAiScanTargetType = 'post' | 'comment' | 'market_listing' | 'market_product' | 'organization_event' | 'organization'
+
+type ContentAiScanSummary = {
+  status: string
+  moderationState: string | null
+  labelSummary: string | null
+  labels: string[]
+  moderationFlags: string[]
+  errorText: string | null
+  updatedAt: string | null
+  completedAt: string | null
+}
+
 type PostSearchResultPayload = {
   id: string
   title: string | null
@@ -5197,20 +5380,70 @@ function buildSearchableText(...parts: Array<string | null | undefined>): string
   return normalizeSearchTerm(parts.filter((part): part is string => typeof part === 'string' && part.trim().length > 0).join(' '))
 }
 
-function scoreSearchTextMatch(text: string, query: string): number {
+const CIVIL_AI_MARKET_QUERY_STOPWORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'any',
+  'for',
+  'from',
+  'i',
+  'im',
+  'i’m',
+  'looking',
+  'look',
+  'me',
+  'near',
+  'sale',
+  'some',
+  'something',
+  'sure',
+  'that',
+  'the',
+  'used',
+  'want',
+  'yeah',
+  'yes',
+  'yep',
+])
+
+function buildCivilAiMarketQueryTokens(query: string) {
+  const normalized = normalizeSearchTerm(query).toLowerCase()
+  if (!normalized) return [] as string[]
+
+  const variants = new Set<string>()
+  for (const rawToken of normalized.split(/[^a-z0-9]+/i)) {
+    const token = rawToken.trim()
+    if (!token || token.length < 2 || CIVIL_AI_MARKET_QUERY_STOPWORDS.has(token)) continue
+    variants.add(token)
+    if (token.endsWith('es') && token.length > 4) variants.add(token.slice(0, -2))
+    else if (token.endsWith('s') && token.length > 3) variants.add(token.slice(0, -1))
+  }
+
+  return Array.from(variants)
+}
+
+export function scoreSearchTextMatch(text: string, query: string): number {
   const haystack = normalizeSearchTerm(text).toLowerCase()
   const normalizedQuery = normalizeSearchTerm(query).toLowerCase()
   if (!haystack || !normalizedQuery) return 0
 
+  const compactHaystack = haystack.replace(/\s+/g, '')
+  const compactQuery = normalizedQuery.replace(/\s+/g, '')
   const tokens = normalizedQuery.split(' ').filter(Boolean)
   let score = 0
 
   if (haystack === normalizedQuery) score += 1000
   if (haystack.startsWith(normalizedQuery)) score += 600
   if (haystack.includes(normalizedQuery)) score += 300
+  if (compactHaystack === compactQuery) score += 900
+  if (compactQuery.length > 2 && compactHaystack.includes(compactQuery)) score += 260
 
   if (tokens.length) {
-    const tokenHits = tokens.filter((token) => haystack.includes(token)).length
+    const tokenHits = tokens.filter((token) => {
+      const compactToken = token.replace(/\s+/g, '')
+      return haystack.includes(token) || (compactToken.length > 2 && compactHaystack.includes(compactToken))
+    }).length
     score += tokenHits * 80
     if (tokenHits === tokens.length) score += 180
   }
@@ -5626,11 +5859,19 @@ async function searchEventsForQuery({
   return results.slice(0, limit).map((entry) => entry.item)
 }
 
-async function searchMarketListingsForQuery(query: string, limit: number): Promise<MarketSearchResultPayload[]> {
+async function searchMarketListingsForQuery(
+  query: string,
+  limit: number,
+  options?: {
+    communities?: Array<{ provinceCode: string; communitySlug: string }>
+    provinceCodes?: string[]
+  },
+): Promise<MarketSearchResultPayload[]> {
   const normalizedQuery = normalizeSearchTerm(query)
   if (!normalizedQuery) return []
 
   await ensureCitizenMarketplaceTables()
+  await ensureContentAiScanTables()
 
   type MarketSearchRow = {
     id: string
@@ -5642,48 +5883,104 @@ async function searchMarketListingsForQuery(query: string, limit: number): Promi
     pickup_city: string | null
     pickup_province: string | null
     created_at: Date
+    ai_search_text: string | null
   }
 
   const likePattern = `%${normalizedQuery.toLowerCase()}%`
+  const compactLikePattern = `%${normalizedQuery.toLowerCase().replace(/\s+/g, '')}%`
+  const tokenPatterns = buildCivilAiMarketQueryTokens(normalizedQuery)
+    .map((token) => ({
+      like: `%${token}%`,
+      compactLike: `%${token.replace(/\s+/g, '')}%`,
+    }))
+
+  const searchClauses = [
+    Prisma.sql`LOWER(l.title) LIKE ${likePattern}`,
+    Prisma.sql`LOWER(COALESCE(l.description, '')) LIKE ${likePattern}`,
+    Prisma.sql`LOWER(COALESCE(ai.search_text, '')) LIKE ${likePattern}`,
+    Prisma.sql`REPLACE(LOWER(l.title), ' ', '') LIKE ${compactLikePattern}`,
+    Prisma.sql`REPLACE(LOWER(COALESCE(l.description, '')), ' ', '') LIKE ${compactLikePattern}`,
+    Prisma.sql`REPLACE(LOWER(COALESCE(ai.search_text, '')), ' ', '') LIKE ${compactLikePattern}`,
+    ...tokenPatterns.flatMap((pattern) => [
+      Prisma.sql`LOWER(l.title) LIKE ${pattern.like}`,
+      Prisma.sql`LOWER(COALESCE(l.description, '')) LIKE ${pattern.like}`,
+      Prisma.sql`LOWER(COALESCE(ai.search_text, '')) LIKE ${pattern.like}`,
+      Prisma.sql`REPLACE(LOWER(l.title), ' ', '') LIKE ${pattern.compactLike}`,
+      Prisma.sql`REPLACE(LOWER(COALESCE(l.description, '')), ' ', '') LIKE ${pattern.compactLike}`,
+      Prisma.sql`REPLACE(LOWER(COALESCE(ai.search_text, '')), ' ', '') LIKE ${pattern.compactLike}`,
+    ]),
+  ]
+
+  const communityClauses = (options?.communities ?? [])
+    .map((community) => {
+      const provinceCode = (normalizeProvinceCode(community.provinceCode) ?? community.provinceCode).toLowerCase()
+      const communitySlug = community.communitySlug.trim().toLowerCase()
+      if (!provinceCode || !communitySlug) return null
+      return Prisma.sql`(
+        LOWER(COALESCE(l.listing_province_code, l.pickup_province, '')) = ${provinceCode}
+        AND LOWER(COALESCE(l.listing_community_slug, '')) = ${communitySlug}
+      )`
+    })
+    .filter((clause): clause is Prisma.Sql => Boolean(clause))
+
+  const provinceCodes = Array.from(
+    new Set(
+      (options?.provinceCodes ?? [])
+        .map((provinceCode) => (normalizeProvinceCode(provinceCode) ?? provinceCode).toLowerCase())
+        .filter(Boolean),
+    ),
+  )
+
+  const scopeClause = communityClauses.length
+    ? Prisma.sql`AND (${Prisma.join(communityClauses, ' OR ')})`
+    : provinceCodes.length
+      ? Prisma.sql`AND LOWER(COALESCE(l.listing_province_code, l.pickup_province, '')) IN (${Prisma.join(provinceCodes)})`
+      : Prisma.empty
+
   const rows: MarketSearchRow[] = await prisma.$queryRaw(Prisma.sql`
     SELECT
-      id,
-      title,
-      description,
-      price_cents,
-      currency,
-      photo_urls,
-      pickup_city,
-      pickup_province,
-      created_at
-    FROM citizen_market_listing
-    WHERE is_active = TRUE
-      AND is_draft = FALSE
-      AND LOWER(status) = 'active'
-      AND (
-        LOWER(title) LIKE ${likePattern}
-        OR LOWER(COALESCE(description, '')) LIKE ${likePattern}
-      )
-    ORDER BY created_at DESC
-    LIMIT ${Math.max(limit * 4, 24)}
+      l.id,
+      l.title,
+      l.description,
+      l.price_cents,
+      l.currency,
+      l.photo_urls,
+      l.pickup_city,
+      l.pickup_province,
+      l.created_at,
+      ai.search_text AS ai_search_text
+    FROM citizen_market_listing l
+    LEFT JOIN content_ai_scan ai
+      ON ai.target_type = ${'market_listing'}
+      AND ai.target_id = l.id
+      AND ai.status = ${'completed'}
+    WHERE l.is_active = TRUE
+      AND l.is_draft = FALSE
+      AND LOWER(l.status) = 'active'
+      ${scopeClause}
+      AND (${Prisma.join(searchClauses, ' OR ')})
+    ORDER BY l.created_at DESC
+    LIMIT ${Math.max(limit * 8, 48)}
   `)
 
-  const ranked: Array<{ item: MarketSearchResultPayload; score: number; createdAt: number }> = rows.map((row: MarketSearchRow) => {
-    const gallery = readGalleryUrls(row.photo_urls)
-    return {
-      item: {
-        id: row.id,
-        title: truncatePreviewText(row.title || 'Marketplace item', 120) || 'Marketplace item',
-        description: truncatePreviewText(stripHtmlToPlainText(row.description ?? ''), 180) || null,
-        imageUrl: gallery[0] ?? null,
-        priceLabel: formatMarketplacePrice(Number(row.price_cents) || 0, row.currency || 'CAD'),
-        locationLabel: [row.pickup_city, row.pickup_province].filter(Boolean).join(', ') || null,
-        href: `/market/listings/${encodeURIComponent(row.id)}`,
-      } satisfies MarketSearchResultPayload,
-      score: scoreSearchTextMatch(buildSearchableText(row.title, row.description), normalizedQuery),
-      createdAt: row.created_at.getTime(),
-    }
-  })
+  const ranked: Array<{ item: MarketSearchResultPayload; score: number; createdAt: number }> = rows
+    .map((row: MarketSearchRow) => {
+      const gallery = readGalleryUrls(row.photo_urls)
+      return {
+        item: {
+          id: row.id,
+          title: truncatePreviewText(row.title || 'Marketplace item', 120) || 'Marketplace item',
+          description: truncatePreviewText(stripHtmlToPlainText(row.description ?? ''), 180) || null,
+          imageUrl: gallery[0] ?? null,
+          priceLabel: formatMarketplacePrice(Number(row.price_cents) || 0, row.currency || 'CAD'),
+          locationLabel: [row.pickup_city, row.pickup_province].filter(Boolean).join(', ') || null,
+          href: `/market/listings/${encodeURIComponent(row.id)}`,
+        } satisfies MarketSearchResultPayload,
+        score: scoreSearchTextMatch(buildSearchableText(row.title, row.description, row.ai_search_text), normalizedQuery),
+        createdAt: row.created_at.getTime(),
+      }
+    })
+    .filter((entry) => entry.score > 0)
 
   ranked.sort((a: { item: MarketSearchResultPayload; score: number; createdAt: number }, b: { item: MarketSearchResultPayload; score: number; createdAt: number }) => {
     const scoreDelta = b.score - a.score
@@ -5951,11 +6248,14 @@ function isBusinessHiddenFromViewer(
   return blockState.blockedBusinessIds.has(business.id)
 }
 
-function moderationLockedErrorCode(targetType: ModerationTargetType | 'POST' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT') {
+function moderationLockedErrorCode(targetType: ModerationTargetType | 'POST' | 'COMMENT' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT') {
   switch (targetType) {
     case ModerationTargetType.POST:
     case 'POST':
       return 'post_quarantined'
+    case ModerationTargetType.COMMENT:
+    case 'COMMENT':
+      return 'comment_quarantined'
     case ModerationTargetType.ORGANIZATION:
     case 'ORGANIZATION':
       return 'organization_quarantined'
@@ -6025,6 +6325,48 @@ async function resolveModerationTarget(targetType: ModerationTargetType, targetI
       targetUrl,
       reportedUserId: post.authorId,
       reportedBusinessId: post.businessId ?? null,
+    }
+  }
+
+  if (targetType === ModerationTargetType.COMMENT) {
+    const comment = await prisma.comment.findUnique({
+      where: { id: targetId },
+      select: {
+        id: true,
+        body: true,
+        userId: true,
+        post: {
+          select: {
+            id: true,
+            seoSlug: true,
+            provinceCode: true,
+            communitySlug: true,
+            business: {
+              select: {
+                provinceCode: true,
+                communitySlug: true,
+              },
+            },
+            author: {
+              select: {
+                handle: true,
+              },
+            },
+          },
+        },
+      },
+    })
+    if (!comment) return null
+
+    const postUrl = buildPostHrefForAdmin(comment.post)
+
+    return {
+      targetType,
+      targetId: comment.id,
+      targetLabel: sanitizePlainText(comment.body).slice(0, 120).trim() || 'Comment',
+      targetUrl: postUrl ? `${postUrl}?comment=${encodeURIComponent(comment.id)}#comment-${comment.id}` : null,
+      reportedUserId: comment.userId,
+      reportedBusinessId: null,
     }
   }
 
@@ -6235,6 +6577,31 @@ async function applyModerationQuarantine(
       where: { id: targetId },
       data: { moderationStatus: ModerationStatus.QUARANTINED },
     })
+    return
+  }
+
+  if (targetType === ModerationTargetType.COMMENT) {
+    const existing = await tx.comment.findFirst({
+      where: { id: targetId },
+      select: {
+        postId: true,
+        post: {
+          select: {
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+    })
+
+    await tx.comment.updateMany({
+      where: { id: targetId },
+      data: { moderationStatus: ModerationStatus.QUARANTINED },
+    })
+
+    if (existing?.postId && existing.post) {
+      await refreshPostAggregates(tx, existing.postId, { createdAt: existing.post.createdAt, lastActivityAt: existing.post.updatedAt }, { bumpActivity: false })
+    }
     return
   }
 
@@ -6491,8 +6858,8 @@ async function refreshPostAggregates(
         createdAt: { gte: reactionWindowStart },
       },
     }),
-    tx.comment.count({ where: { postId } }),
-    tx.comment.aggregate({ where: { postId }, _sum: { score: true } }),
+    tx.comment.count({ where: { postId, moderationStatus: ModerationStatus.VISIBLE } }),
+    tx.comment.aggregate({ where: { postId, moderationStatus: ModerationStatus.VISIBLE }, _sum: { score: true } }),
   ])
 
   const reactionCounts = {
@@ -7017,7 +7384,7 @@ async function createOrganizationEventAnnouncementPost(args: {
       jurisdiction: 'municipal',
       seoSlug,
     },
-    select: { id: true },
+    select: { id: true, authorId: true, title: true, body: true, mediaUrl: true, images: true },
   })
 }
 
@@ -7233,6 +7600,7 @@ async function getRecentCommentsByPostIds(postIds: string[], limitPerPost = 5) {
     where: {
       postId: { in: uniquePostIds },
       parentId: null,
+      moderationStatus: ModerationStatus.VISIBLE,
     },
     orderBy: { createdAt: 'desc' },
     include: {
@@ -7939,7 +8307,7 @@ async function loadViewerInteractionSignalsByPostIds(viewerId: string, postIds: 
       select: { postId: true },
     }),
     prisma.comment.findMany({
-      where: { userId: viewerId, postId: { in: uniquePostIds } },
+      where: { userId: viewerId, postId: { in: uniquePostIds }, moderationStatus: ModerationStatus.VISIBLE },
       select: { postId: true },
       distinct: ['postId'],
     }),
@@ -8459,6 +8827,11 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
   const targetCommunities = (requestedCommunities.length ? requestedCommunities : defaultCommunities)
     .filter((entry, index, collection) => collection.findIndex((item) => item.id === entry.id) === index)
     .slice(0, searchPass === 1 ? 4 : 8)
+  const marketScope = buildCivilAiMarketSearchScope({
+    searchPass,
+    targetCommunities,
+    defaultCommunities,
+  })
 
   const eventResults = retrieval.wantsEvents && targetCommunities.length
     ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityEvents(community.id, retrieval.todayOnly ? 'today' : 'upcoming', retrieval.eventLimit)))
@@ -8467,7 +8840,10 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
     ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityJobs(community.id, retrieval.jobLimit)))
     : []
   const marketResults = retrieval.wantsMarket && marketQuery
-    ? await searchMarketListingsForQuery(marketQuery, retrieval.marketLimit)
+    ? await searchMarketListingsForQuery(marketQuery, retrieval.marketLimit, {
+        communities: marketScope.communities,
+        provinceCodes: marketScope.provinceCodes,
+      })
     : []
   const organizationResults = retrieval.wantsOrganizations && targetCommunities.length
     ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityOrganizations(community.id, retrieval.organizationLimit, topicQuery || undefined)))
@@ -8528,6 +8904,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
       `- Search pass: ${searchPass === 1 ? 'strict local pass' : 'broadened second pass'}`,
       `- Retrieval reasons: ${retrieval.reasons.length ? retrieval.reasons.join('; ') : 'none'}`,
       `- Target communities: ${buildCivilAiCompactList(targetCommunities.map((community) => community.communityName), 'none', 4)}`,
+      `- Market scope: ${marketScope.mode}`,
       `- Result counts: events=${usableEvents.length}; jobs=${usableJobs.length}; market=${marketResults.length}; organizations=${usableOrganizations.length}; posts=${usablePosts.length}`,
       ...(summarizedEvents.length ? ['- Events:', ...summarizedEvents] : []),
       ...(summarizedJobs.length ? ['- Jobs:', ...summarizedJobs] : []),
@@ -8567,6 +8944,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
       requestedCommunities,
       targetCommunities,
       availableCommunityCount: defaultCommunities.length,
+      marketScopeMode: marketScope.mode,
       searchPass,
       topicQueryUsed: topicQuery || null,
       resultCounts: {
@@ -8850,7 +9228,8 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
   const userId = await resolveUserId(req)
   const conversationId = body.data.conversationId?.trim() || randomUUID()
-  const latestUserMessage = [...body.data.messages].reverse().find((message) => message.role === 'user')?.content?.trim() ?? ''
+  const activeMessages: Array<{ role: 'user' | 'assistant'; content: string }> = selectCivilAiActiveMessages(body.data.messages)
+  const latestUserMessage = buildCivilAiEffectiveQuestion(body.data.messages)
 
   const requestStartedAt = Date.now()
   let status = 'error'
@@ -8958,7 +9337,7 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
     const combinedInstructions = [instructions.content, retrievalBundle.prompt].filter(Boolean).join('\n\n')
     const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: combinedInstructions },
-      ...body.data.messages.map((message) => ({
+      ...activeMessages.map((message) => ({
         role: message.role as 'system' | 'user' | 'assistant',
         content: message.content,
       })),
@@ -9031,7 +9410,7 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
         conversationId,
         userId,
         latestUserMessage,
-        requestMessages: body.data.messages.map((message) => ({ role: message.role, content: message.content })),
+        requestMessages: activeMessages.map((message) => ({ role: message.role, content: message.content })),
         viewerContext: retrievalBundle?.viewerContext ?? null,
         retrievalDebug: retrievalBundle
           ? {
@@ -10541,6 +10920,17 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (!created) return reply.code(500).send({ error: 'post_create_failed' })
 
+    void enqueueContentAiScanForPost({
+      id: created.id,
+      authorId: created.authorId,
+      title: created.title ?? null,
+      body: created.body,
+      mediaUrl: created.mediaUrl ?? null,
+      images: created.images,
+    }).catch((error) => {
+      console.error('content_ai_scan_enqueue_post_create_failed', error)
+    })
+
     return reply.code(201).send(formatPost(created, { viewerId: userId }))
   }),
 )
@@ -10997,7 +11387,7 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
     const sortMode = query.data.sort ?? 'hot'
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
-      where: { postId: params.data.id },
+      where: { postId: params.data.id, moderationStatus: ModerationStatus.VISIBLE },
       orderBy: { createdAt: 'asc' },
       include: {
         user: {
@@ -11078,8 +11468,11 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     let parentComment: { id: string; postId: string; userId: string } | null = null
     if (parentId) {
-      const parent = await prisma.comment.findUnique({ where: { id: parentId }, select: { id: true, postId: true, userId: true } })
-      if (!parent || parent.postId !== postId) {
+      const parent = await prisma.comment.findUnique({
+        where: { id: parentId },
+        select: { id: true, postId: true, userId: true, moderationStatus: true },
+      })
+      if (!parent || parent.postId !== postId || parent.moderationStatus !== ModerationStatus.VISIBLE) {
         return reply.code(400).send({ error: 'invalid_parent_comment' })
       }
       parentComment = parent
@@ -11158,6 +11551,10 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const formattingContext = updatedPost ? await loadViewerPostFormattingContext(userId, [updatedPost.id], 5) : null
 
+    void enqueueContentAiScanForComment(created).catch((error) => {
+      console.error('content_ai_scan_enqueue_comment_failed', error)
+    })
+
     return reply.code(201).send({
       comment: {
         ...mapComment(created, 0),
@@ -11210,6 +11607,9 @@ app.post('/comments/vote', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     if (!existing) return reply.code(404).send({ error: 'comment_not_found' })
+    if (existing.moderationStatus !== ModerationStatus.VISIBLE) {
+      return reply.code(423).send({ error: moderationLockedErrorCode('COMMENT') })
+    }
     if (existing.post.moderationStatus !== ModerationStatus.VISIBLE) {
       return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
     }
@@ -11404,6 +11804,17 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     })
 
     const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(userId, [params.data.id], 5)
+
+    void enqueueContentAiScanForPost({
+      id: updated.id,
+      authorId: updated.authorId,
+      title: updated.title ?? null,
+      body: updated.body,
+      mediaUrl: updated.mediaUrl ?? null,
+      images: updated.images,
+    }).catch((error) => {
+      console.error('content_ai_scan_enqueue_post_update_failed', error)
+    })
 
     return reply.send(
       formatPost(updated, {
@@ -15231,7 +15642,7 @@ type OrgEventDefinition = {
   galleryPhotoUrls: string[]
   agenda: Array<{ title: string; startsAt: string | null }>
   attachments: Array<{ title: string; url: string }>
-  status?: 'DRAFT' | 'PUBLISHED'
+  status?: 'DRAFT' | 'PUBLISHED' | 'QUARANTINED'
   createdAt: string
   updatedAt?: string
 }
@@ -16253,6 +16664,10 @@ app.post('/communities/:province/:municipality/orgs', async (req: FastifyRequest
       })) as CommunityOrgRecord
     })) as CommunityOrgRecord
 
+    void enqueueContentAiScanForOrganization(org).catch((error) => {
+      console.error('content_ai_scan_enqueue_organization_create_failed', error)
+    })
+
     return reply.code(201).send({ org: buildCommunityOrgPayload(org, true) })
   }),
 )
@@ -16465,6 +16880,10 @@ app.put('/communities/:province/:municipality/orgs/:slug/settings', async (req: 
       nextValue: {
         changedKeys: Object.keys(nextData),
       },
+    })
+
+    void enqueueContentAiScanForOrganization(updated).catch((error) => {
+      console.error('content_ai_scan_enqueue_organization_update_failed', error)
     })
 
     return reply.send({ org: buildCommunityOrgPayload(updated, true, membership.role as any) })
@@ -16780,7 +17199,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/state', asyn
     const rawIncludeDrafts = (req.query as any)?.includeDrafts
     const wantsDrafts = rawIncludeDrafts === '1' || rawIncludeDrafts === 'true'
     const canSeeDrafts = Boolean(viewerId && canOrganizationPermission(permissions, 'manage_events'))
-    const events = wantsDrafts && canSeeDrafts ? system.events : system.events.filter((event) => event?.status !== 'DRAFT')
+    const events = wantsDrafts && canSeeDrafts ? system.events : system.events.filter((event) => (event?.status ?? 'PUBLISHED') === 'PUBLISHED')
 
     return reply.send({
       state: {
@@ -17989,7 +18408,9 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/events/:even
         return bt - at
       })
 
-    return reply.send({ event, rsvps })
+    const aiScan = await loadContentAiScanSummary('organization_event', buildOrganizationEventScanTargetId(org.id, event.id))
+
+    return reply.send({ event, rsvps, aiScan })
   }),
 )
 
@@ -18154,6 +18575,14 @@ app.put('/communities/:province/:municipality/orgs/:slug/governance/events/:even
       }
     }
 
+    void enqueueContentAiScanForOrganizationEvent({
+      orgId: org.id,
+      ownerUserId: org.ownerId,
+      event: next,
+    }).catch((error) => {
+      console.error('content_ai_scan_enqueue_event_update_failed', error)
+    })
+
     return reply.send({ event: next })
   }),
 )
@@ -18257,6 +18686,7 @@ app.post(
       const nextSystem: OrganizationSystemState = { ...current, events: nextEvents }
       const hostSlug = params.data.slug.trim().toLowerCase()
 
+      let announcementPost: { id: string; authorId: string; title: string | null; body: string; mediaUrl: string | null; images: unknown } | null = null
       await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await tx.business.update({
           where: { id: org.id },
@@ -18264,7 +18694,7 @@ app.post(
           select: { id: true },
         })
 
-        await createOrganizationEventAnnouncementPost({
+        announcementPost = await createOrganizationEventAnnouncementPost({
           client: tx,
           authorUserId: actorUserId,
           businessId: org.id,
@@ -18327,6 +18757,19 @@ app.post(
         if (notifications.length) {
           await Promise.allSettled(notifications)
         }
+      }
+
+      void enqueueContentAiScanForOrganizationEvent({
+        orgId: org.id,
+        ownerUserId: org.ownerId,
+        event: next,
+      }).catch((error) => {
+        console.error('content_ai_scan_enqueue_event_publish_failed', error)
+      })
+      if (announcementPost) {
+        void enqueueContentAiScanForPost(announcementPost).catch((error) => {
+          console.error('content_ai_scan_enqueue_event_announcement_post_publish_failed', error)
+        })
       }
 
       return reply.send({ event: next })
@@ -18790,6 +19233,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
 
     const nextSystem: OrganizationSystemState = { ...current, events: [...current.events, event] }
     const hostSlug = params.data.slug.trim().toLowerCase()
+    let announcementPost: { id: string; authorId: string; title: string | null; body: string; mediaUrl: string | null; images: unknown } | null = null
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.business.update({
         where: { id: org.id },
@@ -18797,7 +19241,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
         select: { id: true },
       })
 
-      await createOrganizationEventAnnouncementPost({
+      announcementPost = await createOrganizationEventAnnouncementPost({
         client: tx,
         authorUserId: actorUserId,
         businessId: org.id,
@@ -18860,6 +19304,19 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events', as
       if (notifications.length) {
         await Promise.allSettled(notifications)
       }
+    }
+
+    void enqueueContentAiScanForOrganizationEvent({
+      orgId: org.id,
+      ownerUserId: org.ownerId,
+      event,
+    }).catch((error) => {
+      console.error('content_ai_scan_enqueue_event_create_failed', error)
+    })
+    if (announcementPost) {
+      void enqueueContentAiScanForPost(announcementPost).catch((error) => {
+        console.error('content_ai_scan_enqueue_event_announcement_post_create_failed', error)
+      })
     }
 
     return reply.code(201).send({ event })
@@ -19658,7 +20115,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/governance/events/:eve
     const current = readOrganizationSystemState(org.metadata)
     const event = current.events.find((item) => item.id === params.data.eventId)
     if (!event) return reply.code(404).send({ error: 'event_not_found' })
-    if (event.status === 'DRAFT') return reply.code(404).send({ error: 'event_not_found' })
+    if ((event.status ?? 'PUBLISHED') !== 'PUBLISHED') return reply.code(404).send({ error: 'event_not_found' })
 
     const actorMember = current.members[actorUserId] ?? null
     if (event.access === 'RESTRICTED') {
@@ -21465,6 +21922,10 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
       WHERE id = ${params.data.productId}
     `
 
+    void enqueueContentAiScanForMarketProduct(params.data.productId).catch((error) => {
+      console.error('content_ai_scan_enqueue_product_update_failed', error)
+    })
+
     return reply.send({ success: true })
   }),
 )
@@ -21620,6 +22081,10 @@ app.post('/communities/:province/:municipality/orgs/:slug/shop/products', async 
       `
     }
 
+    void enqueueContentAiScanForMarketProduct(productId).catch((error) => {
+      console.error('content_ai_scan_enqueue_product_create_failed', error)
+    })
+
     return reply.code(201).send({ product: { id: productId } })
   }),
 )
@@ -21745,6 +22210,10 @@ app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productI
           updated_at = NOW()
       WHERE id = ${params.data.productId}
     `
+
+    void enqueueContentAiScanForMarketProduct(params.data.productId).catch((error) => {
+      console.error('content_ai_scan_enqueue_product_photos_failed', error)
+    })
 
     return reply.send({ success: true })
   }),
@@ -21974,9 +22443,315 @@ function readGalleryUrls(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
   const urls: string[] = []
   for (const entry of raw) {
-    if (typeof entry === 'string') urls.push(entry)
+    if (typeof entry === 'string') {
+      const normalized = normalizeMediaUrl(entry)
+      urls.push(normalized ?? entry)
+    }
   }
   return urls
+}
+
+function normalizeContentAiImageUrls(urls: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      urls
+        .map((url) => normalizeMediaUrl(url ?? null))
+        .filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url)),
+    ),
+  ).slice(0, 8)
+}
+
+function buildContentAiScanSearchText(sourceText: string | null | undefined, labels: string[]) {
+  return buildSearchableText(sourceText ?? null, labels.join(' '))
+}
+
+function buildOrganizationEventScanTargetId(orgId: string, eventId: string) {
+  return `${orgId}:${eventId}`
+}
+
+function buildContentAiScanDefaultSummary(): ContentAiScanSummary {
+  return {
+    status: 'not_queued',
+    moderationState: null,
+    labelSummary: null,
+    labels: [],
+    moderationFlags: [],
+    errorText: null,
+    updatedAt: null,
+    completedAt: null,
+  }
+}
+
+async function loadContentAiScanSummary(targetType: ContentAiScanTargetType, targetId: string): Promise<ContentAiScanSummary> {
+  await ensureContentAiScanTables()
+
+  const rows = await prisma.$queryRaw<Array<{
+    status: string
+    moderation_state: string | null
+    label_summary: string | null
+    labels: unknown
+    moderation_flags: unknown
+    error_text: string | null
+    updated_at: Date | null
+    completed_at: Date | null
+  }>>`
+    SELECT status, moderation_state, label_summary, labels, moderation_flags, error_text, updated_at, completed_at
+    FROM content_ai_scan
+    WHERE target_type = ${targetType}
+      AND target_id = ${targetId}
+    LIMIT 1
+  `
+
+  const row = rows[0]
+  if (!row) return buildContentAiScanDefaultSummary()
+
+  return {
+    status: row.status,
+    moderationState: row.moderation_state,
+    labelSummary: row.label_summary,
+    labels: readStringList(row.labels),
+    moderationFlags: readStringList(row.moderation_flags),
+    errorText: row.error_text,
+    updatedAt: row.updated_at?.toISOString() ?? null,
+    completedAt: row.completed_at?.toISOString() ?? null,
+  }
+}
+
+async function upsertContentAiScanRecord(args: {
+  targetType: ContentAiScanTargetType
+  targetId: string
+  ownerUserId: string | null
+  sourceText: string | null
+  imageUrls: string[]
+}) {
+  await ensureContentAiScanTables()
+
+  const hasImages = args.imageUrls.length > 0
+  const hasSourceText = typeof args.sourceText === 'string' && args.sourceText.trim().length > 0
+  const now = new Date()
+  const shouldQueue = hasImages || hasSourceText
+  const status = shouldQueue ? 'queued' : 'skipped'
+  const moderationState = shouldQueue ? null : 'no_content'
+  const errorText = shouldQueue ? null : 'no_images_or_text_available'
+
+  await prisma.$executeRaw`
+    INSERT INTO content_ai_scan (
+      id,
+      target_type,
+      target_id,
+      owner_user_id,
+      source_text,
+      image_urls,
+      status,
+      moderation_state,
+      label_summary,
+      search_text,
+      labels,
+      moderation_flags,
+      confidence_score,
+      server_id,
+      model,
+      error_text,
+      attempts,
+      queued_at,
+      started_at,
+      completed_at,
+      created_at,
+      updated_at,
+      raw_response
+    )
+    VALUES (
+      ${randomUUID()},
+      ${args.targetType},
+      ${args.targetId},
+      ${args.ownerUserId},
+      ${args.sourceText},
+      ${JSON.stringify(args.imageUrls)}::jsonb,
+      ${status},
+      ${moderationState},
+      ${null},
+      ${buildContentAiScanSearchText(args.sourceText, [])},
+      ${JSON.stringify([])}::jsonb,
+      ${JSON.stringify([])}::jsonb,
+      ${null},
+      ${null},
+      ${null},
+      ${errorText},
+      ${0},
+      ${now},
+      ${null},
+      ${shouldQueue ? null : now},
+      ${now},
+      ${now},
+      ${null}
+    )
+    ON CONFLICT (target_type, target_id) DO UPDATE SET
+      owner_user_id = EXCLUDED.owner_user_id,
+      source_text = EXCLUDED.source_text,
+      image_urls = EXCLUDED.image_urls,
+      status = EXCLUDED.status,
+      moderation_state = EXCLUDED.moderation_state,
+      label_summary = EXCLUDED.label_summary,
+      search_text = EXCLUDED.search_text,
+      labels = EXCLUDED.labels,
+      moderation_flags = EXCLUDED.moderation_flags,
+      confidence_score = EXCLUDED.confidence_score,
+      server_id = EXCLUDED.server_id,
+      model = EXCLUDED.model,
+      error_text = EXCLUDED.error_text,
+      attempts = 0,
+      queued_at = EXCLUDED.queued_at,
+      started_at = NULL,
+      completed_at = EXCLUDED.completed_at,
+      updated_at = EXCLUDED.updated_at,
+      raw_response = NULL
+  `
+
+  if (!shouldQueue) return
+
+  await contentAiScanQueue.add(
+    'scan',
+    { targetType: args.targetType, targetId: args.targetId },
+    {
+      jobId: `content-ai-scan:${args.targetType}:${args.targetId}`,
+      removeOnComplete: true,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 3000 },
+    },
+  )
+}
+
+async function enqueueContentAiScanForPost(post: {
+  id: string
+  authorId: string
+  title: string | null
+  body: string
+  mediaUrl: string | null
+  images: unknown
+}) {
+  const imageUrls = normalizeContentAiImageUrls([...readGalleryUrls(post.images), post.mediaUrl])
+  const sourceText = buildSearchableText(post.title, stripHtmlToPlainText(post.body ?? '')) || null
+  await upsertContentAiScanRecord({
+    targetType: 'post',
+    targetId: post.id,
+    ownerUserId: post.authorId,
+    sourceText,
+    imageUrls,
+  })
+}
+
+async function enqueueContentAiScanForComment(comment: {
+  id: string
+  userId: string
+  body: string
+}) {
+  const sourceText = buildSearchableText(stripHtmlToPlainText(comment.body ?? '')) || null
+  await upsertContentAiScanRecord({
+    targetType: 'comment',
+    targetId: comment.id,
+    ownerUserId: comment.userId,
+    sourceText,
+    imageUrls: [],
+  })
+}
+
+async function enqueueContentAiScanForMarketListing(listingId: string) {
+  await ensureCitizenMarketplaceTables()
+  await ensureContentAiScanTables()
+
+  type ListingScanRow = {
+    id: string
+    seller_user_id: string
+    title: string
+    description: string | null
+    photo_urls: unknown
+  }
+
+  const rows = await prisma.$queryRaw<ListingScanRow[]>`
+    SELECT id, seller_user_id, title, description, photo_urls
+    FROM citizen_market_listing
+    WHERE id = ${listingId}
+      AND is_active = TRUE
+    LIMIT 1
+  `
+
+  const listing = rows[0]
+  if (!listing) return
+
+  const imageUrls = normalizeContentAiImageUrls(readGalleryUrls(listing.photo_urls))
+  const sourceText = buildSearchableText(listing.title, stripHtmlToPlainText(listing.description ?? '')) || null
+
+  await upsertContentAiScanRecord({
+    targetType: 'market_listing',
+    targetId: listing.id,
+    ownerUserId: listing.seller_user_id,
+    sourceText,
+    imageUrls,
+  })
+}
+
+async function enqueueContentAiScanForMarketProduct(productId: string) {
+  await ensureOrganizationShopTables()
+  await ensureContentAiScanTables()
+
+  type ProductScanRow = {
+    id: string
+    created_by: string | null
+    name: string
+    description: string | null
+    primary_image_url: string | null
+    gallery_image_urls: unknown
+  }
+
+  const rows = await prisma.$queryRaw<ProductScanRow[]>`
+    SELECT id, created_by, name, description, primary_image_url, gallery_image_urls
+    FROM organization_shop_product
+    WHERE id = ${productId}
+      AND is_active = TRUE
+    LIMIT 1
+  `
+
+  const product = rows[0]
+  if (!product) return
+
+  const imageUrls = normalizeContentAiImageUrls([product.primary_image_url, ...readGalleryUrls(product.gallery_image_urls)])
+  const sourceText = buildSearchableText(product.name, stripHtmlToPlainText(product.description ?? '')) || null
+
+  await upsertContentAiScanRecord({
+    targetType: 'market_product',
+    targetId: product.id,
+    ownerUserId: product.created_by,
+    sourceText,
+    imageUrls,
+  })
+}
+
+async function enqueueContentAiScanForOrganizationEvent(args: {
+  orgId: string
+  ownerUserId: string
+  event: Pick<OrgEventDefinition, 'id' | 'title' | 'description' | 'primaryPhotoUrl' | 'galleryPhotoUrls'>
+}) {
+  const imageUrls = normalizeContentAiImageUrls([args.event.primaryPhotoUrl, ...(args.event.galleryPhotoUrls ?? [])])
+  const sourceText = buildSearchableText(args.event.title, stripHtmlToPlainText(args.event.description ?? '')) || null
+  await upsertContentAiScanRecord({
+    targetType: 'organization_event',
+    targetId: buildOrganizationEventScanTargetId(args.orgId, args.event.id),
+    ownerUserId: args.ownerUserId,
+    sourceText,
+    imageUrls,
+  })
+}
+
+async function enqueueContentAiScanForOrganization(org: Pick<CommunityOrgRecord, 'id' | 'ownerId' | 'name' | 'description' | 'metadata' | 'logoUrl' | 'coverUrl'>) {
+  const imageUrls = normalizeContentAiImageUrls([org.logoUrl ?? null, org.coverUrl ?? null])
+  const sourceText = buildSearchableText(org.name, org.description ?? null, readOrganizationHeadline(org.metadata)) || null
+  await upsertContentAiScanRecord({
+    targetType: 'organization',
+    targetId: org.id,
+    ownerUserId: org.ownerId,
+    sourceText,
+    imageUrls,
+  })
 }
 
 function readStringList(raw: unknown): string[] {
@@ -24062,6 +24837,10 @@ app.put('/market/listings/:listingId', async (req: FastifyRequest, reply: Fastif
       WHERE id = ${params.data.listingId}
     `
 
+    void enqueueContentAiScanForMarketListing(params.data.listingId).catch((error) => {
+      console.error('content_ai_scan_enqueue_listing_failed', error)
+    })
+
     return reply.send({ success: true })
   }),
 )
@@ -25234,7 +26013,7 @@ app.get('/events', async (req: FastifyRequest, reply: FastifyReply) =>
       const matchedByCommunity = org.provinceCode && org.communitySlug ? communityKeys.has(`${org.provinceCode}:${org.communitySlug}`) : false
 
       const events = system.events
-        .filter((event) => event.status !== 'DRAFT' && event.access === 'PUBLIC')
+        .filter((event) => (event.status ?? 'PUBLISHED') === 'PUBLISHED' && event.access === 'PUBLIC')
         .filter((event) => {
           if (query.data.mine !== 'going') return true
           return system.eventRsvps.some((rsvp) => rsvp.eventId === event.id && rsvp.userId === viewerId && rsvp.status === 'GOING')
@@ -25397,7 +26176,7 @@ app.get('/events/sidebar', async (req: FastifyRequest, reply: FastifyReply) =>
 
       for (const row of userRsvps) {
         const event = system.events.find((item) => item.id === row.eventId)
-        if (!event || event.status === 'DRAFT') continue
+        if (!event || (event.status ?? 'PUBLISHED') !== 'PUBLISHED') continue
         const startsAtMs = Date.parse(event.startsAt)
         if (Number.isFinite(startsAtMs) && startsAtMs < now) continue
 
@@ -25468,7 +26247,7 @@ app.get('/events/:organizationId/:eventId', async (req: FastifyRequest, reply: F
 
     const system = readOrganizationSystemState(org.metadata)
     const event = system.events.find((item) => item.id === params.data.eventId)
-    if (!event || event.status === 'DRAFT' || event.access !== 'PUBLIC') {
+    if (!event || (event.status ?? 'PUBLISHED') !== 'PUBLISHED' || event.access !== 'PUBLIC') {
       return reply.code(404).send({ error: 'event_not_found' })
     }
 
@@ -25711,7 +26490,7 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
-      where: { postId: post.id },
+      where: { postId: post.id, moderationStatus: ModerationStatus.VISIBLE },
       orderBy: { createdAt: 'asc' },
       include: {
         user: {
@@ -25805,7 +26584,7 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     const commentRows: CommentWithUser[] = await prisma.comment.findMany({
-      where: { postId: post.id },
+      where: { postId: post.id, moderationStatus: ModerationStatus.VISIBLE },
       orderBy: { createdAt: 'asc' },
       include: {
         user: {
@@ -28861,6 +29640,8 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
   }
 
   if (query.data.metric === 'posts') {
+    await ensureContentAiScanTables()
+
     let flaggedPostIds: string[] | null = null
     if (query.data.flagReason) {
       const flaggedReports = await prisma.contentReport.findMany({
@@ -28953,6 +29734,49 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
       reportsByPostId.set(report.targetId, bucket)
     })
 
+    const scanRows = posts.length
+      ? await prisma.$queryRaw<Array<{
+          target_id: string
+          status: string
+          moderation_state: string | null
+          label_summary: string | null
+          labels: unknown
+          moderation_flags: unknown
+          error_text: string | null
+          updated_at: Date | null
+          completed_at: Date | null
+        }>>`
+          SELECT target_id, status, moderation_state, label_summary, labels, moderation_flags, error_text, updated_at, completed_at
+          FROM content_ai_scan
+          WHERE target_type = ${'post'}
+            AND target_id IN (${Prisma.join(posts.map((entry: any) => entry.id))})
+        `
+      : []
+
+    const scansByPostId = new Map<string, ContentAiScanSummary>()
+    scanRows.forEach((scan: {
+      target_id: string
+      status: string
+      moderation_state: string | null
+      label_summary: string | null
+      labels: unknown
+      moderation_flags: unknown
+      error_text: string | null
+      updated_at: Date | null
+      completed_at: Date | null
+    }) => {
+      scansByPostId.set(scan.target_id, {
+        status: scan.status,
+        moderationState: scan.moderation_state,
+        labelSummary: scan.label_summary,
+        labels: readStringList(scan.labels),
+        moderationFlags: readStringList(scan.moderation_flags),
+        errorText: scan.error_text,
+        updatedAt: scan.updated_at?.toISOString() ?? null,
+        completedAt: scan.completed_at?.toISOString() ?? null,
+      })
+    })
+
     const items = posts
       .map((post: any) => {
         const reportSummary = summarizeReportReasons(reportsByPostId.get(post.id) ?? [])
@@ -28977,6 +29801,16 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
               }
             : null,
           flags: reportSummary,
+          aiScan: scansByPostId.get(post.id) ?? {
+            status: 'not_queued',
+            moderationState: null,
+            labelSummary: null,
+            labels: [],
+            moderationFlags: [],
+            errorText: null,
+            updatedAt: null,
+            completedAt: null,
+          },
         }
       })
       .filter((item: any) => (query.data.flagReason ? item.flags.reasons.includes(query.data.flagReason) : true))
@@ -28997,6 +29831,7 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
         id: true,
         body: true,
         createdAt: true,
+        moderationStatus: true,
         upvotes: true,
         downvotes: true,
         user: {
@@ -29032,6 +29867,49 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
       },
     })
 
+    const scanRows = comments.length
+      ? await prisma.$queryRaw<Array<{
+          target_id: string
+          status: string
+          moderation_state: string | null
+          label_summary: string | null
+          labels: unknown
+          moderation_flags: unknown
+          error_text: string | null
+          updated_at: Date | null
+          completed_at: Date | null
+        }>>`
+          SELECT target_id, status, moderation_state, label_summary, labels, moderation_flags, error_text, updated_at, completed_at
+          FROM content_ai_scan
+          WHERE target_type = ${'comment'}
+            AND target_id IN (${Prisma.join(comments.map((entry: any) => entry.id))})
+        `
+      : []
+
+    const scansByCommentId = new Map<string, ContentAiScanSummary>()
+    scanRows.forEach((scan: {
+      target_id: string
+      status: string
+      moderation_state: string | null
+      label_summary: string | null
+      labels: unknown
+      moderation_flags: unknown
+      error_text: string | null
+      updated_at: Date | null
+      completed_at: Date | null
+    }) => {
+      scansByCommentId.set(scan.target_id, {
+        status: scan.status,
+        moderationState: scan.moderation_state,
+        labelSummary: scan.label_summary,
+        labels: readStringList(scan.labels),
+        moderationFlags: readStringList(scan.moderation_flags),
+        errorText: scan.error_text,
+        updatedAt: scan.updated_at?.toISOString() ?? null,
+        completedAt: scan.completed_at?.toISOString() ?? null,
+      })
+    })
+
     return reply.send({
       metric: query.data.metric,
       generatedAt: new Date().toISOString(),
@@ -29039,6 +29917,7 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
         id: entry.id,
         createdAt: entry.createdAt.toISOString(),
         body: sanitizePlainText(entry.body).slice(0, 220).trim(),
+        moderationStatus: entry.moderationStatus,
         score: entry.upvotes - entry.downvotes,
         author: formatAdminUserSummary(entry.user),
         post: {
@@ -29046,6 +29925,7 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
           title: entry.post.title?.trim() || sanitizePlainText(entry.post.body).slice(0, 90) || 'Untitled post',
           url: buildPostHrefForAdmin(entry.post),
         },
+        aiScan: scansByCommentId.get(entry.id) ?? buildContentAiScanDefaultSummary(),
       })),
     })
   }
@@ -30769,7 +31649,7 @@ async function loadFeedActivityEvents(args: {
   const items = organizations.flatMap((org) => {
     const system = readOrganizationSystemState(org.metadata)
     return system.events
-      .filter((event) => event.status !== 'DRAFT' && event.access === 'PUBLIC')
+      .filter((event) => (event.status ?? 'PUBLISHED') === 'PUBLISHED' && event.access === 'PUBLIC')
       .filter((event) => {
         const startsAtMs = Date.parse(event.startsAt)
         return Number.isFinite(startsAtMs) ? startsAtMs >= now : true
