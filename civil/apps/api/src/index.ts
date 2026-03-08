@@ -784,31 +784,22 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
   ].filter(Boolean).length
   const totalMatches = bundle.events.length + bundle.jobs.length + bundle.market.length + bundle.organizations.length + bundle.posts.length
 
+  const formatCountLabel = (count: number, singular: string, plural: string) => (count === 1 ? `1 ${singular}` : `${count} ${plural}`)
+
   if (asksMarket && marketIntent) {
     const references = bundle.market.slice(0, 4).map((listing) => toCivilAiMarketReference(listing))
     if (!bundle.market.length) {
       return {
         content: [
-          'I do not see any active marketplace listings in current Civil data that match this search.',
-          'Civil AI only has access to the internal Civil marketplace results returned for this question, so I will not invent listings that are not in the database.',
+          'I could not find any active marketplace listings that match that search right now.',
           'If you want, I can try a broader item keyword or a different product search.',
         ].join('\n\n'),
         references: [] as CivilAiCardReference[],
       }
     }
 
-    const lines = bundle.market.slice(0, 4).map((listing) => {
-      const price = listing.priceLabel?.trim() ? ` (${listing.priceLabel.trim()})` : ''
-      const location = listing.locationLabel?.trim() ? ` in ${listing.locationLabel.trim()}` : ''
-      const description = listing.description?.trim() ? ` ${listing.description.trim()}` : ''
-      return `- ${listing.title}${price}${location}.${description}`
-    })
-    const countLine = bundle.market.length === 1
-      ? 'I found 1 active marketplace listing in current Civil data:'
-      : `I found ${bundle.market.length} active marketplace listings in current Civil data:`
-
     return {
-      content: [countLine, ...lines, 'I am only listing marketplace items that exist in Civil right now.'].join('\n'),
+      content: `I found ${formatCountLabel(bundle.market.length, 'matching listing', 'matching listings')}. The best match is linked below.`,
       references,
     }
   }
@@ -819,8 +810,7 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
       const timing = bundle.retrievalPlan.todayOnly ? 'today' : 'right now'
       return {
         content: [
-          `I do not see any events in current Civil data for ${targetLabel} ${timing}.`,
-          'Civil AI only has access to the internal Civil results returned for this question, so I will not invent events that are not in the database.',
+          `I could not find any events for ${targetLabel} ${timing}.`,
           bundle.organizations.length || bundle.posts.length
             ? 'If helpful, I can still summarize the local organizations or recent posts tied to that area.'
             : 'If you want, I can check local organizations, posts, or another nearby community instead.',
@@ -829,18 +819,10 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
       }
     }
 
-    const lines = bundle.events.slice(0, 4).map((event) => {
-      const orgName = event.organization.name.trim()
-      const descriptionText = truncatePreviewText(stripHtmlToPlainText(event.description ?? ''), 240)
-      const description = descriptionText ? ` ${descriptionText}` : ''
-      return `- ${event.title} (${formatCivilAiShortDateTime(event.startsAt)}) via ${orgName}.${description}`
-    })
-    const countLine = bundle.events.length === 1
-      ? `I found 1 event in current Civil data for ${scopeLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
-      : `I found ${bundle.events.length} events in current Civil data for ${scopeLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
-
     return {
-      content: [countLine, ...lines, 'I am only listing events that exist in Civil right now.'].join('\n'),
+      content: bundle.events.length === 1
+        ? `I found 1 event for ${scopeLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}. It is linked below.`
+        : `I found ${bundle.events.length} events for ${scopeLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}. The best matches are linked below.`,
       references,
     }
   }
@@ -850,24 +832,16 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
     if (!bundle.jobs.length) {
       return {
         content: [
-          `I do not see any active jobs in current Civil data for ${targetLabel}.`,
-          'Civil AI only has access to the internal Civil job results returned for this question, so I will not invent openings that are not in the database.',
+          `I could not find any active jobs for ${targetLabel} right now.`,
         ].join('\n\n'),
         references: [] as CivilAiCardReference[],
       }
     }
 
-    const lines = bundle.jobs.slice(0, 4).map((job) => {
-      const organization = job.organization.name.trim()
-      const location = job.location?.trim() ? ` in ${job.location.trim()}` : ''
-      return `- ${job.title} at ${organization}${location}`
-    })
-    const countLine = bundle.jobs.length === 1
-      ? `I found 1 active job in current Civil data for ${targetLabel}:`
-      : `I found ${bundle.jobs.length} active jobs in current Civil data for ${targetLabel}:`
-
     return {
-      content: [countLine, ...lines, 'I am only listing jobs that exist in Civil right now.'].join('\n'),
+      content: bundle.jobs.length === 1
+        ? `I found 1 active job for ${targetLabel}. It is linked below.`
+        : `I found ${bundle.jobs.length} active jobs for ${targetLabel}. The best matches are linked below.`,
       references,
     }
   }
@@ -877,23 +851,16 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
     if (!bundle.organizations.length) {
       return {
         content: [
-          `I do not see any matching organizations in current Civil data for ${targetLabel}.`,
-          'Civil AI only has access to the internal Civil organization results returned for this question, so I will not invent groups that are not in the database.',
+          `I could not find any matching organizations for ${targetLabel}.`,
         ].join('\n\n'),
         references: [] as CivilAiCardReference[],
       }
     }
 
-    const lines = bundle.organizations.slice(0, 4).map((organization) => {
-      const description = organization.description?.trim() ? ` ${organization.description.trim()}` : ''
-      return `- ${organization.name}.${description}`
-    })
-    const countLine = bundle.organizations.length === 1
-      ? `I found 1 matching organization in current Civil data for ${targetLabel}:`
-      : `I found ${bundle.organizations.length} matching organizations in current Civil data for ${targetLabel}:`
-
     return {
-      content: [countLine, ...lines, 'I am only listing organizations that exist in Civil right now.'].join('\n'),
+      content: bundle.organizations.length === 1
+        ? `I found 1 matching organization for ${targetLabel}. It is linked below.`
+        : `I found ${bundle.organizations.length} matching organizations for ${targetLabel}. The best matches are linked below.`,
       references,
     }
   }
@@ -903,24 +870,16 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
     if (!bundle.posts.length) {
       return {
         content: [
-          `I do not see any matching local posts in current Civil data for ${targetLabel}.`,
-          'Civil AI only has access to the internal Civil post results returned for this question, so I will not invent discussion activity that is not in the database.',
+          `I could not find any matching local posts for ${targetLabel}.`,
         ].join('\n\n'),
         references: [] as CivilAiCardReference[],
       }
     }
 
-    const lines = bundle.posts.slice(0, 4).map((post) => {
-      const authorName = post.author.name?.trim() || `@${post.author.handle}`
-      const excerpt = post.excerpt?.trim() ? ` ${post.excerpt.trim()}` : ''
-      return `- ${post.title} by ${authorName}.${excerpt}`
-    })
-    const countLine = bundle.posts.length === 1
-      ? `I found 1 matching local post in current Civil data for ${targetLabel}:`
-      : `I found ${bundle.posts.length} matching local posts in current Civil data for ${targetLabel}:`
-
     return {
-      content: [countLine, ...lines, 'I am only listing posts that exist in Civil right now.'].join('\n'),
+      content: bundle.posts.length === 1
+        ? `I found 1 matching local post for ${targetLabel}. It is linked below.`
+        : `I found ${bundle.posts.length} matching local posts for ${targetLabel}. The best matches are linked below.`,
       references,
     }
   }
@@ -928,8 +887,7 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
   if (!profileIntent.wantsProfile && requestedSources > 0 && totalMatches === 0) {
     return {
       content: [
-        `I could not find matching results in current Civil data for ${targetLabel}.`,
-        'Civil AI does not use an external knowledge base here, so when internal results are empty I should say that directly rather than guessing.',
+        `I could not find matching results for ${targetLabel}.`,
       ].join('\n\n'),
       references: [] as CivilAiCardReference[],
     }
@@ -8396,12 +8354,13 @@ type CivilAiJobDataItem = {
 }
 
 function toCivilAiEventReference(event: CivilAiEventDataItem): CivilAiCardReference {
+  const summary = truncatePreviewText(stripHtmlToPlainText(event.description ?? ''), 180) || null
   return {
     kind: 'event',
     id: event.id,
     title: event.title,
     subtitle: `${event.organization.name} • ${new Date(event.startsAt).toLocaleString()}`,
-    summary: event.description ?? null,
+    summary,
     href: buildCivilEventHref({
       organizationId: event.organization.id,
       eventId: event.id,
@@ -8422,12 +8381,13 @@ function toCivilAiJobReference(job: CivilAiJobDataItem): CivilAiCardReference | 
     slug: job.organization.slug,
   })
   if (!href) return null
+  const summary = truncatePreviewText(stripHtmlToPlainText(job.description ?? ''), 180) || null
   return {
     kind: 'job',
     id: job.id,
     title: job.title,
     subtitle: `${job.organization.name}${job.salaryMin || job.salaryMax ? ` • ${job.salaryCurrency ?? 'CAD'} ${job.salaryMin?.toLocaleString() ?? job.salaryMax?.toLocaleString() ?? ''}` : ''}`,
-    summary: job.description ?? null,
+    summary,
     href,
     imageUrl: job.photoUrl ?? job.organization.coverUrl ?? job.organization.logoUrl ?? null,
     badge: 'Job',
@@ -8435,12 +8395,13 @@ function toCivilAiJobReference(job: CivilAiJobDataItem): CivilAiCardReference | 
 }
 
 function toCivilAiMarketReference(listing: MarketSearchResultPayload): CivilAiCardReference {
+  const summary = truncatePreviewText(stripHtmlToPlainText(listing.description ?? ''), 180) || null
   return {
     kind: 'market',
     id: listing.id,
     title: listing.title,
     subtitle: [listing.priceLabel, listing.locationLabel].filter(Boolean).join(' • ') || 'Marketplace listing',
-    summary: listing.description ?? null,
+    summary,
     href: listing.href,
     imageUrl: listing.imageUrl,
     badge: 'Market',
@@ -8458,12 +8419,13 @@ function toCivilAiOrganizationReference(org: {
   communityName?: string | null
 }): CivilAiCardReference | null {
   if (!org.href) return null
+  const summary = truncatePreviewText(stripHtmlToPlainText(org.description ?? ''), 180) || null
   return {
     kind: 'organization',
     id: org.id,
     title: org.name,
     subtitle: org.role === 'owner' ? 'Your organization' : org.role === 'member' ? 'Organization membership' : org.role === 'followed' ? 'Followed organization' : org.communityName ? `${org.communityName} organization` : 'Community organization',
-    summary: org.description ?? null,
+    summary,
     href: org.href,
     imageUrl: org.coverUrl ?? org.logoUrl ?? null,
     badge: 'Organization',
