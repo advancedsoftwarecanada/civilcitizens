@@ -84,6 +84,8 @@ import {
 import bcrypt from 'bcryptjs'
 import { Redis as IORedis } from 'ioredis'
 import Stripe from 'stripe'
+import { promises as fs } from 'node:fs'
+import { resolve } from 'node:path'
 type DailyCount = { date: string; count: number }
 type JobAnalyticsKind = 'job_added' | 'applicant_submitted' | 'applications_viewed' | 'applicant_hired'
 
@@ -223,6 +225,287 @@ function parseRange(start?: string | null, end?: string | null): DateRange {
     rangeEnd = startOfUtcDay(new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000))
   }
   return { start: rangeStart, end: rangeEnd }
+}
+
+type CivilAiServerConfig = {
+  id: string
+  name: string
+  baseUrl: string
+  provider: string | null
+  enabled: boolean
+  default: boolean
+}
+
+const CivilAiChatInput = z.object({
+  serverId: z.string().trim().min(1).optional(),
+  model: z.string().trim().min(1).optional(),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['system', 'user', 'assistant']),
+        content: z.string().trim().min(1),
+      }),
+    )
+    .min(1),
+  temperature: z.coerce.number().min(0).max(2).optional(),
+  topP: z.coerce.number().min(0).max(1).optional(),
+  maxTokens: z.coerce.number().int().min(1).max(8192).optional(),
+  stream: z.boolean().optional(),
+})
+
+const CivilAiModelsQuery = z.object({
+  serverId: z.string().trim().min(1).optional(),
+})
+
+type CivilAiHistoryEntry = {
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+}
+
+const CIVIL_AI_HISTORY_LIMIT = 20
+
+const DEFAULT_CIVIL_AI_PROMPT = `Civil AI is a practical Canadian civic assistant inside Civil Citizens.
+Help users understand communities, public life, and constructive next steps.
+Be concise, grounded, civic-minded, and clear about uncertainty.`
+
+function resolveCivilAiServersPath() {
+  return (process.env.CIVIL_AI_SERVERS_FILE || '').trim() || resolve(process.cwd(), 'ai_servers.json')
+}
+
+function resolveCivilAiInstructionsPath() {
+  return (process.env.CIVIL_AI_INSTRUCTIONS_FILE || '').trim() || resolve(process.cwd(), 'CIVIL_AI.md')
+}
+
+function normalizeCivilAiBaseUrl(value: string) {
+  return value.trim().replace(/\/+$/, '')
+}
+
+function readBaseCommunityMeta(value: Prisma.JsonValue | null | undefined) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {} as Record<string, unknown>
+  return { ...(value as Record<string, unknown>) } as Record<string, unknown>
+}
+
+function readCivilAiHistory(meta: Prisma.JsonValue | null | undefined): CivilAiHistoryEntry[] {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return []
+  const payload = meta as Record<string, unknown>
+  const raw = payload.civilAiHistory
+  if (!Array.isArray(raw)) return []
+
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const item = entry as Record<string, unknown>
+      const role = item.role === 'user' || item.role === 'assistant' ? item.role : null
+      const content = typeof item.content === 'string' ? item.content.trim() : ''
+      const createdAt = typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString()
+      if (!role || !content) return null
+      return { role, content, createdAt } satisfies CivilAiHistoryEntry
+    })
+    .filter((entry): entry is CivilAiHistoryEntry => Boolean(entry))
+    .slice(-CIVIL_AI_HISTORY_LIMIT)
+}
+
+async function persistCivilAiHistory(userId: string, appendedEntries: CivilAiHistoryEntry[]) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+  if (!user) return [] as CivilAiHistoryEntry[]
+
+  const baseMeta = readBaseCommunityMeta(user.communityMeta)
+  const current = readCivilAiHistory(baseMeta as Prisma.JsonValue)
+  const next = [...current, ...appendedEntries].slice(-CIVIL_AI_HISTORY_LIMIT)
+  baseMeta.civilAiHistory = next
+
+  await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta } })
+  return next
+}
+
+async function loadCivilAiServersConfig() {
+  const configPath = resolveCivilAiServersPath()
+  const fallbackServer: CivilAiServerConfig = {
+    id: 'local-lm-studio',
+    name: 'Local LM Studio',
+    baseUrl: 'http://192.168.2.10:1234',
+    provider: 'lm-studio',
+    enabled: true,
+    default: true,
+  }
+
+  try {
+    const raw = await fs.readFile(configPath, 'utf8')
+    const parsed = JSON.parse(raw) as { defaultServerId?: string; servers?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+    const configuredServers = Array.isArray(parsed) ? parsed : parsed.servers ?? []
+    const defaultServerId = Array.isArray(parsed) ? null : parsed.defaultServerId ?? null
+
+    const servers: CivilAiServerConfig[] = []
+    for (const entry of configuredServers) {
+      const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+      const name = typeof entry.name === 'string' ? entry.name.trim() : id
+      const baseUrl = typeof entry.baseUrl === 'string' ? normalizeCivilAiBaseUrl(entry.baseUrl) : ''
+      if (!id || !name || !baseUrl) continue
+
+      const server: CivilAiServerConfig = {
+        id,
+        name,
+        baseUrl,
+        provider: typeof entry.provider === 'string' ? entry.provider.trim() : null,
+        enabled: entry.enabled !== false,
+        default: entry.default === true || defaultServerId === id,
+      }
+      if (!server.enabled) continue
+      servers.push(server)
+    }
+
+    if (!servers.length) {
+      return { configPath, defaultServerId: fallbackServer.id, servers: [fallbackServer] }
+    }
+
+    const resolvedDefaultServerId = defaultServerId || servers.find((server) => server.default)?.id || servers[0]?.id || fallbackServer.id
+
+    return { configPath, defaultServerId: resolvedDefaultServerId, servers }
+  } catch {
+    return { configPath, defaultServerId: fallbackServer.id, servers: [fallbackServer] }
+  }
+}
+
+async function readCivilAiInstructions() {
+  const instructionsPath = resolveCivilAiInstructionsPath()
+  try {
+    const raw = await fs.readFile(instructionsPath, 'utf8')
+    return { instructionsPath, content: raw.trim() || DEFAULT_CIVIL_AI_PROMPT }
+  } catch {
+    return { instructionsPath, content: DEFAULT_CIVIL_AI_PROMPT }
+  }
+}
+
+function extractCivilAiText(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => extractCivilAiText(entry))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+  }
+  if (value && typeof value === 'object') {
+    const candidate = value as Record<string, unknown>
+    if ('text' in candidate) return extractCivilAiText(candidate.text)
+    if ('content' in candidate) return extractCivilAiText(candidate.content)
+    if ('message' in candidate) return extractCivilAiText(candidate.message)
+  }
+  return ''
+}
+
+function extractCivilAiMessageContent(payload: unknown): string {
+  if (typeof payload === 'string') return payload.trim()
+  if (!payload || typeof payload !== 'object') return ''
+  const body = payload as Record<string, unknown>
+
+  if (Array.isArray(body.choices) && body.choices.length > 0) {
+    const firstChoice = body.choices[0] as Record<string, unknown>
+    const fromChoice = extractCivilAiText(firstChoice?.message ?? firstChoice?.delta ?? firstChoice?.text ?? null)
+    if (fromChoice) return fromChoice
+  }
+
+  const directContent = extractCivilAiText(body.message ?? body.content ?? body.reply ?? null)
+  if (directContent) return directContent
+
+  const responseContent = extractCivilAiText(body.response ?? body.generated_text ?? body.output ?? body.answer ?? null)
+  if (responseContent) return responseContent
+
+  return ''
+}
+
+function buildCivilAiPromptInput(systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  const transcript = messages
+    .filter((message) => message.role !== 'system')
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content.trim()}`)
+    .join('\n\n')
+
+  return [
+    'System Instructions:',
+    systemPrompt.trim(),
+    '',
+    'Conversation:',
+    transcript,
+    '',
+    'Assistant:',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+async function callCivilAiServer(args: {
+  server: CivilAiServerConfig
+  path: string
+  method?: 'GET' | 'POST'
+  body?: Record<string, unknown>
+}) {
+  const response = await fetch(`${args.server.baseUrl}${args.path}`, {
+    method: args.method ?? (args.body ? 'POST' : 'GET'),
+    headers: args.body ? { 'content-type': 'application/json' } : undefined,
+    body: args.body ? JSON.stringify(args.body) : undefined,
+  })
+
+  const rawText = await response.text()
+  let json: unknown = null
+  if (rawText) {
+    try {
+      json = JSON.parse(rawText)
+    } catch {
+      json = null
+    }
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    text: rawText,
+    json,
+  }
+}
+
+async function resolveCivilAiServer(serverId?: string | null) {
+  const config = await loadCivilAiServersConfig()
+  const server = config.servers.find((entry) => entry.id === serverId) || config.servers.find((entry) => entry.id === config.defaultServerId) || config.servers[0] || null
+  return { ...config, server }
+}
+
+async function resolveCivilAiModel(server: CivilAiServerConfig, preferredModel?: string | null) {
+  if (preferredModel?.trim()) return preferredModel.trim()
+
+  const upstream = await callCivilAiServer({ server, path: '/api/v1/models', method: 'GET' })
+  if (!upstream.ok) return null
+
+  const payload = upstream.json as Record<string, unknown> | null
+  const rawItems = Array.isArray(payload?.data)
+    ? payload?.data
+    : Array.isArray(payload?.models)
+      ? payload?.models
+      : Array.isArray(upstream.json)
+        ? upstream.json
+        : []
+
+  for (const entry of rawItems) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const model = entry as Record<string, unknown>
+    if (model.type && model.type !== 'llm') continue
+
+    const loadedInstances = Array.isArray(model.loaded_instances) ? model.loaded_instances : []
+    const loadedInstance = loadedInstances.find((item) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).id === 'string') as Record<string, unknown> | undefined
+    if (typeof loadedInstance?.id === 'string' && loadedInstance.id.trim()) return loadedInstance.id.trim()
+
+    if (typeof model.selected_variant === 'string' && model.selected_variant.trim()) return model.selected_variant.trim()
+    if (typeof model.key === 'string' && model.key.trim()) return model.key.trim()
+    if (typeof model.id === 'string' && model.id.trim()) return model.id.trim()
+  }
+
+  return null
+}
+
+function readCivilAiBody(req: FastifyRequest) {
+  const body = req.body
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  return body as Record<string, unknown>
 }
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { createHash, randomInt, randomUUID } from 'crypto'
@@ -4502,6 +4785,29 @@ function formatAdminUserSummary(user: {
   }
 }
 
+function formatCommunityFollowLabel(community: { provinceCode: string; communitySlug: string; home?: boolean | null }) {
+  const base = `${community.provinceCode.toUpperCase()} / ${community.communitySlug}`
+  return community.home ? `${base} (home)` : base
+}
+
+function buildAdminUserSearchWhere(search: string): Prisma.UserWhereInput {
+  const normalizedQuery = normalizeSearchTerm(search)
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+  const normalizedHandle = normalizedQuery.replace(/^@/, '')
+
+  return {
+    OR: [
+      tokens.length
+        ? {
+            AND: tokens.map((token) => ({ name: { contains: token, mode: 'insensitive' as const } })),
+          }
+        : { name: { contains: normalizedQuery, mode: 'insensitive' as const } },
+      { handle: { contains: normalizedHandle, mode: 'insensitive' as const } },
+      { email: { contains: normalizedQuery, mode: 'insensitive' as const } },
+    ],
+  }
+}
+
 async function applyModerationQuarantine(
   tx: Prisma.TransactionClient,
   targetType: ModerationTargetType,
@@ -6317,6 +6623,206 @@ async function rankFeedPosts(args: {
 }
 
 app.get('/health', async () => ({ ok: true }))
+
+app.get('/ai/servers', async (_req: FastifyRequest, reply: FastifyReply) => {
+  const config = await loadCivilAiServersConfig()
+  const instructions = await readCivilAiInstructions()
+  return reply.send({
+    defaultServerId: config.defaultServerId,
+    servers: config.servers,
+    configPath: config.configPath,
+    instructionsPath: instructions.instructionsPath,
+  })
+})
+
+app.get('/ai/history', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = await resolveUserId(req)
+  if (!userId) return reply.send({ items: [] })
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+  return reply.send({ items: readCivilAiHistory(user?.communityMeta ?? null) })
+})
+
+app.get('/ai/models', async (req: FastifyRequest, reply: FastifyReply) => {
+  const query = CivilAiModelsQuery.safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const resolved = await resolveCivilAiServer(query.data.serverId)
+  if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
+
+  const upstream = await callCivilAiServer({ server: resolved.server, path: '/api/v1/models', method: 'GET' })
+  if (!upstream.ok) {
+    return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_models_failed' })
+  }
+
+  const payload = upstream.json as Record<string, unknown> | null
+  const rawItems = Array.isArray(payload?.data)
+    ? payload?.data
+    : Array.isArray(payload?.models)
+      ? payload?.models
+      : Array.isArray(upstream.json)
+        ? upstream.json
+        : []
+
+  const items = rawItems
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null
+      const model = entry as Record<string, unknown>
+      const id = typeof model.id === 'string' ? model.id : typeof model.model === 'string' ? model.model : ''
+      if (!id) return null
+      return {
+        id,
+        name: typeof model.name === 'string' ? model.name : id,
+        loaded: model.loaded === true || model.state === 'loaded',
+      }
+    })
+    .filter((entry): entry is { id: string; name: string; loaded: boolean } => Boolean(entry))
+
+  return reply.send({ items, raw: upstream.json })
+})
+
+app.post('/ai/models/load', async (req: FastifyRequest, reply: FastifyReply) => {
+  const body = readCivilAiBody(req)
+  if (!body) return reply.code(400).send({ error: 'invalid_body' })
+
+  const serverId = typeof body.serverId === 'string' ? body.serverId : undefined
+  const resolved = await resolveCivilAiServer(serverId)
+  if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
+
+  const payload = { ...body }
+  delete payload.serverId
+
+  const upstream = await callCivilAiServer({
+    server: resolved.server,
+    path: '/api/v1/models/load',
+    method: 'POST',
+    body: payload,
+  })
+
+  if (!upstream.ok) {
+    return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_model_load_failed' })
+  }
+
+  return reply.send(upstream.json ?? { ok: true })
+})
+
+app.post('/ai/models/download', async (req: FastifyRequest, reply: FastifyReply) => {
+  const body = readCivilAiBody(req)
+  if (!body) return reply.code(400).send({ error: 'invalid_body' })
+
+  const serverId = typeof body.serverId === 'string' ? body.serverId : undefined
+  const resolved = await resolveCivilAiServer(serverId)
+  if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
+
+  const payload = { ...body }
+  delete payload.serverId
+
+  const upstream = await callCivilAiServer({
+    server: resolved.server,
+    path: '/api/v1/models/download',
+    method: 'POST',
+    body: payload,
+  })
+
+  if (!upstream.ok) {
+    return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_model_download_failed' })
+  }
+
+  return reply.send(upstream.json ?? { ok: true })
+})
+
+app.get('/ai/models/download/status/:jobId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z.object({ jobId: z.string().trim().min(1) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+  const query = CivilAiModelsQuery.safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const resolved = await resolveCivilAiServer(query.data.serverId)
+  if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
+
+  const upstream = await callCivilAiServer({
+    server: resolved.server,
+    path: `/api/v1/models/download/status/${encodeURIComponent(params.data.jobId)}`,
+    method: 'GET',
+  })
+
+  if (!upstream.ok) {
+    return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_model_download_status_failed' })
+  }
+
+  return reply.send(upstream.json ?? { ok: true })
+})
+
+app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
+  const body = CivilAiChatInput.safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+  const userId = await resolveUserId(req)
+
+  const resolved = await resolveCivilAiServer(body.data.serverId)
+  if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
+  const resolvedModel = await resolveCivilAiModel(resolved.server, body.data.model)
+  if (!resolvedModel) return reply.code(503).send({ error: 'no_ai_model_available' })
+
+  const instructions = await readCivilAiInstructions()
+  const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+    { role: 'system', content: instructions.content },
+    ...body.data.messages.map((message) => ({
+      role: message.role as 'system' | 'user' | 'assistant',
+      content: message.content,
+    })),
+  ]
+  const input = buildCivilAiPromptInput(instructions.content, upstreamMessages)
+
+  const upstream = await callCivilAiServer({
+    server: resolved.server,
+    path: '/api/v1/chat',
+    method: 'POST',
+    body: {
+      model: resolvedModel,
+      input,
+      temperature: body.data.temperature,
+      top_p: body.data.topP,
+      max_tokens: body.data.maxTokens,
+      stream: body.data.stream ?? false,
+    },
+  })
+
+  if (!upstream.ok) {
+    return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_chat_failed' })
+  }
+
+  const content = extractCivilAiMessageContent(upstream.json)
+  if (!content) {
+    const rawResponse = upstream.json ?? upstream.text?.trim() ?? null
+    return reply.code(502).send({ error: 'ai_empty_response', raw: rawResponse })
+  }
+
+  const persistedHistory = userId
+    ? await persistCivilAiHistory(userId, [
+        {
+          role: 'user',
+          content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
+          createdAt: new Date().toISOString(),
+        },
+        {
+          role: 'assistant',
+          content,
+          createdAt: new Date().toISOString(),
+        },
+      ])
+    : null
+
+  return reply.send({
+    message: {
+      role: 'assistant',
+      content,
+    },
+    model: resolvedModel,
+    server: resolved.server,
+    history: persistedHistory,
+    raw: upstream.json,
+  })
+})
 
 // Ensure all unexpected errors return clean JSON (prevents malformed bodies)
 app.setErrorHandler((err, req, reply) => {
@@ -19195,6 +19701,8 @@ const AdminAnalyticsDetailQuery = z.object({
   end: z.string().trim().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
   flagReason: z.enum(ModerationReportReasonValues).optional(),
+  search: z.string().trim().min(1).max(120).optional(),
+  authorId: z.string().cuid().optional(),
 })
 
 const AdminInspectUserParams = z.object({
@@ -25824,14 +26332,18 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
 
   const range = parseRange(query.data.start, query.data.end)
   const limit = query.data.limit
+  const normalizedSearch = query.data.search ? normalizeSearchTerm(query.data.search) : ''
 
   if (query.data.metric === 'users') {
     const users = await prisma.user.findMany({
-      where: { createdAt: { gte: range.start, lt: range.end } },
+      where: normalizedSearch
+        ? buildAdminUserSearchWhere(normalizedSearch)
+        : { createdAt: { gte: range.start, lt: range.end } },
       orderBy: [{ createdAt: 'desc' }],
       take: limit,
       select: {
         id: true,
+        email: true,
         handle: true,
         name: true,
         avatarUrl: true,
@@ -25839,6 +26351,15 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
         createdAt: true,
         lastLoginAt: true,
         premiumStatus: true,
+        communityFollows: {
+          orderBy: [{ home: 'desc' }, { createdAt: 'asc' }],
+          take: 3,
+          select: {
+            provinceCode: true,
+            communitySlug: true,
+            home: true,
+          },
+        },
         _count: {
           select: {
             posts: true,
@@ -25846,6 +26367,7 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
             businesses: true,
             contentReportsFiled: true,
             contentReportsTargeting: true,
+            communityFollows: true,
           },
         },
       },
@@ -25856,9 +26378,20 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
       generatedAt: new Date().toISOString(),
       items: users.map((entry: any) => ({
         ...formatAdminUserSummary(entry),
+        email: entry.email,
         createdAt: entry.createdAt.toISOString(),
         lastLoginAt: entry.lastLoginAt?.toISOString() ?? null,
         premiumStatus: entry.premiumStatus,
+        communities: {
+          count: entry._count.communityFollows,
+          items: entry.communityFollows.map((community: any) => ({
+            provinceCode: community.provinceCode,
+            communitySlug: community.communitySlug,
+            home: community.home,
+            label: formatCommunityFollowLabel(community),
+            href: buildCommunityHref(community.provinceCode, community.communitySlug),
+          })),
+        },
         postCount: entry._count.posts,
         commentCount: entry._count.comments,
         organizationsOwned: entry._count.businesses,
@@ -25887,8 +26420,19 @@ app.get('/admin/reports/detail', async (req: FastifyRequest, reply: FastifyReply
 
     const posts = await prisma.post.findMany({
       where: {
-        createdAt: { gte: range.start, lt: range.end },
+        ...(query.data.authorId ? { authorId: query.data.authorId } : {}),
+        ...(!query.data.authorId ? { createdAt: { gte: range.start, lt: range.end } } : {}),
         ...(flaggedPostIds ? { id: { in: flaggedPostIds } } : {}),
+        ...(normalizedSearch
+          ? {
+              OR: [
+                { title: { contains: normalizedSearch, mode: 'insensitive' } },
+                { body: { contains: normalizedSearch, mode: 'insensitive' } },
+                { author: { handle: { contains: normalizedSearch.replace(/^@/, ''), mode: 'insensitive' } } },
+                { author: { name: { contains: normalizedSearch, mode: 'insensitive' } } },
+              ],
+            }
+          : {}),
       },
       orderBy: [{ createdAt: 'desc' }],
       take: limit,
@@ -26428,6 +26972,15 @@ app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: Fasti
       createdAt: true,
       lastLoginAt: true,
       premiumStatus: true,
+      communityFollows: {
+        orderBy: [{ home: 'desc' }, { createdAt: 'asc' }],
+        take: 8,
+        select: {
+          provinceCode: true,
+          communitySlug: true,
+          home: true,
+        },
+      },
       _count: {
         select: {
           posts: true,
@@ -26437,6 +26990,7 @@ app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: Fasti
           contentReportsTargeting: true,
           jobApplications: true,
           jobPostingsCreated: true,
+          communityFollows: true,
         },
       },
     },
@@ -26448,7 +27002,7 @@ app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: Fasti
     prisma.post.findMany({
       where: { authorId: inspectedUser.id },
       orderBy: [{ createdAt: 'desc' }],
-      take: 5,
+      take: 20,
       select: {
         id: true,
         title: true,
@@ -26526,6 +27080,16 @@ app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: Fasti
       createdAt: inspectedUser.createdAt.toISOString(),
       lastLoginAt: inspectedUser.lastLoginAt?.toISOString() ?? null,
       premiumStatus: inspectedUser.premiumStatus,
+      communities: {
+        count: inspectedUser._count.communityFollows,
+        items: inspectedUser.communityFollows.map((community: any) => ({
+          provinceCode: community.provinceCode,
+          communitySlug: community.communitySlug,
+          home: community.home,
+          label: formatCommunityFollowLabel(community),
+          href: buildCommunityHref(community.provinceCode, community.communitySlug),
+        })),
+      },
     },
     stats: {
       posts: inspectedUser._count.posts,
@@ -26535,6 +27099,7 @@ app.get('/admin/users/:userId/inspect', async (req: FastifyRequest, reply: Fasti
       reportsAgainst: inspectedUser._count.contentReportsTargeting,
       jobApplications: inspectedUser._count.jobApplications,
       jobsCreated: inspectedUser._count.jobPostingsCreated,
+      communities: inspectedUser._count.communityFollows,
     },
     recentPosts: recentPosts.map((entry: any) => ({
       id: entry.id,

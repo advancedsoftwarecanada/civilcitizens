@@ -98,6 +98,31 @@
   animation: cc-launch-spin 0.9s linear infinite;
 }
 
+.cc-civil-ai-launcher {
+  position: fixed;
+  overflow: hidden;
+  border-radius: 1.55rem;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+}
+
+.cc-civil-ai-launcher__border {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--cc-primary);
+}
+
+.cc-civil-ai-launcher__surface {
+  position: absolute;
+  inset: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(1.55rem - 2px);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
 @keyframes cc-launch-spin {
   to {
     transform: rotate(360deg);

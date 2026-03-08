@@ -1,0 +1,13 @@
+{
+  "defaultServerId": "local-lm-studio",
+  "servers": [
+    {
+      "id": "local-lm-studio",
+      "name": "Local LM Studio",
+      "baseUrl": "http://192.168.2.10:1234",
+      "provider": "lm-studio",
+      "enabled": true,
+      "default": true
+    }
+  ]
+}
