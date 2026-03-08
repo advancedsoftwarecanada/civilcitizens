@@ -1,7 +1,7 @@
 "use client"
 
 import Link from 'next/link'
-import { HiOutlineBriefcase, HiOutlineCog8Tooth, HiOutlineFlag, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
+import { HiOutlineBriefcase, HiOutlineCog8Tooth, HiOutlineCpuChip, HiOutlineFlag, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import AdminWideShell from './_components/AdminWideShell'
 import { useAdminAccess } from './_hooks/useAdminAccess'
@@ -49,6 +49,13 @@ const ACTIONS: AdminAction[] = [
     description: 'Manage industries/sub-industries and populate seed data.',
     href: '/admin/jobs',
     icon: HiOutlineBriefcase,
+  },
+  {
+    key: 'ai',
+    label: 'AI debug console',
+    description: 'Inspect Civil AI conversations, retrieval decisions, prompts, and responses.',
+    href: '/admin/ai',
+    icon: HiOutlineCpuChip,
   },
 ]
 
