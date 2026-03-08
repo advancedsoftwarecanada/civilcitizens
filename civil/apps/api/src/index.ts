@@ -28038,6 +28038,15 @@ function buildJobLocationValue(row: {
   return `community:${provinceCode}:${communitySlug}|${label}`
 }
 
+function parseCommunityKeyFromJobLocationValue(location: string | null | undefined): string | null {
+  const trimmed = (location ?? '').trim()
+  if (!trimmed.startsWith('community:')) return null
+  const body = trimmed.slice('community:'.length)
+  const [head] = body.split('|')
+  const [provinceCode, communitySlug] = (head ?? '').split(':')
+  return toCommunityKey(provinceCode, communitySlug)
+}
+
 async function resolveOrgManagerOrOwner(args: {
   province: string
   municipality: string
@@ -28172,6 +28181,580 @@ function mapJobListRow(row: JobListRow) {
     },
   }
 }
+
+const FeedActivityQuery = z.object({
+  scope: z.enum(['all', 'friends', 'network', 'communities', 'organizations']).default('all'),
+  province: z.string().optional(),
+  community: z.string().optional(),
+  eventLimit: z.coerce.number().int().min(1).max(12).default(6),
+  jobLimit: z.coerce.number().int().min(1).max(12).default(6),
+})
+
+function buildPrioritizedFeedCommunityKeys(context: ViewerFeedContext | null) {
+  if (!context) return [] as string[]
+  return Array.from(
+    new Set(
+      [
+        context.homeCommunityKey,
+        ...context.nearbyCommunityKeys,
+        ...context.regionalCommunityKeys,
+        ...context.followedCommunityKeys,
+      ].filter((key): key is string => Boolean(key)),
+    ),
+  )
+}
+
+function buildViewerFeedOrganizationIds(context: ViewerFeedContext | null) {
+  if (!context) return [] as string[]
+  return Array.from(new Set([...context.followedBusinessIds, ...context.memberBusinessIds]))
+}
+
+function resolveFeedActivityTargets(args: {
+  scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+  context: ViewerFeedContext | null
+  province?: string
+  community?: string
+}) {
+  if (args.province || args.community) {
+    const normalizedProvince = normalizeProvinceCode(args.province ?? '')
+    if (!normalizedProvince) return { error: 'invalid_province' as const }
+    const communityRecord = findCommunity(normalizedProvince, (args.community ?? '').trim().toLowerCase())
+    if (!communityRecord) return { error: 'community_not_found' as const }
+    return {
+      communityKeys: [toCommunityKey(communityRecord.province, communityRecord.slug)!],
+      organizationIds: [] as string[],
+    }
+  }
+
+  if (!args.context) {
+    return { communityKeys: [] as string[], organizationIds: [] as string[] }
+  }
+
+  if (args.scope === 'organizations') {
+    return {
+      communityKeys: [] as string[],
+      organizationIds: buildViewerFeedOrganizationIds(args.context),
+    }
+  }
+
+  if (args.scope === 'communities') {
+    return {
+      communityKeys: buildPrioritizedFeedCommunityKeys(args.context),
+      organizationIds: [] as string[],
+    }
+  }
+
+  if (args.scope === 'all') {
+    return {
+      communityKeys: buildPrioritizedFeedCommunityKeys(args.context),
+      organizationIds: buildViewerFeedOrganizationIds(args.context),
+    }
+  }
+
+  return { communityKeys: [] as string[], organizationIds: [] as string[] }
+}
+
+async function loadFeedActivityEvents(args: {
+  communityKeys: string[]
+  organizationIds: string[]
+  limit: number
+}) {
+  if (!args.communityKeys.length && !args.organizationIds.length) return []
+
+  const whereOr: Prisma.BusinessWhereInput[] = []
+  if (args.organizationIds.length) {
+    whereOr.push({ id: { in: args.organizationIds } })
+  }
+  if (args.communityKeys.length) {
+    whereOr.push({
+      OR: args.communityKeys
+        .map((key) => {
+          const [provinceCode, communitySlug] = key.split(':')
+          if (!provinceCode || !communitySlug) return null
+          return { provinceCode, communitySlug }
+        })
+        .filter((value): value is { provinceCode: string; communitySlug: string } => Boolean(value)),
+    })
+  }
+
+  if (!whereOr.length) return []
+
+  const organizations: Array<{
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    isVerified: boolean
+    metadata: Prisma.JsonValue | null
+  }> = await prisma.business.findMany({
+    where: {
+      status: BusinessStatus.ACTIVE,
+      OR: whereOr,
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      provinceCode: true,
+      communitySlug: true,
+      logoUrl: true,
+      isVerified: true,
+      metadata: true,
+    },
+    take: 1000,
+  })
+
+  const now = Date.now()
+  const items = organizations.flatMap((org) => {
+    const system = readOrganizationSystemState(org.metadata)
+    return system.events
+      .filter((event) => event.status !== 'DRAFT' && event.access === 'PUBLIC')
+      .filter((event) => {
+        const startsAtMs = Date.parse(event.startsAt)
+        return Number.isFinite(startsAtMs) ? startsAtMs >= now : true
+      })
+      .map((event) => ({
+        id: event.id,
+        title: event.title,
+        description: event.description,
+        startsAt: event.startsAt,
+        primaryPhotoUrl: normalizeMediaUrl(event.primaryPhotoUrl ?? null),
+        organization: {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          provinceCode: org.provinceCode,
+          communitySlug: org.communitySlug,
+          logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+          isVerified: org.isVerified,
+        },
+      }))
+  })
+
+  items.sort((left: (typeof items)[number], right: (typeof items)[number]) => {
+    const leftTime = Date.parse(left.startsAt)
+    const rightTime = Date.parse(right.startsAt)
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime
+    }
+    if (left.organization.name !== right.organization.name) {
+      return left.organization.name.localeCompare(right.organization.name)
+    }
+    return left.title.localeCompare(right.title)
+  })
+
+  return items.slice(0, args.limit)
+}
+
+async function loadFeedActivityJobs(args: {
+  communityKeys: string[]
+  organizationIds: string[]
+  limit: number
+}) {
+  if (!args.communityKeys.length && !args.organizationIds.length) return []
+
+  const now = new Date()
+  const communityPairs = args.communityKeys
+    .map((key) => {
+      const [provinceCode, communitySlug] = key.split(':')
+      if (!provinceCode || !communitySlug) return null
+      return { provinceCode, communitySlug }
+    })
+    .filter((value): value is { provinceCode: string; communitySlug: string } => Boolean(value))
+
+  const whereOr: Prisma.JobPostingWhereInput[] = []
+  if (args.organizationIds.length) {
+    whereOr.push({ businessId: { in: args.organizationIds } })
+  }
+  if (communityPairs.length) {
+    whereOr.push({
+      business: {
+        OR: communityPairs,
+      },
+    })
+    whereOr.push({
+      AND: [
+        { locationType: 'community' },
+        {
+          OR: communityPairs.map((pair) => ({
+            locationProvinceCode: pair.provinceCode,
+            locationCommunitySlug: pair.communitySlug,
+          })),
+        },
+      ],
+    })
+  }
+
+  if (!whereOr.length) return []
+
+  const rows: Array<{
+    id: string
+    title: string
+    slug: string
+    status: 'draft' | 'active' | 'closed' | 'expired'
+    employmentType: string
+    salaryMin: number | null
+    salaryMax: number | null
+    salaryCurrency: string | null
+    salaryPeriod: string | null
+    description: string | null
+    photoUrl: string | null
+    duties: string
+    roleRequirements: string
+    locationType: 'community' | 'remote' | 'not_in_canada'
+    locationProvinceCode: string | null
+    locationCommunitySlug: string | null
+    locationLabel: string | null
+    applicantCount: number
+    createdAt: Date
+    updatedAt: Date
+    publishedAt: Date | null
+    expiresAt: Date
+    industry: {
+      id: string
+      name: string
+      slug: string
+    }
+    subIndustry: {
+      id: string
+      name: string
+      slug: string
+    } | null
+    business: {
+      id: string
+      name: string
+      slug: string
+      provinceCode: string | null
+      communitySlug: string | null
+      logoUrl: string | null
+      coverUrl: string | null
+    }
+  }> = await prisma.jobPosting.findMany({
+    where: {
+      status: 'active',
+      publishedAt: { not: null },
+      expiresAt: { gt: now },
+      OR: whereOr,
+    },
+    orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+    take: Math.max(args.limit * 4, 24),
+    select: {
+      id: true,
+      title: true,
+      slug: true,
+      status: true,
+      employmentType: true,
+      salaryMin: true,
+      salaryMax: true,
+      salaryCurrency: true,
+      salaryPeriod: true,
+      description: true,
+      photoUrl: true,
+      duties: true,
+      roleRequirements: true,
+      locationType: true,
+      locationProvinceCode: true,
+      locationCommunitySlug: true,
+      locationLabel: true,
+      industry: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+      subIndustry: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+      applicantCount: true,
+      createdAt: true,
+      updatedAt: true,
+      publishedAt: true,
+      expiresAt: true,
+      business: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          provinceCode: true,
+          communitySlug: true,
+          logoUrl: true,
+          coverUrl: true,
+        },
+      },
+    },
+  })
+
+  const items = rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    slug: row.slug,
+    status: row.status,
+    employmentType: row.employmentType,
+    salaryMin: row.salaryMin,
+    salaryMax: row.salaryMax,
+    salaryCurrency: row.salaryCurrency,
+    salaryPeriod: row.salaryPeriod,
+    description: row.description,
+    photoUrl: normalizeMediaUrl(row.photoUrl),
+    duties: row.duties,
+    roleRequirements: row.roleRequirements,
+    location: buildJobLocationValue({
+      locationType: row.locationType,
+      locationProvinceCode: row.locationProvinceCode,
+      locationCommunitySlug: row.locationCommunitySlug,
+      locationLabel: row.locationLabel,
+    }),
+    industry: {
+      id: row.industry.id,
+      name: row.industry.name,
+      slug: row.industry.slug,
+      subIndustry: row.subIndustry
+        ? {
+            id: row.subIndustry.id,
+            name: row.subIndustry.name,
+            slug: row.subIndustry.slug,
+          }
+        : null,
+    },
+    applicantCount: Number(row.applicantCount) || 0,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    publishedAt: row.publishedAt?.toISOString() ?? null,
+    expiresAt: row.expiresAt.toISOString(),
+    sponsored: false,
+    marketing: {
+      impressions: 0,
+      views: 0,
+      applications: Number(row.applicantCount) || 0,
+      activePromotion: false,
+      impressionCap: 1000,
+    },
+    organization: {
+      id: row.business.id,
+      name: row.business.name,
+      slug: row.business.slug,
+      provinceCode: row.business.provinceCode,
+      communitySlug: row.business.communitySlug,
+      logoUrl: normalizeMediaUrl(row.business.logoUrl),
+      coverUrl: normalizeMediaUrl(row.business.coverUrl),
+    },
+  }))
+
+  return items.slice(0, args.limit)
+}
+
+function mixFeedActivityItems(args: {
+  events: Awaited<ReturnType<typeof loadFeedActivityEvents>>
+  jobs: Awaited<ReturnType<typeof loadFeedActivityJobs>>
+  scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+  context: ViewerFeedContext | null
+}) {
+  type FeedActivitySignal = {
+    label: string
+    strength: 'high' | 'medium' | 'low'
+  }
+
+  type FeedActivityScoredItem =
+    | {
+        kind: 'event'
+        id: string
+        score: number
+        timestampMs: number
+        organizationId: string | null
+        communityKey: string | null
+        signal: FeedActivitySignal
+        item: Awaited<ReturnType<typeof loadFeedActivityEvents>>[number]
+      }
+    | {
+        kind: 'job'
+        id: string
+        score: number
+        timestampMs: number
+        organizationId: string | null
+        communityKey: string | null
+        signal: FeedActivitySignal
+        item: Awaited<ReturnType<typeof loadFeedActivityJobs>>[number]
+      }
+
+  const nowMs = Date.now()
+
+  const resolveActivityGeoLevel = (communityKey: string | null) => {
+    if (!communityKey || !args.context) return 4 as const
+    if (args.context.homeCommunityKey && communityKey === args.context.homeCommunityKey) return 1 as const
+    if (args.context.nearbyCommunityKeys.has(communityKey)) return 2 as const
+    if (args.context.regionalCommunityKeys.has(communityKey) || args.context.followedCommunityKeys.has(communityKey)) return 3 as const
+    return 4 as const
+  }
+
+  const buildGeoSignal = (communityKey: string | null, organizationId?: string | null): FeedActivitySignal => {
+    if (organizationId && args.context && args.context.memberBusinessIds.has(organizationId)) {
+      return { label: 'Your organization', strength: 'high' }
+    }
+    if (organizationId && args.context && args.context.followedBusinessIds.has(organizationId)) {
+      return { label: 'Organization you follow', strength: 'medium' }
+    }
+
+    const geoLevel = resolveActivityGeoLevel(communityKey)
+    if (geoLevel === 1) return { label: 'Home community', strength: 'high' }
+    if (geoLevel === 2) return { label: 'Nearby community', strength: 'high' }
+    if (geoLevel === 3) return { label: 'Followed community', strength: 'medium' }
+    return { label: 'Across your civic network', strength: 'low' }
+  }
+
+  const activityGeoBoost = (communityKey: string | null, organizationId?: string | null) => {
+    if (organizationId && args.context && args.context.memberBusinessIds.has(organizationId)) return 180
+    if (organizationId && args.context && args.context.followedBusinessIds.has(organizationId)) return 120
+
+    const geoLevel = resolveActivityGeoLevel(communityKey)
+    if (args.scope === 'communities' || args.scope === 'all') {
+      return ({ 1: 170, 2: 120, 3: 72, 4: 20 } as const)[geoLevel]
+    }
+    return ({ 1: 60, 2: 36, 3: 18, 4: 0 } as const)[geoLevel]
+  }
+
+  const scored: FeedActivityScoredItem[] = [
+    ...args.events.map((event) => {
+      const startsAtMs = Date.parse(event.startsAt)
+      const hoursUntilStart = Number.isFinite(startsAtMs) ? Math.max(0, (startsAtMs - nowMs) / (1000 * 60 * 60)) : 48
+      const communityKey = toCommunityKey(event.organization.provinceCode, event.organization.communitySlug)
+      const signal = buildGeoSignal(communityKey, event.organization.id)
+      const geoBoost = activityGeoBoost(communityKey, event.organization.id)
+      const imminenceBoost = Math.max(0, 260 - hoursUntilStart * 4.5)
+      const scopeBias = args.scope === 'communities' ? 55 : args.scope === 'organizations' ? 30 : 0
+      const score = Math.max(0, imminenceBoost + geoBoost + scopeBias)
+      return {
+        kind: 'event' as const,
+        id: event.id,
+        score,
+        timestampMs: Number.isFinite(startsAtMs) ? startsAtMs : nowMs,
+        organizationId: event.organization.id,
+        communityKey,
+        signal,
+        item: event,
+      }
+    }),
+    ...args.jobs.map((job) => {
+      const publishedMs = Date.parse(job.publishedAt ?? job.createdAt)
+      const ageHours = Number.isFinite(publishedMs) ? Math.max(0, (nowMs - publishedMs) / (1000 * 60 * 60)) : 72
+      const demandBoost = Math.log1p(Math.max(0, job.applicantCount)) * 8
+      const communityKey =
+        toCommunityKey(job.organization.provinceCode, job.organization.communitySlug) ??
+        parseCommunityKeyFromJobLocationValue(job.location)
+      const signal = buildGeoSignal(communityKey, job.organization.id)
+      const geoBoost = activityGeoBoost(communityKey, job.organization.id)
+      const freshnessBoost = Math.max(0, 220 - ageHours * 2.2)
+      const scopeBias = args.scope === 'organizations' ? 45 : args.scope === 'communities' ? 28 : 0
+      const score = Math.max(0, freshnessBoost + demandBoost + geoBoost + scopeBias)
+      return {
+        kind: 'job' as const,
+        id: job.id,
+        score,
+        timestampMs: Number.isFinite(publishedMs) ? publishedMs : nowMs,
+        organizationId: job.organization.id,
+        communityKey,
+        signal,
+        item: job,
+      }
+    }),
+  ]
+
+  scored.sort((left, right) => {
+    if (right.score !== left.score) return right.score - left.score
+    if (left.kind !== right.kind) {
+      if (args.scope === 'communities') return left.kind === 'event' ? -1 : 1
+      if (args.scope === 'all') return left.kind === 'event' ? -1 : 1
+    }
+    if (right.timestampMs !== left.timestampMs) return right.timestampMs - left.timestampMs
+    return right.id.localeCompare(left.id)
+  })
+
+  const pool = [...scored]
+  const mixed: FeedActivityScoredItem[] = []
+
+  while (pool.length > 0) {
+    let bestIndex = 0
+    let bestScore = Number.NEGATIVE_INFINITY
+
+    for (let index = 0; index < pool.length; index += 1) {
+      const candidate = pool[index]
+      if (!candidate) continue
+      const last = mixed[mixed.length - 1]
+      const beforeLast = mixed[mixed.length - 2]
+
+      let adjustedScore = candidate.score
+      if (last?.kind === candidate.kind) adjustedScore -= 26
+      if (last?.kind === candidate.kind && beforeLast?.kind === candidate.kind) adjustedScore -= 48
+      if (last?.organizationId && candidate.organizationId && last.organizationId === candidate.organizationId) adjustedScore -= 90
+      if (last?.communityKey && candidate.communityKey && last.communityKey === candidate.communityKey) adjustedScore -= 58
+      if (beforeLast?.organizationId && candidate.organizationId && beforeLast.organizationId === candidate.organizationId) adjustedScore -= 30
+
+      if (adjustedScore > bestScore) {
+        bestScore = adjustedScore
+        bestIndex = index
+      }
+    }
+
+    const next = pool.splice(bestIndex, 1)[0]
+    if (!next) break
+    mixed.push(next)
+  }
+
+  return mixed.map((entry) => ({ kind: entry.kind, signal: entry.signal, ...entry.item }))
+}
+
+app.get('/feed/activity', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const query = FeedActivityQuery.safeParse(req.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const viewerId = await resolveUserId(req)
+    if (!viewerId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const viewerFeedContext = await loadViewerFeedContext(viewerId)
+    const targets = resolveFeedActivityTargets({
+      scope: query.data.scope,
+      context: viewerFeedContext,
+      province: query.data.province,
+      community: query.data.community,
+    })
+
+    if ('error' in targets) {
+      return reply.code(targets.error === 'invalid_province' ? 400 : 404).send({ error: targets.error })
+    }
+
+    const [events, jobs] = await Promise.all([
+      loadFeedActivityEvents({
+        communityKeys: targets.communityKeys,
+        organizationIds: targets.organizationIds,
+        limit: query.data.eventLimit,
+      }),
+      loadFeedActivityJobs({
+        communityKeys: targets.communityKeys,
+        organizationIds: targets.organizationIds,
+        limit: query.data.jobLimit,
+      }),
+    ])
+    const items = mixFeedActivityItems({ events, jobs, scope: query.data.scope, context: viewerFeedContext })
+
+    return reply.send({
+      events,
+      jobs,
+      items,
+      context: {
+        scope: query.data.scope,
+        communityCount: targets.communityKeys.length,
+        organizationCount: targets.organizationIds.length,
+      },
+    })
+  }),
+)
 
 app.get('/work/jobs', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
