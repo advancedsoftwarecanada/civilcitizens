@@ -146,6 +146,7 @@ model Comment {
   postId    String
   userId    String
   parentId  String?
+  moderationStatus ModerationStatus @default(VISIBLE)
   body      String
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
@@ -160,6 +161,7 @@ model Comment {
 
   @@index([postId, createdAt])
   @@index([postId, parentId, createdAt])
+  @@index([moderationStatus, createdAt])
 }
 
 model CommentVote {
@@ -985,6 +987,7 @@ enum ModerationStatus {
 
 enum ModerationTargetType {
   POST
+  COMMENT
   ORGANIZATION
   MARKET_LISTING
   MARKET_PRODUCT
