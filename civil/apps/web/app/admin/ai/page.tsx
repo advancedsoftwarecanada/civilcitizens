@@ -50,6 +50,8 @@ type AdminAiConversationDetailResponse = {
   turns: AdminAiTurn[]
 }
 
+type AdminAiSourceFilter = 'all' | 'direct' | 'grounded' | 'model' | 'error'
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return 'Unknown'
   const parsed = new Date(value)
@@ -66,6 +68,28 @@ function formatJson(value: unknown) {
   }
 }
 
+function getAiAnswerSource(status: string | null | undefined, retrievalDebug?: unknown) {
+  if (status === 'direct_answer') {
+    return { label: 'Direct', tone: 'bg-emerald-100 text-emerald-700' }
+  }
+  if (status === 'grounded_answer') {
+    return { label: 'Grounded', tone: 'bg-sky-100 text-sky-700' }
+  }
+  if (status === 'completed') {
+    return { label: 'Model', tone: 'bg-violet-100 text-violet-700' }
+  }
+  if (retrievalDebug && typeof retrievalDebug === 'object' && !Array.isArray(retrievalDebug)) {
+    const candidate = retrievalDebug as { directAnswerUsed?: boolean; groundedAnswerUsed?: boolean }
+    if (candidate.directAnswerUsed) {
+      return { label: 'Direct', tone: 'bg-emerald-100 text-emerald-700' }
+    }
+    if (candidate.groundedAnswerUsed) {
+      return { label: 'Grounded', tone: 'bg-sky-100 text-sky-700' }
+    }
+  }
+  return { label: 'Error', tone: 'bg-rose-100 text-rose-700' }
+}
+
 export default function AdminAiPage() {
   const { token, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
   const [loading, setLoading] = useState(false)
@@ -75,6 +99,8 @@ export default function AdminAiPage() {
   const [items, setItems] = useState<AdminAiConversationSummary[]>([])
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [detail, setDetail] = useState<AdminAiConversationDetailResponse | null>(null)
+  const [sourceFilter, setSourceFilter] = useState<AdminAiSourceFilter>('all')
+  const [statusFilter, setStatusFilter] = useState('')
 
   const loadConversations = useCallback(async () => {
     if (!token) return
@@ -141,17 +167,26 @@ export default function AdminAiPage() {
     void loadDetail(selectedConversationId)
   }, [isSuperAdmin, loadDetail, selectedConversationId, token])
 
-  useEffect(() => {
-    if (!isSuperAdmin || !token) return
-    const interval = window.setInterval(() => {
-      void loadConversations()
-      if (selectedConversationId) {
-        void loadDetail(selectedConversationId)
-      }
-    }, 5000)
+  const filteredItems = items.filter((conversation) => {
+    const source = getAiAnswerSource(conversation.status).label.toLowerCase()
+    const normalizedStatusFilter = statusFilter.trim().toLowerCase()
+    const sourceMatches = sourceFilter === 'all' ? true : source === sourceFilter
+    const statusMatches = normalizedStatusFilter
+      ? (conversation.status ?? '').toLowerCase().includes(normalizedStatusFilter)
+      : true
+    return sourceMatches && statusMatches
+  })
 
-    return () => window.clearInterval(interval)
-  }, [isSuperAdmin, loadConversations, loadDetail, selectedConversationId, token])
+  useEffect(() => {
+    if (!filteredItems.length) {
+      setSelectedConversationId(null)
+      setDetail(null)
+      return
+    }
+    if (!selectedConversationId || !filteredItems.some((item) => item.id === selectedConversationId)) {
+      setSelectedConversationId(filteredItems[0]?.id ?? null)
+    }
+  }, [filteredItems, selectedConversationId])
 
   const body = () => {
     if (accessLoading) {
@@ -174,7 +209,7 @@ export default function AdminAiPage() {
             <p className="text-sm text-slate-600">
               Review AI conversations, direct answers, retrieval decisions, prompt inputs, and returned content.
             </p>
-            <p className="text-xs text-slate-400">{lastUpdatedAt ? `Last updated ${formatDateTime(lastUpdatedAt)}` : 'Waiting for first refresh.'}</p>
+            <p className="text-xs text-slate-400">{lastUpdatedAt ? `Last updated ${formatDateTime(lastUpdatedAt)}. Manual refresh only.` : 'Waiting for first refresh. Manual refresh only.'}</p>
           </div>
           <button
             type="button"
@@ -185,19 +220,46 @@ export default function AdminAiPage() {
           </button>
         </section>
 
+        <section className="surface-card flex flex-wrap items-center gap-3 px-6 py-4 shadow-subtle">
+          <div className="flex flex-wrap gap-2">
+            {([
+              ['all', 'All'],
+              ['direct', 'Direct'],
+              ['grounded', 'Grounded'],
+              ['model', 'Model'],
+              ['error', 'Error'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setSourceFilter(value)}
+                className={`rounded-full px-3 py-2 text-sm font-medium transition ${sourceFilter === value ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <input
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            placeholder="Filter by raw status"
+            className="min-w-[220px] flex-1 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 outline-none placeholder:text-slate-400"
+          />
+        </section>
+
         {message ? <section className="surface-card border border-amber-200 bg-amber-50 px-6 py-4 text-sm text-amber-700">{message}</section> : null}
 
         <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="surface-card overflow-hidden shadow-subtle">
             <div className="border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-semibold text-slate-900">Conversations</h2>
-              <p className="mt-1 text-sm text-slate-500">Latest 50 Civil AI conversations.</p>
+              <p className="mt-1 text-sm text-slate-500">Latest 50 Civil AI conversations. Showing {filteredItems.length} of {items.length}.</p>
             </div>
             <div className="max-h-[70vh] overflow-y-auto">
-              {!items.length ? (
-                <div className="px-5 py-6 text-sm text-slate-500">{loading ? 'Loading conversations…' : 'No Civil AI conversations logged yet.'}</div>
+              {!filteredItems.length ? (
+                <div className="px-5 py-6 text-sm text-slate-500">{loading ? 'Loading conversations…' : items.length ? 'No conversations match the current filters.' : 'No Civil AI conversations logged yet.'}</div>
               ) : (
-                items.map((conversation) => (
+                filteredItems.map((conversation) => (
                   <button
                     key={conversation.id}
                     type="button"
@@ -213,9 +275,14 @@ export default function AdminAiPage() {
                           {conversation.userHandle ? `@${conversation.userHandle}` : 'No handle'}
                         </p>
                       </div>
-                      <span className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${selectedConversationId === conversation.id ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                        {conversation.status ?? 'unknown'}
-                      </span>
+                      <div className="flex flex-col items-end gap-2">
+                        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${selectedConversationId === conversation.id ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                          {conversation.status ?? 'unknown'}
+                        </span>
+                        <span className={`rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${selectedConversationId === conversation.id ? 'bg-white/10 text-white' : getAiAnswerSource(conversation.status).tone}`}>
+                          {getAiAnswerSource(conversation.status).label}
+                        </span>
+                      </div>
                     </div>
                     <p className={`mt-3 line-clamp-2 text-sm ${selectedConversationId === conversation.id ? 'text-slate-100' : 'text-slate-600'}`}>
                       {conversation.lastUserMessage || conversation.firstUserMessage || 'No user message captured.'}
@@ -264,6 +331,10 @@ export default function AdminAiPage() {
                       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Last model</p>
                       <p className="mt-2 text-sm text-slate-700">{detail.conversation.lastModel ?? 'Direct answer / unavailable'}</p>
                     </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Answer source</p>
+                      <p className="mt-2 text-sm text-slate-700">{getAiAnswerSource(detail.conversation.status).label}</p>
+                    </div>
                   </div>
                   {detail.conversation.lastError ? (
                     <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -275,6 +346,9 @@ export default function AdminAiPage() {
                 <section className="space-y-4">
                   {detail.turns.map((turn) => (
                     <article key={turn.id} className="surface-card px-6 py-5 shadow-subtle">
+                      {(() => {
+                        const answerSource = getAiAnswerSource(turn.status, turn.retrievalDebug)
+                        return (
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Turn</p>
@@ -282,12 +356,15 @@ export default function AdminAiPage() {
                         </div>
                         <div className="flex flex-wrap gap-2 text-xs">
                           <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold uppercase tracking-[0.18em] text-slate-600">{turn.status}</span>
+                          <span className={`rounded-full px-3 py-1 font-semibold uppercase tracking-[0.18em] ${answerSource.tone}`}>{answerSource.label}</span>
                           {turn.durationMs != null ? <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-500">{turn.durationMs} ms</span> : null}
                           <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-500">{formatDateTime(turn.createdAt)}</span>
                         </div>
                       </div>
+                        )
+                      })()}
 
-                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <div className="mt-4 grid gap-3 md:grid-cols-4">
                         <div className="rounded-2xl bg-slate-50 px-4 py-3">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Model</p>
                           <p className="mt-2 text-sm text-slate-700">{turn.model ?? 'Direct answer / unavailable'}</p>
@@ -299,6 +376,10 @@ export default function AdminAiPage() {
                         <div className="rounded-2xl bg-slate-50 px-4 py-3">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Error</p>
                           <p className="mt-2 text-sm text-slate-700">{turn.errorMessage ?? 'None'}</p>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Answer source</p>
+                          <p className="mt-2 text-sm text-slate-700">{getAiAnswerSource(turn.status, turn.retrievalDebug).label}</p>
                         </div>
                       </div>
 
