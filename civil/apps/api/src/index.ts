@@ -312,12 +312,17 @@ type CivilAiDebugTurnRecord = {
   rawResponse: unknown
 }
 
-const CIVIL_AI_HISTORY_LIMIT = 20
+const CIVIL_AI_MEMORY_USER_TURN_LIMIT = 6
+const CIVIL_AI_HISTORY_LIMIT = CIVIL_AI_MEMORY_USER_TURN_LIMIT * 2
 const CIVIL_AI_DATA_KEY = (process.env.CIVIL_AI_DATA_KEY || '').trim()
 
 let civilAiDebugTablesReady: Promise<void> | null = null
 const CIVIL_AI_SERVER_TIMEOUT_MS = 45000
 const CIVIL_AI_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
+const CIVIL_AI_MAX_PROMPT_CHARS = 12000
+const CIVIL_AI_MAX_SYSTEM_PROMPT_CHARS = 8500
+const CIVIL_AI_MAX_TRANSCRIPT_CHARS = 2800
+const CIVIL_AI_MAX_MESSAGE_CHARS = 700
 const civilAiResolvedModelCache = new Map<string, { model: string | null; expiresAt: number }>()
 
 const DEFAULT_CIVIL_AI_PROMPT = `Civil AI is a practical Canadian civic assistant inside Civil Citizens.
@@ -349,13 +354,30 @@ function readBaseCommunityMeta(value: Prisma.JsonValue | null | undefined) {
   return { ...(value as Record<string, unknown>) } as Record<string, unknown>
 }
 
+function trimCivilAiConversationEntries<T extends { role: 'user' | 'assistant' }>(entries: T[], maxUserTurns = CIVIL_AI_MEMORY_USER_TURN_LIMIT) {
+  const next: T[] = []
+  let userTurnsSeen = 0
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (!entry) continue
+    next.unshift(entry)
+    if (entry.role === 'user') {
+      userTurnsSeen += 1
+      if (userTurnsSeen >= maxUserTurns) break
+    }
+  }
+
+  return next
+}
+
 function readCivilAiHistory(meta: Prisma.JsonValue | null | undefined): CivilAiHistoryEntry[] {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return []
   const payload = meta as Record<string, unknown>
   const raw = payload.civilAiHistory
   if (!Array.isArray(raw)) return []
 
-  return raw
+  const normalized = raw
     .map<CivilAiHistoryEntry | null>((entry) => {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
       const item = entry as Record<string, unknown>
@@ -399,7 +421,8 @@ function readCivilAiHistory(meta: Prisma.JsonValue | null | undefined): CivilAiH
       return historyEntry
     })
     .filter((entry): entry is CivilAiHistoryEntry => Boolean(entry))
-    .slice(-CIVIL_AI_HISTORY_LIMIT)
+
+  return trimCivilAiConversationEntries(normalized, CIVIL_AI_MEMORY_USER_TURN_LIMIT).slice(-CIVIL_AI_HISTORY_LIMIT)
 }
 
 async function persistCivilAiHistory(userId: string, appendedEntries: CivilAiHistoryEntry[]) {
@@ -408,7 +431,7 @@ async function persistCivilAiHistory(userId: string, appendedEntries: CivilAiHis
 
   const baseMeta = readBaseCommunityMeta(user.communityMeta)
   const current = readCivilAiHistory(baseMeta as Prisma.JsonValue)
-  const next = [...current, ...appendedEntries].slice(-CIVIL_AI_HISTORY_LIMIT)
+  const next = trimCivilAiConversationEntries([...current, ...appendedEntries], CIVIL_AI_MEMORY_USER_TURN_LIMIT).slice(-CIVIL_AI_HISTORY_LIMIT)
   baseMeta.civilAiHistory = next
 
   await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta } })
@@ -511,15 +534,38 @@ function extractCivilAiMessageContent(payload: unknown): string {
   return ''
 }
 
-function buildCivilAiPromptInput(systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
-  const transcript = messages
-    .filter((message) => message.role !== 'system')
-    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content.trim()}`)
-    .join('\n\n')
+function truncateCivilAiText(value: string, maxChars: number, keepTail = false) {
+  const normalized = value.trim()
+  if (normalized.length <= maxChars) return normalized
+  if (maxChars <= 32) return normalized.slice(0, maxChars)
+  return keepTail
+    ? `[earlier content truncated]\n${normalized.slice(-(maxChars - 28))}`
+    : `${normalized.slice(0, maxChars - 22).trimEnd()}\n[truncated]`
+}
 
-  return [
+function truncateCivilAiMessageText(value: string, maxChars: number) {
+  const normalized = value.trim()
+  if (normalized.length <= maxChars) return normalized
+  if (maxChars <= 48) return normalized.slice(0, maxChars)
+  const headLength = Math.min(Math.ceil(maxChars * 0.45), maxChars - 24)
+  const tailLength = Math.max(0, maxChars - headLength - 19)
+  return `${normalized.slice(0, headLength).trimEnd()}\n[truncated]\n${normalized.slice(-tailLength).trimStart()}`
+}
+
+function selectRecentCivilAiPromptMessages(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  const nonSystemMessages = messages.filter((message): message is { role: 'user' | 'assistant'; content: string } => message.role !== 'system')
+  return trimCivilAiConversationEntries(nonSystemMessages, CIVIL_AI_MEMORY_USER_TURN_LIMIT)
+}
+
+export function buildCivilAiPromptInput(systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) {
+  const transcriptMessages = selectRecentCivilAiPromptMessages(messages)
+    .map((message) => `${message.role === 'user' ? 'User' : 'Assistant'}: ${truncateCivilAiMessageText(message.content.trim(), CIVIL_AI_MAX_MESSAGE_CHARS)}`)
+  let boundedSystemPrompt = truncateCivilAiText(systemPrompt.trim(), CIVIL_AI_MAX_SYSTEM_PROMPT_CHARS)
+  let transcript = truncateCivilAiText(transcriptMessages.join('\n\n'), CIVIL_AI_MAX_TRANSCRIPT_CHARS, true)
+
+  let prompt = [
     'System Instructions:',
-    systemPrompt.trim(),
+    boundedSystemPrompt,
     '',
     'Conversation:',
     transcript,
@@ -528,6 +574,40 @@ function buildCivilAiPromptInput(systemPrompt: string, messages: Array<{ role: '
   ]
     .filter(Boolean)
     .join('\n')
+
+  if (prompt.length > CIVIL_AI_MAX_PROMPT_CHARS) {
+    const overflow = prompt.length - CIVIL_AI_MAX_PROMPT_CHARS
+    boundedSystemPrompt = truncateCivilAiText(boundedSystemPrompt, Math.max(1200, boundedSystemPrompt.length - overflow))
+    prompt = [
+      'System Instructions:',
+      boundedSystemPrompt,
+      '',
+      'Conversation:',
+      transcript,
+      '',
+      'Assistant:',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (prompt.length > CIVIL_AI_MAX_PROMPT_CHARS) {
+    const overflow = prompt.length - CIVIL_AI_MAX_PROMPT_CHARS
+    transcript = truncateCivilAiText(transcript, Math.max(600, transcript.length - overflow), true)
+    prompt = [
+      'System Instructions:',
+      boundedSystemPrompt,
+      '',
+      'Conversation:',
+      transcript,
+      '',
+      'Assistant:',
+    ]
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  return prompt
 }
 
 function safeJsonStringify(value: unknown) {
@@ -610,6 +690,210 @@ function normalizeComparableUrl(value: string) {
   return value.trim().replace(/[)\].,!?;:]+$/g, '').replace(/\/$/, '').toLowerCase()
 }
 
+function formatCivilAiShortDateTime(value: string) {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return new Intl.DateTimeFormat('en-CA', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed)
+}
+
+function formatCivilAiCommunityNames(
+  communities: Array<{
+    communityName: string
+  }>,
+) {
+  const unique = communities
+    .map((community) => community.communityName.trim())
+    .filter(Boolean)
+    .filter((name, index, collection) => collection.indexOf(name) === index)
+
+  if (!unique.length) return 'your Civil communities'
+  if (unique.length === 1) return unique[0]
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`
+  return `${unique.slice(0, -1).join(', ')}, and ${unique[unique.length - 1]}`
+}
+
+type CivilAiGroundingBundle = {
+  retrievalPlan: CivilAiRetrievalPlan
+  searchPass: 1 | 2
+  targetCommunities: Array<{
+    id: string
+    communityName: string
+    provinceName: string
+    communitySlug: string
+    provinceCode: string
+    href: string
+  }>
+  events: CivilAiEventDataItem[]
+  jobs: CivilAiJobDataItem[]
+  organizations: CivilAiOrganizationDataItem[]
+  posts: CivilAiPostDataItem[]
+}
+
+function detectCivilAiProfileIntent(question: string) {
+  const normalized = question.trim().toLowerCase()
+  const asksName = /(what is my name|what'?s my name|do you know my name|who am i|my first name|what is my first name|what'?s my first name|my last name|what is my last name|what'?s my last name|surname|family name|given name)/.test(normalized)
+  const asksExperience = /(my experience|my experiences|what experience do i have|what have i done|my background|my work history|my profile)/.test(normalized)
+  const asksOrganizations = /(my organizations|what organizations do i belong to|what orgs do i belong to|what groups do i belong to|which organizations am i in|which groups am i in)/.test(normalized)
+  const asksBio = /(my bio|my profile bio|what does my bio say)/.test(normalized)
+  return {
+    asksName,
+    asksExperience,
+    asksOrganizations,
+    asksBio,
+    wantsProfile: asksName || asksExperience || asksOrganizations || asksBio,
+  }
+}
+
+export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGroundingBundle) {
+  const normalized = question.trim().toLowerCase()
+  const profileIntent = detectCivilAiProfileIntent(question)
+  const asksEvents = bundle.retrievalPlan.wantsEvents
+  const asksJobs = bundle.retrievalPlan.wantsJobs
+  const asksOrganizations = bundle.retrievalPlan.wantsOrganizations
+  const asksPosts = bundle.retrievalPlan.wantsPosts
+  const eventIntent = /(what(?:'s| is) happening|going on|anything happening|event|events|today|tonight|this afternoon|this evening|near me|nearby)/.test(normalized)
+  const jobIntent = /(job|jobs|hiring|employment|position|positions|open role|open roles|work near me|jobs near me)/.test(normalized)
+  const organizationIntent = /(organization|organizations|group|groups|association|associations|who should i talk to|who is working on|which org|which organization|which organizations|which groups)/.test(normalized)
+  const postIntent = /(post|posts|discussion|discussions|conversation|conversations|debate|debates|people saying|talking about|discussing|buzz)/.test(normalized)
+  const targetLabel = formatCivilAiCommunityNames(bundle.targetCommunities)
+  const requestedSources = [
+    bundle.retrievalPlan.wantsEvents,
+    bundle.retrievalPlan.wantsJobs,
+    bundle.retrievalPlan.wantsOrganizations,
+    bundle.retrievalPlan.wantsPosts,
+  ].filter(Boolean).length
+  const totalMatches = bundle.events.length + bundle.jobs.length + bundle.organizations.length + bundle.posts.length
+
+  if (asksEvents && eventIntent) {
+    const references = bundle.events.slice(0, 4).map((event) => toCivilAiEventReference(event))
+    if (!bundle.events.length) {
+      const timing = bundle.retrievalPlan.todayOnly ? 'today' : 'right now'
+      return {
+        content: [
+          `I do not see any events in current Civil data for ${targetLabel} ${timing}.`,
+          'Civil AI only has access to the internal Civil results returned for this question, so I will not invent events that are not in the database.',
+          bundle.organizations.length || bundle.posts.length
+            ? 'If helpful, I can still summarize the local organizations or recent posts tied to that area.'
+            : 'If you want, I can check local organizations, posts, or another nearby community instead.',
+        ].join('\n\n'),
+        references: [] as CivilAiCardReference[],
+      }
+    }
+
+    const lines = bundle.events.slice(0, 4).map((event) => {
+      const orgName = event.organization.name.trim()
+      const description = event.description?.trim() ? ` ${event.description.trim()}` : ''
+      return `- ${event.title} (${formatCivilAiShortDateTime(event.startsAt)}) via ${orgName}.${description}`
+    })
+    const countLine = bundle.events.length === 1
+      ? `I found 1 event in current Civil data for ${targetLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
+      : `I found ${bundle.events.length} events in current Civil data for ${targetLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
+
+    return {
+      content: [countLine, ...lines, 'I am only listing events that exist in Civil right now.'].join('\n'),
+      references,
+    }
+  }
+
+  if (asksJobs && jobIntent) {
+    const references = bundle.jobs.slice(0, 4).map((job) => toCivilAiJobReference(job)).filter((entry): entry is CivilAiCardReference => Boolean(entry))
+    if (!bundle.jobs.length) {
+      return {
+        content: [
+          `I do not see any active jobs in current Civil data for ${targetLabel}.`,
+          'Civil AI only has access to the internal Civil job results returned for this question, so I will not invent openings that are not in the database.',
+        ].join('\n\n'),
+        references: [] as CivilAiCardReference[],
+      }
+    }
+
+    const lines = bundle.jobs.slice(0, 4).map((job) => {
+      const organization = job.organization.name.trim()
+      const location = job.location?.trim() ? ` in ${job.location.trim()}` : ''
+      return `- ${job.title} at ${organization}${location}`
+    })
+    const countLine = bundle.jobs.length === 1
+      ? `I found 1 active job in current Civil data for ${targetLabel}:`
+      : `I found ${bundle.jobs.length} active jobs in current Civil data for ${targetLabel}:`
+
+    return {
+      content: [countLine, ...lines, 'I am only listing jobs that exist in Civil right now.'].join('\n'),
+      references,
+    }
+  }
+
+  if (asksOrganizations && organizationIntent) {
+    const references = bundle.organizations.slice(0, 4).map((organization) => toCivilAiOrganizationReference(organization)).filter((entry): entry is CivilAiCardReference => Boolean(entry))
+    if (!bundle.organizations.length) {
+      return {
+        content: [
+          `I do not see any matching organizations in current Civil data for ${targetLabel}.`,
+          'Civil AI only has access to the internal Civil organization results returned for this question, so I will not invent groups that are not in the database.',
+        ].join('\n\n'),
+        references: [] as CivilAiCardReference[],
+      }
+    }
+
+    const lines = bundle.organizations.slice(0, 4).map((organization) => {
+      const description = organization.description?.trim() ? ` ${organization.description.trim()}` : ''
+      return `- ${organization.name}.${description}`
+    })
+    const countLine = bundle.organizations.length === 1
+      ? `I found 1 matching organization in current Civil data for ${targetLabel}:`
+      : `I found ${bundle.organizations.length} matching organizations in current Civil data for ${targetLabel}:`
+
+    return {
+      content: [countLine, ...lines, 'I am only listing organizations that exist in Civil right now.'].join('\n'),
+      references,
+    }
+  }
+
+  if (asksPosts && postIntent) {
+    const references = bundle.posts.slice(0, 4).map((post) => toCivilAiPostReference(post))
+    if (!bundle.posts.length) {
+      return {
+        content: [
+          `I do not see any matching local posts in current Civil data for ${targetLabel}.`,
+          'Civil AI only has access to the internal Civil post results returned for this question, so I will not invent discussion activity that is not in the database.',
+        ].join('\n\n'),
+        references: [] as CivilAiCardReference[],
+      }
+    }
+
+    const lines = bundle.posts.slice(0, 4).map((post) => {
+      const authorName = post.author.name?.trim() || `@${post.author.handle}`
+      const excerpt = post.excerpt?.trim() ? ` ${post.excerpt.trim()}` : ''
+      return `- ${post.title} by ${authorName}.${excerpt}`
+    })
+    const countLine = bundle.posts.length === 1
+      ? `I found 1 matching local post in current Civil data for ${targetLabel}:`
+      : `I found ${bundle.posts.length} matching local posts in current Civil data for ${targetLabel}:`
+
+    return {
+      content: [countLine, ...lines, 'I am only listing posts that exist in Civil right now.'].join('\n'),
+      references,
+    }
+  }
+
+  if (!profileIntent.wantsProfile && requestedSources > 0 && totalMatches === 0) {
+    return {
+      content: [
+        `I could not find matching results in current Civil data for ${targetLabel}.`,
+        'Civil AI does not use an external knowledge base here, so when internal results are empty I should say that directly rather than guessing.',
+      ].join('\n\n'),
+      references: [] as CivilAiCardReference[],
+    }
+  }
+
+  return null
+}
+
 export function sanitizeCivilAiResponseContent(content: string, references: CivilAiCardReference[]) {
   let next = content.trim()
   if (!next || !references.length) return next
@@ -665,21 +949,31 @@ function serializeCivilAiViewerContext(viewerContext: CivilAiViewerContext | nul
   }
 }
 
-function buildCivilAiDirectAnswer(question: string, viewerContext: CivilAiViewerContext | null) {
+export function buildCivilAiDirectAnswer(question: string, viewerContext: CivilAiViewerContext | null) {
   if (!viewerContext) return null
   const normalized = question.trim().toLowerCase()
-  const asksName = /(what is my name|what's my name|do you know my name|who am i)/.test(normalized)
-  const asksExperience = /(my experience|my experiences|what experience do i have|what have i done)/.test(normalized)
-  const asksOrganizations = /(my organizations|what organizations do i belong to|what orgs do i belong to|what groups do i belong to|which organizations am i in)/.test(normalized)
+  const { asksName, asksExperience, asksOrganizations, asksBio } = detectCivilAiProfileIntent(question)
+  const asksFirstName = /(my first name|what is my first name|what'?s my first name|given name)/.test(normalized)
+  const asksLastName = /(my last name|what is my last name|what'?s my last name|surname|family name)/.test(normalized)
 
-  if (!asksName && !asksExperience && !asksOrganizations) return null
+  if (!asksName && !asksExperience && !asksOrganizations && !asksBio) return null
 
   const lines: string[] = []
   const references: CivilAiCardReference[] = []
 
   if (asksName) {
     const displayName = viewerContext.user.name || [viewerContext.user.firstName, viewerContext.user.lastName].filter(Boolean).join(' ').trim() || `@${viewerContext.user.handle}`
-    lines.push(`Your name on Civil is ${displayName}.`)
+    if (asksFirstName && viewerContext.user.firstName) {
+      lines.push(`Your first name on Civil is ${viewerContext.user.firstName}.`)
+    } else if (asksLastName && viewerContext.user.lastName) {
+      lines.push(`Your last name on Civil is ${viewerContext.user.lastName}.`)
+    } else {
+      lines.push(`Your name on Civil is ${displayName}.`)
+    }
+  }
+
+  if (asksBio) {
+    lines.push(viewerContext.user.bio ? `Your Civil bio says: ${viewerContext.user.bio}` : 'I do not see a bio in your Civil profile yet.')
   }
 
   if (asksExperience) {
@@ -728,6 +1022,7 @@ function buildCivilAiDirectAnswer(question: string, viewerContext: CivilAiViewer
       asksName,
       asksExperience,
       asksOrganizations,
+      asksBio,
     },
   }
 }
@@ -1349,26 +1644,47 @@ function buildCivilAiApiCatalog(viewerContext: CivilAiViewerContext | null) {
   ]
 }
 
+function buildCivilAiCompactList(items: string[], emptyLabel: string, limit = 4) {
+  const normalized = items.map((item) => item.trim()).filter(Boolean)
+  if (!normalized.length) return emptyLabel
+  const visible = normalized.slice(0, limit)
+  const remainder = normalized.length - visible.length
+  return remainder > 0 ? `${visible.join('; ')}; +${remainder} more` : visible.join('; ')
+}
+
+function buildCivilAiContextSummary(viewerContext: CivilAiViewerContext | null) {
+  if (!viewerContext) {
+    return ['- Authenticated user context: unavailable']
+  }
+
+  const displayName = viewerContext.user.name || [viewerContext.user.firstName, viewerContext.user.lastName].filter(Boolean).join(' ').trim() || `@${viewerContext.user.handle}`
+  const nearby = buildCivilAiCompactList(viewerContext.nearbyCommunities.map((community) => community.communityName), 'none', 4)
+  const followed = buildCivilAiCompactList(viewerContext.followedCommunities.map((community) => community.communityName), 'none', 5)
+  const organizations = buildCivilAiCompactList(viewerContext.organizations.map((organization) => `${organization.name} (${organization.role})`), 'none', 5)
+  const experiences = buildCivilAiCompactList(viewerContext.user.experiences.map((experience) => `${experience.title} at ${experience.organization}${experience.current ? ' (current)' : ''}`), 'none', 4)
+
+  return [
+    `- User: ${displayName} (@${viewerContext.user.handle})`,
+    viewerContext.user.bio ? `- Bio: ${truncateCivilAiText(viewerContext.user.bio, 180)}` : '- Bio: none',
+    `- Home community: ${viewerContext.homeCommunity ? viewerContext.homeCommunity.communityName : 'none'}`,
+    `- Nearby communities: ${nearby}`,
+    `- Followed communities: ${followed}`,
+    `- Organizations: ${organizations}`,
+    `- Experience: ${experiences}`,
+  ]
+}
+
+function buildCivilAiCatalogSummary(viewerContext: CivilAiViewerContext | null) {
+  return buildCivilAiApiCatalog(viewerContext).map((entry) => `- ${entry.name}: ${entry.purpose}`)
+}
+
 function buildCivilAiContextPrompt(viewerContext: CivilAiViewerContext | null) {
-  const catalog = buildCivilAiApiCatalog(viewerContext)
   return [
     'Current Civil User Context:',
-    JSON.stringify(
-      viewerContext
-        ? {
-            user: viewerContext.user,
-            homeCommunity: viewerContext.homeCommunity,
-            nearbyCommunities: viewerContext.nearbyCommunities.slice(0, 5),
-            followedCommunities: viewerContext.followedCommunities.slice(0, 8),
-            organizations: viewerContext.organizations.slice(0, 8),
-          }
-        : { authenticated: false },
-      null,
-      2,
-    ),
+    ...buildCivilAiContextSummary(viewerContext),
     '',
     'Available Civil AI Data Endpoints:',
-    JSON.stringify(catalog, null, 2),
+    ...buildCivilAiCatalogSummary(viewerContext),
     '',
     'Rules for signed-in user context:',
     '- If a current signed-in user context block is present, you do know that user\'s provided profile data for this conversation.',
@@ -1378,6 +1694,9 @@ function buildCivilAiContextPrompt(viewerContext: CivilAiViewerContext | null) {
     '',
     'Rules for local data answers:',
     '- Prefer the current user context over generic assumptions.',
+    '- You do not have any external events, jobs, organization, or post database beyond the provided Civil data for this question.',
+    '- Never invent events, jobs, organizations, posts, communities, counts, dates, addresses, or links that are not present in the provided Civil data.',
+    '- Never imply there are more matching Civil items than were actually returned.',
     '- Prefer home, nearby, or followed communities before anything farther away.',
     '- For events, ignore stale past items unless the user explicitly asks about history.',
     '- If the request asks about today, only use today-filtered events.',
@@ -1387,6 +1706,7 @@ function buildCivilAiContextPrompt(viewerContext: CivilAiViewerContext | null) {
 }
 
 type CivilAiRetrievalPlan = {
+  wantsProfile: boolean
   wantsEvents: boolean
   wantsJobs: boolean
   wantsCommunities: boolean
@@ -1480,6 +1800,7 @@ function extractCivilAiTopicQuery(question: string) {
 export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   const normalized = question.toLowerCase()
   const topicQuery = extractCivilAiTopicQuery(question)
+  const profileIntent = detectCivilAiProfileIntent(question)
 
   const explicitEvents = /(event|events|festival|meeting|parade|rally)/.test(normalized)
   const explicitJobs = /(job|jobs|hiring|employment|position|positions|open role|open roles)/.test(normalized)
@@ -1499,32 +1820,43 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   let wantsPosts = explicitPosts || asksWhatPeopleAreSaying
   const wantsCommunities = asksLocalContext
 
-  if (hasIssueTopic && asksWhatPeopleAreSaying) wantsPosts = true
-  if (hasIssueTopic && asksWhichGroupsMatter) wantsOrganizations = true
-
-  if (hasIssueTopic && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
-    wantsPosts = true
-    wantsOrganizations = true
+  if (profileIntent.wantsProfile) {
+    wantsEvents = false
+    wantsJobs = false
+    wantsOrganizations = false
+    wantsPosts = false
   }
 
-  if ((asksOverview || asksLocalContext) && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
-    wantsEvents = true
-    wantsPosts = true
-    wantsOrganizations = true
-  }
+  if (!profileIntent.wantsProfile) {
+    if (hasIssueTopic && asksWhatPeopleAreSaying) wantsPosts = true
+    if (hasIssueTopic && asksWhichGroupsMatter) wantsOrganizations = true
 
-  if (!wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
-    wantsPosts = true
-    wantsOrganizations = hasIssueTopic
+    if (hasIssueTopic && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+      wantsPosts = true
+      wantsOrganizations = true
+    }
+
+    if ((asksOverview || asksLocalContext) && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+      wantsEvents = true
+      wantsPosts = true
+      wantsOrganizations = true
+    }
+
+    if (!wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+      wantsPosts = true
+      wantsOrganizations = hasIssueTopic
+    }
   }
 
   const reasons: string[] = []
+  if (profileIntent.wantsProfile) reasons.push('profile or identity intent detected')
   if (wantsEvents) reasons.push(todayOnly ? 'time-sensitive local activity requested' : 'activity or happenings requested')
   if (wantsJobs) reasons.push('employment intent detected')
   if (wantsPosts) reasons.push(asksWhatPeopleAreSaying ? 'public conversation intent detected' : 'local discussion context may help answer')
   if (wantsOrganizations) reasons.push(asksWhichGroupsMatter ? 'organization discovery intent detected' : 'local groups may help answer')
 
   return {
+    wantsProfile: profileIntent.wantsProfile,
     wantsEvents,
     wantsJobs,
     wantsCommunities,
@@ -1553,6 +1885,21 @@ function matchCivilAiRequestedCommunities(question: string, viewerContext: Civil
     }
   }
   return Array.from(unique.values())
+}
+
+function shouldCivilAiRunSecondSearch(question: string, bundle: Awaited<ReturnType<typeof buildCivilAiRetrievalBundle>>) {
+  const profileIntent = detectCivilAiProfileIntent(question)
+  if (profileIntent.wantsProfile) return false
+  if (bundle.grounding.searchPass >= 2) return false
+
+  const resultCounts = bundle.debug.resultCounts
+  const totalMatches = resultCounts.events + resultCounts.jobs + resultCounts.organizations + resultCounts.posts
+  if (totalMatches > 0) return false
+
+  const retrievalPlan = bundle.debug.retrievalPlan as CivilAiRetrievalPlan
+  const hasBroaderCommunities = bundle.debug.availableCommunityCount > bundle.debug.targetCommunities.length
+  const canRelaxTopicQuery = Boolean(retrievalPlan.topicQuery && (retrievalPlan.wantsOrganizations || retrievalPlan.wantsPosts))
+  return hasBroaderCommunities || canRelaxTopicQuery
 }
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { createHash, randomInt, randomUUID } from 'crypto'
@@ -8041,18 +8388,19 @@ function toCivilAiPostReference(post: CivilAiPostDataItem): CivilAiCardReference
   }
 }
 
-async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion: string) {
+async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion: string, options?: { searchPass?: 1 | 2 }) {
   const viewerContext = userId ? await loadCivilAiViewerContext(userId) : null
+  const searchPass = options?.searchPass ?? 1
   const retrieval = planCivilAiRetrieval(latestQuestion)
-  const topicQuery = retrieval.topicQuery
+  const topicQuery = searchPass === 1 ? retrieval.topicQuery : ''
   const requestedCommunities = matchCivilAiRequestedCommunities(latestQuestion, viewerContext)
-  const nearbyCommunities = viewerContext ? viewerContext.nearbyCommunities.slice(0, 2) : []
-  const followedCommunities = viewerContext ? viewerContext.followedCommunities.slice(0, 3) : []
+  const nearbyCommunities = viewerContext ? viewerContext.nearbyCommunities.slice(0, searchPass === 1 ? 2 : 8) : []
+  const followedCommunities = viewerContext ? viewerContext.followedCommunities.slice(0, searchPass === 1 ? 3 : 8) : []
   const defaultCommunities = [viewerContext?.homeCommunity ?? null, ...nearbyCommunities, ...followedCommunities]
     .filter((entry): entry is NonNullable<CivilAiViewerContext['homeCommunity']> => Boolean(entry))
   const targetCommunities = (requestedCommunities.length ? requestedCommunities : defaultCommunities)
     .filter((entry, index, collection) => collection.findIndex((item) => item.id === entry.id) === index)
-    .slice(0, 4)
+    .slice(0, searchPass === 1 ? 4 : 8)
 
   const eventResults = retrieval.wantsEvents && targetCommunities.length
     ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityEvents(community.id, retrieval.todayOnly ? 'today' : 'upcoming', retrieval.eventLimit)))
@@ -8103,28 +8451,31 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
     }
   }
 
+  const summarizedEvents = usableEvents.slice(0, 6).map((event) => `- ${event.title} | ${formatCivilAiShortDateTime(event.startsAt)} | ${event.organization.name}`)
+  const summarizedJobs = usableJobs.slice(0, 6).map((job) => `- ${job.title} | ${job.organization.name} | ${truncateCivilAiText(job.location || 'location unavailable', 80)}`)
+  const summarizedOrganizations = usableOrganizations.slice(0, 6).map((organization) => `- ${organization.name} | ${truncateCivilAiText(organization.description ?? 'No description', 120)}`)
+  const summarizedPosts = usablePosts.slice(0, 6).map((post) => `- ${post.title} | ${post.author.name || `@${post.author.handle}`} | ${truncateCivilAiText(post.excerpt ?? 'No excerpt', 140)}`)
+
   const promptSections = [buildCivilAiContextPrompt(viewerContext)]
   if (viewerContext) {
     promptSections.push(
       '',
       'Fresh Civil data for this question:',
-      JSON.stringify(
-        {
-          question: latestQuestion,
-          retrievalPlan: retrieval,
-          targetCommunities,
-          events: usableEvents.slice(0, 8),
-          jobs: usableJobs.slice(0, 8),
-          organizations: usableOrganizations.slice(0, 8),
-          posts: usablePosts.slice(0, 8),
-        },
-        null,
-        2,
-      ),
+      `- Question: ${truncateCivilAiText(latestQuestion, 240)}`,
+      `- Search pass: ${searchPass === 1 ? 'strict local pass' : 'broadened second pass'}`,
+      `- Retrieval reasons: ${retrieval.reasons.length ? retrieval.reasons.join('; ') : 'none'}`,
+      `- Target communities: ${buildCivilAiCompactList(targetCommunities.map((community) => community.communityName), 'none', 4)}`,
+      `- Result counts: events=${usableEvents.length}; jobs=${usableJobs.length}; organizations=${usableOrganizations.length}; posts=${usablePosts.length}`,
+      ...(summarizedEvents.length ? ['- Events:', ...summarizedEvents] : []),
+      ...(summarizedJobs.length ? ['- Jobs:', ...summarizedJobs] : []),
+      ...(summarizedOrganizations.length ? ['- Organizations:', ...summarizedOrganizations] : []),
+      ...(summarizedPosts.length ? ['- Posts:', ...summarizedPosts] : []),
       '',
       'Answering rules for fetched Civil data:',
       '- Use the fetched Civil data when it answers the user directly.',
       '- If there are no matching results, say so plainly.',
+      '- Never fabricate extra Civil items when the fetched result count is low or zero.',
+      '- Never claim a count larger than the number of returned Civil items.',
       '- Do not mention old or unrelated far-away events when the user asks about what is near them.',
       '- For posts and organizations, stay anchored to the returned local community data unless the user explicitly asks to broaden the search.',
       '- Do not paste raw Civil URLs into the answer when a linked Civil item is available in the fetched data.',
@@ -8136,11 +8487,23 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
   return {
     viewerContext,
     references: references.slice(0, 8),
+    grounding: {
+      retrievalPlan: retrieval,
+      searchPass,
+      targetCommunities,
+      events: usableEvents.slice(0, 8),
+      jobs: usableJobs.slice(0, 8),
+      organizations: usableOrganizations.slice(0, 8),
+      posts: usablePosts.slice(0, 8),
+    },
     debug: {
       latestQuestion,
       retrievalPlan: retrieval,
       requestedCommunities,
       targetCommunities,
+      availableCommunityCount: defaultCommunities.length,
+      searchPass,
+      topicQueryUsed: topicQuery || null,
       resultCounts: {
         events: usableEvents.length,
         jobs: usableJobs.length,
@@ -8453,6 +8816,45 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
       })
     }
 
+    if (shouldCivilAiRunSecondSearch(latestUserMessage, retrievalBundle)) {
+      retrievalBundle = await buildCivilAiRetrievalBundle(userId ?? null, latestUserMessage, { searchPass: 2 })
+    }
+
+    const groundedAnswer = buildCivilAiGroundedAnswer(latestUserMessage, retrievalBundle.grounding)
+    if (groundedAnswer) {
+      assistantContent = groundedAnswer.content
+      status = 'grounded_answer'
+      persistedHistory = userId
+        ? await persistCivilAiHistory(userId, [
+            {
+              role: 'user',
+              content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
+              createdAt: new Date().toISOString(),
+            },
+            {
+              role: 'assistant',
+              content: groundedAnswer.content,
+              createdAt: new Date().toISOString(),
+              references: groundedAnswer.references,
+            },
+          ])
+        : null
+
+      return reply.send({
+        conversationId,
+        message: {
+          role: 'assistant',
+          content: groundedAnswer.content,
+          references: groundedAnswer.references,
+        },
+        model: null,
+        server: null,
+        viewerContext: retrievalBundle.viewerContext,
+        history: persistedHistory,
+        raw: null,
+      })
+    }
+
     const resolved = await resolveCivilAiServer(body.data.serverId)
     resolvedServer = resolved.server
     if (!resolved.server) {
@@ -8550,11 +8952,27 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
           ? {
               ...retrievalBundle.debug,
               directAnswerUsed: status === 'direct_answer',
+              groundedAnswerUsed: status === 'grounded_answer',
+              upstreamInputChars: upstreamInput?.length ?? 0,
             }
           : null,
-        references: status === 'direct_answer'
-          ? buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle?.viewerContext ?? null)?.references ?? []
-          : retrievalBundle?.references ?? [],
+        references:
+          status === 'direct_answer'
+            ? buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle?.viewerContext ?? null)?.references ?? []
+            : status === 'grounded_answer'
+              ? buildCivilAiGroundedAnswer(
+                  latestUserMessage,
+                  retrievalBundle?.grounding ?? {
+                    retrievalPlan: planCivilAiRetrieval(latestUserMessage),
+                    searchPass: 1,
+                    targetCommunities: [],
+                    events: [],
+                    jobs: [],
+                    organizations: [],
+                    posts: [],
+                  },
+                )?.references ?? []
+              : retrievalBundle?.references ?? [],
         serverName: resolvedServer?.name ?? null,
         model: resolvedModel,
         upstreamInput,
