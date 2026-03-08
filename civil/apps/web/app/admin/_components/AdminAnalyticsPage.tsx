@@ -406,7 +406,12 @@ export default function AdminAnalyticsPage() {
   const [inspectUserId, setInspectUserId] = useState<string | null>(null)
 
   const activeMetricDefinition = useMemo(
-    () => METRIC_DEFINITIONS.find((entry) => entry.key === activeMetric) ?? METRIC_DEFINITIONS[0],
+    () =>
+      METRIC_DEFINITIONS.find((entry) => entry.key === activeMetric) ?? {
+        key: activeMetric,
+        title: 'Details',
+        description: 'Selected metric details.',
+      },
     [activeMetric],
   )
 
