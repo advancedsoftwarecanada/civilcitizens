@@ -10,6 +10,18 @@ type AiMessage = {
   id: string
   role: 'assistant' | 'user'
   content: string
+  references?: CivilAiReference[]
+}
+
+type CivilAiReference = {
+  kind: 'community' | 'event' | 'job' | 'organization' | 'post'
+  id: string
+  title: string
+  subtitle: string | null
+  summary: string | null
+  href: string
+  imageUrl: string | null
+  badge: string | null
 }
 
 type AiHistoryResponse = {
@@ -24,6 +36,7 @@ type AiChatResponse = {
   message?: {
     role?: string
     content?: string
+    references?: CivilAiReference[]
   } | null
 }
 
@@ -135,6 +148,32 @@ function renderCivilAiBlock(block: string, index: number) {
 
 function CivilAiMessageBody({ content }: { content: string }) {
   return <Fragment>{content.split(/\n\s*\n/).map((block, index) => renderCivilAiBlock(block, index))}</Fragment>
+}
+
+function CivilAiReferenceCard({ reference }: { reference: CivilAiReference }) {
+  return (
+    <a
+      href={reference.href}
+      className="group block overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white shadow-sm transition hover:border-[var(--cc-primary)]/30 hover:bg-slate-50"
+      target="_blank"
+      rel="noreferrer"
+    >
+      <div className="flex gap-3 p-3">
+        <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-slate-100">
+          {reference.imageUrl ? <img src={reference.imageUrl} alt={reference.title} className="h-full w-full object-cover" loading="lazy" /> : null}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {reference.badge ? <span className="rounded-full border border-[var(--cc-primary)]/15 bg-[var(--cc-primary)]/8 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">{reference.badge}</span> : null}
+            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Civil</span>
+          </div>
+          <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-900 transition group-hover:text-[var(--cc-primary)]">{reference.title}</p>
+          {reference.subtitle ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{reference.subtitle}</p> : null}
+          {reference.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{reference.summary}</p> : null}
+        </div>
+      </div>
+    </a>
+  )
 }
 
 export default function CivilAiLauncher() {
@@ -252,6 +291,7 @@ export default function CivilAiLauncher() {
           id: nextMessageId('assistant'),
           role: 'assistant',
           content: json.message?.content || 'No response returned.',
+          references: Array.isArray(json.message?.references) ? json.message?.references : [],
         },
       ])
     } catch (sendError) {
@@ -328,15 +368,24 @@ export default function CivilAiLauncher() {
                     key={message.id}
                     className={clsx('flex', message.role === 'user' ? 'justify-end' : 'justify-start')}
                   >
-                    <div
-                      className={clsx(
-                        'max-w-[88%] rounded-[1.4rem] px-4 py-3 text-sm leading-6 shadow-[0_10px_28px_rgba(15,23,42,0.08)]',
-                        message.role === 'user'
-                          ? 'bg-[var(--cc-primary)] text-white'
-                          : 'border border-slate-200 bg-white text-slate-800',
-                      )}
-                    >
-                      <CivilAiMessageBody content={message.content} />
+                    <div className="max-w-[88%] space-y-2">
+                      <div
+                        className={clsx(
+                          'rounded-[1.4rem] px-4 py-3 text-sm leading-6 shadow-[0_10px_28px_rgba(15,23,42,0.08)]',
+                          message.role === 'user'
+                            ? 'bg-[var(--cc-primary)] text-white'
+                            : 'border border-slate-200 bg-white text-slate-800',
+                        )}
+                      >
+                        <CivilAiMessageBody content={message.content} />
+                      </div>
+                      {message.role === 'assistant' && message.references?.length ? (
+                        <div className="space-y-2">
+                          {message.references.map((reference) => (
+                            <CivilAiReferenceCard key={`${reference.kind}-${reference.id}`} reference={reference} />
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 ))}

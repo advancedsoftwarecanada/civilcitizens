@@ -263,7 +263,19 @@ type CivilAiHistoryEntry = {
   createdAt: string
 }
 
+type CivilAiCardReference = {
+  kind: 'community' | 'event' | 'job' | 'organization' | 'post'
+  id: string
+  title: string
+  subtitle: string | null
+  summary: string | null
+  href: string
+  imageUrl: string | null
+  badge: string | null
+}
+
 const CIVIL_AI_HISTORY_LIMIT = 20
+const CIVIL_AI_DATA_KEY = (process.env.CIVIL_AI_DATA_KEY || '').trim()
 
 const DEFAULT_CIVIL_AI_PROMPT = `Civil AI is a practical Canadian civic assistant inside Civil Citizens.
 Help users understand communities, public life, and constructive next steps.
@@ -279,6 +291,14 @@ function resolveCivilAiInstructionsPath() {
 
 function normalizeCivilAiBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, '')
+}
+
+function getCivilPublicBaseUrl() {
+  return `https://${CIVIL_PUBLIC_HOST}`.replace(/\/+$/, '')
+}
+
+function getCivilApiBaseUrl() {
+  return `${getCivilPublicBaseUrl()}/api`
 }
 
 function readBaseCommunityMeta(value: Prisma.JsonValue | null | undefined) {
@@ -506,6 +526,537 @@ function readCivilAiBody(req: FastifyRequest) {
   const body = req.body
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null
   return body as Record<string, unknown>
+}
+
+function buildCivilCommunityHref(provinceCode: string, communitySlug: string) {
+  return `${getCivilPublicBaseUrl()}/${provinceCode.toLowerCase()}/${communitySlug.toLowerCase()}`
+}
+
+function buildCivilOrganizationHref(args: { provinceCode: string | null; communitySlug: string | null; slug: string }) {
+  if (!args.provinceCode || !args.communitySlug) return null
+  return `${getCivilPublicBaseUrl()}/com/${args.provinceCode.toLowerCase()}/${args.communitySlug.toLowerCase()}/orgs/${args.slug}`
+}
+
+function buildCivilEventHref(args: { organizationId: string; eventId: string; provinceCode: string | null; communitySlug: string | null; slug: string }) {
+  if (args.provinceCode && args.communitySlug) {
+    return `${getCivilPublicBaseUrl()}/com/${args.provinceCode.toLowerCase()}/${args.communitySlug.toLowerCase()}/orgs/${args.slug}/events/${args.eventId}`
+  }
+  return `${getCivilPublicBaseUrl()}/events/${args.organizationId}/${args.eventId}`
+}
+
+function buildCivilJobHref(args: { jobId: string; provinceCode: string | null; communitySlug: string | null; slug: string }) {
+  if (!args.provinceCode || !args.communitySlug) return null
+  return `${getCivilPublicBaseUrl()}/com/${args.provinceCode.toLowerCase()}/${args.communitySlug.toLowerCase()}/orgs/${args.slug}/jobs/${args.jobId}`
+}
+
+function buildCivilPostHref(path: string | null) {
+  if (!path) return null
+  if (/^https?:\/\//i.test(path)) return path
+  return `${getCivilPublicBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+function parseCivilAiCommunityId(value: string) {
+  const trimmed = value.trim()
+  const [provinceCode, communitySlug] = trimmed.split(':')
+  if (!provinceCode || !communitySlug) return null
+  const normalizedProvince = normalizeProvinceCode(provinceCode)
+  if (!normalizedProvince) return null
+  const normalizedCommunitySlug = communitySlug.trim().toLowerCase()
+  const community = findCommunity(normalizedProvince, normalizedCommunitySlug)
+  if (!community) return null
+  return {
+    id: `${community.province}:${community.slug}`,
+    provinceCode: community.province,
+    communitySlug: community.slug,
+    communityName: community.name ?? community.slug,
+    provinceName: getProvinceDisplayName(community.province as any) ?? community.province.toUpperCase(),
+    href: buildCivilCommunityHref(community.province, community.slug),
+  }
+}
+
+const CivilAiCommunityIdParams = z.object({
+  communityId: z.string().trim().min(3).max(80),
+})
+
+const CivilAiScopedDataQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(12).default(6),
+  when: z.enum(['today', 'upcoming']).default('upcoming'),
+})
+
+const CivilAiSearchableDataQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(12).default(6),
+  q: z.string().trim().min(1).max(120).optional(),
+})
+
+async function authorizeCivilAiDataRequest(req: FastifyRequest) {
+  const userId = await resolveUserId(req)
+  if (userId) return { userId }
+
+  const providedKey = typeof req.headers['x-civil-ai-key'] === 'string' ? req.headers['x-civil-ai-key'].trim() : ''
+  if (CIVIL_AI_DATA_KEY && providedKey === CIVIL_AI_DATA_KEY) return { userId: null }
+  return null
+}
+
+type CivilAiViewerContext = {
+  user: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    isVerified: boolean
+    isPremium: boolean
+  }
+  homeCommunity: {
+    id: string
+    provinceCode: string
+    provinceName: string
+    communitySlug: string
+    communityName: string
+    href: string
+  } | null
+  nearbyCommunities: Array<{
+    id: string
+    provinceCode: string
+    provinceName: string
+    communitySlug: string
+    communityName: string
+    href: string
+  }>
+  followedCommunities: Array<{
+    id: string
+    provinceCode: string
+    provinceName: string
+    communitySlug: string
+    communityName: string
+    href: string
+    isHome: boolean
+  }>
+  organizations: Array<{
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    role: 'owner' | 'member' | 'followed'
+    href: string | null
+    logoUrl: string | null
+    coverUrl: string | null
+  }>
+  feedContext: ViewerFeedContext
+}
+
+async function loadCivilAiViewerContext(userId: string): Promise<CivilAiViewerContext | null> {
+  const [user, follows, businessFollows, memberships, ownedOrganizations, feedContext] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        handle: true,
+        name: true,
+        avatarUrl: true,
+        premiumStatus: true,
+        communityMeta: true,
+      },
+    }),
+    prisma.communityFollow.findMany({
+      where: { userId },
+      orderBy: [{ home: 'desc' }, { createdAt: 'asc' }],
+      take: 30,
+      select: { provinceCode: true, communitySlug: true, home: true },
+    }),
+    prisma.businessFollow.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 30,
+      select: {
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+            logoUrl: true,
+            coverUrl: true,
+          },
+        },
+      },
+    }),
+    prisma.businessMembership.findMany({
+      where: { userId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 30,
+      select: {
+        role: true,
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+            logoUrl: true,
+            coverUrl: true,
+          },
+        },
+      },
+    }),
+    prisma.business.findMany({
+      where: { ownerId: userId },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 30,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        provinceCode: true,
+        communitySlug: true,
+        logoUrl: true,
+        coverUrl: true,
+      },
+    }),
+    loadViewerFeedContext(userId),
+  ])
+
+  if (!user) return null
+
+  const typedFollows = follows as Array<{ provinceCode: string; communitySlug: string; home: boolean }>
+  const homeFollow = typedFollows.find((entry: { provinceCode: string; communitySlug: string; home: boolean }) => entry.home) ?? typedFollows[0] ?? null
+  const homeCommunity = homeFollow
+    ? parseCivilAiCommunityId(`${homeFollow.provinceCode}:${homeFollow.communitySlug}`)
+    : null
+
+  const nearbyCommunities = (parseCommunityMeta(user.communityMeta ?? null)?.nearbyCommunities ?? [])
+    .map((entry: { provinceCode: string; communitySlug: string }) => parseCivilAiCommunityId(`${entry.provinceCode}:${entry.communitySlug}`))
+    .filter((entry: NonNullable<typeof homeCommunity> | null): entry is NonNullable<typeof homeCommunity> => Boolean(entry))
+    .slice(0, 8)
+
+  const followedCommunities = typedFollows
+    .map((follow: { provinceCode: string; communitySlug: string; home: boolean }) => {
+      const parsed = parseCivilAiCommunityId(`${follow.provinceCode}:${follow.communitySlug}`)
+      if (!parsed) return null
+      return {
+        ...parsed,
+        isHome: Boolean(follow.home),
+      }
+    })
+    .filter(
+      (
+        entry: {
+          id: string
+          provinceCode: string
+          provinceName: string
+          communitySlug: string
+          communityName: string
+          href: string
+          isHome: boolean
+        } | null,
+      ): entry is {
+        id: string
+        provinceCode: string
+        provinceName: string
+        communitySlug: string
+        communityName: string
+        href: string
+        isHome: boolean
+      } => Boolean(entry),
+    )
+
+  const organizationsMap = new Map<string, CivilAiViewerContext['organizations'][number]>()
+  for (const org of ownedOrganizations) {
+    organizationsMap.set(org.id, {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      provinceCode: org.provinceCode,
+      communitySlug: org.communitySlug,
+      role: 'owner',
+      href: buildCivilOrganizationHref({ provinceCode: org.provinceCode, communitySlug: org.communitySlug, slug: org.slug }),
+      logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+    })
+  }
+  for (const row of memberships) {
+    if (!row.business || organizationsMap.has(row.business.id)) continue
+    organizationsMap.set(row.business.id, {
+      id: row.business.id,
+      name: row.business.name,
+      slug: row.business.slug,
+      provinceCode: row.business.provinceCode,
+      communitySlug: row.business.communitySlug,
+      role: 'member',
+      href: buildCivilOrganizationHref({ provinceCode: row.business.provinceCode, communitySlug: row.business.communitySlug, slug: row.business.slug }),
+      logoUrl: normalizeMediaUrl(row.business.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(row.business.coverUrl ?? null),
+    })
+  }
+  for (const row of businessFollows) {
+    if (!row.business || organizationsMap.has(row.business.id)) continue
+    organizationsMap.set(row.business.id, {
+      id: row.business.id,
+      name: row.business.name,
+      slug: row.business.slug,
+      provinceCode: row.business.provinceCode,
+      communitySlug: row.business.communitySlug,
+      role: 'followed',
+      href: buildCivilOrganizationHref({ provinceCode: row.business.provinceCode, communitySlug: row.business.communitySlug, slug: row.business.slug }),
+      logoUrl: normalizeMediaUrl(row.business.logoUrl ?? null),
+      coverUrl: normalizeMediaUrl(row.business.coverUrl ?? null),
+    })
+  }
+
+  return {
+    user: {
+      id: user.id,
+      handle: user.handle,
+      name: user.name,
+      avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+      isVerified: Boolean(user.premiumStatus),
+      isPremium: Boolean(user.premiumStatus),
+    },
+    homeCommunity,
+    nearbyCommunities,
+    followedCommunities,
+    organizations: Array.from(organizationsMap.values()).slice(0, 12),
+    feedContext,
+  }
+}
+
+function buildCivilAiApiCatalog(viewerContext: CivilAiViewerContext | null) {
+  const apiBaseUrl = getCivilApiBaseUrl()
+  const suggestedCommunityId = viewerContext?.homeCommunity?.id ?? viewerContext?.followedCommunities[0]?.id ?? 'ON:newmarket'
+  return [
+    {
+      name: 'Current User Context',
+      endpoint: `${apiBaseUrl}/ai/context`,
+      purpose: 'Current signed-in user profile, home community, nearby communities, followed communities, and organizations.',
+    },
+    {
+      name: 'Community Summary',
+      endpoint: `${apiBaseUrl}/ai/communities/${encodeURIComponent(suggestedCommunityId)}`,
+      purpose: 'Structured community identity and direct Civil URL for a community.',
+    },
+    {
+      name: 'Community Events',
+      endpoint: `${apiBaseUrl}/ai/events/${encodeURIComponent(suggestedCommunityId)}?when=today`,
+      purpose: 'Upcoming or today-only events for a specific community. Filters out stale events.',
+    },
+    {
+      name: 'Community Jobs',
+      endpoint: `${apiBaseUrl}/ai/jobs/${encodeURIComponent(suggestedCommunityId)}`,
+      purpose: 'Active jobs in a community from local organizations or local job locations.',
+    },
+    {
+      name: 'Community Organizations',
+      endpoint: `${apiBaseUrl}/ai/organizations/${encodeURIComponent(suggestedCommunityId)}`,
+      purpose: 'Active organizations in a specific community, optionally filtered by a topic query.',
+    },
+    {
+      name: 'Community Posts',
+      endpoint: `${apiBaseUrl}/ai/posts/${encodeURIComponent(suggestedCommunityId)}`,
+      purpose: 'Recent public posts in a specific community, optionally filtered by a topic query.',
+    },
+  ]
+}
+
+function buildCivilAiContextPrompt(viewerContext: CivilAiViewerContext | null) {
+  const catalog = buildCivilAiApiCatalog(viewerContext)
+  return [
+    'Current Civil User Context:',
+    JSON.stringify(
+      viewerContext
+        ? {
+            user: viewerContext.user,
+            homeCommunity: viewerContext.homeCommunity,
+            nearbyCommunities: viewerContext.nearbyCommunities.slice(0, 5),
+            followedCommunities: viewerContext.followedCommunities.slice(0, 8),
+            organizations: viewerContext.organizations.slice(0, 8),
+          }
+        : { authenticated: false },
+      null,
+      2,
+    ),
+    '',
+    'Available Civil AI Data Endpoints:',
+    JSON.stringify(catalog, null, 2),
+    '',
+    'Rules for local data answers:',
+    '- Prefer the current user context over generic assumptions.',
+    '- Prefer home, nearby, or followed communities before anything farther away.',
+    '- For events, ignore stale past items unless the user explicitly asks about history.',
+    '- If the request asks about today, only use today-filtered events.',
+    '- For posts and organizations, prefer matches from the target local communities before broader discovery.',
+    '- If live data is missing, say that plainly instead of inventing specifics.',
+  ].join('\n')
+}
+
+type CivilAiRetrievalPlan = {
+  wantsEvents: boolean
+  wantsJobs: boolean
+  wantsCommunities: boolean
+  wantsOrganizations: boolean
+  wantsPosts: boolean
+  todayOnly: boolean
+  topicQuery: string
+  eventLimit: number
+  jobLimit: number
+  organizationLimit: number
+  postLimit: number
+  includeViewerOrganizations: boolean
+  reasons: string[]
+}
+
+const CIVIL_AI_TOPIC_STOPWORDS = new Set([
+  'a',
+  'about',
+  'active',
+  'all',
+  'an',
+  'and',
+  'any',
+  'are',
+  'around',
+  'association',
+  'associations',
+  'at',
+  'can',
+  'city',
+  'communities',
+  'community',
+  'conversation',
+  'conversations',
+  'debate',
+  'debates',
+  'discussing',
+  'discussion',
+  'discussions',
+  'event',
+  'events',
+  'for',
+  'going',
+  'group',
+  'groups',
+  'happening',
+  'hiring',
+  'in',
+  'is',
+  'job',
+  'jobs',
+  'local',
+  'me',
+  'my',
+  'near',
+  'nearby',
+  'of',
+  'on',
+  'organization',
+  'organizations',
+  'people',
+  'post',
+  'posts',
+  'saying',
+  'talking',
+  'that',
+  'the',
+  'there',
+  'things',
+  'this',
+  'today',
+  'tonight',
+  'town',
+  'upcoming',
+  'what',
+  'where',
+  'work',
+])
+
+function extractCivilAiTopicQuery(question: string) {
+  const normalized = normalizeSearchTerm(question).toLowerCase()
+  if (!normalized) return ''
+
+  return normalized
+    .split(' ')
+    .filter((token) => token.length > 2 && !CIVIL_AI_TOPIC_STOPWORDS.has(token))
+    .slice(0, 8)
+    .join(' ')
+}
+
+function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
+  const normalized = question.toLowerCase()
+  const topicQuery = extractCivilAiTopicQuery(question)
+
+  const explicitEvents = /(event|events|festival|meeting|parade|rally)/.test(normalized)
+  const explicitJobs = /(job|jobs|hiring|employment|position|positions|open role|open roles)/.test(normalized)
+  const explicitOrganizations = /(organization|organizations|group|groups|association|associations)/.test(normalized)
+  const explicitPosts = /(post|posts|discussion|discussions|conversation|conversations|debate|debates)/.test(normalized)
+  const asksWhatIsHappening = /(what(?:'s| is) happening|going on|anything happening|what(?:'s| is) going on)/.test(normalized)
+  const asksWhatPeopleAreSaying = /(people saying|what are people saying|talking about|discussing|buzz)/.test(normalized)
+  const asksWhichGroupsMatter = /(who should i talk to|who is working on|which org|which organization|which organizations|which groups|groups working on|organizations working on)/.test(normalized)
+  const asksLocalContext = /(community|communities|near me|nearby|around me|my area|my city|my town|my riding|local)/.test(normalized)
+  const asksOverview = /(what matters|what should i know|what should i pay attention|summary|summarize)/.test(normalized)
+  const todayOnly = /(today|tonight|this afternoon|this evening)/.test(normalized)
+  const hasIssueTopic = topicQuery.length > 0
+
+  let wantsEvents = explicitEvents || asksWhatIsHappening || todayOnly
+  let wantsJobs = explicitJobs
+  let wantsOrganizations = explicitOrganizations || asksWhichGroupsMatter
+  let wantsPosts = explicitPosts || asksWhatPeopleAreSaying
+  const wantsCommunities = asksLocalContext
+
+  if (hasIssueTopic && asksWhatPeopleAreSaying) wantsPosts = true
+  if (hasIssueTopic && asksWhichGroupsMatter) wantsOrganizations = true
+
+  if (hasIssueTopic && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+    wantsPosts = true
+    wantsOrganizations = true
+  }
+
+  if ((asksOverview || asksLocalContext) && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+    wantsEvents = true
+    wantsPosts = true
+    wantsOrganizations = true
+  }
+
+  if (!wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+    wantsPosts = true
+    wantsOrganizations = hasIssueTopic
+  }
+
+  const reasons: string[] = []
+  if (wantsEvents) reasons.push(todayOnly ? 'time-sensitive local activity requested' : 'activity or happenings requested')
+  if (wantsJobs) reasons.push('employment intent detected')
+  if (wantsPosts) reasons.push(asksWhatPeopleAreSaying ? 'public conversation intent detected' : 'local discussion context may help answer')
+  if (wantsOrganizations) reasons.push(asksWhichGroupsMatter ? 'organization discovery intent detected' : 'local groups may help answer')
+
+  return {
+    wantsEvents,
+    wantsJobs,
+    wantsCommunities,
+    wantsOrganizations,
+    wantsPosts,
+    todayOnly,
+    topicQuery,
+    eventLimit: wantsEvents ? (todayOnly || asksWhatIsHappening ? 6 : 4) : 0,
+    jobLimit: wantsJobs ? 4 : 0,
+    organizationLimit: wantsOrganizations ? (asksWhichGroupsMatter || hasIssueTopic ? 4 : 3) : 0,
+    postLimit: wantsPosts ? (asksWhatPeopleAreSaying || hasIssueTopic ? 5 : 3) : 0,
+    includeViewerOrganizations: wantsOrganizations || asksWhichGroupsMatter,
+    reasons,
+  }
+}
+
+function matchCivilAiRequestedCommunities(question: string, viewerContext: CivilAiViewerContext | null) {
+  if (!viewerContext) return [] as Array<NonNullable<CivilAiViewerContext['homeCommunity']>>
+  const normalized = question.toLowerCase()
+  const candidates = [viewerContext.homeCommunity, ...viewerContext.nearbyCommunities, ...viewerContext.followedCommunities]
+    .filter((entry): entry is NonNullable<CivilAiViewerContext['homeCommunity']> => Boolean(entry))
+  const unique = new Map<string, NonNullable<CivilAiViewerContext['homeCommunity']>>()
+  for (const candidate of candidates) {
+    if (normalized.includes(candidate.communityName.toLowerCase()) || normalized.includes(candidate.communitySlug.toLowerCase().replace(/-/g, ' '))) {
+      unique.set(candidate.id, candidate)
+    }
+  }
+  return Array.from(unique.values())
 }
 type ExperienceModel = Prisma.ExperienceGetPayload<{ select: { id: true; title: true; organization: true; location: true; startDate: true; endDate: true; current: true; description: true; position: true } }>
 import { createHash, randomInt, randomUUID } from 'crypto'
@@ -6624,6 +7175,473 @@ async function rankFeedPosts(args: {
 
 app.get('/health', async () => ({ ok: true }))
 
+function filterCivilAiEventsByWhen(
+  events: Awaited<ReturnType<typeof loadFeedActivityEvents>>,
+  when: 'today' | 'upcoming',
+) {
+  if (when !== 'today') return events
+  const now = new Date()
+  return events.filter((event) => {
+    const date = new Date(event.startsAt)
+    return (
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    )
+  })
+}
+
+async function loadCivilAiCommunityEvents(communityId: string, when: 'today' | 'upcoming', limit: number) {
+  const parsed = parseCivilAiCommunityId(communityId)
+  if (!parsed) return { error: 'community_not_found' as const }
+
+  const items = filterCivilAiEventsByWhen(
+    await loadFeedActivityEvents({ communityKeys: [parsed.id], organizationIds: [], limit: Math.max(limit * 2, 12) }),
+    when,
+  ).slice(0, limit)
+
+  return { community: parsed, items }
+}
+
+async function loadCivilAiCommunityJobs(communityId: string, limit: number) {
+  const parsed = parseCivilAiCommunityId(communityId)
+  if (!parsed) return { error: 'community_not_found' as const }
+
+  const items = (await loadFeedActivityJobs({ communityKeys: [parsed.id], organizationIds: [], limit: Math.max(limit * 2, 12) })).slice(0, limit)
+  return { community: parsed, items }
+}
+
+type CivilAiOrganizationDataItem = {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  logoUrl: string | null
+  coverUrl: string | null
+  isVerified: boolean
+  provinceCode: string
+  communitySlug: string
+  communityName: string | null
+  href: string
+  role?: 'owner' | 'member' | 'followed'
+}
+
+type CivilAiPostDataItem = PostSearchResultPayload
+
+async function loadCivilAiCommunityOrganizations(communityId: string, limit: number, query?: string) {
+  const parsed = parseCivilAiCommunityId(communityId)
+  if (!parsed) return { error: 'community_not_found' as const }
+
+  const normalizedQuery = normalizeSearchTerm(query ?? '')
+  type CivilAiOrganizationRow = {
+    id: string
+    name: string
+    slug: string
+    description: string | null
+    logoUrl: string | null
+    coverUrl: string | null
+    isVerified: boolean
+    provinceCode: string | null
+    communitySlug: string | null
+  }
+
+  const businesses: CivilAiOrganizationRow[] = await prisma.business.findMany({
+    where: {
+      status: BusinessStatus.ACTIVE,
+      provinceCode: parsed.provinceCode,
+      communitySlug: parsed.communitySlug,
+    },
+    orderBy: [{ isVerified: 'desc' }, { name: 'asc' }],
+    take: Math.max(limit * 3, 18),
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      logoUrl: true,
+      coverUrl: true,
+      isVerified: true,
+      provinceCode: true,
+      communitySlug: true,
+    },
+  })
+
+  const ranked: Array<{ item: CivilAiOrganizationDataItem; score: number }> = []
+  for (const business of businesses) {
+      const item = {
+        id: business.id,
+        name: business.name,
+        slug: business.slug,
+        description: truncatePreviewText(stripHtmlToPlainText(business.description ?? ''), 180) || null,
+        logoUrl: normalizeMediaUrl(business.logoUrl ?? null),
+        coverUrl: normalizeMediaUrl(business.coverUrl ?? null),
+        isVerified: Boolean(business.isVerified),
+        provinceCode: parsed.provinceCode,
+        communitySlug: parsed.communitySlug,
+        communityName: parsed.communityName,
+        href:
+          buildCivilOrganizationHref({
+            provinceCode: parsed.provinceCode,
+            communitySlug: parsed.communitySlug,
+            slug: business.slug,
+          }) ?? buildCivilCommunityHref(parsed.provinceCode, parsed.communitySlug),
+      } satisfies CivilAiOrganizationDataItem
+
+      const textScore = normalizedQuery
+        ? scoreSearchTextMatch(buildSearchableText(business.name, business.slug, business.description), normalizedQuery)
+        : 0
+
+      const entry = {
+        item,
+        score: textScore + (business.isVerified ? 25 : 0),
+      }
+      if (normalizedQuery && entry.score <= 0) continue
+      ranked.push(entry)
+  }
+
+  ranked.sort((a, b) => {
+    const scoreDelta = b.score - a.score
+    if (scoreDelta !== 0) return scoreDelta
+    if (a.item.isVerified !== b.item.isVerified) return a.item.isVerified ? -1 : 1
+    return a.item.name.localeCompare(b.item.name)
+  })
+
+  return {
+    community: parsed,
+    items: ranked.slice(0, limit).map((entry) => entry.item),
+  }
+}
+
+async function loadCivilAiCommunityPosts(communityId: string, limit: number, query?: string) {
+  const parsed = parseCivilAiCommunityId(communityId)
+  if (!parsed) return { error: 'community_not_found' as const }
+
+  const normalizedQuery = normalizeSearchTerm(query ?? '')
+  type CivilAiPostRow = Prisma.PostGetPayload<{
+    include: {
+      author: true
+      business: true
+    }
+  }>
+
+  const posts: CivilAiPostRow[] = await prisma.post.findMany({
+    where: {
+      visibility: 'public',
+      provinceCode: parsed.provinceCode,
+      communitySlug: parsed.communitySlug,
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: Math.max(limit * 4, 24),
+    include: {
+      author: true,
+      business: true,
+    },
+  })
+
+  const ranked: Array<{ item: CivilAiPostDataItem; score: number; createdAt: number }> = []
+  for (const post of posts) {
+      const formatted = formatPost(post as any)
+      const href = buildCivilPostHref(getCanonicalPaths(post as any).community)
+      if (!href) continue
+
+      const item = {
+        id: post.id,
+        title: formatted.title,
+        excerpt: truncatePreviewText(stripHtmlToPlainText(post.body ?? ''), 220) || null,
+        imageUrl: formatted.images?.[0] ?? formatted.mediaUrl ?? formatted.organization?.coverUrl ?? formatted.organization?.logoUrl ?? null,
+        communityName: formatted.communityName,
+        provinceName: formatted.provinceName,
+        author: {
+          handle: formatted.author.handle,
+          name: formatted.author.name,
+          avatarUrl: formatted.author.avatarUrl,
+        },
+        organization: formatted.organization
+          ? {
+              name: formatted.organization.name,
+              slug: formatted.organization.slug,
+              logoUrl: formatted.organization.logoUrl,
+            }
+          : null,
+        href,
+      } satisfies CivilAiPostDataItem
+
+      const textScore = normalizedQuery
+        ? scoreSearchTextMatch(
+            buildSearchableText(post.title, stripHtmlToPlainText(post.body ?? ''), post.author.name, post.author.handle, post.business?.name),
+            normalizedQuery,
+          )
+        : 0
+
+      const entry = {
+        item,
+        score: textScore,
+        createdAt: post.createdAt.getTime(),
+      }
+      if (normalizedQuery && entry.score <= 0) continue
+      ranked.push(entry)
+  }
+
+  ranked.sort((a, b) => {
+    const scoreDelta = b.score - a.score
+    if (scoreDelta !== 0) return scoreDelta
+    return b.createdAt - a.createdAt
+  })
+
+  return {
+    community: parsed,
+    items: ranked.slice(0, limit).map((entry) => entry.item),
+  }
+}
+
+function toCivilAiCommunityReference(community: {
+  id: string
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+  href: string
+}): CivilAiCardReference {
+  return {
+    kind: 'community',
+    id: community.id,
+    title: community.communityName,
+    subtitle: `${community.provinceName}`,
+    summary: `Community page for ${community.communityName}, ${community.provinceName}.`,
+    href: community.href,
+    imageUrl: null,
+    badge: 'Community',
+  }
+}
+
+type CivilAiEventDataItem = {
+  id: string
+  title: string
+  description: string | null
+  startsAt: string
+  primaryPhotoUrl: string | null
+  organization: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    isVerified: boolean
+  }
+}
+
+type CivilAiJobDataItem = {
+  id: string
+  title: string
+  slug: string
+  status: 'draft' | 'active' | 'closed' | 'expired'
+  employmentType: string
+  salaryMin: number | null
+  salaryMax: number | null
+  salaryCurrency: string | null
+  salaryPeriod: string | null
+  description: string | null
+  photoUrl: string | null
+  duties: string
+  roleRequirements: string
+  location: string
+  applicantCount: number
+  createdAt: string
+  updatedAt: string
+  publishedAt: string | null
+  expiresAt: string
+  sponsored: boolean
+  marketing: {
+    impressions: number
+    views: number
+    applications: number
+    activePromotion: boolean
+    impressionCap: number
+  }
+  organization: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    coverUrl: string | null
+  }
+}
+
+function toCivilAiEventReference(event: CivilAiEventDataItem): CivilAiCardReference {
+  return {
+    kind: 'event',
+    id: event.id,
+    title: event.title,
+    subtitle: `${event.organization.name} • ${new Date(event.startsAt).toLocaleString()}`,
+    summary: event.description ?? null,
+    href: buildCivilEventHref({
+      organizationId: event.organization.id,
+      eventId: event.id,
+      provinceCode: event.organization.provinceCode,
+      communitySlug: event.organization.communitySlug,
+      slug: event.organization.slug,
+    }),
+    imageUrl: event.primaryPhotoUrl,
+    badge: 'Event',
+  }
+}
+
+function toCivilAiJobReference(job: CivilAiJobDataItem): CivilAiCardReference | null {
+  const href = buildCivilJobHref({
+    jobId: job.id,
+    provinceCode: job.organization.provinceCode,
+    communitySlug: job.organization.communitySlug,
+    slug: job.organization.slug,
+  })
+  if (!href) return null
+  return {
+    kind: 'job',
+    id: job.id,
+    title: job.title,
+    subtitle: `${job.organization.name}${job.salaryMin || job.salaryMax ? ` • ${job.salaryCurrency ?? 'CAD'} ${job.salaryMin?.toLocaleString() ?? job.salaryMax?.toLocaleString() ?? ''}` : ''}`,
+    summary: job.description ?? null,
+    href,
+    imageUrl: job.photoUrl ?? job.organization.coverUrl ?? job.organization.logoUrl ?? null,
+    badge: 'Job',
+  }
+}
+
+function toCivilAiOrganizationReference(org: {
+  id: string
+  name: string
+  href: string | null
+  logoUrl: string | null
+  coverUrl: string | null
+  role?: 'owner' | 'member' | 'followed'
+  description?: string | null
+  communityName?: string | null
+}): CivilAiCardReference | null {
+  if (!org.href) return null
+  return {
+    kind: 'organization',
+    id: org.id,
+    title: org.name,
+    subtitle: org.role === 'owner' ? 'Your organization' : org.role === 'member' ? 'Organization membership' : org.role === 'followed' ? 'Followed organization' : org.communityName ? `${org.communityName} organization` : 'Community organization',
+    summary: org.description ?? null,
+    href: org.href,
+    imageUrl: org.coverUrl ?? org.logoUrl ?? null,
+    badge: 'Organization',
+  }
+}
+
+function toCivilAiPostReference(post: CivilAiPostDataItem): CivilAiCardReference {
+  return {
+    kind: 'post',
+    id: post.id,
+    title: post.title || `Post by ${post.author.name || `@${post.author.handle}`}`,
+    subtitle: [post.communityName, post.provinceName].filter(Boolean).join(', ') || `@${post.author.handle}`,
+    summary: post.excerpt,
+    href: post.href,
+    imageUrl: post.imageUrl ?? post.author.avatarUrl ?? null,
+    badge: 'Post',
+  }
+}
+
+async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion: string) {
+  const viewerContext = userId ? await loadCivilAiViewerContext(userId) : null
+  const retrieval = planCivilAiRetrieval(latestQuestion)
+  const topicQuery = retrieval.topicQuery
+  const requestedCommunities = matchCivilAiRequestedCommunities(latestQuestion, viewerContext)
+  const nearbyCommunities = viewerContext ? viewerContext.nearbyCommunities.slice(0, 2) : []
+  const followedCommunities = viewerContext ? viewerContext.followedCommunities.slice(0, 3) : []
+  const defaultCommunities = [viewerContext?.homeCommunity ?? null, ...nearbyCommunities, ...followedCommunities]
+    .filter((entry): entry is NonNullable<CivilAiViewerContext['homeCommunity']> => Boolean(entry))
+  const targetCommunities = (requestedCommunities.length ? requestedCommunities : defaultCommunities)
+    .filter((entry, index, collection) => collection.findIndex((item) => item.id === entry.id) === index)
+    .slice(0, 4)
+
+  const eventResults = retrieval.wantsEvents && targetCommunities.length
+    ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityEvents(community.id, retrieval.todayOnly ? 'today' : 'upcoming', retrieval.eventLimit)))
+    : []
+  const jobResults = retrieval.wantsJobs && targetCommunities.length
+    ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityJobs(community.id, retrieval.jobLimit)))
+    : []
+  const organizationResults = retrieval.wantsOrganizations && targetCommunities.length
+    ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityOrganizations(community.id, retrieval.organizationLimit, topicQuery || undefined)))
+    : []
+  const postResults = retrieval.wantsPosts && targetCommunities.length
+    ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityPosts(community.id, retrieval.postLimit, topicQuery || undefined)))
+    : []
+
+  const usableEvents: CivilAiEventDataItem[] = []
+  for (const result of eventResults) {
+    if ('items' in result && Array.isArray(result.items)) usableEvents.push(...result.items)
+  }
+  const usableJobs: CivilAiJobDataItem[] = []
+  for (const result of jobResults) {
+    if ('items' in result && Array.isArray(result.items)) usableJobs.push(...result.items)
+  }
+  const usableOrganizations: CivilAiOrganizationDataItem[] = []
+  for (const result of organizationResults) {
+    if ('items' in result && Array.isArray(result.items)) usableOrganizations.push(...result.items)
+  }
+  const usablePosts: CivilAiPostDataItem[] = []
+  for (const result of postResults) {
+    if ('items' in result && Array.isArray(result.items)) usablePosts.push(...result.items)
+  }
+
+  const references: CivilAiCardReference[] = []
+  for (const community of targetCommunities.slice(0, 3)) references.push(toCivilAiCommunityReference(community))
+  for (const event of usableEvents.slice(0, 4)) references.push(toCivilAiEventReference(event))
+  for (const job of usableJobs.slice(0, 4)) {
+    const reference = toCivilAiJobReference(job)
+    if (reference) references.push(reference)
+  }
+  for (const post of usablePosts.slice(0, 4)) references.push(toCivilAiPostReference(post))
+  for (const org of usableOrganizations.slice(0, 4)) {
+    const reference = toCivilAiOrganizationReference(org)
+    if (reference) references.push(reference)
+  }
+  if (retrieval.includeViewerOrganizations && viewerContext?.organizations.length) {
+    for (const org of viewerContext.organizations.slice(0, 3)) {
+      const reference = toCivilAiOrganizationReference({ ...org, description: null, communityName: null })
+      if (reference) references.push(reference)
+    }
+  }
+
+  const promptSections = [buildCivilAiContextPrompt(viewerContext)]
+  if (viewerContext) {
+    promptSections.push(
+      '',
+      'Fresh Civil data for this question:',
+      JSON.stringify(
+        {
+          question: latestQuestion,
+          retrievalPlan: retrieval,
+          targetCommunities,
+          events: usableEvents.slice(0, 8),
+          jobs: usableJobs.slice(0, 8),
+          organizations: usableOrganizations.slice(0, 8),
+          posts: usablePosts.slice(0, 8),
+        },
+        null,
+        2,
+      ),
+      '',
+      'Answering rules for fetched Civil data:',
+      '- Use the fetched Civil data when it answers the user directly.',
+      '- If there are no matching results, say so plainly.',
+      '- Do not mention old or unrelated far-away events when the user asks about what is near them.',
+      '- For posts and organizations, stay anchored to the returned local community data unless the user explicitly asks to broaden the search.',
+      '- When helpful, mention linked Civil items from the fetched data naturally in the answer.',
+    )
+  }
+
+  return {
+    viewerContext,
+    references: references.slice(0, 8),
+    prompt: promptSections.join('\n'),
+  }
+}
+
 app.get('/ai/servers', async (_req: FastifyRequest, reply: FastifyReply) => {
   const config = await loadCivilAiServersConfig()
   const instructions = await readCivilAiInstructions()
@@ -6641,6 +7659,121 @@ app.get('/ai/history', async (req: FastifyRequest, reply: FastifyReply) => {
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
   return reply.send({ items: readCivilAiHistory(user?.communityMeta ?? null) })
+})
+
+app.get('/ai/context', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access?.userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const viewerContext = await loadCivilAiViewerContext(access.userId)
+  if (!viewerContext) return reply.code(404).send({ error: 'user_not_found' })
+
+  return reply.send({
+    viewer: viewerContext,
+    availableApis: buildCivilAiApiCatalog(viewerContext),
+  })
+})
+
+app.get('/ai/communities/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = CivilAiCommunityIdParams.safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  const community = parseCivilAiCommunityId(params.data.communityId)
+  if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+  return reply.send({
+    community,
+    card: toCivilAiCommunityReference(community),
+  })
+})
+
+app.get('/ai/events/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = CivilAiCommunityIdParams.safeParse(req.params)
+  const query = CivilAiScopedDataQuery.safeParse(req.query ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const result = await loadCivilAiCommunityEvents(params.data.communityId, query.data.when, query.data.limit)
+  if ('error' in result) return reply.code(404).send({ error: result.error })
+
+  return reply.send({
+    community: result.community,
+    when: query.data.when,
+    items: result.items,
+    cards: result.items.map((item) => toCivilAiEventReference(item)),
+  })
+})
+
+app.get('/ai/jobs/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = CivilAiCommunityIdParams.safeParse(req.params)
+  const query = CivilAiScopedDataQuery.safeParse(req.query ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const result = await loadCivilAiCommunityJobs(params.data.communityId, query.data.limit)
+  if ('error' in result) return reply.code(404).send({ error: result.error })
+
+  return reply.send({
+    community: result.community,
+    items: result.items,
+    cards: result.items.map((item) => toCivilAiJobReference(item)).filter((entry): entry is CivilAiCardReference => Boolean(entry)),
+  })
+})
+
+app.get('/ai/organizations/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = CivilAiCommunityIdParams.safeParse(req.params)
+  const query = CivilAiSearchableDataQuery.safeParse(req.query ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const result = await loadCivilAiCommunityOrganizations(params.data.communityId, query.data.limit, query.data.q)
+  if ('error' in result) return reply.code(404).send({ error: result.error })
+
+  const cards: CivilAiCardReference[] = []
+  for (const item of result.items) {
+    const card = toCivilAiOrganizationReference(item)
+    if (card) cards.push(card)
+  }
+
+  return reply.send({
+    community: result.community,
+    query: query.data.q ?? null,
+    items: result.items,
+    cards,
+  })
+})
+
+app.get('/ai/posts/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = CivilAiCommunityIdParams.safeParse(req.params)
+  const query = CivilAiSearchableDataQuery.safeParse(req.query ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const result = await loadCivilAiCommunityPosts(params.data.communityId, query.data.limit, query.data.q)
+  if ('error' in result) return reply.code(404).send({ error: result.error })
+
+  const cards = result.items.map((item) => toCivilAiPostReference(item))
+
+  return reply.send({
+    community: result.community,
+    query: query.data.q ?? null,
+    items: result.items,
+    cards,
+  })
 })
 
 app.get('/ai/models', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -6757,6 +7890,7 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
   const body = CivilAiChatInput.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
   const userId = await resolveUserId(req)
+  const latestUserMessage = [...body.data.messages].reverse().find((message) => message.role === 'user')?.content?.trim() ?? ''
 
   const resolved = await resolveCivilAiServer(body.data.serverId)
   if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
@@ -6764,14 +7898,16 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
   if (!resolvedModel) return reply.code(503).send({ error: 'no_ai_model_available' })
 
   const instructions = await readCivilAiInstructions()
+  const retrievalBundle = await buildCivilAiRetrievalBundle(userId ?? null, latestUserMessage)
+  const combinedInstructions = [instructions.content, retrievalBundle.prompt].filter(Boolean).join('\n\n')
   const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    { role: 'system', content: instructions.content },
+    { role: 'system', content: combinedInstructions },
     ...body.data.messages.map((message) => ({
       role: message.role as 'system' | 'user' | 'assistant',
       content: message.content,
     })),
   ]
-  const input = buildCivilAiPromptInput(instructions.content, upstreamMessages)
+  const input = buildCivilAiPromptInput(combinedInstructions, upstreamMessages)
 
   const upstream = await callCivilAiServer({
     server: resolved.server,
@@ -6816,9 +7952,11 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
     message: {
       role: 'assistant',
       content,
+      references: retrievalBundle.references,
     },
     model: resolvedModel,
     server: resolved.server,
+    viewerContext: retrievalBundle.viewerContext,
     history: persistedHistory,
     raw: upstream.json,
   })
