@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'crypto'
 import { prisma } from '@civil/db'
 import { expect, describe, test, beforeAll, afterAll } from 'vitest'
+import { truncateTables } from './testDbGuard'
 
 const truncateForFlow = async () => {
   const tables = [
@@ -16,9 +17,7 @@ const truncateForFlow = async () => {
     'Post',
     'User',
   ]
-  for (const table of tables) {
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE`)
-  }
+  await truncateTables(tables)
 }
 
 const authHeader = (token: string) => ({ authorization: `Bearer ${token}` })

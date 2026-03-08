@@ -9,7 +9,7 @@ export default function HomePage() {
       <FeedPageClient
         scope="all"
         sidebarActive="home"
-        title="Civic Pulse"
+        title="Civil Pulse"
         defaultSort="hot"
         sortOptions={[
           {

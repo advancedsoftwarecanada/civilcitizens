@@ -209,6 +209,9 @@ Recommended mix:
 
 If one category has no content, its share is redistributed.
 
+Within those weights, each home-feed build randomizes which category is pulled next so refreshes do not feel static.
+That randomization should stay stable for the duration of one pagination session, then reshuffle on a fresh load.
+
 Seen Content Recycling
 
 Once a user has seen all available posts:

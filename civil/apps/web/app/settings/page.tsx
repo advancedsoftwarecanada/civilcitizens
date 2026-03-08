@@ -11,7 +11,6 @@ import {
   HiOutlineBuildingLibrary,
   HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
-  HiOutlineFlag,
   HiOutlineShoppingBag,
   HiOutlineTrash,
   HiOutlineUserCircle,
@@ -20,6 +19,7 @@ import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import Modal from '../_components/Modal'
+import { RightRail } from '../_components/RightRail'
 import type { MeResponse } from '../_lib/me'
 import { hasHomeCommunity } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
@@ -53,7 +53,7 @@ type SettingsActionCardItem = {
   href?: string
   onClick?: () => void
   icon: IconType
-  tone?: 'default' | 'danger'
+  tone?: 'default' | 'danger' | 'warning' | 'admin'
 }
 
 type SettingsActionCardProps = {
@@ -62,7 +62,7 @@ type SettingsActionCardProps = {
   icon: IconType
   href?: string
   onClick?: () => void
-  tone?: 'default' | 'danger'
+  tone?: 'default' | 'danger' | 'warning' | 'admin'
 }
 
 type SettingsToggleCardProps = {
@@ -136,16 +136,32 @@ function SettingsActionCard({
     'rounded-2xl border p-4 text-left transition hover:bg-slate-50',
     tone === 'danger'
       ? 'border-rose-200 bg-rose-50/40 hover:border-rose-300 hover:bg-rose-50/60'
-      : 'border-slate-200 bg-white',
+      : tone === 'warning'
+        ? 'border-amber-200 bg-amber-50/60 hover:border-amber-300 hover:bg-amber-100/70'
+        : tone === 'admin'
+          ? 'border-slate-950 bg-slate-950 hover:border-amber-300 hover:bg-black'
+          : 'border-slate-200 bg-white',
   )
   const iconShellClassName = clsx(
     'rounded-xl border p-2 transition',
     tone === 'danger'
       ? 'border-rose-200 bg-rose-50 text-rose-600'
-      : 'border-slate-200 bg-slate-50 text-slate-700',
+      : tone === 'warning'
+        ? 'border-amber-200 bg-amber-100 text-amber-700'
+        : tone === 'admin'
+          ? 'border-amber-300/50 bg-amber-300/10 text-amber-300'
+          : 'border-slate-200 bg-slate-50 text-slate-700',
   )
-  const labelClassName = tone === 'danger' ? 'text-rose-700' : 'text-slate-900'
-  const descriptionClassName = tone === 'danger' ? 'text-rose-700/80' : 'text-slate-500'
+  const labelClassName =
+    tone === 'danger' ? 'text-rose-700' : tone === 'warning' ? 'text-amber-800' : tone === 'admin' ? 'text-amber-300' : 'text-slate-900'
+  const descriptionClassName =
+    tone === 'danger'
+      ? 'text-rose-700/80'
+      : tone === 'warning'
+        ? 'text-amber-800/80'
+        : tone === 'admin'
+          ? 'text-amber-100/80'
+          : 'text-slate-500'
 
   const content = (
     <div className="flex items-start gap-3">
@@ -479,6 +495,7 @@ export default function SettingsPage() {
         description: 'End your current session on this device.',
         onClick: () => setShowLogoutConfirm(true),
         icon: HiOutlineArrowRightOnRectangle,
+        tone: 'warning',
       },
       {
         key: 'delete',
@@ -502,18 +519,12 @@ export default function SettingsPage() {
 
     if (isAdminViewer) {
       items.push({
-        key: 'moderation',
-        label: 'Reports & Support',
-        description: 'Review quarantined content, customer-service requests, and feature requests.',
-        href: '/settings/admin/reports',
-        icon: HiOutlineFlag,
-      })
-      items.push({
         key: 'admin',
         label: 'Admin Dashboard',
-        description: 'Open platform diagnostics and moderation controls.',
+        description: 'Open platform diagnostics, reports, support queues, and moderation controls.',
         href: '/admin',
         icon: HiOutlineCog8Tooth,
+        tone: 'admin',
       })
     }
 
@@ -580,7 +591,11 @@ export default function SettingsPage() {
   const panelEyebrow = useMemo(() => `${viewerDisplayName.toUpperCase()} · ACCOUNT`, [viewerDisplayName])
 
   return (
-    <DashboardShell className="bg-slate-50" mainClassName="space-y-6">
+    <DashboardShell
+      className="bg-slate-50"
+      mainClassName="space-y-6"
+      rightRail={<RightRail showOrganizations showRsvps sticky={false} />}
+    >
       <SettingsPanelSection
         id="notifications"
         eyebrow="Notifications"
@@ -681,7 +696,7 @@ export default function SettingsPage() {
               onClick={() => {
                 void handleLogout()
               }}
-              className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700"
+              className="rounded-full bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-300"
             >
               Log Out
             </button>

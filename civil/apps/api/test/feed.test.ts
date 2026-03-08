@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'crypto'
-import { FriendshipStatus, PollResultsVisibility, prisma } from '@civil/db'
+import { ConnectionStatus, FriendshipStatus, PollResultsVisibility, prisma } from '@civil/db'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
+import { truncateTables } from './testDbGuard'
 
 const truncateAll = async () => {
   const tables = [
@@ -16,9 +17,7 @@ const truncateAll = async () => {
     'Post',
     'User',
   ]
-  for (const table of tables) {
-    await prisma.$executeRawUnsafe(`TRUNCATE TABLE "${table}" CASCADE`)
-  }
+  await truncateTables(tables)
 }
 
 const authHeader = (token: string) => ({ authorization: `Bearer ${token}` })
@@ -149,6 +148,8 @@ describe('home feed and profile visibility', () => {
         name: 'Poll Visibility Org',
         slug: `poll-visibility-org-${randomUUID().slice(0, 8)}`,
         status: 'ACTIVE',
+        provinceCode: 'ON',
+        communitySlug: 'test-town',
       },
     })
 
@@ -199,5 +200,185 @@ describe('home feed and profile visibility', () => {
       select: { resultsVisibility: true },
     })
     expect(persistedPoll?.resultsVisibility).toBe(PollResultsVisibility.AFTER_VOTE)
+  })
+
+  test('smart home feed uses seeded weighted mixing with stable pagination', async () => {
+    const viewer = await registerUser(app, 'Smart', 'Viewer')
+    const friend = await registerUser(app, 'Smart', 'Friend')
+    const connection = await registerUser(app, 'Smart', 'Connection')
+    const communityAuthor = await registerUser(app, 'Smart', 'Community')
+    const eventAuthor = await registerUser(app, 'Smart', 'Event')
+    const marketAuthor = await registerUser(app, 'Smart', 'Market')
+    const orgOwner = await registerUser(app, 'Smart', 'Org')
+
+    await prisma.friendship.create({
+      data: {
+        requesterId: viewer.id,
+        addresseeId: friend.id,
+        status: FriendshipStatus.ACCEPTED,
+        respondedAt: new Date(),
+      },
+    })
+
+    await prisma.connection.create({
+      data: {
+        requesterId: viewer.id,
+        addresseeId: connection.id,
+        status: ConnectionStatus.ACCEPTED,
+        respondedAt: new Date(),
+      },
+    })
+
+    await prisma.communityFollow.create({
+      data: {
+        userId: viewer.id,
+        provinceCode: 'ON',
+        communitySlug: 'seed-town',
+        home: true,
+      },
+    })
+
+    const business = await prisma.business.create({
+      data: {
+        ownerId: orgOwner.id,
+        name: 'Seeded Mix Org',
+        slug: `seeded-mix-org-${randomUUID().slice(0, 8)}`,
+        status: 'ACTIVE',
+      },
+    })
+
+    await prisma.businessFollow.create({
+      data: {
+        userId: viewer.id,
+        businessId: business.id,
+      },
+    })
+
+    const now = Date.now()
+    const basePostData = {
+      visibility: 'public' as const,
+      provinceCode: 'ON',
+      communitySlug: 'seed-town',
+      jurisdiction: 'municipal' as const,
+      lastActivityAt: new Date(now),
+      createdAt: new Date(now),
+      updatedAt: new Date(now),
+    }
+
+    const friendPost = await app.inject({
+      method: 'POST',
+      url: '/posts',
+      headers: authHeader(friend.token),
+      payload: {
+        type: 'post',
+        audience: 'friends',
+        body: 'Friend bucket post',
+      },
+    })
+    expect(friendPost.statusCode).toBe(201)
+
+    const networkPost = await app.inject({
+      method: 'POST',
+      url: '/posts',
+      headers: authHeader(connection.token),
+      payload: {
+        type: 'post',
+        audience: 'network',
+        body: 'Network bucket post',
+      },
+    })
+    expect(networkPost.statusCode).toBe(201)
+
+    const communityPost = await prisma.post.create({
+      data: {
+        authorId: communityAuthor.id,
+        audience: 'community',
+        body: 'Community bucket post',
+        type: 'post',
+        ...basePostData,
+      },
+    })
+
+    const eventPost = await prisma.post.create({
+      data: {
+        authorId: eventAuthor.id,
+        audience: 'community',
+        body: 'Event bucket post',
+        type: 'event',
+        ...basePostData,
+      },
+    })
+
+    const marketPost = await prisma.post.create({
+      data: {
+        authorId: marketAuthor.id,
+        audience: 'community',
+        body: 'Market bucket post',
+        type: 'market',
+        ...basePostData,
+      },
+    })
+
+    const organizationPost = await prisma.post.create({
+      data: {
+        authorId: orgOwner.id,
+        businessId: business.id,
+        audience: 'organization',
+        body: 'Organization bucket post',
+        type: 'post',
+        ...basePostData,
+      },
+    })
+
+    const seededFirstPageA = await app.inject({
+      method: 'GET',
+      url: '/posts?scope=all&sort=hot&limit=3&cursor=rank:101:0',
+      headers: authHeader(viewer.token),
+    })
+    expect(seededFirstPageA.statusCode).toBe(200)
+    const payloadA = seededFirstPageA.json() as { items?: Array<{ id: string }>; nextCursor?: string }
+    const pageAIds = (payloadA.items ?? []).map((item) => item.id)
+    expect(pageAIds).toHaveLength(3)
+    expect(payloadA.nextCursor).toBe('rank:101:3')
+
+    const seededSecondPageA = await app.inject({
+      method: 'GET',
+      url: `/posts?scope=all&sort=hot&limit=3&cursor=${encodeURIComponent(payloadA.nextCursor ?? '')}`,
+      headers: authHeader(viewer.token),
+    })
+    expect(seededSecondPageA.statusCode).toBe(200)
+    const payloadASecond = seededSecondPageA.json() as { items?: Array<{ id: string }>; nextCursor?: string }
+    const pageASecondIds = (payloadASecond.items ?? []).map((item) => item.id)
+    expect(pageASecondIds).toHaveLength(3)
+    expect(new Set([...pageAIds, ...pageASecondIds]).size).toBe(6)
+    expect(payloadASecond.nextCursor).toBeUndefined()
+
+    const seededFirstPageARepeat = await app.inject({
+      method: 'GET',
+      url: '/posts?scope=all&sort=hot&limit=3&cursor=rank:101:0',
+      headers: authHeader(viewer.token),
+    })
+    expect(seededFirstPageARepeat.statusCode).toBe(200)
+    const payloadARepeat = seededFirstPageARepeat.json() as { items?: Array<{ id: string }> }
+    expect((payloadARepeat.items ?? []).map((item) => item.id)).toEqual(pageAIds)
+
+    const seededFirstPageB = await app.inject({
+      method: 'GET',
+      url: '/posts?scope=all&sort=hot&limit=6&cursor=rank:202:0',
+      headers: authHeader(viewer.token),
+    })
+    expect(seededFirstPageB.statusCode).toBe(200)
+    const payloadB = seededFirstPageB.json() as { items?: Array<{ id: string }> }
+    const pageBIds = (payloadB.items ?? []).map((item) => item.id)
+    expect(pageBIds).toHaveLength(6)
+    expect(pageBIds).toEqual(expect.arrayContaining([
+      (friendPost.json() as { id: string }).id,
+      (networkPost.json() as { id: string }).id,
+      communityPost.id,
+      eventPost.id,
+      marketPost.id,
+      organizationPost.id,
+    ]))
+    expect(pageBIds).not.toEqual([...pageAIds, ...pageASecondIds])
   })
 })

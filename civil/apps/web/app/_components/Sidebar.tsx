@@ -43,7 +43,7 @@ export type SidebarNavItem = {
 }
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
-  { key: 'home', label: 'Civic Pulse', href: '/home', icon: HiOutlineHome },
+  { key: 'home', label: 'Civil Pulse', href: '/home', icon: HiOutlineHome },
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
   { key: 'network', label: 'Network', href: '/network', icon: HiOutlineBriefcase },

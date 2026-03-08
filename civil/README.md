@@ -69,6 +69,12 @@ SSE_ORIGIN=http://localhost:3000
 NEXT_PUBLIC_API_BASE=http://localhost:3000
 ```
 
+## Test safety
+
+- Do not run destructive API tests against the shared dev database named `civil`.
+- The default API test command rewrites `DATABASE_URL` to `civil_test`.
+- If you need a custom test database, set `API_TEST_DATABASE_URL` to a database name containing `test`.
+
 ## Database model (Prisma snippet)
 
 `packages/db/schema.prisma` (core tables only)

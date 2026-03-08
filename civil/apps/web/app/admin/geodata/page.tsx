@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import DashboardShell from '../../_components/DashboardShell'
+import AdminWideShell from '../_components/AdminWideShell'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { clearAuthSession } from '../../_lib/authSession'
@@ -131,11 +131,8 @@ export default function AdminGeodataPage() {
   }
 
   return (
-    <DashboardShell
-      className="bg-slate-50"
-      mainClassName="space-y-6"
-    >
+    <AdminWideShell className="bg-slate-50" mainClassName="space-y-6">
       {renderMain()}
-    </DashboardShell>
+    </AdminWideShell>
   )
 }
