@@ -266,7 +266,7 @@ type CivilAiHistoryEntry = {
 }
 
 type CivilAiCardReference = {
-  kind: 'community' | 'event' | 'job' | 'organization' | 'post'
+  kind: 'community' | 'event' | 'job' | 'market' | 'organization' | 'post'
   id: string
   title: string
   subtitle: string | null
@@ -393,6 +393,7 @@ function readCivilAiHistory(meta: Prisma.JsonValue | null | undefined): CivilAiH
                 candidate.kind === 'community' ||
                 candidate.kind === 'event' ||
                 candidate.kind === 'job' ||
+                candidate.kind === 'market' ||
                 candidate.kind === 'organization' ||
                 candidate.kind === 'post'
                   ? candidate.kind
@@ -718,6 +719,14 @@ function formatCivilAiCommunityNames(
   return `${unique.slice(0, -1).join(', ')}, and ${unique[unique.length - 1]}`
 }
 
+function formatCivilAiSearchScopeLabel(
+  communities: Array<{
+    communityName: string
+  }>,
+) {
+  return communities.length > 1 ? 'your searched Civil communities' : formatCivilAiCommunityNames(communities)
+}
+
 type CivilAiGroundingBundle = {
   retrievalPlan: CivilAiRetrievalPlan
   searchPass: 1 | 2
@@ -731,6 +740,7 @@ type CivilAiGroundingBundle = {
   }>
   events: CivilAiEventDataItem[]
   jobs: CivilAiJobDataItem[]
+  market: MarketSearchResultPayload[]
   organizations: CivilAiOrganizationDataItem[]
   posts: CivilAiPostDataItem[]
 }
@@ -755,20 +765,53 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
   const profileIntent = detectCivilAiProfileIntent(question)
   const asksEvents = bundle.retrievalPlan.wantsEvents
   const asksJobs = bundle.retrievalPlan.wantsJobs
+  const asksMarket = bundle.retrievalPlan.wantsMarket
   const asksOrganizations = bundle.retrievalPlan.wantsOrganizations
   const asksPosts = bundle.retrievalPlan.wantsPosts
-  const eventIntent = /(what(?:'s| is) happening|going on|anything happening|event|events|today|tonight|this afternoon|this evening|near me|nearby)/.test(normalized)
+  const eventIntent = /(what(?:'s| is) happening|going on|anything happening|event|events|meetup|meetups|metup|metups|networking|networking event|networking events|today|tonight|this afternoon|this evening|near me|nearby|attend)/.test(normalized)
   const jobIntent = /(job|jobs|hiring|employment|position|positions|open role|open roles|work near me|jobs near me)/.test(normalized)
+  const marketIntent = /(buy|buying|looking for|looking to buy|where can i buy|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalized)
   const organizationIntent = /(organization|organizations|group|groups|association|associations|who should i talk to|who is working on|which org|which organization|which organizations|which groups)/.test(normalized)
   const postIntent = /(post|posts|discussion|discussions|conversation|conversations|debate|debates|people saying|talking about|discussing|buzz)/.test(normalized)
   const targetLabel = formatCivilAiCommunityNames(bundle.targetCommunities)
+  const scopeLabel = formatCivilAiSearchScopeLabel(bundle.targetCommunities)
   const requestedSources = [
     bundle.retrievalPlan.wantsEvents,
     bundle.retrievalPlan.wantsJobs,
+    bundle.retrievalPlan.wantsMarket,
     bundle.retrievalPlan.wantsOrganizations,
     bundle.retrievalPlan.wantsPosts,
   ].filter(Boolean).length
-  const totalMatches = bundle.events.length + bundle.jobs.length + bundle.organizations.length + bundle.posts.length
+  const totalMatches = bundle.events.length + bundle.jobs.length + bundle.market.length + bundle.organizations.length + bundle.posts.length
+
+  if (asksMarket && marketIntent) {
+    const references = bundle.market.slice(0, 4).map((listing) => toCivilAiMarketReference(listing))
+    if (!bundle.market.length) {
+      return {
+        content: [
+          'I do not see any active marketplace listings in current Civil data that match this search.',
+          'Civil AI only has access to the internal Civil marketplace results returned for this question, so I will not invent listings that are not in the database.',
+          'If you want, I can try a broader item keyword or a different product search.',
+        ].join('\n\n'),
+        references: [] as CivilAiCardReference[],
+      }
+    }
+
+    const lines = bundle.market.slice(0, 4).map((listing) => {
+      const price = listing.priceLabel?.trim() ? ` (${listing.priceLabel.trim()})` : ''
+      const location = listing.locationLabel?.trim() ? ` in ${listing.locationLabel.trim()}` : ''
+      const description = listing.description?.trim() ? ` ${listing.description.trim()}` : ''
+      return `- ${listing.title}${price}${location}.${description}`
+    })
+    const countLine = bundle.market.length === 1
+      ? 'I found 1 active marketplace listing in current Civil data:'
+      : `I found ${bundle.market.length} active marketplace listings in current Civil data:`
+
+    return {
+      content: [countLine, ...lines, 'I am only listing marketplace items that exist in Civil right now.'].join('\n'),
+      references,
+    }
+  }
 
   if (asksEvents && eventIntent) {
     const references = bundle.events.slice(0, 4).map((event) => toCivilAiEventReference(event))
@@ -788,12 +831,13 @@ export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGrou
 
     const lines = bundle.events.slice(0, 4).map((event) => {
       const orgName = event.organization.name.trim()
-      const description = event.description?.trim() ? ` ${event.description.trim()}` : ''
+      const descriptionText = truncatePreviewText(stripHtmlToPlainText(event.description ?? ''), 240)
+      const description = descriptionText ? ` ${descriptionText}` : ''
       return `- ${event.title} (${formatCivilAiShortDateTime(event.startsAt)}) via ${orgName}.${description}`
     })
     const countLine = bundle.events.length === 1
-      ? `I found 1 event in current Civil data for ${targetLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
-      : `I found ${bundle.events.length} events in current Civil data for ${targetLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
+      ? `I found 1 event in current Civil data for ${scopeLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
+      : `I found ${bundle.events.length} events in current Civil data for ${scopeLabel}${bundle.retrievalPlan.todayOnly ? ' today' : ''}:`
 
     return {
       content: [countLine, ...lines, 'I am only listing events that exist in Civil right now.'].join('\n'),
@@ -1632,6 +1676,11 @@ function buildCivilAiApiCatalog(viewerContext: CivilAiViewerContext | null) {
       purpose: 'Active jobs in a community from local organizations or local job locations.',
     },
     {
+      name: 'Marketplace Listings',
+      endpoint: `${apiBaseUrl}/ai/market?q=skateboard`,
+      purpose: 'Active marketplace listings that match a shopping or buying query.',
+    },
+    {
       name: 'Community Organizations',
       endpoint: `${apiBaseUrl}/ai/organizations/${encodeURIComponent(suggestedCommunityId)}`,
       purpose: 'Active organizations in a specific community, optionally filtered by a topic query.',
@@ -1709,6 +1758,7 @@ type CivilAiRetrievalPlan = {
   wantsProfile: boolean
   wantsEvents: boolean
   wantsJobs: boolean
+  wantsMarket: boolean
   wantsCommunities: boolean
   wantsOrganizations: boolean
   wantsPosts: boolean
@@ -1716,6 +1766,7 @@ type CivilAiRetrievalPlan = {
   topicQuery: string
   eventLimit: number
   jobLimit: number
+  marketLimit: number
   organizationLimit: number
   postLimit: number
   includeViewerOrganizations: boolean
@@ -1735,6 +1786,8 @@ const CIVIL_AI_TOPIC_STOPWORDS = new Set([
   'association',
   'associations',
   'at',
+  'buy',
+  'buying',
   'can',
   'city',
   'communities',
@@ -1763,6 +1816,7 @@ const CIVIL_AI_TOPIC_STOPWORDS = new Set([
   'my',
   'near',
   'nearby',
+  'need',
   'of',
   'on',
   'organization',
@@ -1771,6 +1825,10 @@ const CIVIL_AI_TOPIC_STOPWORDS = new Set([
   'post',
   'posts',
   'saying',
+  'sell',
+  'selling',
+  'shop',
+  'shopping',
   'talking',
   'that',
   'the',
@@ -1781,6 +1839,7 @@ const CIVIL_AI_TOPIC_STOPWORDS = new Set([
   'tonight',
   'town',
   'upcoming',
+  'want',
   'what',
   'where',
   'work',
@@ -1802,8 +1861,9 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   const topicQuery = extractCivilAiTopicQuery(question)
   const profileIntent = detectCivilAiProfileIntent(question)
 
-  const explicitEvents = /(event|events|festival|meeting|parade|rally)/.test(normalized)
+  const explicitEvents = /(event|events|festival|meeting|meetup|meetups|metup|metups|networking|networking event|networking events|parade|rally|attend)/.test(normalized)
   const explicitJobs = /(job|jobs|hiring|employment|position|positions|open role|open roles)/.test(normalized)
+  const explicitMarket = /(buy|buying|looking for|looking to buy|where can i buy|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalized)
   const explicitOrganizations = /(organization|organizations|group|groups|association|associations)/.test(normalized)
   const explicitPosts = /(post|posts|discussion|discussions|conversation|conversations|debate|debates)/.test(normalized)
   const asksWhatIsHappening = /(what(?:'s| is) happening|going on|anything happening|what(?:'s| is) going on)/.test(normalized)
@@ -1816,6 +1876,7 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
 
   let wantsEvents = explicitEvents || asksWhatIsHappening || todayOnly
   let wantsJobs = explicitJobs
+  let wantsMarket = explicitMarket
   let wantsOrganizations = explicitOrganizations || asksWhichGroupsMatter
   let wantsPosts = explicitPosts || asksWhatPeopleAreSaying
   const wantsCommunities = asksLocalContext
@@ -1823,6 +1884,7 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   if (profileIntent.wantsProfile) {
     wantsEvents = false
     wantsJobs = false
+    wantsMarket = false
     wantsOrganizations = false
     wantsPosts = false
   }
@@ -1831,18 +1893,18 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
     if (hasIssueTopic && asksWhatPeopleAreSaying) wantsPosts = true
     if (hasIssueTopic && asksWhichGroupsMatter) wantsOrganizations = true
 
-    if (hasIssueTopic && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+    if (hasIssueTopic && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts) {
       wantsPosts = true
       wantsOrganizations = true
     }
 
-    if ((asksOverview || asksLocalContext) && !wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+    if ((asksOverview || asksLocalContext) && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts) {
       wantsEvents = true
       wantsPosts = true
       wantsOrganizations = true
     }
 
-    if (!wantsEvents && !wantsJobs && !wantsOrganizations && !wantsPosts) {
+    if (!wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts) {
       wantsPosts = true
       wantsOrganizations = hasIssueTopic
     }
@@ -1852,6 +1914,7 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   if (profileIntent.wantsProfile) reasons.push('profile or identity intent detected')
   if (wantsEvents) reasons.push(todayOnly ? 'time-sensitive local activity requested' : 'activity or happenings requested')
   if (wantsJobs) reasons.push('employment intent detected')
+  if (wantsMarket) reasons.push('shopping or marketplace intent detected')
   if (wantsPosts) reasons.push(asksWhatPeopleAreSaying ? 'public conversation intent detected' : 'local discussion context may help answer')
   if (wantsOrganizations) reasons.push(asksWhichGroupsMatter ? 'organization discovery intent detected' : 'local groups may help answer')
 
@@ -1859,6 +1922,7 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
     wantsProfile: profileIntent.wantsProfile,
     wantsEvents,
     wantsJobs,
+    wantsMarket,
     wantsCommunities,
     wantsOrganizations,
     wantsPosts,
@@ -1866,6 +1930,7 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
     topicQuery,
     eventLimit: wantsEvents ? (todayOnly || asksWhatIsHappening ? 6 : 4) : 0,
     jobLimit: wantsJobs ? 4 : 0,
+    marketLimit: wantsMarket ? 4 : 0,
     organizationLimit: wantsOrganizations ? (asksWhichGroupsMatter || hasIssueTopic ? 4 : 3) : 0,
     postLimit: wantsPosts ? (asksWhatPeopleAreSaying || hasIssueTopic ? 5 : 3) : 0,
     includeViewerOrganizations: wantsOrganizations || asksWhichGroupsMatter,
@@ -1893,11 +1958,11 @@ function shouldCivilAiRunSecondSearch(question: string, bundle: Awaited<ReturnTy
   if (bundle.grounding.searchPass >= 2) return false
 
   const resultCounts = bundle.debug.resultCounts
-  const totalMatches = resultCounts.events + resultCounts.jobs + resultCounts.organizations + resultCounts.posts
+  const totalMatches = resultCounts.events + resultCounts.jobs + resultCounts.market + resultCounts.organizations + resultCounts.posts
   if (totalMatches > 0) return false
 
   const retrievalPlan = bundle.debug.retrievalPlan as CivilAiRetrievalPlan
-  const hasBroaderCommunities = bundle.debug.availableCommunityCount > bundle.debug.targetCommunities.length
+  const hasBroaderCommunities = !retrievalPlan.wantsMarket && bundle.debug.availableCommunityCount > bundle.debug.targetCommunities.length
   const canRelaxTopicQuery = Boolean(retrievalPlan.topicQuery && (retrievalPlan.wantsOrganizations || retrievalPlan.wantsPosts))
   return hasBroaderCommunities || canRelaxTopicQuery
 }
@@ -8155,11 +8220,14 @@ async function loadCivilAiCommunityOrganizations(communityId: string, limit: num
   }
 }
 
-async function loadCivilAiCommunityPosts(communityId: string, limit: number, query?: string) {
+async function loadCivilAiCommunityPosts(communityId: string, limit: number, query?: string, viewerFeedContext?: ViewerFeedContext | null) {
   const parsed = parseCivilAiCommunityId(communityId)
   if (!parsed) return { error: 'community_not_found' as const }
 
   const normalizedQuery = normalizeSearchTerm(query ?? '')
+  const allowedAuthorIds = viewerFeedContext
+    ? Array.from(new Set([viewerFeedContext.viewerId, ...viewerFeedContext.friendIds]))
+    : []
   type CivilAiPostRow = Prisma.PostGetPayload<{
     include: {
       author: true
@@ -8169,9 +8237,23 @@ async function loadCivilAiCommunityPosts(communityId: string, limit: number, que
 
   const posts: CivilAiPostRow[] = await prisma.post.findMany({
     where: {
-      visibility: 'public',
       provinceCode: parsed.provinceCode,
       communitySlug: parsed.communitySlug,
+      AND: [
+        {
+          OR: [
+            { visibility: 'public' },
+            ...(allowedAuthorIds.length
+              ? [
+                  {
+                    authorId: { in: allowedAuthorIds },
+                    businessId: null,
+                  } satisfies Prisma.PostWhereInput,
+                ]
+              : []),
+          ],
+        },
+      ],
     },
     orderBy: [{ createdAt: 'desc' }],
     take: Math.max(limit * 4, 24),
@@ -8352,6 +8434,19 @@ function toCivilAiJobReference(job: CivilAiJobDataItem): CivilAiCardReference | 
   }
 }
 
+function toCivilAiMarketReference(listing: MarketSearchResultPayload): CivilAiCardReference {
+  return {
+    kind: 'market',
+    id: listing.id,
+    title: listing.title,
+    subtitle: [listing.priceLabel, listing.locationLabel].filter(Boolean).join(' • ') || 'Marketplace listing',
+    summary: listing.description ?? null,
+    href: listing.href,
+    imageUrl: listing.imageUrl,
+    badge: 'Market',
+  }
+}
+
 function toCivilAiOrganizationReference(org: {
   id: string
   name: string
@@ -8393,6 +8488,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
   const searchPass = options?.searchPass ?? 1
   const retrieval = planCivilAiRetrieval(latestQuestion)
   const topicQuery = searchPass === 1 ? retrieval.topicQuery : ''
+  const marketQuery = retrieval.topicQuery || normalizeSearchTerm(latestQuestion)
   const requestedCommunities = matchCivilAiRequestedCommunities(latestQuestion, viewerContext)
   const nearbyCommunities = viewerContext ? viewerContext.nearbyCommunities.slice(0, searchPass === 1 ? 2 : 8) : []
   const followedCommunities = viewerContext ? viewerContext.followedCommunities.slice(0, searchPass === 1 ? 3 : 8) : []
@@ -8408,11 +8504,14 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
   const jobResults = retrieval.wantsJobs && targetCommunities.length
     ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityJobs(community.id, retrieval.jobLimit)))
     : []
+  const marketResults = retrieval.wantsMarket && marketQuery
+    ? await searchMarketListingsForQuery(marketQuery, retrieval.marketLimit)
+    : []
   const organizationResults = retrieval.wantsOrganizations && targetCommunities.length
     ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityOrganizations(community.id, retrieval.organizationLimit, topicQuery || undefined)))
     : []
   const postResults = retrieval.wantsPosts && targetCommunities.length
-    ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityPosts(community.id, retrieval.postLimit, topicQuery || undefined)))
+    ? await Promise.all(targetCommunities.map((community) => loadCivilAiCommunityPosts(community.id, retrieval.postLimit, topicQuery || undefined, viewerContext?.feedContext ?? null)))
     : []
 
   const usableEvents: CivilAiEventDataItem[] = []
@@ -8439,6 +8538,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
     const reference = toCivilAiJobReference(job)
     if (reference) references.push(reference)
   }
+  for (const listing of marketResults.slice(0, 4)) references.push(toCivilAiMarketReference(listing))
   for (const post of usablePosts.slice(0, 4)) references.push(toCivilAiPostReference(post))
   for (const org of usableOrganizations.slice(0, 4)) {
     const reference = toCivilAiOrganizationReference(org)
@@ -8453,6 +8553,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
 
   const summarizedEvents = usableEvents.slice(0, 6).map((event) => `- ${event.title} | ${formatCivilAiShortDateTime(event.startsAt)} | ${event.organization.name}`)
   const summarizedJobs = usableJobs.slice(0, 6).map((job) => `- ${job.title} | ${job.organization.name} | ${truncateCivilAiText(job.location || 'location unavailable', 80)}`)
+  const summarizedMarket = marketResults.slice(0, 6).map((listing) => `- ${listing.title} | ${listing.priceLabel} | ${truncateCivilAiText(listing.locationLabel ?? 'location unavailable', 80)}`)
   const summarizedOrganizations = usableOrganizations.slice(0, 6).map((organization) => `- ${organization.name} | ${truncateCivilAiText(organization.description ?? 'No description', 120)}`)
   const summarizedPosts = usablePosts.slice(0, 6).map((post) => `- ${post.title} | ${post.author.name || `@${post.author.handle}`} | ${truncateCivilAiText(post.excerpt ?? 'No excerpt', 140)}`)
 
@@ -8465,9 +8566,10 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
       `- Search pass: ${searchPass === 1 ? 'strict local pass' : 'broadened second pass'}`,
       `- Retrieval reasons: ${retrieval.reasons.length ? retrieval.reasons.join('; ') : 'none'}`,
       `- Target communities: ${buildCivilAiCompactList(targetCommunities.map((community) => community.communityName), 'none', 4)}`,
-      `- Result counts: events=${usableEvents.length}; jobs=${usableJobs.length}; organizations=${usableOrganizations.length}; posts=${usablePosts.length}`,
+      `- Result counts: events=${usableEvents.length}; jobs=${usableJobs.length}; market=${marketResults.length}; organizations=${usableOrganizations.length}; posts=${usablePosts.length}`,
       ...(summarizedEvents.length ? ['- Events:', ...summarizedEvents] : []),
       ...(summarizedJobs.length ? ['- Jobs:', ...summarizedJobs] : []),
+      ...(summarizedMarket.length ? ['- Marketplace:', ...summarizedMarket] : []),
       ...(summarizedOrganizations.length ? ['- Organizations:', ...summarizedOrganizations] : []),
       ...(summarizedPosts.length ? ['- Posts:', ...summarizedPosts] : []),
       '',
@@ -8493,6 +8595,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
       targetCommunities,
       events: usableEvents.slice(0, 8),
       jobs: usableJobs.slice(0, 8),
+      market: marketResults.slice(0, 8),
       organizations: usableOrganizations.slice(0, 8),
       posts: usablePosts.slice(0, 8),
     },
@@ -8507,6 +8610,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
       resultCounts: {
         events: usableEvents.length,
         jobs: usableJobs.length,
+        market: marketResults.length,
         organizations: usableOrganizations.length,
         posts: usablePosts.length,
       },
@@ -8602,6 +8706,24 @@ app.get('/ai/jobs/:communityId', async (req: FastifyRequest, reply: FastifyReply
   })
 })
 
+app.get('/ai/market', async (req: FastifyRequest, reply: FastifyReply) => {
+  const access = await authorizeCivilAiDataRequest(req)
+  if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+  const query = CivilAiSearchableDataQuery.safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const normalizedQuery = normalizeSearchTerm(query.data.q ?? '')
+  if (!normalizedQuery) return reply.send({ query: null, items: [], cards: [] })
+
+  const items = await searchMarketListingsForQuery(normalizedQuery, query.data.limit)
+  return reply.send({
+    query: normalizedQuery,
+    items,
+    cards: items.map((item) => toCivilAiMarketReference(item)),
+  })
+})
+
 app.get('/ai/organizations/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
@@ -8637,7 +8759,8 @@ app.get('/ai/posts/:communityId', async (req: FastifyRequest, reply: FastifyRepl
   if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-  const result = await loadCivilAiCommunityPosts(params.data.communityId, query.data.limit, query.data.q)
+  const viewerContext = access.userId ? await loadCivilAiViewerContext(access.userId) : null
+  const result = await loadCivilAiCommunityPosts(params.data.communityId, query.data.limit, query.data.q, viewerContext?.feedContext ?? null)
   if ('error' in result) return reply.code(404).send({ error: result.error })
 
   const cards = result.items.map((item) => toCivilAiPostReference(item))
@@ -8968,6 +9091,7 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
                     targetCommunities: [],
                     events: [],
                     jobs: [],
+                        market: [],
                     organizations: [],
                     posts: [],
                   },
