@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { getProvinceDisplayName, normalizeProvinceCode, type ReactionType } from '@civil/shared'
@@ -53,6 +54,55 @@ type CommunityFollowsResponse = {
   items?: CommunityFollowRow[]
 }
 
+type CommunityEventFeedItem = {
+  id: string
+  title: string
+  description: string | null
+  startsAt: string
+  primaryPhotoUrl: string | null
+  organization: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    isVerified: boolean
+  }
+}
+
+type CommunityEventsResponse = {
+  items?: CommunityEventFeedItem[]
+}
+
+type CommunityJobFeedItem = {
+  id: string
+  title: string
+  photoUrl: string | null
+  employmentType: string
+  salaryMin: number | null
+  salaryMax: number | null
+  salaryCurrency: string | null
+  salaryPeriod: string | null
+  description: string | null
+  location: string
+  publishedAt: string | null
+  organization: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    coverUrl: string | null
+  }
+}
+
+type CommunityJobsResponse = {
+  sponsored?: CommunityJobFeedItem[]
+  items?: CommunityJobFeedItem[]
+}
+
 type OwnedOrganization = {
   id: string
   name: string
@@ -101,6 +151,83 @@ const mapFollowToCommunityTarget = (follow: CommunityFollowRow): CommunityTarget
   }
 }
 
+const buildCommunityKey = (provinceCode: string | null | undefined, communitySlug: string | null | undefined) => {
+  if (!provinceCode || !communitySlug) return null
+  return `${provinceCode.toUpperCase()}:${communitySlug.toLowerCase()}`
+}
+
+function truncatePreview(value: string | null | undefined, maxChars = 140) {
+  const text = (value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .trim()
+    .replace(/\s+/g, ' ')
+
+  if (!text) return null
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars).trimEnd()}…`
+}
+
+function formatCommunityEventDate(isoString: string) {
+  const date = new Date(isoString)
+  if (Number.isNaN(date.getTime())) return 'Upcoming event'
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function parseJobLocationLabel(value: string) {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return 'Location not set'
+  if (trimmed === 'special:remote') return 'Remote'
+  if (trimmed === 'special:not_in_canada') return 'Not in Canada'
+  if (!trimmed.startsWith('community:')) return 'Location not set'
+
+  const body = trimmed.slice('community:'.length)
+  const [head, labelPart] = body.split('|')
+  const [, communitySlug] = (head ?? '').split(':')
+  const label = (labelPart ?? '').trim()
+  if (label) return label
+  return (communitySlug ?? '').replace(/-/g, ' ')
+}
+
+function parseJobLocationKey(value: string) {
+  const trimmed = (value || '').trim()
+  if (!trimmed.startsWith('community:')) return null
+  const body = trimmed.slice('community:'.length)
+  const [head] = body.split('|')
+  const [provinceCode, communitySlug] = (head ?? '').split(':')
+  return buildCommunityKey(provinceCode, communitySlug)
+}
+
+function formatJobSalary(job: CommunityJobFeedItem) {
+  const currency = job.salaryCurrency ?? 'CAD'
+  if (typeof job.salaryMin !== 'number' && typeof job.salaryMax !== 'number') return null
+  const min = typeof job.salaryMin === 'number' ? job.salaryMin.toLocaleString() : null
+  const max = typeof job.salaryMax === 'number' ? job.salaryMax.toLocaleString() : null
+  const range = min && max ? `${currency} ${min} - ${max}` : `${currency} ${min ?? max}`
+  return job.salaryPeriod ? `${range} / ${job.salaryPeriod}` : range
+}
+
+function getCommunityEventHref(event: CommunityEventFeedItem) {
+  if (event.organization.provinceCode && event.organization.communitySlug) {
+    return `/com/${encodeURIComponent(event.organization.provinceCode.toLowerCase())}/${encodeURIComponent(event.organization.communitySlug)}/orgs/${encodeURIComponent(event.organization.slug)}/events/${encodeURIComponent(event.id)}`
+  }
+  return `/events/${encodeURIComponent(event.organization.id)}/${encodeURIComponent(event.id)}`
+}
+
+function getCommunityJobHref(job: CommunityJobFeedItem) {
+  if (!job.organization.provinceCode || !job.organization.communitySlug) return null
+  return `/com/${encodeURIComponent(job.organization.provinceCode.toLowerCase())}/${encodeURIComponent(job.organization.communitySlug)}/orgs/${encodeURIComponent(job.organization.slug)}/jobs/${encodeURIComponent(job.id)}`
+}
+
 export default function FeedPageClient(props: FeedPageClientProps) {
   const {
     scope,
@@ -122,6 +249,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const [memberOrganizations, setMemberOrganizations] = useState<MemberOrganization[]>([])
   const [selectedOrganizationId, setSelectedOrganizationId] = useState('')
   const [posts, setPosts] = useState<ApiPost[]>([])
+  const [communityEvents, setCommunityEvents] = useState<CommunityEventFeedItem[]>([])
+  const [communityJobs, setCommunityJobs] = useState<CommunityJobFeedItem[]>([])
   const [loading, setLoading] = useState(false)
 
   const postableOrganizations = useMemo(() => {
@@ -255,6 +384,69 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       /* noop */
     })
   }, [loadPosts])
+
+  useEffect(() => {
+    const isTopLevelCommunitiesFeed = scope === 'communities' && !province && !community
+    if (!isTopLevelCommunitiesFeed) {
+      setCommunityEvents([])
+      setCommunityJobs([])
+      return
+    }
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) return
+
+    const communityKeys = new Set(
+      communityOptions
+        .map((option) => buildCommunityKey(option.provinceCode, option.communitySlug))
+        .filter((value): value is string => Boolean(value)),
+    )
+
+    const loadCommunityActivity = async () => {
+      try {
+        const [eventsRes, jobsRes] = await Promise.all([
+          fetch(buildApiUrl('/events?limit=24'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+          fetch(buildApiUrl('/work/jobs?limit=40'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        ])
+
+        if (eventsRes.ok) {
+          const payload = (await eventsRes.json().catch(() => null)) as CommunityEventsResponse | null
+          const items = Array.isArray(payload?.items) ? payload.items : []
+          setCommunityEvents(items.slice(0, 6))
+        } else {
+          setCommunityEvents([])
+        }
+
+        if (jobsRes.ok) {
+          const payload = (await jobsRes.json().catch(() => null)) as CommunityJobsResponse | null
+          const combined = [
+            ...(Array.isArray(payload?.sponsored) ? payload.sponsored : []),
+            ...(Array.isArray(payload?.items) ? payload.items : []),
+          ]
+          const filtered = combined.filter((job) => {
+            if (communityKeys.size === 0) return false
+            const organizationKey = buildCommunityKey(job.organization.provinceCode, job.organization.communitySlug)
+            const locationKey = parseJobLocationKey(job.location)
+            return (organizationKey ? communityKeys.has(organizationKey) : false) || (locationKey ? communityKeys.has(locationKey) : false)
+          })
+          setCommunityJobs(filtered.slice(0, 6))
+        } else {
+          setCommunityJobs([])
+        }
+      } catch {
+        setCommunityEvents([])
+        setCommunityJobs([])
+      }
+    }
+
+    void loadCommunityActivity()
+  }, [community, communityOptions, province, scope])
 
   useEffect(() => {
     seenPostIdsRef.current.clear()
@@ -574,6 +766,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       return authorHandle ? authorHandle !== viewerHandleNormalized : true
     })
   }, [hideSelfPosts, posts, viewerHandleNormalized])
+  const isTopLevelCommunitiesFeed = scope === 'communities' && !province && !community
+  const hasCommunityActivity = isTopLevelCommunitiesFeed && (communityEvents.length > 0 || communityJobs.length > 0)
 
   const selectedOrganization = useMemo(() => {
     if (scope !== 'organizations' || !selectedOrganizationId) return null
@@ -759,7 +953,115 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       </section>
 
       <div ref={feedItemsContainerRef} className="min-w-0 space-y-4">
-        {visiblePosts.length === 0 ? (
+        {isTopLevelCommunitiesFeed && communityEvents.length > 0 ? (
+          <section className="surface-card px-6 py-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Events From Your Communities</h2>
+                <p className="text-sm text-slate-500">Upcoming public events from organizations in the communities you follow.</p>
+              </div>
+              <Link href="/events" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">
+                View all
+              </Link>
+            </div>
+            <div className="space-y-3">
+              {communityEvents.map((event) => (
+                <Link
+                  key={event.id}
+                  href={getCommunityEventHref(event)}
+                  className="group flex gap-4 rounded-2xl border border-slate-200 bg-white p-3 transition hover:border-[var(--cc-primary)]/30 hover:bg-slate-50"
+                >
+                  <div className="h-24 w-28 shrink-0 overflow-hidden rounded-xl bg-slate-100">
+                    {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" loading="lazy" /> : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">
+                      <span>Event</span>
+                      <span className="text-slate-300">•</span>
+                      <span className="text-slate-500">{formatCommunityEventDate(event.startsAt)}</span>
+                    </div>
+                    <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{event.title}</h3>
+                    {truncatePreview(event.description, 160) ? <p className="mt-1 text-sm text-slate-600">{truncatePreview(event.description, 160)}</p> : null}
+                    <div className="mt-3 flex items-center gap-2 text-sm text-slate-500">
+                      <VerifiedAvatar
+                        src={event.organization.logoUrl}
+                        alt={event.organization.name}
+                        initials={event.organization.name}
+                        size={28}
+                        isVerified={event.organization.isVerified}
+                        className="shrink-0"
+                      />
+                      <span className="truncate">{event.organization.name}</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {isTopLevelCommunitiesFeed && communityJobs.length > 0 ? (
+          <section className="surface-card px-6 py-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">Jobs From Your Communities</h2>
+                <p className="text-sm text-slate-500">Open roles from local organizations and nearby community postings.</p>
+              </div>
+              <Link href="/work" className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">
+                View all
+              </Link>
+            </div>
+            <div className="space-y-3">
+              {communityJobs.map((job) => {
+                const jobHref = getCommunityJobHref(job)
+                const salaryLabel = formatJobSalary(job)
+                const descriptionPreview = truncatePreview(job.description, 150)
+
+                const content = (
+                  <>
+                    <div className="h-24 w-28 shrink-0 overflow-hidden rounded-xl bg-slate-100">
+                      {job.photoUrl ? <img src={job.photoUrl} alt={job.title} className="h-full w-full object-cover" loading="lazy" /> : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">
+                        <span>Job</span>
+                        <span className="text-slate-300">•</span>
+                        <span className="text-slate-500">{job.employmentType.replace(/_/g, ' ')}</span>
+                      </div>
+                      <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)]">{job.title}</h3>
+                      <p className="mt-1 text-sm text-slate-500">{parseJobLocationLabel(job.location)}</p>
+                      {descriptionPreview ? <p className="mt-1 text-sm text-slate-600">{descriptionPreview}</p> : null}
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                        <span className="rounded-full border border-slate-200 px-2 py-1">{job.organization.name}</span>
+                        {salaryLabel ? <span className="rounded-full border border-slate-200 px-2 py-1">{salaryLabel}</span> : null}
+                      </div>
+                    </div>
+                  </>
+                )
+
+                if (!jobHref) {
+                  return (
+                    <article key={job.id} className="flex gap-4 rounded-2xl border border-slate-200 bg-white p-3">
+                      {content}
+                    </article>
+                  )
+                }
+
+                return (
+                  <Link
+                    key={job.id}
+                    href={jobHref}
+                    className="group flex gap-4 rounded-2xl border border-slate-200 bg-white p-3 transition hover:border-[var(--cc-primary)]/30 hover:bg-slate-50"
+                  >
+                    {content}
+                  </Link>
+                )
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        {visiblePosts.length === 0 && !hasCommunityActivity ? (
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
             {loading ? 'Loading the latest updates…' : emptyLabel}
             {!loading && emptyStateCta ? (
