@@ -13,6 +13,7 @@ import AdminWideShell from './AdminWideShell'
 type SeriesPoint = { date: string; count: number }
 type MetricSeries = { total: number; today: number; series: SeriesPoint[] }
 type DetailMetric = 'users' | 'posts' | 'comments' | 'reactions' | 'follows' | 'jobsAdded' | 'applicants' | 'applicationsViewed' | 'hired'
+type ContentAiScanTargetType = 'post' | 'comment' | 'market_listing' | 'market_product' | 'organization_event' | 'organization'
 
 type ReportSummary = {
   generatedAt: string
@@ -61,6 +62,8 @@ type DetailResponse = {
   metric: DetailMetric
   generatedAt: string
   items: unknown[]
+  page?: number
+  hasMore?: boolean
 }
 
 type UserRow = AdminUser & {
@@ -78,11 +81,15 @@ type UserRow = AdminUser & {
 
 type PostRow = {
   id: string
+  aiScanTargetType: ContentAiScanTargetType
+  aiScanTargetId: string
   createdAt: string
+  contentType: 'social_post' | 'market_listing' | 'organization_event'
   title: string | null
   preview: string
   url: string | null
-  jurisdiction: string
+  sourceLabel: string
+  metaLine: string | null
   moderationStatus: string
   commentCount: number
   reactionCount: number
@@ -110,6 +117,8 @@ type PostRow = {
 
 type CommentRow = {
   id: string
+  aiScanTargetType: ContentAiScanTargetType
+  aiScanTargetId: string
   createdAt: string
   body: string
   moderationStatus: string
@@ -181,6 +190,7 @@ type HireRow = {
 }
 
 type Status = 'idle' | 'loading' | 'ready' | 'error' | 'unauthorized' | 'forbidden'
+type ScanActionNotice = { type: 'success' | 'error'; message: string }
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const defaultStart = new Date(Date.now() - 29 * DAY_MS)
@@ -202,7 +212,7 @@ const FLAG_REASON_OPTIONS = [
 
 const METRIC_DEFINITIONS: Array<{ key: DetailMetric; title: string; description: string }> = [
   { key: 'users', title: 'Users', description: 'New accounts created in the selected range.' },
-  { key: 'posts', title: 'Posts', description: 'Posts with moderation flags, author links, and engagement.' },
+  { key: 'posts', title: 'Posts', description: 'Mixed content feed for social posts, market listings, and organization events.' },
   { key: 'comments', title: 'Comments', description: 'Latest comments tied back to the source post.' },
   { key: 'reactions', title: 'Reactions', description: 'Recent reaction events and the users behind them.' },
   { key: 'follows', title: 'Follows', description: 'Community and organization follow activity.' },
@@ -344,6 +354,10 @@ function formatAiScanStatus(value: string) {
   return value.replace(/_/g, ' ')
 }
 
+function canRetryAiScan(status: string) {
+  return status === 'failed'
+}
+
 function formatUserLabel(user: AdminUser) {
   return user.name?.trim() || `@${user.handle}`
 }
@@ -458,6 +472,9 @@ export default function AdminAnalyticsPage() {
   const [inspectUserId, setInspectUserId] = useState<string | null>(null)
   const [userSearch, setUserSearch] = useState('')
   const [selectedPostAuthor, setSelectedPostAuthor] = useState<AdminUser | null>(null)
+  const [detailPage, setDetailPage] = useState(1)
+  const [retryingScanKey, setRetryingScanKey] = useState<string | null>(null)
+  const [scanActionNotice, setScanActionNotice] = useState<ScanActionNotice | null>(null)
 
   const activeMetricDefinition = useMemo(
     () =>
@@ -531,6 +548,7 @@ export default function AdminAnalyticsPage() {
       nextFlagReason: (typeof FLAG_REASON_OPTIONS)[number],
       nextUserSearch: string,
       nextSelectedPostAuthor: AdminUser | null,
+      nextPage: number,
       signal?: AbortSignal,
     ) => {
       const authToken = token ?? (typeof window !== 'undefined' ? window.localStorage.getItem('token') : null)
@@ -546,6 +564,7 @@ export default function AdminAnalyticsPage() {
       const params = new URLSearchParams({
         metric,
         limit: metric === 'posts' ? '150' : '100',
+        page: String(nextPage),
       })
       if (rangeStart) params.set('start', rangeStart)
       if (rangeEnd) params.set('end', rangeEnd)
@@ -601,9 +620,13 @@ export default function AdminAnalyticsPage() {
   useEffect(() => {
     if (accessLoading || !isSuperAdmin) return
     const controller = new AbortController()
-    void loadDetail(activeMetric, startDate, endDate, flagReason, normalizedUserSearch, selectedPostAuthor, controller.signal)
+    void loadDetail(activeMetric, startDate, endDate, flagReason, normalizedUserSearch, selectedPostAuthor, detailPage, controller.signal)
     return () => controller.abort()
-  }, [accessLoading, activeMetric, endDate, flagReason, isSuperAdmin, loadDetail, normalizedUserSearch, selectedPostAuthor, startDate])
+  }, [accessLoading, activeMetric, detailPage, endDate, flagReason, isSuperAdmin, loadDetail, normalizedUserSearch, selectedPostAuthor, startDate])
+
+  useEffect(() => {
+    setDetailPage(1)
+  }, [activeMetric, startDate, endDate, flagReason, normalizedUserSearch, selectedPostAuthor])
 
   const handleExportCsv = useCallback(async () => {
     const authToken = token ?? (typeof window !== 'undefined' ? window.localStorage.getItem('token') : null)
@@ -644,6 +667,55 @@ export default function AdminAnalyticsPage() {
     setSelectedPostAuthor(user)
     setActiveMetric('posts')
   }, [])
+
+  const handleRetryContentAiScan = useCallback(
+    async (targetType: ContentAiScanTargetType, targetId: string) => {
+      const authToken = token ?? (typeof window !== 'undefined' ? window.localStorage.getItem('token') : null)
+      if (!authToken) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      const scanKey = `${targetType}:${targetId}`
+      setRetryingScanKey(scanKey)
+      setScanActionNotice(null)
+
+      try {
+        const response = await fetch(buildApiUrl('/admin/content-ai-scans/retry'), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${authToken}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ targetType, targetId }),
+        })
+
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          setDetailStatus('unauthorized')
+          return
+        }
+
+        if (response.status === 403) {
+          setDetailStatus('forbidden')
+          return
+        }
+
+        if (!response.ok) {
+          throw new Error('content_ai_scan_retry_failed')
+        }
+
+        await loadDetail(activeMetric, startDate, endDate, flagReason, normalizedUserSearch, selectedPostAuthor, detailPage)
+        setScanActionNotice({ type: 'success', message: 'Scan requeued.' })
+      } catch (error) {
+        console.error('[admin/analytics] failed to retry content ai scan', error)
+        setScanActionNotice({ type: 'error', message: 'Unable to requeue this scan.' })
+      } finally {
+        setRetryingScanKey(null)
+      }
+    },
+    [activeMetric, detailPage, endDate, flagReason, loadDetail, normalizedUserSearch, selectedPostAuthor, startDate, token],
+  )
 
   const renderDetailTable = () => {
     if (detailStatus === 'loading' || detailStatus === 'idle') {
@@ -731,7 +803,7 @@ export default function AdminAnalyticsPage() {
                 <th className="px-4 py-3">Author</th>
                 <th className="px-4 py-3">Content</th>
                 <th className="px-4 py-3">AI Scan</th>
-                <th className="px-4 py-3">Jurisdiction</th>
+                <th className="px-4 py-3">Source</th>
                 <th className="px-4 py-3 text-right">Engagement</th>
                 <th className="px-4 py-3">Flags</th>
               </tr>
@@ -754,6 +826,7 @@ export default function AdminAnalyticsPage() {
                   <td className="px-4 py-3">
                     <p className="font-semibold text-slate-900">{row.title || 'Untitled post'}</p>
                     <p className="mt-1 max-w-xl text-slate-600">{row.preview || 'No body text.'}</p>
+                    {row.metaLine ? <p className="mt-2 text-xs text-slate-500">{row.metaLine}</p> : null}
                     {row.url ? <Link href={row.url} className="mt-2 inline-flex text-xs font-semibold text-[var(--cc-primary)] hover:underline">Open post</Link> : null}
                   </td>
                   <td className="px-4 py-3 text-slate-600">
@@ -763,9 +836,19 @@ export default function AdminAnalyticsPage() {
                     {row.aiScan.labels.length ? <p className="mt-2 text-xs text-slate-500">{row.aiScan.labels.slice(0, 4).join(' · ')}</p> : null}
                     {row.aiScan.moderationFlags.length ? <p className="mt-2 text-xs font-semibold text-amber-700">{row.aiScan.moderationFlags.map(formatReasonLabel).join(' · ')}</p> : null}
                     {row.aiScan.errorText ? <p className="mt-2 text-xs text-rose-600">{row.aiScan.errorText}</p> : null}
+                    {canRetryAiScan(row.aiScan.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRetryContentAiScan(row.aiScanTargetType, row.aiScanTargetId)}
+                        disabled={retryingScanKey === `${row.aiScanTargetType}:${row.aiScanTargetId}`}
+                        className="mt-2 inline-flex items-center rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                      >
+                        {retryingScanKey === `${row.aiScanTargetType}:${row.aiScanTargetId}` ? 'Retrying...' : 'Retry scan'}
+                      </button>
+                    ) : null}
                     {row.aiScan.updatedAt ? <p className="mt-2 text-[11px] text-slate-400">Updated {formatDateTime(row.aiScan.updatedAt)}</p> : null}
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{row.jurisdiction}</td>
+                  <td className="px-4 py-3 text-slate-600">{row.sourceLabel}</td>
                   <td className="px-4 py-3 text-right text-slate-600">
                     <p className="font-semibold text-slate-900">Score {row.score.toLocaleString()}</p>
                     <p className="mt-1 text-xs">{row.commentCount.toLocaleString()} comments</p>
@@ -828,6 +911,16 @@ export default function AdminAnalyticsPage() {
                     {row.aiScan.labels.length ? <p className="mt-2 text-xs text-slate-500">{row.aiScan.labels.slice(0, 4).join(' · ')}</p> : null}
                     {row.aiScan.moderationFlags.length ? <p className="mt-2 text-xs font-semibold text-amber-700">{row.aiScan.moderationFlags.map(formatReasonLabel).join(' · ')}</p> : null}
                     {row.aiScan.errorText ? <p className="mt-2 text-xs text-rose-600">{row.aiScan.errorText}</p> : null}
+                    {canRetryAiScan(row.aiScan.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleRetryContentAiScan(row.aiScanTargetType, row.aiScanTargetId)}
+                        disabled={retryingScanKey === `${row.aiScanTargetType}:${row.aiScanTargetId}`}
+                        className="mt-2 inline-flex items-center rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                      >
+                        {retryingScanKey === `${row.aiScanTargetType}:${row.aiScanTargetId}` ? 'Retrying...' : 'Retry scan'}
+                      </button>
+                    ) : null}
                     {row.aiScan.updatedAt ? <p className="mt-2 text-[11px] text-slate-400">Updated {formatDateTime(row.aiScan.updatedAt)}</p> : null}
                   </td>
                   <td className="px-4 py-3">
@@ -1157,14 +1250,14 @@ export default function AdminAnalyticsPage() {
                     >
                       {FLAG_REASON_OPTIONS.map((option) => (
                         <option key={option} value={option}>
-                          {option === 'ALL' ? 'All posts' : formatReasonLabel(option)}
+                          {option === 'ALL' ? 'All content' : formatReasonLabel(option)}
                         </option>
                       ))}
                     </select>
                   </label>
                   {selectedPostAuthor ? (
                     <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
-                      <p className="font-semibold">Showing posts by {formatUserLabel(selectedPostAuthor)}</p>
+                      <p className="font-semibold">Showing content by {formatUserLabel(selectedPostAuthor)}</p>
                       <button type="button" onClick={() => setSelectedPostAuthor(null)} className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700 hover:underline">
                         Clear filter
                       </button>
@@ -1174,6 +1267,18 @@ export default function AdminAnalyticsPage() {
               ) : null}
             </div>
           </div>
+          {scanActionNotice ? (
+            <div
+              className={clsx(
+                'rounded-2xl border px-4 py-3 text-sm',
+                scanActionNotice.type === 'success'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-rose-200 bg-rose-50 text-rose-700',
+              )}
+            >
+              {scanActionNotice.message}
+            </div>
+          ) : null}
           {renderDetailTable()}
         </section>
 
@@ -1187,6 +1292,29 @@ export default function AdminAnalyticsPage() {
             <TrafficTable title="Routes" rows={summary.traffic.routes.map((entry) => ({ key: entry.path, label: entry.path, views: entry.views }))} />
             <TrafficTable title="Posts" rows={summary.traffic.posts.map((entry) => ({ key: entry.postId, label: entry.title ?? 'Untitled post', views: entry.views }))} />
           </div>
+          {activeMetric === 'posts' && detail ? (
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600">
+              <p>Page {detail.page ?? detailPage}</p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDetailPage((current) => Math.max(1, current - 1))}
+                  disabled={detailPage <= 1 || detailStatus === 'loading'}
+                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailPage((current) => current + 1)}
+                  disabled={!detail.hasMore || detailStatus === 'loading'}
+                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
       </>
     )
