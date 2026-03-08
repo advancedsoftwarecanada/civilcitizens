@@ -242,6 +242,7 @@ async function seedCivilAiLocalScenario(viewerId: string, authorId: string) {
 
 let app: FastifyInstance
 let planCivilAiRetrieval: (question: string) => {
+  wantsProfile: boolean
   wantsEvents: boolean
   wantsJobs: boolean
   wantsOrganizations: boolean
@@ -250,6 +251,76 @@ let planCivilAiRetrieval: (question: string) => {
   topicQuery: string
 }
 let sanitizeCivilAiResponseContent: (content: string, references: Array<{ href: string }>) => string
+let buildCivilAiPromptInput: (systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string
+let buildCivilAiDirectAnswer: (question: string, viewerContext: {
+  user: {
+    id: string
+    handle: string
+    firstName: string | null
+    lastName: string | null
+    name: string | null
+    bio: string | null
+    avatarUrl: string | null
+    coverUrl: string | null
+    isVerified: boolean
+    isPremium: boolean
+    experiences: Array<{
+      id: string
+      title: string
+      organization: string
+      location: string | null
+      startDate: string
+      endDate: string | null
+      current: boolean
+      description: string | null
+      organizationProfile: null
+    }>
+  }
+  homeCommunity: null
+  nearbyCommunities: Array<never>
+  followedCommunities: Array<never>
+  organizations: Array<never>
+  feedContext: {
+    viewerId: string
+    homeCommunityKey: string | null
+    friendIds: Set<string>
+    connectionIds: Set<string>
+    followedBusinessIds: Set<string>
+    memberBusinessIds: Set<string>
+    nearbyCommunityKeys: Set<string>
+    regionalCommunityKeys: Set<string>
+    followedCommunityKeys: Set<string>
+  }
+} | null) => { content: string } | null
+let buildCivilAiGroundedAnswer: (question: string, bundle: {
+  retrievalPlan: {
+    wantsEvents: boolean
+    wantsJobs: boolean
+    wantsOrganizations: boolean
+    wantsPosts: boolean
+    todayOnly: boolean
+  }
+  targetCommunities: Array<{ id: string; communityName: string; provinceName: string; communitySlug: string; provinceCode: string; href: string }>
+  events: Array<{
+    id: string
+    title: string
+    description: string | null
+    startsAt: string
+    primaryPhotoUrl: string | null
+    organization: {
+      id: string
+      name: string
+      slug: string
+      provinceCode: string | null
+      communitySlug: string | null
+      logoUrl: string | null
+      isVerified: boolean
+    }
+  }>
+  jobs: Array<unknown>
+  organizations: Array<unknown>
+  posts: Array<unknown>
+}) => { content: string; references: Array<{ kind: string; title: string }> } | null
 let capturedChatInputs: string[] = []
 
 beforeAll(async () => {
@@ -287,6 +358,9 @@ beforeAll(async () => {
   app = mod.app as FastifyInstance
   planCivilAiRetrieval = mod.planCivilAiRetrieval as typeof planCivilAiRetrieval
   sanitizeCivilAiResponseContent = mod.sanitizeCivilAiResponseContent as typeof sanitizeCivilAiResponseContent
+  buildCivilAiPromptInput = mod.buildCivilAiPromptInput as typeof buildCivilAiPromptInput
+  buildCivilAiDirectAnswer = mod.buildCivilAiDirectAnswer as typeof buildCivilAiDirectAnswer
+  buildCivilAiGroundedAnswer = mod.buildCivilAiGroundedAnswer as typeof buildCivilAiGroundedAnswer
   await app.ready()
 })
 
@@ -319,6 +393,26 @@ describe('Civil AI smoke', () => {
     expect(plan.wantsEvents).toBe(false)
   })
 
+  test('planner treats first-name questions as profile intent, not local search', () => {
+    const plan = planCivilAiRetrieval('What is my first name?')
+
+    expect(plan.wantsProfile).toBe(true)
+    expect(plan.wantsEvents).toBe(false)
+    expect(plan.wantsJobs).toBe(false)
+    expect(plan.wantsOrganizations).toBe(false)
+    expect(plan.wantsPosts).toBe(false)
+  })
+
+  test('planner treats apostrophe-less name questions as profile intent', () => {
+    const plan = planCivilAiRetrieval('Whats my name?')
+
+    expect(plan.wantsProfile).toBe(true)
+    expect(plan.wantsEvents).toBe(false)
+    expect(plan.wantsJobs).toBe(false)
+    expect(plan.wantsOrganizations).toBe(false)
+    expect(plan.wantsPosts).toBe(false)
+  })
+
   test('response sanitizer removes duplicate raw Civil URLs when a card already exists', () => {
     const content = 'There is one event that stands out: Civil Citizens Meetup. You can find more details about it here: https://dev.civilcitizens.ca/com/on/newmarket-aurora/orgs/civil-citizens-of-newmarket-aurora/events/event_123'
     const references = [
@@ -332,6 +426,295 @@ describe('Civil AI smoke', () => {
     expect(sanitized).toContain('Civil Citizens Meetup')
     expect(sanitized).toContain('Civil card below')
     expect(sanitized).not.toContain('https://dev.civilcitizens.ca/com/on/newmarket-aurora/orgs/civil-citizens-of-newmarket-aurora/events/event_123')
+  })
+
+  test('prompt input stays within the bounded budget and preserves the newest exchange', () => {
+    const veryLongSystemPrompt = 'Civil instructions. '.repeat(1200)
+    const messages = Array.from({ length: 16 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+      content: `Message ${index} ` + 'context '.repeat(220),
+    }))
+
+    const prompt = buildCivilAiPromptInput(veryLongSystemPrompt, messages)
+
+    expect(prompt.length).toBeLessThanOrEqual(12000)
+    expect(prompt).toContain('Message 15')
+    expect(prompt).not.toContain('Message 0')
+    expect(prompt).toContain('Assistant:')
+  })
+
+  test('direct answer returns the viewer first name for first-name questions', () => {
+    const answer = buildCivilAiDirectAnswer('What is my first name?', {
+      user: {
+        id: 'user_1',
+        handle: 'andre',
+        firstName: 'andre',
+        lastName: 'smith',
+        name: 'andre smith',
+        bio: null,
+        avatarUrl: null,
+        coverUrl: null,
+        isVerified: false,
+        isPremium: false,
+        experiences: [],
+      },
+      homeCommunity: null,
+      nearbyCommunities: [],
+      followedCommunities: [],
+      organizations: [],
+      feedContext: {
+        viewerId: 'user_1',
+        homeCommunityKey: null,
+        friendIds: new Set(),
+        connectionIds: new Set(),
+        followedBusinessIds: new Set(),
+        memberBusinessIds: new Set(),
+        nearbyCommunityKeys: new Set(),
+        regionalCommunityKeys: new Set(),
+        followedCommunityKeys: new Set(),
+      },
+    })
+
+    expect(answer).not.toBeNull()
+    expect(answer?.content).toContain('Your first name on Civil is andre.')
+  })
+
+  test('direct answer returns the viewer name for apostrophe-less name questions', () => {
+    const answer = buildCivilAiDirectAnswer('Whats my name?', {
+      user: {
+        id: 'user_1',
+        handle: 'andre',
+        firstName: 'andre',
+        lastName: 'normore',
+        name: 'andrew normore',
+        bio: null,
+        avatarUrl: null,
+        coverUrl: null,
+        isVerified: false,
+        isPremium: false,
+        experiences: [],
+      },
+      homeCommunity: null,
+      nearbyCommunities: [],
+      followedCommunities: [],
+      organizations: [],
+      feedContext: {
+        viewerId: 'user_1',
+        homeCommunityKey: null,
+        friendIds: new Set(),
+        connectionIds: new Set(),
+        followedBusinessIds: new Set(),
+        memberBusinessIds: new Set(),
+        nearbyCommunityKeys: new Set(),
+        regionalCommunityKeys: new Set(),
+        followedCommunityKeys: new Set(),
+      },
+    })
+
+    expect(answer).not.toBeNull()
+    expect(answer?.content).toContain('Your name on Civil is andrew normore.')
+  })
+
+  test('grounded answer says when no Civil events were found instead of inventing them', () => {
+    const grounded = buildCivilAiGroundedAnswer('What events are happening near me today?', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('What events are happening near me today?'),
+        wantsJobs: false,
+        wantsOrganizations: false,
+        wantsPosts: false,
+      },
+      targetCommunities: [
+        {
+          id: 'ON:york-durham',
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          communitySlug: 'york-durham',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/york-durham',
+        },
+      ],
+      events: [],
+      jobs: [],
+      organizations: [],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I do not see any events in current Civil data for York-Durham today.')
+    expect(grounded?.content).toContain('I will not invent events that are not in the database')
+    expect(grounded?.references).toHaveLength(0)
+  })
+
+  test('grounded answer lists only the exact Civil events returned', () => {
+    const startsAt = '2026-03-08T19:00:00.000Z'
+    const grounded = buildCivilAiGroundedAnswer('What events are happening near me today?', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('What events are happening near me today?'),
+        wantsJobs: false,
+        wantsOrganizations: false,
+        wantsPosts: false,
+      },
+      targetCommunities: [
+        {
+          id: 'ON:york-durham',
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          communitySlug: 'york-durham',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/york-durham',
+        },
+      ],
+      events: [
+        {
+          id: 'event_1',
+          title: 'Community Budget Night',
+          description: 'Residents review the proposed local budget.',
+          startsAt,
+          primaryPhotoUrl: null,
+          organization: {
+            id: 'org_1',
+            name: 'York-Durham Civic League',
+            slug: 'york-durham-civic-league',
+            provinceCode: 'ON',
+            communitySlug: 'york-durham',
+            logoUrl: null,
+            isVerified: true,
+          },
+        },
+      ],
+      jobs: [],
+      organizations: [],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I found 1 event in current Civil data for York-Durham today:')
+    expect(grounded?.content).toContain('Community Budget Night')
+    expect(grounded?.content).toContain('York-Durham Civic League')
+    expect(grounded?.references).toHaveLength(1)
+    expect(grounded?.references[0]?.kind).toBe('event')
+    expect(grounded?.references[0]?.title).toBe('Community Budget Night')
+  })
+
+  test('grounded answer says when no Civil jobs were found', () => {
+    const grounded = buildCivilAiGroundedAnswer('Are there any jobs near me?', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('Are there any jobs near me?'),
+        wantsEvents: false,
+        wantsOrganizations: false,
+        wantsPosts: false,
+      },
+      targetCommunities: [
+        {
+          id: 'ON:york-durham',
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          communitySlug: 'york-durham',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/york-durham',
+        },
+      ],
+      events: [],
+      jobs: [],
+      organizations: [],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I do not see any active jobs in current Civil data for York-Durham.')
+    expect(grounded?.content).toContain('I will not invent openings that are not in the database')
+  })
+
+  test('grounded answer lists only the exact matching organizations returned', () => {
+    const grounded = buildCivilAiGroundedAnswer('Which organizations are working on housing here?', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('Which organizations are working on housing here?'),
+        wantsEvents: false,
+        wantsJobs: false,
+        wantsPosts: false,
+      },
+      targetCommunities: [
+        {
+          id: 'ON:york-durham',
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          communitySlug: 'york-durham',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/york-durham',
+        },
+      ],
+      events: [],
+      jobs: [],
+      organizations: [
+        {
+          id: 'org_1',
+          name: 'Housing Action Network',
+          slug: 'housing-action-network',
+          description: 'Residents organizing around housing affordability.',
+          logoUrl: null,
+          coverUrl: null,
+          isVerified: true,
+          provinceCode: 'ON',
+          communitySlug: 'york-durham',
+          communityName: 'York-Durham',
+          href: 'https://dev.civilcitizens.ca/com/on/york-durham/orgs/housing-action-network',
+        },
+      ],
+      posts: [],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I found 1 matching organization in current Civil data for York-Durham:')
+    expect(grounded?.content).toContain('Housing Action Network')
+    expect(grounded?.references).toHaveLength(1)
+    expect(grounded?.references[0]?.kind).toBe('organization')
+  })
+
+  test('grounded answer lists only the exact matching posts returned', () => {
+    const grounded = buildCivilAiGroundedAnswer('What are people saying about housing nearby?', {
+      retrievalPlan: {
+        ...planCivilAiRetrieval('What are people saying about housing nearby?'),
+        wantsEvents: false,
+        wantsJobs: false,
+        wantsOrganizations: false,
+      },
+      targetCommunities: [
+        {
+          id: 'ON:york-durham',
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          communitySlug: 'york-durham',
+          provinceCode: 'ON',
+          href: 'https://dev.civilcitizens.ca/on/york-durham',
+        },
+      ],
+      events: [],
+      jobs: [],
+      organizations: [],
+      posts: [
+        {
+          id: 'post_1',
+          title: 'Housing pressure in the east end',
+          excerpt: 'Residents say rent increases are outpacing local wages.',
+          imageUrl: null,
+          communityName: 'York-Durham',
+          provinceName: 'Ontario',
+          author: {
+            handle: 'citizen1',
+            name: 'Citizen One',
+            avatarUrl: null,
+          },
+          organization: null,
+          href: 'https://dev.civilcitizens.ca/on/york-durham/posts/post_1',
+        },
+      ],
+    })
+
+    expect(grounded).not.toBeNull()
+    expect(grounded?.content).toContain('I found 1 matching local post in current Civil data for York-Durham:')
+    expect(grounded?.content).toContain('Housing pressure in the east end')
+    expect(grounded?.references).toHaveLength(1)
+    expect(grounded?.references[0]?.kind).toBe('post')
   })
 
   ;(canRunDbSmoke() ? test : test.skip)('AI endpoints and /ai/chat stay anchored to local Civil data', async () => {
