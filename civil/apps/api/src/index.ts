@@ -10587,6 +10587,17 @@ app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
       },
     }
 
+    void enqueueContentAiScanForPost({
+      id: result.post.id,
+      authorId: result.post.authorId,
+      title: result.post.title,
+      body: result.post.body,
+      mediaUrl: result.post.mediaUrl,
+      images: result.post.images,
+    }).catch((error) => {
+      console.error('content_ai_scan_enqueue_profile_photo_post_failed', error)
+    })
+
     return reply.send({
       ok: true,
       post: formatPost(postWithUpdatedAuthor),
@@ -25876,6 +25887,21 @@ app.post('/communities/:province/:municipality/orgs/:slug/profile-photo', async 
       })) as CommunityOrgRecord
 
       return { post, org: updated }
+    })
+
+    void enqueueContentAiScanForPost({
+      id: result.post.id,
+      authorId: result.post.authorId,
+      title: result.post.title,
+      body: result.post.body,
+      mediaUrl: result.post.mediaUrl,
+      images: result.post.images,
+    }).catch((error) => {
+      console.error('content_ai_scan_enqueue_organization_photo_post_failed', error)
+    })
+
+    void enqueueContentAiScanForOrganization(result.org).catch((error) => {
+      console.error('content_ai_scan_enqueue_organization_photo_org_failed', error)
     })
 
     return reply.send({
