@@ -18,6 +18,16 @@ type InspectUserSummary = {
   createdAt: string
   lastLoginAt: string | null
   premiumStatus: string
+  communities: {
+    count: number
+    items: Array<{
+      provinceCode: string
+      communitySlug: string
+      home: boolean
+      label: string
+      href: string | null
+    }>
+  }
 }
 
 type InspectReport = {
@@ -40,6 +50,7 @@ type InspectPayload = {
     reportsAgainst: number
     jobApplications: number
     jobsCreated: number
+    communities: number
   }
   recentPosts: Array<{
     id: string
@@ -109,6 +120,11 @@ function formatTargetType(value: InspectReport['targetType']) {
     default:
       return value
   }
+}
+
+function formatPremiumStatus(value: string) {
+  if (!value || value === 'NONE') return 'No premium membership'
+  return value.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (char) => char.toUpperCase())
 }
 
 export default function AdminUserInspectModal({ userId, token, onClose }: AdminUserInspectModalProps) {
@@ -199,7 +215,7 @@ export default function AdminUserInspectModal({ userId, token, onClose }: AdminU
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Premium</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900">{payload.user.premiumStatus}</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900">{formatPremiumStatus(payload.user.premiumStatus)}</p>
               </div>
               <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Reports against</p>
@@ -225,11 +241,15 @@ export default function AdminUserInspectModal({ userId, token, onClose }: AdminU
               <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Reports filed</p>
               <p className="mt-2 text-2xl font-semibold text-slate-900">{payload.stats.reportsFiled.toLocaleString()}</p>
             </div>
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Communities</p>
+              <p className="mt-2 text-2xl font-semibold text-slate-900">{payload.stats.communities.toLocaleString()}</p>
+            </div>
           </section>
 
           <section className="grid gap-4 xl:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-slate-900">Recent posts</h3>
+              <h3 className="text-sm font-semibold text-slate-900">Posts</h3>
               <div className="mt-3 space-y-3">
                 {payload.recentPosts.length ? payload.recentPosts.map((entry) => (
                   <div key={entry.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -238,6 +258,17 @@ export default function AdminUserInspectModal({ userId, token, onClose }: AdminU
                     {entry.url ? <Link href={entry.url} className="mt-2 inline-flex text-xs font-semibold text-[var(--cc-primary)] hover:underline">Open post</Link> : null}
                   </div>
                 )) : <p className="text-sm text-slate-500">No recent posts.</p>}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-slate-900">Communities</h3>
+              <div className="mt-3 space-y-3">
+                {payload.user.communities.items.length ? payload.user.communities.items.map((entry) => (
+                  <div key={`${entry.provinceCode}:${entry.communitySlug}`} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    {entry.href ? <Link href={entry.href} className="text-sm font-semibold text-[var(--cc-primary)] hover:underline">{entry.label}</Link> : <p className="text-sm font-semibold text-slate-900">{entry.label}</p>}
+                  </div>
+                )) : <p className="text-sm text-slate-500">No community follows.</p>}
               </div>
             </div>
 

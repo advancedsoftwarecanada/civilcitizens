@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 import Sidebar from './Sidebar'
+import CivilAiLauncher from './CivilAiLauncher'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
 import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 
@@ -51,6 +52,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
     >
       {!sidebarHidden ? <Sidebar /> : null}
       {children}
+      <CivilAiLauncher />
       {modal}
     </div>
   )
