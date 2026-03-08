@@ -237,6 +237,7 @@ type CivilAiServerConfig = {
 }
 
 const CivilAiChatInput = z.object({
+  conversationId: z.string().trim().min(1).max(120).optional(),
   serverId: z.string().trim().min(1).optional(),
   model: z.string().trim().min(1).optional(),
   messages: z
@@ -261,6 +262,7 @@ type CivilAiHistoryEntry = {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  references?: CivilAiCardReference[]
 }
 
 type CivilAiCardReference = {
@@ -274,8 +276,49 @@ type CivilAiCardReference = {
   badge: string | null
 }
 
+type CivilAiDebugConversationSummary = {
+  id: string
+  userId: string | null
+  userHandle: string | null
+  userName: string | null
+  startedAt: string
+  lastActivityAt: string
+  turnCount: number
+  firstUserMessage: string | null
+  lastUserMessage: string | null
+  status: string | null
+  lastModel: string | null
+  lastServer: string | null
+  lastError: string | null
+}
+
+type CivilAiDebugTurnRecord = {
+  id: string
+  conversationId: string
+  userId: string | null
+  createdAt: string
+  latestUserMessage: string | null
+  status: string
+  durationMs: number | null
+  serverName: string | null
+  model: string | null
+  errorMessage: string | null
+  assistantContent: string | null
+  requestMessages: unknown
+  viewerContext: unknown
+  retrievalDebug: unknown
+  references: unknown
+  upstreamInput: string | null
+  rawResponse: unknown
+}
+
 const CIVIL_AI_HISTORY_LIMIT = 20
 const CIVIL_AI_DATA_KEY = (process.env.CIVIL_AI_DATA_KEY || '').trim()
+
+let civilAiDebugTablesReady: Promise<void> | null = null
+const CIVIL_AI_SERVER_TIMEOUT_MS = 45000
+const CIVIL_AI_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
+const civilAiResolvedModelCache = new Map<string, { model: string | null; expiresAt: number }>()
 
 const DEFAULT_CIVIL_AI_PROMPT = `Civil AI is a practical Canadian civic assistant inside Civil Citizens.
 Help users understand communities, public life, and constructive next steps.
@@ -313,14 +356,47 @@ function readCivilAiHistory(meta: Prisma.JsonValue | null | undefined): CivilAiH
   if (!Array.isArray(raw)) return []
 
   return raw
-    .map((entry) => {
+    .map<CivilAiHistoryEntry | null>((entry) => {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
       const item = entry as Record<string, unknown>
       const role = item.role === 'user' || item.role === 'assistant' ? item.role : null
       const content = typeof item.content === 'string' ? item.content.trim() : ''
       const createdAt = typeof item.createdAt === 'string' ? item.createdAt : new Date().toISOString()
+      const references = Array.isArray(item.references)
+        ? item.references
+            .map((reference) => {
+              if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return null
+              const candidate = reference as Record<string, unknown>
+              const kind =
+                candidate.kind === 'community' ||
+                candidate.kind === 'event' ||
+                candidate.kind === 'job' ||
+                candidate.kind === 'organization' ||
+                candidate.kind === 'post'
+                  ? candidate.kind
+                  : null
+              const id = typeof candidate.id === 'string' ? candidate.id.trim() : ''
+              const title = typeof candidate.title === 'string' ? candidate.title.trim() : ''
+              const href = typeof candidate.href === 'string' ? candidate.href.trim() : ''
+              if (!kind || !id || !title || !href) return null
+              return {
+                kind,
+                id,
+                title,
+                subtitle: typeof candidate.subtitle === 'string' ? candidate.subtitle : null,
+                summary: typeof candidate.summary === 'string' ? candidate.summary : null,
+                href,
+                imageUrl: typeof candidate.imageUrl === 'string' ? candidate.imageUrl : null,
+                badge: typeof candidate.badge === 'string' ? candidate.badge : null,
+              } satisfies CivilAiCardReference
+            })
+            .filter((reference): reference is CivilAiCardReference => Boolean(reference))
+        : undefined
       if (!role || !content) return null
-      return { role, content, createdAt } satisfies CivilAiHistoryEntry
+      const historyEntry: CivilAiHistoryEntry = references?.length
+        ? { role, content, createdAt, references }
+        : { role, content, createdAt }
+      return historyEntry
     })
     .filter((entry): entry is CivilAiHistoryEntry => Boolean(entry))
     .slice(-CIVIL_AI_HISTORY_LIMIT)
@@ -454,17 +530,293 @@ function buildCivilAiPromptInput(systemPrompt: string, messages: Array<{ role: '
     .join('\n')
 }
 
+function safeJsonStringify(value: unknown) {
+  if (value === undefined) return null
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return null
+  }
+}
+
+function parseLoggedJsonText<T>(value: string | null | undefined): T | null {
+  if (!value) return null
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return null
+  }
+}
+
+async function ensureCivilAiDebugTables() {
+  if (!civilAiDebugTablesReady) {
+    civilAiDebugTablesReady = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS civil_ai_conversation (
+          id TEXT PRIMARY KEY,
+          user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          user_handle TEXT,
+          user_name TEXT,
+          started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          turn_count INTEGER NOT NULL DEFAULT 0,
+          first_user_message TEXT,
+          last_user_message TEXT,
+          status TEXT,
+          last_model TEXT,
+          last_server TEXT,
+          last_error TEXT
+        )
+      `)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_conversation_last_activity_idx ON civil_ai_conversation (last_activity_at DESC)`)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_conversation_user_id_idx ON civil_ai_conversation (user_id)`)
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS civil_ai_turn (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES civil_ai_conversation(id) ON DELETE CASCADE,
+          user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          latest_user_message TEXT,
+          status TEXT NOT NULL,
+          duration_ms INTEGER,
+          server_name TEXT,
+          model TEXT,
+          error_message TEXT,
+          assistant_content TEXT,
+          request_messages_text TEXT,
+          viewer_context_text TEXT,
+          retrieval_debug_text TEXT,
+          references_text TEXT,
+          upstream_input_text TEXT,
+          raw_response_text TEXT
+        )
+      `)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_turn_conversation_idx ON civil_ai_turn (conversation_id, created_at DESC)`)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_turn_user_id_idx ON civil_ai_turn (user_id, created_at DESC)`)
+    })().catch((error) => {
+      civilAiDebugTablesReady = null
+      throw error
+    })
+  }
+
+  await civilAiDebugTablesReady
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function normalizeComparableUrl(value: string) {
+  return value.trim().replace(/[)\].,!?;:]+$/g, '').replace(/\/$/, '').toLowerCase()
+}
+
+export function sanitizeCivilAiResponseContent(content: string, references: CivilAiCardReference[]) {
+  let next = content.trim()
+  if (!next || !references.length) return next
+
+  const uniqueHrefs = Array.from(
+    new Set(
+      references
+        .map((reference) => reference.href?.trim())
+        .filter((href): href is string => Boolean(href)),
+    ),
+  )
+
+  for (const href of uniqueHrefs) {
+    const normalizedHref = normalizeComparableUrl(href)
+    if (!normalizedHref) continue
+
+    const escapedHref = escapeRegExp(href)
+    next = next.replace(new RegExp(`\\[([^\\]]+)\\]\\(${escapedHref}\\)`, 'gi'), '$1')
+    next = next.replace(new RegExp(`\\(?${escapedHref}\\)?`, 'gi'), 'the Civil card below')
+  }
+
+  next = next
+    .replace(/^view\s+(event|job|community|organization|post):\s*$/gim, '')
+    .replace(/here:\s*the Civil card below/gi, 'in the Civil card below')
+    .replace(/details\s+about\s+it\s+the Civil card below/gi, 'details in the Civil card below')
+    .replace(/\(\s*the Civil card below\s*\)/gi, 'the Civil card below')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+
+  return next
+}
+
+function serializeCivilAiViewerContext(viewerContext: CivilAiViewerContext | null) {
+  if (!viewerContext) return null
+  return {
+    user: viewerContext.user,
+    homeCommunity: viewerContext.homeCommunity,
+    nearbyCommunities: viewerContext.nearbyCommunities,
+    followedCommunities: viewerContext.followedCommunities,
+    organizations: viewerContext.organizations,
+    feedContext: {
+      viewerId: viewerContext.feedContext.viewerId,
+      homeCommunityKey: viewerContext.feedContext.homeCommunityKey,
+      friendIds: Array.from(viewerContext.feedContext.friendIds),
+      connectionIds: Array.from(viewerContext.feedContext.connectionIds),
+      followedBusinessIds: Array.from(viewerContext.feedContext.followedBusinessIds),
+      memberBusinessIds: Array.from(viewerContext.feedContext.memberBusinessIds),
+      nearbyCommunityKeys: Array.from(viewerContext.feedContext.nearbyCommunityKeys),
+      regionalCommunityKeys: Array.from(viewerContext.feedContext.regionalCommunityKeys),
+      followedCommunityKeys: Array.from(viewerContext.feedContext.followedCommunityKeys),
+    },
+  }
+}
+
+function buildCivilAiDirectAnswer(question: string, viewerContext: CivilAiViewerContext | null) {
+  if (!viewerContext) return null
+  const normalized = question.trim().toLowerCase()
+  const asksName = /(what is my name|what's my name|do you know my name|who am i)/.test(normalized)
+  const asksExperience = /(my experience|my experiences|what experience do i have|what have i done)/.test(normalized)
+  const asksOrganizations = /(my organizations|what organizations do i belong to|what orgs do i belong to|what groups do i belong to|which organizations am i in)/.test(normalized)
+
+  if (!asksName && !asksExperience && !asksOrganizations) return null
+
+  const lines: string[] = []
+  const references: CivilAiCardReference[] = []
+
+  if (asksName) {
+    const displayName = viewerContext.user.name || [viewerContext.user.firstName, viewerContext.user.lastName].filter(Boolean).join(' ').trim() || `@${viewerContext.user.handle}`
+    lines.push(`Your name on Civil is ${displayName}.`)
+  }
+
+  if (asksExperience) {
+    if (viewerContext.user.experiences.length) {
+      const summary = viewerContext.user.experiences
+        .slice(0, 3)
+        .map((experience) => `${experience.title} at ${experience.organization}${experience.current ? ' (current)' : ''}`)
+        .join('; ')
+      lines.push(`Your experience on file includes ${summary}.`)
+      for (const experience of viewerContext.user.experiences.slice(0, 3)) {
+        if (!experience.organizationProfile) continue
+        const reference = toCivilAiOrganizationReference({
+          ...experience.organizationProfile,
+          role: undefined,
+          description: null,
+          communityName: null,
+        })
+        if (reference) references.push(reference)
+      }
+    } else {
+      lines.push('I do not see any experience entries in your Civil profile yet.')
+    }
+  }
+
+  if (asksOrganizations) {
+    if (viewerContext.organizations.length) {
+      const summary = viewerContext.organizations
+        .slice(0, 4)
+        .map((org) => `${org.name} (${org.role})`)
+        .join('; ')
+      lines.push(`Your Civil organization context includes ${summary}.`)
+      for (const org of viewerContext.organizations.slice(0, 4)) {
+        const reference = toCivilAiOrganizationReference({ ...org, description: null, communityName: null })
+        if (reference) references.push(reference)
+      }
+    } else {
+      lines.push('I do not see any organizations linked to your Civil account yet.')
+    }
+  }
+
+  return {
+    content: lines.join('\n\n').trim(),
+    references: references.slice(0, 4),
+    decision: {
+      type: 'direct-profile-answer',
+      asksName,
+      asksExperience,
+      asksOrganizations,
+    },
+  }
+}
+
+async function persistCivilAiDebugTurn(args: {
+  conversationId: string
+  userId: string | null
+  latestUserMessage: string
+  requestMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  viewerContext: CivilAiViewerContext | null
+  retrievalDebug: unknown
+  references: CivilAiCardReference[]
+  serverName: string | null
+  model: string | null
+  upstreamInput: string | null
+  assistantContent: string | null
+  rawResponse: unknown
+  status: string
+  errorMessage: string | null
+  durationMs: number | null
+}) {
+  await ensureCivilAiDebugTables()
+
+  const userHandle = args.viewerContext?.user.handle ?? null
+  const userName = args.viewerContext?.user.name ?? null
+  const now = new Date()
+
+  await prisma.$executeRaw`
+    INSERT INTO civil_ai_conversation (
+      id, user_id, user_handle, user_name, started_at, last_activity_at, turn_count, first_user_message, last_user_message, status, last_model, last_server, last_error
+    )
+    VALUES (
+      ${args.conversationId}, ${args.userId}, ${userHandle}, ${userName}, ${now}, ${now}, 1, ${args.latestUserMessage || null}, ${args.latestUserMessage || null}, ${args.status}, ${args.model}, ${args.serverName}, ${args.errorMessage}
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      user_id = COALESCE(civil_ai_conversation.user_id, EXCLUDED.user_id),
+      user_handle = COALESCE(EXCLUDED.user_handle, civil_ai_conversation.user_handle),
+      user_name = COALESCE(EXCLUDED.user_name, civil_ai_conversation.user_name),
+      last_activity_at = EXCLUDED.last_activity_at,
+      turn_count = civil_ai_conversation.turn_count + 1,
+      first_user_message = COALESCE(civil_ai_conversation.first_user_message, EXCLUDED.first_user_message),
+      last_user_message = EXCLUDED.last_user_message,
+      status = EXCLUDED.status,
+      last_model = EXCLUDED.last_model,
+      last_server = EXCLUDED.last_server,
+      last_error = EXCLUDED.last_error
+  `
+
+  await prisma.$executeRaw`
+    INSERT INTO civil_ai_turn (
+      id, conversation_id, user_id, created_at, latest_user_message, status, duration_ms, server_name, model, error_message, assistant_content,
+      request_messages_text, viewer_context_text, retrieval_debug_text, references_text, upstream_input_text, raw_response_text
+    )
+    VALUES (
+      ${randomUUID()}, ${args.conversationId}, ${args.userId}, ${now}, ${args.latestUserMessage || null}, ${args.status}, ${args.durationMs}, ${args.serverName}, ${args.model}, ${args.errorMessage}, ${args.assistantContent},
+      ${safeJsonStringify(args.requestMessages)}, ${safeJsonStringify(serializeCivilAiViewerContext(args.viewerContext))}, ${safeJsonStringify(args.retrievalDebug)}, ${safeJsonStringify(args.references)}, ${args.upstreamInput}, ${typeof args.rawResponse === 'string' ? args.rawResponse : safeJsonStringify(args.rawResponse)}
+    )
+  `
+}
+
 async function callCivilAiServer(args: {
   server: CivilAiServerConfig
   path: string
   method?: 'GET' | 'POST'
   body?: Record<string, unknown>
+  timeoutMs?: number
 }) {
-  const response = await fetch(`${args.server.baseUrl}${args.path}`, {
-    method: args.method ?? (args.body ? 'POST' : 'GET'),
-    headers: args.body ? { 'content-type': 'application/json' } : undefined,
-    body: args.body ? JSON.stringify(args.body) : undefined,
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? CIVIL_AI_SERVER_TIMEOUT_MS)
+
+  let response: Response
+  try {
+    response = await fetch(`${args.server.baseUrl}${args.path}`, {
+      method: args.method ?? (args.body ? 'POST' : 'GET'),
+      headers: args.body ? { 'content-type': 'application/json' } : undefined,
+      body: args.body ? JSON.stringify(args.body) : undefined,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    clearTimeout(timeout)
+    const message = error instanceof Error && error.name === 'AbortError' ? 'ai_upstream_timeout' : error instanceof Error ? error.message : 'ai_upstream_request_failed'
+    return {
+      ok: false,
+      status: 504,
+      text: message,
+      json: null,
+    }
+  }
+  clearTimeout(timeout)
 
   const rawText = await response.text()
   let json: unknown = null
@@ -493,8 +845,16 @@ async function resolveCivilAiServer(serverId?: string | null) {
 async function resolveCivilAiModel(server: CivilAiServerConfig, preferredModel?: string | null) {
   if (preferredModel?.trim()) return preferredModel.trim()
 
+  const cached = civilAiResolvedModelCache.get(server.id)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.model
+  }
+
   const upstream = await callCivilAiServer({ server, path: '/api/v1/models', method: 'GET' })
-  if (!upstream.ok) return null
+  if (!upstream.ok) {
+    civilAiResolvedModelCache.set(server.id, { model: null, expiresAt: Date.now() + 10_000 })
+    return null
+  }
 
   const payload = upstream.json as Record<string, unknown> | null
   const rawItems = Array.isArray(payload?.data)
@@ -512,13 +872,30 @@ async function resolveCivilAiModel(server: CivilAiServerConfig, preferredModel?:
 
     const loadedInstances = Array.isArray(model.loaded_instances) ? model.loaded_instances : []
     const loadedInstance = loadedInstances.find((item) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).id === 'string') as Record<string, unknown> | undefined
-    if (typeof loadedInstance?.id === 'string' && loadedInstance.id.trim()) return loadedInstance.id.trim()
+    if (typeof loadedInstance?.id === 'string' && loadedInstance.id.trim()) {
+      const model = loadedInstance.id.trim()
+      civilAiResolvedModelCache.set(server.id, { model, expiresAt: Date.now() + CIVIL_AI_MODEL_CACHE_TTL_MS })
+      return model
+    }
 
-    if (typeof model.selected_variant === 'string' && model.selected_variant.trim()) return model.selected_variant.trim()
-    if (typeof model.key === 'string' && model.key.trim()) return model.key.trim()
-    if (typeof model.id === 'string' && model.id.trim()) return model.id.trim()
+    if (typeof model.selected_variant === 'string' && model.selected_variant.trim()) {
+      const selectedModel = model.selected_variant.trim()
+      civilAiResolvedModelCache.set(server.id, { model: selectedModel, expiresAt: Date.now() + CIVIL_AI_MODEL_CACHE_TTL_MS })
+      return selectedModel
+    }
+    if (typeof model.key === 'string' && model.key.trim()) {
+      const selectedModel = model.key.trim()
+      civilAiResolvedModelCache.set(server.id, { model: selectedModel, expiresAt: Date.now() + CIVIL_AI_MODEL_CACHE_TTL_MS })
+      return selectedModel
+    }
+    if (typeof model.id === 'string' && model.id.trim()) {
+      const selectedModel = model.id.trim()
+      civilAiResolvedModelCache.set(server.id, { model: selectedModel, expiresAt: Date.now() + CIVIL_AI_MODEL_CACHE_TTL_MS })
+      return selectedModel
+    }
   }
 
+  civilAiResolvedModelCache.set(server.id, { model: null, expiresAt: Date.now() + 10_000 })
   return null
 }
 
@@ -601,10 +978,32 @@ type CivilAiViewerContext = {
   user: {
     id: string
     handle: string
+    firstName: string | null
+    lastName: string | null
     name: string | null
+    bio: string | null
     avatarUrl: string | null
+    coverUrl: string | null
     isVerified: boolean
     isPremium: boolean
+    experiences: Array<{
+      id: string
+      title: string
+      organization: string
+      location: string | null
+      startDate: string
+      endDate: string | null
+      current: boolean
+      description: string | null
+      organizationProfile: {
+        id: string
+        name: string
+        slug: string
+        href: string | null
+        logoUrl: string | null
+        coverUrl: string | null
+      } | null
+    }>
   }
   homeCommunity: {
     id: string
@@ -653,7 +1052,9 @@ async function loadCivilAiViewerContext(userId: string): Promise<CivilAiViewerCo
         id: true,
         handle: true,
         name: true,
+        bio: true,
         avatarUrl: true,
+        coverUrl: true,
         premiumStatus: true,
         communityMeta: true,
       },
@@ -719,6 +1120,90 @@ async function loadCivilAiViewerContext(userId: string): Promise<CivilAiViewerCo
   ])
 
   if (!user) return null
+
+  let experienceItems: CivilAiViewerContext['user']['experiences'] = []
+  try {
+    const experiences = await prisma.experience.findMany({
+      where: { userId },
+      orderBy: [{ position: 'asc' }, { startDate: 'desc' }],
+    })
+
+    const normalizedExperienceOrganizationNames = Array.from(
+      new Set(
+        experiences
+          .map((exp: ExperienceModel) => exp.organization.trim().toLowerCase())
+          .filter((name: string) => name.length > 0),
+      ),
+    )
+
+    const organizationByName = new Map<
+      string,
+      {
+        id: string
+        name: string
+        slug: string
+        href: string | null
+        logoUrl: string | null
+        coverUrl: string | null
+      }
+    >()
+
+    if (normalizedExperienceOrganizationNames.length > 0) {
+      const linkedOrganizations = await prisma.business.findMany({
+        where: {
+          status: 'ACTIVE',
+          moderationStatus: ModerationStatus.VISIBLE,
+          OR: normalizedExperienceOrganizationNames.map((name) => ({
+            name: {
+              equals: name,
+              mode: 'insensitive',
+            },
+          })),
+        },
+        orderBy: [{ isVerified: 'desc' }, { name: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          provinceCode: true,
+          communitySlug: true,
+          logoUrl: true,
+          coverUrl: true,
+        },
+      })
+
+      for (const org of linkedOrganizations) {
+        const key = org.name.trim().toLowerCase()
+        if (!key || organizationByName.has(key)) continue
+        organizationByName.set(key, {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          href: buildCivilOrganizationHref({ provinceCode: org.provinceCode, communitySlug: org.communitySlug, slug: org.slug }),
+          logoUrl: normalizeMediaUrl(org.logoUrl ?? null),
+          coverUrl: normalizeMediaUrl(org.coverUrl ?? null),
+        })
+      }
+    }
+
+    experienceItems = experiences.map((exp: ExperienceModel) => ({
+      id: exp.id,
+      title: exp.title,
+      organization: exp.organization,
+      location: exp.location ?? null,
+      startDate: exp.startDate.toISOString(),
+      endDate: exp.endDate ? exp.endDate.toISOString() : null,
+      current: exp.current,
+      description: exp.description ?? null,
+      organizationProfile: organizationByName.get(exp.organization.trim().toLowerCase()) ?? null,
+    }))
+  } catch (err) {
+    if (!isExperienceTableMissing(err)) throw err
+  }
+
+  const nameParts = (user.name ?? '').trim().split(/\s+/).filter(Boolean)
+  const firstName = nameParts[0] ?? null
+  const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null
 
   const typedFollows = follows as Array<{ provinceCode: string; communitySlug: string; home: boolean }>
   const homeFollow = typedFollows.find((entry: { provinceCode: string; communitySlug: string; home: boolean }) => entry.home) ?? typedFollows[0] ?? null
@@ -809,10 +1294,15 @@ async function loadCivilAiViewerContext(userId: string): Promise<CivilAiViewerCo
     user: {
       id: user.id,
       handle: user.handle,
+      firstName,
+      lastName,
       name: user.name,
+      bio: user.bio ? sanitizePlainText(user.bio) : null,
       avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+      coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
       isVerified: Boolean(user.premiumStatus),
       isPremium: Boolean(user.premiumStatus),
+      experiences: experienceItems,
     },
     homeCommunity,
     nearbyCommunities,
@@ -879,6 +1369,12 @@ function buildCivilAiContextPrompt(viewerContext: CivilAiViewerContext | null) {
     '',
     'Available Civil AI Data Endpoints:',
     JSON.stringify(catalog, null, 2),
+    '',
+    'Rules for signed-in user context:',
+    '- If a current signed-in user context block is present, you do know that user\'s provided profile data for this conversation.',
+    '- You may use the provided first name, last name, display name, experience history, home community, and organizations to answer personally relevant questions.',
+    '- Do not claim you lack access to the user\'s name or organizations if those fields are present in the context block.',
+    '- Only say information is unavailable when the specific field is actually missing from the provided context.',
     '',
     'Rules for local data answers:',
     '- Prefer the current user context over generic assumptions.',
@@ -981,7 +1477,7 @@ function extractCivilAiTopicQuery(question: string) {
     .join(' ')
 }
 
-function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
+export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   const normalized = question.toLowerCase()
   const topicQuery = extractCivilAiTopicQuery(question)
 
@@ -7631,6 +8127,8 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
       '- If there are no matching results, say so plainly.',
       '- Do not mention old or unrelated far-away events when the user asks about what is near them.',
       '- For posts and organizations, stay anchored to the returned local community data unless the user explicitly asks to broaden the search.',
+      '- Do not paste raw Civil URLs into the answer when a linked Civil item is available in the fetched data.',
+      '- Refer to linked Civil items naturally and let the UI card carry the destination link and metadata.',
       '- When helpful, mention linked Civil items from the fetched data naturally in the answer.',
     )
   }
@@ -7638,6 +8136,19 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
   return {
     viewerContext,
     references: references.slice(0, 8),
+    debug: {
+      latestQuestion,
+      retrievalPlan: retrieval,
+      requestedCommunities,
+      targetCommunities,
+      resultCounts: {
+        events: usableEvents.length,
+        jobs: usableJobs.length,
+        organizations: usableOrganizations.length,
+        posts: usablePosts.length,
+      },
+      includedViewerOrganizations: retrieval.includeViewerOrganizations && Boolean(viewerContext?.organizations.length),
+    },
     prompt: promptSections.join('\n'),
   }
 }
@@ -7890,76 +8401,173 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
   const body = CivilAiChatInput.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
   const userId = await resolveUserId(req)
+  const conversationId = body.data.conversationId?.trim() || randomUUID()
   const latestUserMessage = [...body.data.messages].reverse().find((message) => message.role === 'user')?.content?.trim() ?? ''
 
-  const resolved = await resolveCivilAiServer(body.data.serverId)
-  if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
-  const resolvedModel = await resolveCivilAiModel(resolved.server, body.data.model)
-  if (!resolvedModel) return reply.code(503).send({ error: 'no_ai_model_available' })
+  const requestStartedAt = Date.now()
+  let status = 'error'
+  let errorMessage: string | null = null
+  let resolvedModel: string | null = null
+  let resolvedServer: CivilAiServerConfig | null = null
+  let retrievalBundle: Awaited<ReturnType<typeof buildCivilAiRetrievalBundle>> | null = null
+  let upstreamInput: string | null = null
+  let assistantContent: string | null = null
+  let rawResponse: unknown = null
+  let persistedHistory: CivilAiHistoryEntry[] | null = null
 
-  const instructions = await readCivilAiInstructions()
-  const retrievalBundle = await buildCivilAiRetrievalBundle(userId ?? null, latestUserMessage)
-  const combinedInstructions = [instructions.content, retrievalBundle.prompt].filter(Boolean).join('\n\n')
-  const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    { role: 'system', content: combinedInstructions },
-    ...body.data.messages.map((message) => ({
-      role: message.role as 'system' | 'user' | 'assistant',
-      content: message.content,
-    })),
-  ]
-  const input = buildCivilAiPromptInput(combinedInstructions, upstreamMessages)
+  try {
+    retrievalBundle = await buildCivilAiRetrievalBundle(userId ?? null, latestUserMessage)
 
-  const upstream = await callCivilAiServer({
-    server: resolved.server,
-    path: '/api/v1/chat',
-    method: 'POST',
-    body: {
-      model: resolvedModel,
-      input,
-      temperature: body.data.temperature,
-      top_p: body.data.topP,
-      max_tokens: body.data.maxTokens,
-      stream: body.data.stream ?? false,
-    },
-  })
+    const directAnswer = buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle.viewerContext)
+    if (directAnswer) {
+      assistantContent = directAnswer.content
+      status = 'direct_answer'
+      persistedHistory = userId
+        ? await persistCivilAiHistory(userId, [
+            {
+              role: 'user',
+              content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
+              createdAt: new Date().toISOString(),
+            },
+            {
+              role: 'assistant',
+              content: directAnswer.content,
+              createdAt: new Date().toISOString(),
+              references: directAnswer.references,
+            },
+          ])
+        : null
 
-  if (!upstream.ok) {
-    return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_chat_failed' })
-  }
-
-  const content = extractCivilAiMessageContent(upstream.json)
-  if (!content) {
-    const rawResponse = upstream.json ?? upstream.text?.trim() ?? null
-    return reply.code(502).send({ error: 'ai_empty_response', raw: rawResponse })
-  }
-
-  const persistedHistory = userId
-    ? await persistCivilAiHistory(userId, [
-        {
-          role: 'user',
-          content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
-          createdAt: new Date().toISOString(),
-        },
-        {
+      return reply.send({
+        conversationId,
+        message: {
           role: 'assistant',
-          content,
-          createdAt: new Date().toISOString(),
+          content: directAnswer.content,
+          references: directAnswer.references,
         },
-      ])
-    : null
+        model: null,
+        server: null,
+        viewerContext: retrievalBundle.viewerContext,
+        history: persistedHistory,
+        raw: null,
+      })
+    }
 
-  return reply.send({
-    message: {
-      role: 'assistant',
-      content,
-      references: retrievalBundle.references,
-    },
-    model: resolvedModel,
-    server: resolved.server,
-    viewerContext: retrievalBundle.viewerContext,
-    history: persistedHistory,
-    raw: upstream.json,
-  })
+    const resolved = await resolveCivilAiServer(body.data.serverId)
+    resolvedServer = resolved.server
+    if (!resolved.server) {
+      status = 'no_ai_server_available'
+      errorMessage = 'no_ai_server_available'
+      return reply.code(503).send({ error: 'no_ai_server_available' })
+    }
+    resolvedModel = await resolveCivilAiModel(resolved.server, body.data.model)
+    if (!resolvedModel) {
+      status = 'no_ai_model_available'
+      errorMessage = 'no_ai_model_available'
+      return reply.code(503).send({ error: 'no_ai_model_available' })
+    }
+
+    const instructions = await readCivilAiInstructions()
+    const combinedInstructions = [instructions.content, retrievalBundle.prompt].filter(Boolean).join('\n\n')
+    const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: combinedInstructions },
+      ...body.data.messages.map((message) => ({
+        role: message.role as 'system' | 'user' | 'assistant',
+        content: message.content,
+      })),
+    ]
+    upstreamInput = buildCivilAiPromptInput(combinedInstructions, upstreamMessages)
+
+    const upstream = await callCivilAiServer({
+      server: resolved.server,
+      path: '/api/v1/chat',
+      method: 'POST',
+      body: {
+        model: resolvedModel,
+        input: upstreamInput,
+        temperature: body.data.temperature,
+        top_p: body.data.topP,
+        max_tokens: body.data.maxTokens,
+        stream: body.data.stream ?? false,
+      },
+    })
+
+    rawResponse = upstream.json ?? upstream.text?.trim() ?? null
+    if (!upstream.ok) {
+      status = 'ai_chat_failed'
+      errorMessage = upstream.text || 'ai_chat_failed'
+      return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_chat_failed' })
+    }
+
+    const rawContent = extractCivilAiMessageContent(upstream.json)
+    const content = sanitizeCivilAiResponseContent(rawContent, retrievalBundle.references)
+    if (!content) {
+      status = 'ai_empty_response'
+      errorMessage = 'ai_empty_response'
+      return reply.code(502).send({ error: 'ai_empty_response', raw: rawResponse })
+    }
+
+    assistantContent = content
+    status = 'completed'
+    persistedHistory = userId
+      ? await persistCivilAiHistory(userId, [
+          {
+            role: 'user',
+            content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            role: 'assistant',
+            content,
+            createdAt: new Date().toISOString(),
+            references: retrievalBundle.references,
+          },
+        ])
+      : null
+
+    return reply.send({
+      conversationId,
+      message: {
+        role: 'assistant',
+        content,
+        references: retrievalBundle.references,
+      },
+      model: resolvedModel,
+      server: resolved.server,
+      viewerContext: retrievalBundle.viewerContext,
+      history: persistedHistory,
+      raw: upstream.json,
+    })
+  } finally {
+    try {
+      await persistCivilAiDebugTurn({
+        conversationId,
+        userId,
+        latestUserMessage,
+        requestMessages: body.data.messages.map((message) => ({ role: message.role, content: message.content })),
+        viewerContext: retrievalBundle?.viewerContext ?? null,
+        retrievalDebug: retrievalBundle
+          ? {
+              ...retrievalBundle.debug,
+              directAnswerUsed: status === 'direct_answer',
+            }
+          : null,
+        references: status === 'direct_answer'
+          ? buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle?.viewerContext ?? null)?.references ?? []
+          : retrievalBundle?.references ?? [],
+        serverName: resolvedServer?.name ?? null,
+        model: resolvedModel,
+        upstreamInput,
+        assistantContent,
+        rawResponse,
+        status,
+        errorMessage,
+        durationMs: Date.now() - requestStartedAt,
+      })
+    } catch (error) {
+      req.log.error({ err: error }, 'civil_ai_debug_log_failed')
+    }
+  }
 })
 
 // Ensure all unexpected errors return clean JSON (prevents malformed bodies)
@@ -26501,6 +27109,215 @@ app.post(
     }
   },
 )
+
+app.get('/admin/ai/conversations', async (req: FastifyRequest, reply: FastifyReply) => {
+  let user: { id: string; email: string | null; name: string | null } | null
+  try {
+    user = await loadAuthenticatedUser(req)
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  if (!user || !isSuperAdminEmail(user.email)) {
+    return reply.code(403).send({ error: 'forbidden' })
+  }
+
+  await ensureCivilAiDebugTables()
+  const query = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  type AdminAiConversationRow = {
+    id: string
+    user_id: string | null
+    user_handle: string | null
+    user_name: string | null
+    started_at: Date
+    last_activity_at: Date
+    turn_count: number | bigint
+    first_user_message: string | null
+    last_user_message: string | null
+    status: string | null
+    last_model: string | null
+    last_server: string | null
+    last_error: string | null
+  }
+
+  const rows = await prisma.$queryRaw<AdminAiConversationRow[]>`
+    SELECT
+      id,
+      user_id,
+      user_handle,
+      user_name,
+      started_at,
+      last_activity_at,
+      turn_count,
+      first_user_message,
+      last_user_message,
+      status,
+      last_model,
+      last_server,
+      last_error
+    FROM civil_ai_conversation
+    ORDER BY last_activity_at DESC
+    LIMIT ${query.data.limit}
+  `
+
+  const items: CivilAiDebugConversationSummary[] = rows.map((row: AdminAiConversationRow) => ({
+    id: row.id,
+    userId: row.user_id,
+    userHandle: row.user_handle,
+    userName: row.user_name,
+    startedAt: row.started_at.toISOString(),
+    lastActivityAt: row.last_activity_at.toISOString(),
+    turnCount: Number(row.turn_count) || 0,
+    firstUserMessage: row.first_user_message,
+    lastUserMessage: row.last_user_message,
+    status: row.status,
+    lastModel: row.last_model,
+    lastServer: row.last_server,
+    lastError: row.last_error,
+  }))
+
+  return reply.send({ items })
+})
+
+app.get('/admin/ai/conversations/:conversationId', async (req: FastifyRequest, reply: FastifyReply) => {
+  let user: { id: string; email: string | null; name: string | null } | null
+  try {
+    user = await loadAuthenticatedUser(req)
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  if (!user || !isSuperAdminEmail(user.email)) {
+    return reply.code(403).send({ error: 'forbidden' })
+  }
+
+  await ensureCivilAiDebugTables()
+  const params = z.object({ conversationId: z.string().trim().min(1).max(120) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const summaryRows = await prisma.$queryRaw<Array<{
+    id: string
+    user_id: string | null
+    user_handle: string | null
+    user_name: string | null
+    started_at: Date
+    last_activity_at: Date
+    turn_count: number | bigint
+    first_user_message: string | null
+    last_user_message: string | null
+    status: string | null
+    last_model: string | null
+    last_server: string | null
+    last_error: string | null
+  }>>`
+    SELECT
+      id,
+      user_id,
+      user_handle,
+      user_name,
+      started_at,
+      last_activity_at,
+      turn_count,
+      first_user_message,
+      last_user_message,
+      status,
+      last_model,
+      last_server,
+      last_error
+    FROM civil_ai_conversation
+    WHERE id = ${params.data.conversationId}
+    LIMIT 1
+  `
+
+  const summary = summaryRows[0]
+  if (!summary) return reply.code(404).send({ error: 'conversation_not_found' })
+
+  type AdminAiTurnRow = {
+    id: string
+    conversation_id: string
+    user_id: string | null
+    created_at: Date
+    latest_user_message: string | null
+    status: string
+    duration_ms: number | null
+    server_name: string | null
+    model: string | null
+    error_message: string | null
+    assistant_content: string | null
+    request_messages_text: string | null
+    viewer_context_text: string | null
+    retrieval_debug_text: string | null
+    references_text: string | null
+    upstream_input_text: string | null
+    raw_response_text: string | null
+  }
+
+  const turnRows = await prisma.$queryRaw<AdminAiTurnRow[]>`
+    SELECT
+      id,
+      conversation_id,
+      user_id,
+      created_at,
+      latest_user_message,
+      status,
+      duration_ms,
+      server_name,
+      model,
+      error_message,
+      assistant_content,
+      request_messages_text,
+      viewer_context_text,
+      retrieval_debug_text,
+      references_text,
+      upstream_input_text,
+      raw_response_text
+    FROM civil_ai_turn
+    WHERE conversation_id = ${params.data.conversationId}
+    ORDER BY created_at DESC
+    LIMIT 100
+  `
+
+  const turns: CivilAiDebugTurnRecord[] = turnRows.map((row: AdminAiTurnRow) => ({
+    id: row.id,
+    conversationId: row.conversation_id,
+    userId: row.user_id,
+    createdAt: row.created_at.toISOString(),
+    latestUserMessage: row.latest_user_message,
+    status: row.status,
+    durationMs: row.duration_ms,
+    serverName: row.server_name,
+    model: row.model,
+    errorMessage: row.error_message,
+    assistantContent: row.assistant_content,
+    requestMessages: parseLoggedJsonText(row.request_messages_text),
+    viewerContext: parseLoggedJsonText(row.viewer_context_text),
+    retrievalDebug: parseLoggedJsonText(row.retrieval_debug_text),
+    references: parseLoggedJsonText(row.references_text),
+    upstreamInput: row.upstream_input_text,
+    rawResponse: parseLoggedJsonText(row.raw_response_text) ?? row.raw_response_text,
+  }))
+
+  return reply.send({
+    conversation: {
+      id: summary.id,
+      userId: summary.user_id,
+      userHandle: summary.user_handle,
+      userName: summary.user_name,
+      startedAt: summary.started_at.toISOString(),
+      lastActivityAt: summary.last_activity_at.toISOString(),
+      turnCount: Number(summary.turn_count) || 0,
+      firstUserMessage: summary.first_user_message,
+      lastUserMessage: summary.last_user_message,
+      status: summary.status,
+      lastModel: summary.last_model,
+      lastServer: summary.last_server,
+      lastError: summary.last_error,
+    } satisfies CivilAiDebugConversationSummary,
+    turns,
+  })
+})
 
 app.get('/admin/env', async (req: FastifyRequest, reply: FastifyReply) => {
   let user: { id: string; email: string | null; name: string | null } | null

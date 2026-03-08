@@ -1,8 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { Fragment, ReactNode, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import clsx from 'clsx'
-import { HiOutlineArrowUp, HiOutlineSparkles, HiOutlineXMark } from 'react-icons/hi2'
+import { HiOutlineArrowPath, HiOutlineArrowUp, HiOutlineXMark } from 'react-icons/hi2'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { getStoredToken } from '../_lib/tokenStorage'
 
@@ -29,10 +30,12 @@ type AiHistoryResponse = {
     role: 'assistant' | 'user'
     content: string
     createdAt: string
+    references?: CivilAiReference[]
   }>
 }
 
 type AiChatResponse = {
+  conversationId?: string
   message?: {
     role?: string
     content?: string
@@ -54,9 +57,90 @@ const QUICK_PROMPTS = [
 ]
 
 const CIVIL_AI_OPEN_STORAGE_KEY = 'civil-ai-open'
+const CIVIL_AI_CONVERSATION_STORAGE_KEY = 'civil-ai-conversation-id'
 
 function nextMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function isCivilInternalHref(href: string) {
+  if (!href) return false
+  if (href.startsWith('/')) return true
+  try {
+    const parsed = new URL(href)
+    const host = parsed.hostname.toLowerCase()
+    return host === 'civilcitizens.ca' || host.endsWith('.civilcitizens.ca')
+  } catch {
+    return false
+  }
+}
+
+function toCivilAppHref(href: string) {
+  if (href.startsWith('/')) return href
+  try {
+    const parsed = new URL(href)
+    return `${parsed.pathname}${parsed.search}${parsed.hash}` || '/'
+  } catch {
+    return href
+  }
+}
+
+function createCivilAiConversationId() {
+  if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID()
+  }
+  return nextMessageId('conversation')
+}
+
+function buildCivilAiLoadingSteps(question: string) {
+  const normalized = question.trim().toLowerCase()
+  const wantsEvents = /(event|events|happening|going on|tonight|today|this weekend|this month)/.test(normalized)
+  const wantsJobs = /(job|jobs|hiring|employment|position|positions|work)/.test(normalized)
+  const wantsPosts = /(post|posts|people saying|talking about|discussion|discussions|conversation|conversations|debate|debates)/.test(normalized)
+  const wantsOrganizations = /(organization|organizations|group|groups|association|associations)/.test(normalized)
+  const wantsProfile = /(my name|who am i|do you know my name|my profile|my experience|my organizations|i belong to)/.test(normalized)
+  const wantsToday = /(today|tonight|this afternoon|this evening)/.test(normalized)
+  const wantsThisMonth = /(this month|this week)/.test(normalized)
+
+  if (wantsProfile) {
+    return [
+      'Checking your signed-in Civil profile.',
+      'Reviewing your experience and organization context.',
+      'Pulling together the most relevant profile details.',
+    ]
+  }
+
+  if (wantsEvents) {
+    return [
+      'Checking your home and nearby communities.',
+      wantsToday ? 'Looking up events happening today.' : wantsThisMonth ? 'Looking up events happening this month.' : 'Looking up nearby events.',
+      'Considering a few nearby communities as well.',
+      "If local event results are thin, I'll expand the search nearby.",
+    ]
+  }
+
+  if (wantsJobs) {
+    return [
+      'Checking your local communities and organizations.',
+      'Looking up active jobs nearby.',
+      'Considering organization and location matches together.',
+    ]
+  }
+
+  if (wantsPosts || wantsOrganizations) {
+    return [
+      'Checking your local communities first.',
+      wantsPosts ? 'Looking up what people are saying nearby.' : 'Looking up local organizations tied to your question.',
+      wantsOrganizations ? 'Considering which organizations are most relevant.' : 'Considering a few related local signals.',
+      'If the first pass is thin, I will broaden the local search.',
+    ]
+  }
+
+  return [
+    'Checking your signed-in Civil context.',
+    'Considering a few relevant local angles.',
+    'Looking up the best matching Civil data.',
+  ]
 }
 
 function renderInlineCivilAiMarkdown(text: string): ReactNode[] {
@@ -79,16 +163,27 @@ function renderInlineCivilAiMarkdown(text: string): ReactNode[] {
         </code>,
       )
     } else if (match[4] && match[5]) {
+      const href = match[5]
       nodes.push(
-        <a
-          key={`link-${match.index}`}
-          href={match[5]}
-          className="font-semibold text-[var(--cc-primary)] underline underline-offset-2"
-          target="_blank"
-          rel="noreferrer"
-        >
-          {match[4]}
-        </a>,
+        isCivilInternalHref(href) ? (
+          <Link
+            key={`link-${match.index}`}
+            href={toCivilAppHref(href)}
+            className="font-semibold text-[var(--cc-primary)] underline underline-offset-2"
+          >
+            {match[4]}
+          </Link>
+        ) : (
+          <a
+            key={`link-${match.index}`}
+            href={href}
+            className="font-semibold text-[var(--cc-primary)] underline underline-offset-2"
+            target="_blank"
+            rel="noreferrer"
+          >
+            {match[4]}
+          </a>
+        ),
       )
     }
 
@@ -151,43 +246,64 @@ function CivilAiMessageBody({ content }: { content: string }) {
 }
 
 function CivilAiReferenceCard({ reference }: { reference: CivilAiReference }) {
-  return (
-    <a
-      href={reference.href}
-      className="group block overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white shadow-sm transition hover:border-[var(--cc-primary)]/30 hover:bg-slate-50"
-      target="_blank"
-      rel="noreferrer"
-    >
-      <div className="flex gap-3 p-3">
-        <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-slate-100">
-          {reference.imageUrl ? <img src={reference.imageUrl} alt={reference.title} className="h-full w-full object-cover" loading="lazy" /> : null}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {reference.badge ? <span className="rounded-full border border-[var(--cc-primary)]/15 bg-[var(--cc-primary)]/8 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">{reference.badge}</span> : null}
-            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Civil</span>
-          </div>
-          <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-900 transition group-hover:text-[var(--cc-primary)]">{reference.title}</p>
-          {reference.subtitle ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{reference.subtitle}</p> : null}
-          {reference.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{reference.summary}</p> : null}
-        </div>
+  const body = (
+    <div className="flex gap-3 p-3">
+      <div className="h-20 w-24 shrink-0 overflow-hidden rounded-xl bg-slate-100">
+        {reference.imageUrl ? <img src={reference.imageUrl} alt={reference.title} className="h-full w-full object-cover" loading="lazy" /> : null}
       </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          {reference.badge ? <span className="rounded-full border border-[var(--cc-primary)]/15 bg-[var(--cc-primary)]/8 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">{reference.badge}</span> : null}
+          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">Civil</span>
+        </div>
+        <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-slate-900 transition group-hover:text-[var(--cc-primary)]">{reference.title}</p>
+        {reference.subtitle ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{reference.subtitle}</p> : null}
+        {reference.summary ? <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">{reference.summary}</p> : null}
+      </div>
+    </div>
+  )
+
+  const className = 'group block overflow-hidden rounded-[1.25rem] border border-slate-200 bg-white shadow-sm transition hover:border-[var(--cc-primary)]/30 hover:bg-slate-50'
+
+  if (isCivilInternalHref(reference.href)) {
+    return (
+      <Link href={toCivilAppHref(reference.href)} className={className}>
+        {body}
+      </Link>
+    )
+  }
+
+  return (
+    <a href={reference.href} className={className} target="_blank" rel="noreferrer">
+      {body}
     </a>
   )
 }
 
 export default function CivilAiLauncher() {
   const [open, setOpen] = useState(false)
+  const [conversationId, setConversationId] = useState('')
   const [messages, setMessages] = useState<AiMessage[]>([STARTER_MESSAGE])
   const [draft, setDraft] = useState('')
   const [historyLoading, setHistoryLoading] = useState(false)
   const [sendLoading, setSendLoading] = useState(false)
+  const [loadingSteps, setLoadingSteps] = useState<string[]>([])
+  const [loadingStepIndex, setLoadingStepIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const sendLoadingRef = useRef(false)
+
+  useEffect(() => {
+    sendLoadingRef.current = sendLoading
+  }, [sendLoading])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
     setOpen(window.sessionStorage.getItem(CIVIL_AI_OPEN_STORAGE_KEY) === 'true')
+    const existingConversationId = window.sessionStorage.getItem(CIVIL_AI_CONVERSATION_STORAGE_KEY)
+    const nextConversationId = existingConversationId || createCivilAiConversationId()
+    window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, nextConversationId)
+    setConversationId(nextConversationId)
   }, [])
 
   useEffect(() => {
@@ -222,6 +338,20 @@ export default function CivilAiLauncher() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open])
 
+  useEffect(() => {
+    if (!sendLoading || loadingSteps.length <= 1) return
+
+    setLoadingStepIndex(0)
+    const interval = window.setInterval(() => {
+      setLoadingStepIndex((current) => {
+        if (current >= loadingSteps.length - 1) return current
+        return current + 1
+      })
+    }, 1800)
+
+    return () => window.clearInterval(interval)
+  }, [sendLoading, loadingSteps])
+
   async function loadHistory() {
     setHistoryLoading(true)
     setError(null)
@@ -235,15 +365,19 @@ export default function CivilAiLauncher() {
       if (!response.ok || !json) {
         throw new Error(text || 'Unable to load Civil AI history right now.')
       }
-      setMessages(
-        json.items.length
-          ? json.items.map((item, index) => ({
-              id: `history-${index}-${item.createdAt}`,
-              role: item.role,
-              content: item.content,
-            }))
-          : [STARTER_MESSAGE],
-      )
+      const historyMessages = json.items.length
+        ? json.items.map((item, index) => ({
+            id: `history-${index}-${item.createdAt}`,
+            role: item.role,
+            content: item.content,
+            references: Array.isArray(item.references) ? item.references : undefined,
+          }))
+        : [STARTER_MESSAGE]
+      setMessages((current) => {
+        const hasLiveConversation = current.some((message) => message.id !== STARTER_MESSAGE.id && !message.id.startsWith('history-'))
+        if (sendLoadingRef.current || hasLiveConversation) return current
+        return historyMessages
+      })
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load Civil AI history right now.')
     } finally {
@@ -265,6 +399,8 @@ export default function CivilAiLauncher() {
     setMessages(nextMessages)
     setDraft('')
     setSendLoading(true)
+    setLoadingSteps(buildCivilAiLoadingSteps(content))
+    setLoadingStepIndex(0)
     setError(null)
 
     try {
@@ -276,6 +412,7 @@ export default function CivilAiLauncher() {
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          conversationId: conversationId || createCivilAiConversationId(),
           messages: nextMessages
             .filter((message) => message.id !== STARTER_MESSAGE.id)
             .map((message) => ({ role: message.role, content: message.content })),
@@ -284,6 +421,10 @@ export default function CivilAiLauncher() {
       const { json, text } = await parseApiResponse<AiChatResponse>(response)
       if (!response.ok || !json?.message?.content) {
         throw new Error(text || 'Civil AI did not return a usable response.')
+      }
+      if (typeof window !== 'undefined' && json.conversationId) {
+        window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, json.conversationId)
+        setConversationId(json.conversationId)
       }
       setMessages((current) => [
         ...current,
@@ -298,6 +439,8 @@ export default function CivilAiLauncher() {
       setError(sendError instanceof Error ? sendError.message : 'Civil AI could not answer right now.')
     } finally {
       setSendLoading(false)
+      setLoadingSteps([])
+      setLoadingStepIndex(0)
     }
   }
 
@@ -392,9 +535,14 @@ export default function CivilAiLauncher() {
 
                 {sendLoading ? (
                   <div className="flex justify-start">
-                    <div className="flex items-center gap-2 rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
-                      <HiOutlineSparkles className="text-[var(--cc-primary)]" />
-                      Civil AI is thinking
+                    <div className="rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <HiOutlineArrowPath className="animate-spin text-[var(--cc-primary)]" />
+                        Civil AI is thinking
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">
+                        {loadingSteps[loadingStepIndex] || 'Looking up the best matching Civil data.'}
+                      </p>
                     </div>
                   </div>
                 ) : null}
