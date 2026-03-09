@@ -31,6 +31,7 @@ function resolveMetadataBaseUrl(): string {
 
 const baseUrl = resolveMetadataBaseUrl()
 const launchOverlayBootstrap = `(function(){try{if(window.location.pathname==='/'&&window.localStorage.getItem('token')){document.documentElement.classList.add('cc-launch-pending')}}catch(_error){}})();`
+const nativeIosBootstrap = `(function(){try{var capacitor=window.Capacitor;if(capacitor&&typeof capacitor.getPlatform==='function'&&capacitor.getPlatform()==='ios'){document.documentElement.classList.add('cc-native-ios')}}catch(_error){}})();`
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
@@ -95,6 +96,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.className} bg-[var(--cc-muted-surface)] text-slate-900 antialiased`}>
+        <script dangerouslySetInnerHTML={{ __html: nativeIosBootstrap }} />
         <script dangerouslySetInnerHTML={{ __html: launchOverlayBootstrap }} />
         <div id="cc-launch-overlay" aria-hidden="true">
           <div className="cc-launch-overlay__glow" />
