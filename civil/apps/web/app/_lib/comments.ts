@@ -125,3 +125,21 @@ export function updateCommentInTree(nodes: ApiComment[], comment: ApiComment): A
   const next = walk(nodes)
   return updated ? next : nodes
 }
+
+export function removeCommentFromTree(nodes: ApiComment[], commentId: string): ApiComment[] {
+  return nodes
+    .filter((node) => node.id !== commentId)
+    .map((node) => ({
+      ...node,
+      replies: removeCommentFromTree(node.replies, commentId),
+    }))
+}
+
+export function removeCommentsByAuthorFromTree(nodes: ApiComment[], authorId: string): ApiComment[] {
+  return nodes
+    .filter((node) => node.author.id !== authorId)
+    .map((node) => ({
+      ...node,
+      replies: removeCommentsByAuthorFromTree(node.replies, authorId),
+    }))
+}

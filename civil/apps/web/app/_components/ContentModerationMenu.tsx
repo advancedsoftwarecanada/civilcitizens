@@ -10,7 +10,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { pushToast } from './useToasts'
 
-type ModerationTargetType = 'POST' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT'
+type ModerationTargetType = 'POST' | 'COMMENT' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT'
 type ReportReasonValue =
   | 'spam_or_scam'
   | 'hate_or_harassment'
@@ -238,8 +238,8 @@ export default function ContentModerationMenu({
       const path = blockTarget.type === 'organization' ? '/moderation/blocks/organizations' : '/moderation/blocks/users'
       const body =
         blockTarget.type === 'organization'
-          ? { businessId: blockTarget.id }
-          : { userId: blockTarget.id }
+          ? { businessId: blockTarget.id, reportTarget: reportTarget ? { targetType: reportTarget.targetType, targetId: reportTarget.targetId } : null }
+          : { userId: blockTarget.id, reportTarget: reportTarget ? { targetType: reportTarget.targetType, targetId: reportTarget.targetId } : null }
 
       const response = await fetch(buildApiUrl(path), {
         method: 'POST',
@@ -256,7 +256,12 @@ export default function ContentModerationMenu({
         return
       }
 
-      pushToast(blockTarget.type === 'organization' ? 'Organization blocked.' : 'User blocked.', 'success')
+      pushToast(
+        blockTarget.type === 'organization'
+          ? 'Organization blocked. The content was removed for you and moderators were notified.'
+          : 'User blocked. Their content was removed for you and moderators were notified.',
+        'success',
+      )
       setBlockOpen(false)
       setMenuOpen(false)
       onBlocked?.()
@@ -408,7 +413,7 @@ export default function ContentModerationMenu({
               : `Hide ${blockTarget?.label} and future content from this person in your Civil experience.`}
           </p>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Blocking only affects your account. It does not notify the other side.
+            Blocking hides this content immediately, removes future content from your experience, and sends the linked item to moderators for review.
           </div>
           <div className="flex justify-end gap-2">
             <button

@@ -24,7 +24,7 @@ import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
 import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
 import { ensureViewerMe } from '../../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../../_lib/viewerStore'
-import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../../_lib/comments'
+import { addCommentToTree, normalizeCommentTree, removeCommentFromTree, removeCommentsByAuthorFromTree, updateCommentInTree } from '../../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../../_lib/text'
 import { buildApiUrl } from '../../../../../_lib/api'
 import { getStoredToken } from '../../../../../_lib/tokenStorage'
@@ -402,6 +402,14 @@ export default function ChamberPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
+  const handleCommentReported = useCallback((commentId: string) => {
+    setComments((prev) => removeCommentFromTree(prev, commentId))
+  }, [])
+
+  const handleCommentAuthorBlocked = useCallback((authorId: string) => {
+    setComments((prev) => removeCommentsByAuthorFromTree(prev, authorId))
+  }, [])
+
   const communityDisplayName = (post?.communityName ?? chamberParam)
     .split('-')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -754,7 +762,14 @@ export default function ChamberPostPage({ params }: PageProps) {
             )}
 
             <div className="mt-6">
-              <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
+              <CommentThread
+                comments={comments}
+                onReply={handleReply}
+                onVote={handleCommentVote}
+                onCommentReported={handleCommentReported}
+                onCommentAuthorBlocked={handleCommentAuthorBlocked}
+                currentUser={viewer}
+              />
             </div>
             {viewer ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
           </section>
