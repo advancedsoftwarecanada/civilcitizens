@@ -111,7 +111,7 @@ export default function InstallAndroidPwaPage() {
                 onClick={handleTesterClick}
                 className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/30"
               >
-                Open Google Play Test
+                I have been invited to test Civil
               </a>
             </div>
           </div>
