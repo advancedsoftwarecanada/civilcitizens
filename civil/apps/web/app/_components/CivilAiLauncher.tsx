@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Fragment, ReactNode, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Fragment, ReactNode, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { HiOutlineArrowPath, HiOutlineArrowUp, HiOutlineXMark } from 'react-icons/hi2'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -307,7 +307,6 @@ export default function CivilAiLauncher() {
   const [conversationId, setConversationId] = useState('')
   const [messages, setMessages] = useState<AiMessage[]>([STARTER_MESSAGE])
   const [draft, setDraft] = useState('')
-  const [historyLoading, setHistoryLoading] = useState(false)
   const [sendLoading, setSendLoading] = useState(false)
   const [loadingSteps, setLoadingSteps] = useState<string[]>([])
   const [loadingStepIndex, setLoadingStepIndex] = useState(0)
@@ -321,11 +320,26 @@ export default function CivilAiLauncher() {
   const hasCompleteAccount = Boolean(me && hasHomeCommunity(me) && hasDeclaredCivilStatus(me))
   const shouldHideLauncher = launcherHiddenForRoute || !hasCompleteAccount
 
+  const resetCivilAiSession = useCallback(() => {
+    const nextConversationId = createCivilAiConversationId()
+    setConversationId(nextConversationId)
+    setMessages([STARTER_MESSAGE])
+    setDraft('')
+    setSendLoading(false)
+    setLoadingSteps([])
+    setLoadingStepIndex(0)
+    setError(null)
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, nextConversationId)
+    }
+  }, [])
+
   useEffect(() => {
     if (shouldHideLauncher && open) {
       setOpen(false)
+      resetCivilAiSession()
     }
-  }, [open, shouldHideLauncher])
+  }, [open, resetCivilAiSession, shouldHideLauncher])
 
   useEffect(() => {
     sendLoadingRef.current = sendLoading
@@ -334,8 +348,7 @@ export default function CivilAiLauncher() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     setOpen(window.sessionStorage.getItem(CIVIL_AI_OPEN_STORAGE_KEY) === 'true')
-    const existingConversationId = window.sessionStorage.getItem(CIVIL_AI_CONVERSATION_STORAGE_KEY)
-    const nextConversationId = existingConversationId || createCivilAiConversationId()
+    const nextConversationId = createCivilAiConversationId()
     window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, nextConversationId)
     setConversationId(nextConversationId)
   }, [])
@@ -351,11 +364,6 @@ export default function CivilAiLauncher() {
       window.sessionStorage.setItem(CIVIL_AI_OPEN_STORAGE_KEY, open ? 'true' : 'false')
     }
     window.dispatchEvent(new CustomEvent('civil-ai:state', { detail: { open } }))
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    void loadHistory()
   }, [open])
 
   useEffect(() => {
@@ -386,39 +394,6 @@ export default function CivilAiLauncher() {
     return () => window.clearInterval(interval)
   }, [sendLoading, loadingSteps])
 
-  async function loadHistory() {
-    setHistoryLoading(true)
-    setError(null)
-    try {
-      const token = getStoredToken()
-      const response = await fetch(buildApiUrl('/ai/history'), {
-        cache: 'no-store',
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-      })
-      const { json, text } = await parseApiResponse<AiHistoryResponse>(response)
-      if (!response.ok || !json) {
-        throw new Error(text || 'Unable to load Civil AI history right now.')
-      }
-      const historyMessages = json.items.length
-        ? json.items.map((item, index) => ({
-            id: `history-${index}-${item.createdAt}`,
-            role: item.role,
-            content: item.content,
-            references: Array.isArray(item.references) ? item.references : undefined,
-          }))
-        : [STARTER_MESSAGE]
-      setMessages((current) => {
-        const hasLiveConversation = current.some((message) => message.id !== STARTER_MESSAGE.id && !message.id.startsWith('history-'))
-        if (sendLoadingRef.current || hasLiveConversation) return current
-        return pruneCivilAiMessages(historyMessages)
-      })
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load Civil AI history right now.')
-    } finally {
-      setHistoryLoading(false)
-    }
-  }
-
   async function handleSend() {
     const content = draft.trim()
     if (!content || sendLoading) return
@@ -428,7 +403,8 @@ export default function CivilAiLauncher() {
       role: 'user',
       content,
     }
-    const nextMessages = pruneCivilAiMessages([...messages, nextUserMessage])
+    const nextConversationId = createCivilAiConversationId()
+    const nextMessages = [nextUserMessage]
 
     setMessages(nextMessages)
     setDraft('')
@@ -436,9 +412,13 @@ export default function CivilAiLauncher() {
     setLoadingSteps(buildCivilAiLoadingSteps(content))
     setLoadingStepIndex(0)
     setError(null)
+    setConversationId(nextConversationId)
 
     try {
       const token = getStoredToken()
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, nextConversationId)
+      }
       const response = await fetch(buildApiUrl('/ai/chat'), {
         method: 'POST',
         headers: {
@@ -446,10 +426,8 @@ export default function CivilAiLauncher() {
           ...(token ? { authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          conversationId: conversationId || createCivilAiConversationId(),
-          messages: nextMessages
-            .filter((message) => message.id !== STARTER_MESSAGE.id)
-            .map((message) => ({ role: message.role, content: message.content })),
+          conversationId: nextConversationId,
+          messages: nextMessages.map((message) => ({ role: message.role, content: message.content })),
         }),
       })
       const { json, text } = await parseApiResponse<AiChatResponse>(response)
@@ -482,6 +460,11 @@ export default function CivilAiLauncher() {
     if (event.key !== 'Enter' || event.shiftKey) return
     event.preventDefault()
     void handleSend()
+  }
+
+  function handleClose() {
+    setOpen(false)
+    resetCivilAiSession()
   }
 
   if (shouldHideLauncher) {
@@ -520,7 +503,7 @@ export default function CivilAiLauncher() {
                 <button
                   type="button"
                   className="shrink-0 rounded-full border border-slate-200 bg-white p-2 text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)]/30 hover:text-[var(--cc-primary)]"
-                  onClick={() => setOpen(false)}
+                  onClick={handleClose}
                   aria-label="Close Civil AI"
                 >
                   <HiOutlineXMark className="text-xl" />
@@ -581,14 +564,6 @@ export default function CivilAiLauncher() {
                       <p className="mt-1 text-xs leading-5 text-slate-400">
                         {loadingSteps[loadingStepIndex] || 'Looking up the best matching Civil data.'}
                       </p>
-                    </div>
-                  </div>
-                ) : null}
-
-                {historyLoading ? (
-                  <div className="flex justify-start">
-                    <div className="rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
-                      Loading recent chat
                     </div>
                   </div>
                 ) : null}
