@@ -22,10 +22,11 @@
   --safe-area-left: env(safe-area-inset-left, 0px);
   --mobile-bottom-bar-top-pad: 0.5rem;
   --mobile-bottom-bar-row-height: 44px;
+  --mobile-dock-bottom-offset: 0px;
   --mobile-dock-bottom-pad: max(0.4rem, var(--safe-area-bottom));
   --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
   --mobile-thread-composer-height: var(--mobile-dock-height);
-  --mobile-dock-clearance: var(--mobile-dock-height);
+  --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom-offset));
 }
 
 @supports (height: 100dvh) {
@@ -50,10 +51,11 @@ html.cc-native-android {
   --cc-native-safe-top-offset: max(var(--safe-area-top), 0.9rem);
   --cc-top-nav-offset: calc(var(--cc-top-nav-height) + var(--cc-native-safe-top-offset));
   --cc-native-shell-top-gap: 0.35rem;
-  --mobile-dock-bottom-pad: max(0.15rem, min(var(--safe-area-bottom), 0.35rem));
+  --mobile-dock-bottom-offset: max(var(--safe-area-bottom), 0.7rem);
+  --mobile-dock-bottom-pad: max(0.15rem, min(var(--safe-area-bottom), 0.3rem));
   --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
   --mobile-thread-composer-height: var(--mobile-dock-height);
-  --mobile-dock-clearance: var(--mobile-dock-height);
+  --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom-offset));
 }
 
 #cc-launch-overlay {
