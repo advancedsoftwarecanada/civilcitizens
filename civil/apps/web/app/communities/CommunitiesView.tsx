@@ -11,7 +11,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
 import DashboardShell from '../_components/DashboardShell'
-import type { MeResponse } from '../_lib/me'
+import { getAuthedEntryPath, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import {
@@ -715,6 +715,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       setSelectedCommunitySlug(communitySlug)
 
       const viewerForUpdate = useViewerStore.getState().me ?? me
+      let updatedViewer: MeResponse | null = viewerForUpdate
       if (viewerForUpdate) {
         const provinceName =
           provinces.find((province) => province.code === provinceCode)?.name ??
@@ -724,7 +725,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           communityOptions.find((community) => community.province === provinceCode && community.slug === communitySlug)?.name ??
           nextHome.name ??
           communitySlug
-        const updatedViewer: MeResponse = {
+        updatedViewer = {
           ...viewerForUpdate,
           homeCommunity: {
             provinceCode,
@@ -741,7 +742,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         await loadCitiesForProvince(provinceCode, communitySlug, selectedCitySlug)
       }
       if (isWelcomeMode) {
-        router.replace('/home')
+        router.replace(updatedViewer ? getAuthedEntryPath(updatedViewer) : '/verify')
         return
       }
 

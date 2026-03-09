@@ -1,11 +1,14 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { Fragment, ReactNode, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import clsx from 'clsx'
 import { HiOutlineArrowPath, HiOutlineArrowUp, HiOutlineXMark } from 'react-icons/hi2'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { hasDeclaredCivilStatus, hasHomeCommunity } from '../_lib/me'
+import { useViewerStore } from '../_lib/viewerStore'
 
 type AiMessage = {
   id: string
@@ -59,6 +62,7 @@ const QUICK_PROMPTS = [
 const CIVIL_AI_OPEN_STORAGE_KEY = 'civil-ai-open'
 const CIVIL_AI_CONVERSATION_STORAGE_KEY = 'civil-ai-conversation-id'
 const CIVIL_AI_MAX_VISIBLE_MESSAGES = 8
+const CIVIL_AI_HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 
 function nextMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -296,6 +300,9 @@ function CivilAiReferenceCard({ reference }: { reference: CivilAiReference }) {
 }
 
 export default function CivilAiLauncher() {
+  const pathname = usePathname()
+  const resolvedPathname = pathname || ''
+  const me = useViewerStore((state) => state.me)
   const [open, setOpen] = useState(false)
   const [conversationId, setConversationId] = useState('')
   const [messages, setMessages] = useState<AiMessage[]>([STARTER_MESSAGE])
@@ -307,6 +314,18 @@ export default function CivilAiLauncher() {
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const sendLoadingRef = useRef(false)
+  const launcherHiddenForRoute =
+    CIVIL_AI_HIDDEN_PATHS.has(resolvedPathname) ||
+    resolvedPathname.startsWith('/welcome') ||
+    resolvedPathname.startsWith('/verify')
+  const hasCompleteAccount = Boolean(me && hasHomeCommunity(me) && hasDeclaredCivilStatus(me))
+  const shouldHideLauncher = launcherHiddenForRoute || !hasCompleteAccount
+
+  useEffect(() => {
+    if (shouldHideLauncher && open) {
+      setOpen(false)
+    }
+  }, [open, shouldHideLauncher])
 
   useEffect(() => {
     sendLoadingRef.current = sendLoading
@@ -463,6 +482,10 @@ export default function CivilAiLauncher() {
     if (event.key !== 'Enter' || event.shiftKey) return
     event.preventDefault()
     void handleSend()
+  }
+
+  if (shouldHideLauncher) {
+    return null
   }
 
   return (

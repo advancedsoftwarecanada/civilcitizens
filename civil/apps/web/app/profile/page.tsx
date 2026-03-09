@@ -5,13 +5,16 @@ import { useRouter } from 'next/navigation'
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildHandleBase, MediaCategory } from '@civil/shared'
 import { Area } from 'react-easy-crop'
+import { HiOutlineMagnifyingGlass } from 'react-icons/hi2'
+import CivilCard from '../_components/CivilCard'
 import Sidebar from '../_components/Sidebar'
 import RichTextEditor from '../_components/RichTextEditor'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeCommunity } from '../_lib/me'
+import { COUNTRY_OPTIONS } from '../_lib/countries'
+import { hasHomeCommunity, type CivicStatusValue, type WorkAuthorizationValue } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import DashboardShell from '../_components/DashboardShell'
@@ -22,6 +25,11 @@ type Viewer = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  coverUrl?: string | null
+  civicStatus?: CivicStatusValue | null
+  workAuthorization?: WorkAuthorizationValue | null
+  statusUpdatedAt?: string | null
+  isVerified?: boolean
   isPremium?: boolean
   premiumSince?: string | null
   premiumRenewsAt?: string | null
@@ -62,6 +70,10 @@ type ProfileResponse = {
     coverMediaId?: string | null
     avatarPostId?: string | null
     coverPostId?: string | null
+    dateOfBirth?: string | null
+    countryOfBirth?: string | null
+    shareDateOfBirth?: boolean
+    shareCountryOfBirth?: boolean
     createdAt?: string | null
     experiences?: ExperienceResponse[]
   }
@@ -545,6 +557,29 @@ function formatMonthYear(iso?: string | null) {
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
 }
 
+function formatStatusDate(iso?: string | null) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function civicStatusLabel(value?: CivicStatusValue | null) {
+  if (value === 'citizen') return 'Canadian Citizen'
+  if (value === 'permanent_resident') return 'Permanent Resident of Canada'
+  if (value === 'work_permit') return 'Valid Work Permit'
+  if (value === 'study_permit') return 'Valid Study Permit'
+  if (value === 'unspecified') return 'Other / Prefer not to say'
+  return 'Not set'
+}
+
+function workAuthorizationLabel(value?: WorkAuthorizationValue | null) {
+  if (value === 'authorized') return 'Authorized to work in Canada'
+  if (value === 'not_authorized') return 'Not authorized to work in Canada'
+  if (value === 'unspecified') return 'Work authorization not provided'
+  return ''
+}
+
 function generateKey() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -573,6 +608,11 @@ export default function ProfileEditPage() {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [bio, setBio] = useState('')
+  const [dateOfBirth, setDateOfBirth] = useState('')
+  const [countryOfBirth, setCountryOfBirth] = useState('')
+  const [shareDateOfBirth, setShareDateOfBirth] = useState(true)
+  const [shareCountryOfBirth, setShareCountryOfBirth] = useState(true)
+  const [countrySearchFocused, setCountrySearchFocused] = useState(false)
   const [experiences, setExperiences] = useState<ExperienceFormState[]>([emptyExperience()])
   const [avatarMedia, setAvatarMedia] = useState<MediaSlotState>(() => createMediaState())
   const [coverMedia, setCoverMedia] = useState<MediaSlotState>(() => createMediaState())
@@ -597,6 +637,7 @@ export default function ProfileEditPage() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
   const handledPhotoIntentRef = useRef<string | null>(null)
+  const countrySearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const previewHandle = useMemo(() => buildHandleBase(firstName, lastName), [firstName, lastName])
 
@@ -1067,6 +1108,11 @@ export default function ProfileEditPage() {
           handle: cached.handle,
           name: cached.name,
           avatarUrl: cached.avatarUrl,
+          coverUrl: cached.coverUrl,
+          civicStatus: cached.civicStatus ?? null,
+          workAuthorization: cached.workAuthorization ?? null,
+          statusUpdatedAt: cached.statusUpdatedAt ?? null,
+          isVerified: Boolean(cached.isVerified),
           isPremium: Boolean(cached.isPremium),
           premiumSince: cached.premiumSince ?? null,
           premiumRenewsAt: cached.premiumRenewsAt ?? null,
@@ -1093,6 +1139,11 @@ export default function ProfileEditPage() {
         handle: data.handle,
         name: data.name,
         avatarUrl: data.avatarUrl,
+        coverUrl: data.coverUrl,
+        civicStatus: data.civicStatus ?? null,
+        workAuthorization: data.workAuthorization ?? null,
+        statusUpdatedAt: data.statusUpdatedAt ?? null,
+        isVerified: Boolean(data.isVerified),
         isPremium: Boolean(data.isPremium),
         premiumSince: data.premiumSince ?? null,
         premiumRenewsAt: data.premiumRenewsAt ?? null,
@@ -1154,6 +1205,10 @@ export default function ProfileEditPage() {
         setFirstName(data.user.firstName ?? '')
         setLastName(data.user.lastName ?? '')
         setBio(data.user.bio ?? '')
+        setDateOfBirth(data.user.dateOfBirth ?? '')
+        setCountryOfBirth(data.user.countryOfBirth ?? '')
+        setShareDateOfBirth(data.user.shareDateOfBirth ?? true)
+        setShareCountryOfBirth(data.user.shareCountryOfBirth ?? true)
         const mappedExperiences = mapExperiencesFromResponse(data.user.experiences)
         setExperiences(mappedExperiences)
         const nextLinkedByKey: Record<string, OrganizationDirectoryResult> = {}
@@ -1259,6 +1314,14 @@ export default function ProfileEditPage() {
       }
     }
   }, [coverMedia.previewUrl])
+
+  useEffect(() => {
+    return () => {
+      if (countrySearchBlurTimeoutRef.current) {
+        clearTimeout(countrySearchBlurTimeoutRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const url = photoDrafts.avatar.previewUrl
@@ -1670,6 +1733,10 @@ export default function ProfileEditPage() {
         body: JSON.stringify({
           firstName: trimmedFirst,
           lastName: trimmedLast,
+          dateOfBirth: dateOfBirth || undefined,
+          countryOfBirth: countryOfBirth.trim() || undefined,
+          shareDateOfBirth,
+          shareCountryOfBirth,
           bio,
           experiences: normalizedExperiences,
           avatarMediaId: ensuredAvatarId ?? undefined,
@@ -1709,7 +1776,22 @@ export default function ProfileEditPage() {
     } finally {
       setSaving(false)
     }
-  }, [bio, ensurePhotoApplied, experiences, firstName, lastName, loadProfile, locationSelectionByExperienceKey, photoDrafts.avatar.file, photoDrafts.cover.file, token])
+  }, [
+    bio,
+    countryOfBirth,
+    dateOfBirth,
+    ensurePhotoApplied,
+    experiences,
+    firstName,
+    lastName,
+    loadProfile,
+    locationSelectionByExperienceKey,
+    photoDrafts.avatar.file,
+    photoDrafts.cover.file,
+    shareCountryOfBirth,
+    shareDateOfBirth,
+    token,
+  ])
 
   const handleLogout = useCallback(async () => {
     try {
@@ -1741,20 +1823,58 @@ export default function ProfileEditPage() {
 
   const formDisabled = saving || loading
   const joinDate = profile?.user?.createdAt ? formatMonthYear(profile.user.createdAt) : ''
+  const currentCivicStatusLabel = civicStatusLabel(viewer?.civicStatus)
+  const currentWorkAuthorizationLabel = viewer?.civicStatus && viewer.civicStatus !== 'citizen' && viewer.civicStatus !== 'permanent_resident'
+    ? workAuthorizationLabel(viewer?.workAuthorization)
+    : ''
+  const statusUpdatedLabel = formatStatusDate(viewer?.statusUpdatedAt)
+  const profileDisplayName = `${firstName} ${lastName}`.trim() || profile?.user?.name || viewer?.name || viewer?.handle || 'Your profile'
 
   const displayInitials = useMemo(() => {
     return (
       initialsFromUser({
-        name: profile?.user?.name,
-        handle: profile?.user?.handle,
+        name: profileDisplayName,
+        handle: profile?.user?.handle ?? viewer?.handle,
       }) || 'C'
     )
-  }, [profile])
+  }, [profile?.user?.handle, profileDisplayName, viewer?.handle])
 
   const avatarDraftPreview = photoDrafts.avatar.isDirty ? photoDrafts.avatar.previewUrl : null
   const coverDraftPreview = photoDrafts.cover.isDirty ? photoDrafts.cover.previewUrl : null
   const avatarDisplayUrl = avatarDraftPreview ?? avatarMedia.previewUrl ?? avatarMedia.serverUrl ?? profile?.user?.avatarUrl ?? viewer?.avatarUrl ?? null
   const coverDisplayUrl = coverDraftPreview ?? coverMedia.previewUrl ?? coverMedia.serverUrl ?? profile?.user?.coverUrl ?? null
+  const filteredCountryOptions = useMemo(() => {
+    const query = countryOfBirth.trim().toLowerCase()
+    if (!query) return COUNTRY_OPTIONS.slice(0, 14)
+
+    const startsWithMatches = COUNTRY_OPTIONS.filter((country) => country.label.toLowerCase().startsWith(query))
+    const includesMatches = COUNTRY_OPTIONS.filter(
+      (country) => !country.label.toLowerCase().startsWith(query) && country.label.toLowerCase().includes(query),
+    )
+
+    return [...startsWithMatches, ...includesMatches].slice(0, 14)
+  }, [countryOfBirth])
+  const showCountryResults = countrySearchFocused && filteredCountryOptions.length > 0
+
+  const handleCountrySearchFocus = useCallback(() => {
+    if (countrySearchBlurTimeoutRef.current) {
+      clearTimeout(countrySearchBlurTimeoutRef.current)
+      countrySearchBlurTimeoutRef.current = null
+    }
+    setCountrySearchFocused(true)
+  }, [])
+
+  const handleCountrySearchBlur = useCallback(() => {
+    if (countrySearchBlurTimeoutRef.current) clearTimeout(countrySearchBlurTimeoutRef.current)
+    countrySearchBlurTimeoutRef.current = setTimeout(() => {
+      setCountrySearchFocused(false)
+    }, 140)
+  }, [])
+
+  const handleCountrySelect = useCallback((label: string) => {
+    setCountryOfBirth(label)
+    setCountrySearchFocused(false)
+  }, [])
 
   const modalMediaState = useMemo(() => {
     if (!photoModalCategory) return null
@@ -1853,99 +1973,34 @@ export default function ProfileEditPage() {
           <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
         ) : (
           <form onSubmit={onSubmit} className="space-y-4">
-            <section id="photos" className="surface-card p-6 shadow-subtle">
-              <header className="mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
-                <p className="text-sm text-gray-500">Upload a cover and profile photo to personalize your profile.</p>
-              </header>
-              <div className="space-y-6">
-                <div>
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">Cover photo</p>
-                      <p className="text-xs text-gray-500">Shown at the top of your public profile.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => launchPhotoFlow('cover')}
-                      className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={formDisabled || coverMedia.status === 'uploading'}
-                    >
-                      {coverMedia.status === 'uploading' ? 'Uploading…' : 'Upload cover'}
-                    </button>
-                  </div>
+            <input
+              ref={coverInputRef}
+              type="file"
+              accept={ACCEPTED_IMAGE_TYPES}
+              className="hidden"
+              onChange={handleFileInputChange('cover')}
+            />
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept={ACCEPTED_IMAGE_TYPES}
+              className="hidden"
+              onChange={handleFileInputChange('avatar')}
+            />
 
-                  <button
-                    type="button"
-                    onClick={() => launchPhotoFlow('cover', false)}
-                    className="relative h-40 w-full overflow-hidden rounded-2xl bg-gradient-to-r from-slate-100 to-slate-200 text-left"
-                    aria-label="Update cover photo"
-                  >
-                    {coverDisplayUrl ? <img src={coverDisplayUrl} alt="Cover preview" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-sm text-slate-500">Add a cover photo</div>}
-                    <span className="pointer-events-none absolute left-3 top-3 inline-flex items-center justify-center rounded-full border border-white/60 bg-gray-900/75 p-2 text-white shadow-md backdrop-blur">
-                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                        <circle cx="12" cy="13" r="3" />
-                      </svg>
-                      <span className="sr-only">Update cover</span>
-                    </span>
-                  </button>
-
-                  <p className="mt-2 text-xs text-gray-500">
-                    Up to {formatFileSize(MEDIA_LIMITS.cover)}. Supported: JPG, PNG, WebP, AVIF, HEIC.
-                  </p>
-                  {coverMedia.status === 'processing' ? <p className="text-xs text-amber-600">Processing your new cover…</p> : null}
-                  {coverMedia.error ? <p className="text-xs text-red-600">{coverMedia.error}</p> : null}
-                </div>
-
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    onClick={() => launchPhotoFlow('avatar', false)}
-                    className="relative flex h-20 w-20 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-lg font-semibold text-slate-600"
-                    aria-label="Update profile photo"
-                  >
-                    {avatarDisplayUrl ? <img src={avatarDisplayUrl} alt="Profile preview" className="h-full w-full object-cover" /> : displayInitials}
-                    <span className="pointer-events-none absolute left-1/2 top-2 inline-flex -translate-x-1/2 transform items-center justify-center rounded-full border border-white/70 bg-gray-900/80 p-2 text-white shadow-md backdrop-blur">
-                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                        <circle cx="12" cy="13" r="3" />
-                      </svg>
-                      <span className="sr-only">Update photo</span>
-                    </span>
-                  </button>
-                  <div className="space-y-1 text-sm text-gray-600">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => launchPhotoFlow('avatar')}
-                        className="rounded border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={formDisabled || avatarMedia.status === 'uploading'}
-                      >
-                        {avatarMedia.status === 'uploading' ? 'Uploading…' : 'Upload photo'}
-                      </button>
-                      {avatarMedia.status === 'processing' ? <span className="text-xs text-amber-600">Processing your new photo…</span> : null}
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      Up to {formatFileSize(MEDIA_LIMITS.avatar)}. Supported: JPG, PNG, WebP, AVIF, HEIC.
-                    </p>
-                    {avatarMedia.error ? <p className="text-xs text-red-600">{avatarMedia.error}</p> : null}
-                  </div>
-                </div>
-              </div>
-              <input
-                ref={coverInputRef}
-                type="file"
-                accept={ACCEPTED_IMAGE_TYPES}
-                className="hidden"
-                onChange={handleFileInputChange('cover')}
-              />
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept={ACCEPTED_IMAGE_TYPES}
-                className="hidden"
-                onChange={handleFileInputChange('avatar')}
+            <section className="space-y-4">
+              <CivilCard
+                size="hero"
+                name={profileDisplayName}
+                subtitle="View profile"
+                avatarAlt={profileDisplayName}
+                avatarInitials={displayInitials}
+                avatarSrc={avatarDisplayUrl}
+                coverUrl={coverDisplayUrl}
+                isVerified={Boolean(viewer?.isVerified)}
+                isBusiness={Boolean(viewer?.isPremium)}
+                interactive={false}
+                className="w-full"
               />
             </section>
 
@@ -1984,11 +2039,109 @@ export default function ProfileEditPage() {
                         placeholder="Citizen"
                       />
                     </label>
+                    <label className="text-sm font-medium text-gray-700">
+                      Date of birth
+                      <input
+                        type="date"
+                        value={dateOfBirth}
+                        onChange={(event) => setDateOfBirth(event.target.value)}
+                        disabled={formDisabled}
+                        className="mt-1 w-full border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                      />
+                    </label>
+                    <label className="text-sm font-medium text-gray-700 sm:col-span-2">
+                      Country of birth
+                      <div className="relative mt-1">
+                        <div className="relative w-full rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+                          <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <input
+                            type="search"
+                            value={countryOfBirth}
+                            onChange={(event) => setCountryOfBirth(event.target.value)}
+                            onFocus={handleCountrySearchFocus}
+                            onBlur={handleCountrySearchBlur}
+                            disabled={formDisabled}
+                            className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
+                            placeholder="Search countries"
+                            autoComplete="off"
+                            autoCorrect="off"
+                            autoCapitalize="off"
+                            spellCheck={false}
+                          />
+                        </div>
+                        {showCountryResults ? (
+                          <div
+                            className="absolute left-0 top-[calc(100%+0.5rem)] z-20 w-full rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-2xl shadow-slate-900/10 backdrop-blur"
+                            onMouseDown={(event) => event.preventDefault()}
+                          >
+                            <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto">
+                              {filteredCountryOptions.map((country) => (
+                                <li key={country.code}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCountrySelect(country.label)}
+                                    className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+                                  >
+                                    <span className="font-medium text-slate-900">{country.label}</span>
+                                    <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">{country.code}</span>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">Search from the full country list and choose the closest match.</p>
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+                    <label className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={shareDateOfBirth}
+                        onChange={(event) => setShareDateOfBirth(event.target.checked)}
+                        disabled={formDisabled}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="block font-medium text-slate-900">Share my date of birth?</span>
+                        <span className="block text-slate-600">Enabled by default so other members can see it on your profile.</span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={shareCountryOfBirth}
+                        onChange={(event) => setShareCountryOfBirth(event.target.checked)}
+                        disabled={formDisabled}
+                        className="mt-1"
+                      />
+                      <span>
+                        <span className="block font-medium text-slate-900">Share my country of birth?</span>
+                        <span className="block text-slate-600">Enabled by default so other members can see it on your profile.</span>
+                      </span>
+                    </label>
                   </div>
                   <p className="text-xs leading-snug text-gray-500">
                     Your public handle updates automatically from your name. Next handle in line will start with{' '}
                     <span className="font-medium text-gray-900">@{previewHandle}</span>. If it's already taken, we'll add a few digits to keep it unique.
                   </p>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold text-slate-900">Canadian Status &amp; Work Authorization</p>
+                        <p className="text-sm text-slate-700">{currentCivicStatusLabel}</p>
+                        {currentWorkAuthorizationLabel ? <p className="text-sm text-slate-600">{currentWorkAuthorizationLabel}</p> : null}
+                        {statusUpdatedLabel ? <p className="text-xs text-slate-500">Last updated {statusUpdatedLabel}</p> : null}
+                      </div>
+                      <Link
+                        href="/verify?mode=edit"
+                        className="inline-flex items-center justify-center rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-white"
+                      >
+                        Edit
+                      </Link>
+                    </div>
+                  </div>
                 </div>
               </div>
             </section>

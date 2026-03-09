@@ -17,6 +17,7 @@ export default function TopNavVisibility() {
     !hasResolvedPathname ||
     HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
+    resolvedPathname.startsWith('/verify') ||
     resolvedPathname.startsWith('/install/') ||
     (isInviteRoute && inviteGuestMode !== false) ||
     isMeetingRoomPath(resolvedPathname)

@@ -473,7 +473,7 @@ export default function BillingSettingsPage() {
                 <p className="text-xs text-slate-500">
                   <span className="inline-flex items-center gap-2">
                     <span>Verify to unlock the maple leaf beside your profile so people know you proudly support Canada.</span>
-                    <Image src="/verified.png" alt="Verified maple badge" width={20} height={20} />
+                    <Image src="/self-verified.png" alt="Self-verified Canadian citizen badge" width={20} height={20} />
                   </span>
                 </p>
               ) : null}
