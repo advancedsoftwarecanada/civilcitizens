@@ -109,7 +109,7 @@ export default function InstallAndroidPwaPage() {
               <a
                 href={internalTestUrl}
                 onClick={handleTesterClick}
-                className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/30"
+                className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(213,43,30,0.35)] transition hover:bg-[var(--cc-primary-700)] focus:outline-none focus:ring-2 focus:ring-[var(--cc-primary)]/45"
               >
                 I have been invited to test Civil
               </a>
