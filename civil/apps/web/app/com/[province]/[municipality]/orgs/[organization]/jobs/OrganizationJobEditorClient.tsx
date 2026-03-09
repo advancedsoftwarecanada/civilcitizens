@@ -32,7 +32,6 @@ type JobDetail = {
   salaryPeriod: string | null
   photoUrl: string | null
   duties: string
-  roleRequirements: string
   description: string | null
   location: string
   expiresAt: string
@@ -218,7 +217,6 @@ export default function OrganizationJobEditorClient({
   const [hourlyRate, setHourlyRate] = useState('')
   const [industryId, setIndustryId] = useState('')
   const [subIndustryId, setSubIndustryId] = useState('')
-  const [rolesHtml, setRolesHtml] = useState('')
   const [descriptionHtml, setDescriptionHtml] = useState('')
   const [expiresDays, setExpiresDays] = useState('30')
   const [locationQuery, setLocationQuery] = useState('')
@@ -324,7 +322,6 @@ export default function OrganizationJobEditorClient({
         setIndustryId(job.industry.id)
         setSubIndustryId(job.industry.subIndustry?.id ?? '')
         setPhotoUrl(job.photoUrl || '')
-        setRolesHtml(job.roleRequirements || '')
         setDescriptionHtml(job.description || job.duties || '')
         const loadedLocation = job.location || defaultCommunityLocation
         setLocationValue(loadedLocation)
@@ -674,7 +671,6 @@ export default function OrganizationJobEditorClient({
             salaryPeriod: resolvedSalaryPeriod,
             photoUrl: photoUrl || null,
             duties: descriptionHtml,
-            roleRequirements: rolesHtml,
             description: descriptionHtml,
             location: locationValue,
             industryId,
@@ -707,7 +703,6 @@ export default function OrganizationJobEditorClient({
     municipality,
     photoUrl,
     province,
-    rolesHtml,
     salaryMax,
     salaryMin,
     salaryPeriod,
@@ -1189,10 +1184,6 @@ export default function OrganizationJobEditorClient({
         <div className="mt-3">
           <p className="mb-1 text-sm font-semibold text-slate-800">Description</p>
           <RichTextEditor value={descriptionHtml} onChange={setDescriptionHtml} minHeight={160} placeholder="Describe day-to-day responsibilities and details" />
-        </div>
-        <div className="mt-3">
-          <p className="mb-1 text-sm font-semibold text-slate-800">Role requirements</p>
-          <RichTextEditor value={rolesHtml} onChange={setRolesHtml} minHeight={160} placeholder="Describe qualifications and expectations" />
         </div>
       </section>
 
