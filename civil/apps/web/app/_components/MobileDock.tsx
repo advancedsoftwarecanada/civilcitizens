@@ -505,11 +505,11 @@ export default function MobileDock() {
       <nav
         data-mobile-dock="true"
         className="fixed inset-x-0 bottom-0 z-40 min-h-[var(--mobile-dock-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 lg:hidden"
-        style={{ ...navGridStyle, bottom: 'var(--mobile-dock-bottom-offset)' }}
+        style={{ bottom: 'var(--mobile-dock-bottom-offset)' }}
         role="navigation"
         aria-label="Mobile navigation"
       >
-        <div className="grid gap-0.5">
+        <div className="grid gap-0.5" style={navGridStyle}>
           {NAV_BUTTONS.map((item) => {
             const Icon = item.icon
             const isActive =
