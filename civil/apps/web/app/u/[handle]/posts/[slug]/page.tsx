@@ -28,7 +28,7 @@ import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib
 import { getStoredToken } from '../../../../_lib/tokenStorage'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
-import { addCommentToTree, normalizeCommentTree, updateCommentInTree } from '../../../../_lib/comments'
+import { addCommentToTree, normalizeCommentTree, removeCommentFromTree, removeCommentsByAuthorFromTree, updateCommentInTree } from '../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../_lib/text'
 import { useRegisterPageView } from '../../../../_components/AnalyticsTracker'
 
@@ -440,6 +440,14 @@ export default function UserPostPage({ params }: PageProps) {
     }
   }, [commentSort, loadComments])
 
+  const handleCommentReported = useCallback((commentId: string) => {
+    setComments((prev) => removeCommentFromTree(prev, commentId))
+  }, [])
+
+  const handleCommentAuthorBlocked = useCallback((authorId: string) => {
+    setComments((prev) => removeCommentsByAuthorFromTree(prev, authorId))
+  }, [])
+
   const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
   const postOrganization = post?.organization ?? null
   const authorProfileHref = postOrganization?.provinceCode && postOrganization.communitySlug
@@ -693,7 +701,14 @@ export default function UserPostPage({ params }: PageProps) {
                   )}
 
                   <div className="mt-6">
-                    <CommentThread comments={comments} onReply={handleReply} onVote={handleCommentVote} currentUser={viewer} />
+                    <CommentThread
+                      comments={comments}
+                      onReply={handleReply}
+                      onVote={handleCommentVote}
+                      onCommentReported={handleCommentReported}
+                      onCommentAuthorBlocked={handleCommentAuthorBlocked}
+                      currentUser={viewer}
+                    />
                   </div>
                   {viewer ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
                 </section>

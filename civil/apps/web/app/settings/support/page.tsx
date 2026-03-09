@@ -27,7 +27,7 @@ type SupportRequestItem = {
 
 type ContentReportItem = {
   id: string
-  targetType: 'POST' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT'
+  targetType: 'POST' | 'COMMENT' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT'
   targetId: string
   targetLabel: string | null
   targetUrl: string | null
@@ -84,6 +84,8 @@ function formatTargetType(value: ContentReportItem['targetType']) {
   switch (value) {
     case 'POST':
       return 'Post'
+    case 'COMMENT':
+      return 'Comment'
     case 'ORGANIZATION':
       return 'Organization'
     case 'MARKET_LISTING':
