@@ -951,6 +951,12 @@ export default function MessageCallClient({
   }))
   const viewerParticipant = thread.participants.find((participant) => participant.isViewer) ?? null
   const viewerDisplayName = participantDisplayName(viewerParticipant)
+  const primaryPeer = stagePeers[0] ?? null
+  const overflowPeers = stagePeers.slice(1)
+  const primaryPeerDisplayName = primaryPeer ? participantDisplayName(primaryPeer.participant) || primaryPeer.displayName : callTitle
+  const primaryRemoteStream = primaryPeer ? remoteStreams[primaryPeer.peerId] ?? null : null
+  const primaryRemoteHasVideo = streamHasVideoTrack(primaryRemoteStream)
+  const localPreviewVisible = activeCall.mode === 'video' && cameraEnabled && (mediaReady || isPreparingMedia)
   const stageSummary =
     rtcStatus === 'connected'
       ? 'Live'
@@ -961,237 +967,154 @@ export default function MessageCallClient({
           : 'Ready'
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white text-slate-900">
-      <div className="relative min-h-screen overflow-hidden">
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_top_left,rgba(253,226,215,0.85),transparent_48%),radial-gradient(circle_at_top_right,rgba(219,234,254,0.9),transparent_46%)]"
-          aria-hidden="true"
-        />
+    <div className="h-dvh overflow-hidden bg-[#080b14] text-white">
+      <div className="relative h-full overflow-hidden bg-[radial-gradient(circle_at_top,#1f2d52_0%,rgba(8,11,20,0.96)_38%,#05070d_100%)]">
+        {mediaError ? (
+          <div className="absolute left-4 right-4 top-4 z-40 rounded-2xl border border-rose-400/30 bg-rose-500/16 px-4 py-3 text-sm text-rose-100 backdrop-blur">
+            {mediaError}
+          </div>
+        ) : null}
 
-        <main className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-3 pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-3 sm:px-4 sm:pt-5 lg:pb-8">
-          <section className="rounded-[32px] border border-white/70 bg-white/82 p-4 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-5">
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">Civil Call</p>
-                  <h1 className="mt-1 text-2xl font-semibold text-slate-900 sm:text-3xl">{callTitle}</h1>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {callSubtitle} · {stageSummary} · {stagePeers.length + 1} live participant{stagePeers.length === 0 ? '' : 's'}
+        <div className="absolute left-4 top-4 z-30 max-w-[min(70vw,30rem)] rounded-2xl border border-white/10 bg-slate-950/35 px-4 py-3 shadow-[0_18px_55px_rgba(0,0,0,0.35)] backdrop-blur-md">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/55">Civil Call</p>
+          <h1 className="mt-1 text-lg font-semibold text-white sm:text-xl">{primaryPeerDisplayName}</h1>
+          <p className="mt-1 text-sm text-white/70">
+            {callSubtitle} · {stageSummary} · {stagePeers.length + 1} live participant{stagePeers.length === 0 ? '' : 's'}
+          </p>
+        </div>
+
+        <main className="relative flex h-full w-full items-stretch justify-stretch overflow-hidden">
+          <section className="relative h-full w-full overflow-hidden">
+            {primaryPeer && primaryRemoteStream && primaryRemoteHasVideo ? (
+              <video
+                autoPlay
+                playsInline
+                className="h-full w-full object-cover"
+                ref={(node) => {
+                  attachStreamToMediaElement(node, primaryRemoteStream, { muted: false })
+                }}
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,#213057_0%,#111827_42%,#05070d_100%)] px-6 py-20">
+                {primaryRemoteStream && !primaryRemoteHasVideo ? (
+                  <audio
+                    autoPlay
+                    ref={(node) => {
+                      attachStreamToMediaElement(node, primaryRemoteStream, { muted: false })
+                    }}
+                    className="hidden"
+                  />
+                ) : null}
+                <div className="flex max-w-xl flex-col items-center text-center">
+                  <div className="flex h-36 w-36 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white/10 shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:h-44 sm:w-44">
+                    {primaryPeer?.participant?.user.avatarUrl ? (
+                      <img
+                        src={primaryPeer.participant.user.avatarUrl}
+                        alt={primaryPeerDisplayName}
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span className="text-4xl font-semibold text-white/90 sm:text-5xl">{initialsFrom(primaryPeer?.participant?.user)}</span>
+                    )}
+                  </div>
+                  <p className="mt-6 text-2xl font-semibold text-white sm:text-3xl">{primaryPeerDisplayName}</p>
+                  <p className="mt-2 text-sm text-white/65 sm:text-base">
+                    {primaryPeer
+                      ? primaryRemoteStream
+                        ? activeCall.mode === 'video'
+                          ? `${primaryPeerDisplayName} is on audio only right now.`
+                          : `${primaryPeerDisplayName} is connected by audio.`
+                        : `Waiting for ${primaryPeerDisplayName} to join.`
+                      : 'Waiting for someone else to join the call.'}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAddPeopleOpen(true)
-                      if (friends.length === 0 && !friendsLoading) {
-                        void loadFriends()
-                      }
-                    }}
-                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-                  >
-                    Add people
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      autoJoinStartedRef.current = false
-                      void connectRtc()
-                    }}
-                    disabled={rtcStatus === 'connecting'}
-                    className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60"
-                  >
-                    {rtcStatus === 'connecting' ? 'Connecting…' : rtcStatus === 'connected' ? 'Reconnect' : 'Join'}
-                  </button>
-                </div>
               </div>
+            )}
 
-              {mediaError ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{mediaError}</div>
-              ) : null}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/20 to-transparent" />
 
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-                <section className="rounded-[28px] border border-white/75 bg-[#f7fbff] p-3 shadow-inner shadow-white/60 sm:p-4">
-                  <div className="grid min-h-[18rem] gap-3 md:grid-cols-2">
-                    <article className="rounded-[26px] border border-slate-200/80 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
-                      <CivilCard
-                        size="md"
-                        name={viewerDisplayName}
-                        avatarAlt={viewerDisplayName}
-                        avatarSrc={viewerParticipant?.user.avatarUrl ?? null}
-                        avatarInitials={viewerDisplayName}
-                        coverUrl={viewerParticipant?.user.coverUrl ?? null}
-                        isVerified={Boolean(viewerParticipant?.user.isVerified)}
-                        isBusiness={Boolean(viewerParticipant?.user.isPremium)}
-                        subtitle={`You · ${micEnabled ? 'Microphone on' : 'Microphone muted'}`}
-                        trailing={
-                          <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/92">
-                            {rtcStatus === 'connected' ? 'Connected' : rtcStatus === 'connecting' ? 'Joining' : 'Ready'}
-                          </span>
-                        }
-                      />
-                      <div className="mt-3 aspect-video overflow-hidden rounded-[22px] border border-slate-200/80 bg-[linear-gradient(160deg,#ecf4ff_0%,#f8fbff_56%,#eef2ff_100%)]">
-                        {activeCall.mode === 'video' && cameraEnabled && (mediaReady || isPreparingMedia) ? (
-                          <video ref={localVideoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+            {overflowPeers.length ? (
+              <div className="absolute left-4 right-28 top-20 z-20 flex flex-wrap gap-2 sm:right-36 sm:top-24">
+                {overflowPeers.map((peer) => {
+                  const displayName = participantDisplayName(peer.participant) || peer.displayName
+                  const connected = Boolean(remoteStreams[peer.peerId])
+                  return (
+                    <div
+                      key={peer.peerId}
+                      className="rounded-full border border-white/12 bg-slate-950/40 px-3 py-2 text-xs font-semibold text-white/80 shadow-[0_14px_30px_rgba(0,0,0,0.25)] backdrop-blur-md"
+                    >
+                      {displayName} · {connected ? 'Live' : 'Joining'}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            <div className="absolute right-4 top-4 z-30 w-[7.5rem] sm:w-[9rem]">
+              <div className="overflow-hidden rounded-[1.6rem] border border-white/15 bg-slate-950/45 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur-md">
+                <div className="px-3 pb-2 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/55">You</div>
+                <div className="relative aspect-[3/4] overflow-hidden bg-[linear-gradient(180deg,#1e293b_0%,#0f172a_100%)]">
+                  {localPreviewVisible ? (
+                    <video ref={localVideoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-2 px-3 text-center">
+                      <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-white/12 bg-white/10 text-xl font-semibold text-white/90">
+                        {viewerParticipant?.user.avatarUrl ? (
+                          <img
+                            src={viewerParticipant.user.avatarUrl}
+                            alt={viewerDisplayName}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
                         ) : (
-                          <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
-                            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-100 text-2xl font-semibold text-slate-700">
-                              {initialsFrom(viewerParticipant?.user)}
-                            </div>
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">
-                                {activeCall.mode === 'video' && cameraEnabled ? 'Preparing your camera…' : 'Audio only'}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">{micEnabled ? 'Microphone on' : 'Microphone muted'}</p>
-                            </div>
-                          </div>
+                          initialsFrom(viewerParticipant?.user)
                         )}
                       </div>
-                    </article>
-
-                    {stagePeers.map((peer) => {
-                      const displayName = participantDisplayName(peer.participant) || peer.displayName
-                      const remoteStream = remoteStreams[peer.peerId]
-                      const remoteHasVideo = streamHasVideoTrack(remoteStream)
-                      return (
-                        <article
-                          key={peer.peerId}
-                          className="rounded-[26px] border border-slate-200/80 bg-white p-3 shadow-[0_18px_45px_rgba(15,23,42,0.08)]"
-                        >
-                          <CivilCard
-                            size="md"
-                            name={displayName}
-                            avatarAlt={displayName}
-                            avatarSrc={peer.participant?.user.avatarUrl ?? null}
-                            avatarInitials={displayName}
-                            coverUrl={peer.participant?.user.coverUrl ?? null}
-                            isVerified={Boolean(peer.participant?.user.isVerified)}
-                            isBusiness={Boolean(peer.participant?.user.isPremium)}
-                            subtitle={`${peer.role === 'manager' ? 'Host' : 'Participant'} · ${remoteStream ? 'Connected' : 'Joining'}`}
-                            trailing={
-                              <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/92">
-                                {remoteStream ? 'Live' : 'Joining'}
-                              </span>
-                            }
-                          />
-                          <div className="mt-3 aspect-video overflow-hidden rounded-[22px] border border-slate-200/80 bg-[linear-gradient(160deg,#ecf4ff_0%,#f8fbff_56%,#eef2ff_100%)]">
-                            {remoteStream && remoteHasVideo ? (
-                              <video
-                                autoPlay
-                                playsInline
-                                className="h-full w-full object-cover"
-                                ref={(node) => {
-                                  attachStreamToMediaElement(node, remoteStream, { muted: false })
-                                }}
-                              />
-                            ) : (
-                              <div className="relative flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
-                                {remoteStream ? (
-                                  <audio
-                                    autoPlay
-                                    ref={(node) => {
-                                      attachStreamToMediaElement(node, remoteStream, { muted: false })
-                                    }}
-                                    className="hidden"
-                                  />
-                                ) : null}
-                                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-100 text-2xl font-semibold text-slate-700">
-                                  {initialsFrom(peer.participant?.user)}
-                                </div>
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-900">{remoteStream ? 'Audio live' : 'Joining call'}</p>
-                                  <p className="mt-1 text-xs text-slate-500">
-                                    {remoteStream ? `${displayName} is speaking with audio only.` : `Waiting for ${displayName} to connect.`}
-                                  </p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </article>
-                      )
-                    })}
-
-                    {stagePeers.length === 0 ? (
-                      <article className="flex min-h-[14rem] items-center justify-center rounded-[26px] border border-dashed border-slate-200 bg-white/70 p-6 text-center md:col-span-2">
-                        <div>
-                          <p className="text-lg font-semibold text-slate-900">Waiting for someone else to join</p>
-                          <p className="mt-2 text-sm text-slate-500">
-                            Keep the call open. Friends and connections will see the incoming ring and can join from messages.
-                          </p>
-                        </div>
-                      </article>
-                    ) : null}
-                  </div>
-                </section>
-
-                <aside className="rounded-[28px] border border-white/75 bg-white/90 p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)]">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">Participants</p>
-                      <p className="text-sm text-slate-500">{thread.participants.length} in this conversation</p>
+                      <div>
+                        <p className="text-xs font-semibold text-white/90">{activeCall.mode === 'video' && cameraEnabled ? 'Preparing video…' : 'Audio only'}</p>
+                        <p className="mt-1 text-[11px] text-white/55">{micEnabled ? 'Mic on' : 'Mic muted'}</p>
+                      </div>
                     </div>
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{stageSummary}</span>
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {thread.participants.map((participant) => {
-                      const name = participantDisplayName(participant)
-                      const connected = participant.isViewer || stagePeers.some((peer) => peer.userId === participant.userId)
-                      return (
-                        <CivilCard
-                          key={participant.userId}
-                          size="sm"
-                          name={participant.isViewer ? `${name}` : name}
-                          avatarAlt={name}
-                          avatarSrc={participant.user.avatarUrl}
-                          avatarInitials={name}
-                          coverUrl={participant.user.coverUrl ?? null}
-                          isVerified={participant.user.isVerified}
-                          isBusiness={participant.user.isPremium}
-                          subtitle={participant.isViewer ? 'You' : `@${participant.user.handle}`}
-                          trailing={
-                            <span
-                              className={clsx(
-                                'rounded-full px-2.5 py-1 text-[11px] font-semibold',
-                                connected ? 'bg-emerald-300/14 text-emerald-100' : 'bg-white/8 text-white/70',
-                              )}
-                            >
-                              {connected ? 'Connected' : 'Ringing'}
-                            </span>
-                          }
-                        />
-                      )
-                    })}
-                  </div>
-                </aside>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="absolute inset-x-0 bottom-[5.75rem] z-20 flex justify-center px-4 sm:bottom-28">
+              <div className="rounded-full border border-white/10 bg-slate-950/38 px-4 py-2 text-xs font-semibold text-white/70 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-md">
+                {primaryPeer ? (primaryRemoteStream ? 'Connected' : 'Waiting for connection') : 'Ringing'}
               </div>
             </div>
           </section>
         </main>
 
-        <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/92 px-3 pb-[max(env(safe-area-inset-bottom),0.85rem)] pt-3 shadow-[0_-18px_45px_rgba(15,23,42,0.08)] backdrop-blur lg:static lg:mx-auto lg:mb-5 lg:mt-4 lg:w-full lg:max-w-7xl lg:rounded-[32px] lg:border lg:px-4 lg:pb-4 lg:pt-4 lg:shadow-[0_22px_60px_rgba(15,23,42,0.10)]">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-40 bg-gradient-to-t from-black/70 via-black/25 to-transparent" />
+
+        <footer className="absolute inset-x-0 bottom-0 z-40 px-3 pb-[max(env(safe-area-inset-bottom),0.85rem)] pt-3">
           <div className="mx-auto flex w-full max-w-4xl items-center justify-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => setMicEnabled((prev) => !prev)}
               className={clsx(
-                'inline-flex min-w-[4.5rem] flex-col items-center gap-1 rounded-[1.35rem] border px-4 py-3 text-xs font-semibold transition sm:min-w-[5.5rem]',
-                micEnabled ? 'border-slate-300 bg-white text-slate-900' : 'border-slate-200 bg-slate-100 text-slate-500',
+                'inline-flex h-14 w-14 items-center justify-center rounded-full border text-xs font-semibold transition sm:h-16 sm:w-16',
+                micEnabled ? 'border-white/20 bg-white/12 text-white' : 'border-white/10 bg-white/5 text-white/45',
               )}
+              aria-label={micEnabled ? 'Mute microphone' : 'Enable microphone'}
             >
               <HiOutlineMicrophone className="h-5 w-5" />
-              {micEnabled ? 'Mic on' : 'Mic off'}
             </button>
             {activeCall.mode === 'video' ? (
               <button
                 type="button"
                 onClick={() => setCameraEnabled((prev) => !prev)}
                 className={clsx(
-                  'inline-flex min-w-[4.5rem] flex-col items-center gap-1 rounded-[1.35rem] border px-4 py-3 text-xs font-semibold transition sm:min-w-[5.5rem]',
-                  cameraEnabled ? 'border-slate-300 bg-white text-slate-900' : 'border-slate-200 bg-slate-100 text-slate-500',
+                  'inline-flex h-14 w-14 items-center justify-center rounded-full border text-xs font-semibold transition sm:h-16 sm:w-16',
+                  cameraEnabled ? 'border-white/20 bg-white/12 text-white' : 'border-white/10 bg-white/5 text-white/45',
                 )}
+                aria-label={cameraEnabled ? 'Turn camera off' : 'Turn camera on'}
               >
                 <HiOutlineVideoCamera className="h-5 w-5" />
-                {cameraEnabled ? 'Camera on' : 'Camera off'}
               </button>
             ) : null}
             <button
@@ -1202,10 +1125,24 @@ export default function MessageCallClient({
                   void loadFriends()
                 }
               }}
-              className="inline-flex min-w-[4.5rem] flex-col items-center gap-1 rounded-[1.35rem] border border-slate-300 bg-white px-4 py-3 text-xs font-semibold text-slate-900 transition hover:bg-slate-50 sm:min-w-[5.5rem]"
+              className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-white/12 text-xs font-semibold text-white transition hover:bg-white/18 sm:h-16 sm:w-16"
+              aria-label="Add people"
             >
               <span className="text-base leading-none">+</span>
-              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                autoJoinStartedRef.current = false
+                void connectRtc()
+              }}
+              disabled={rtcStatus === 'connecting'}
+              className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-white/12 text-xs font-semibold text-white transition hover:bg-white/18 disabled:opacity-60 sm:h-16 sm:w-16"
+              aria-label={rtcStatus === 'connecting' ? 'Connecting call' : rtcStatus === 'connected' ? 'Reconnect call' : 'Join call'}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-[0.16em]">
+                {rtcStatus === 'connecting' ? '...' : rtcStatus === 'connected' ? 'Re' : 'Go'}
+              </span>
             </button>
             <button
               type="button"
@@ -1213,10 +1150,10 @@ export default function MessageCallClient({
                 void hangUp()
               }}
               disabled={endingCall}
-              className="inline-flex min-w-[5rem] flex-col items-center gap-1 rounded-[1.35rem] border border-rose-300/20 bg-[var(--cc-primary)] px-5 py-3 text-xs font-semibold text-white transition hover:brightness-95 disabled:opacity-60 sm:min-w-[6rem]"
+              className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-rose-300/20 bg-[#ff5f57] text-white transition hover:brightness-95 disabled:opacity-60 sm:h-16 sm:w-16"
+              aria-label={endingCall ? 'Ending call' : 'Hang up'}
             >
               <HiOutlineXMark className="h-5 w-5" />
-              {endingCall ? 'Ending…' : 'Hang up'}
             </button>
           </div>
         </footer>
