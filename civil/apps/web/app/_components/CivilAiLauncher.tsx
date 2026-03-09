@@ -53,12 +53,6 @@ const STARTER_MESSAGE = {
     'I am Civil AI. Ask about a community issue, a civic process, or what to do next inside Civil Citizens.',
 }
 
-const QUICK_PROMPTS = [
-  'Summarize what matters in my community feed.',
-  'Help me write a civic update people will actually read.',
-  'Explain a local issue in plain language.',
-]
-
 const CIVIL_AI_OPEN_STORAGE_KEY = 'civil-ai-open'
 const CIVIL_AI_CONVERSATION_STORAGE_KEY = 'civil-ai-conversation-id'
 const CIVIL_AI_MAX_VISIBLE_MESSAGES = 8
@@ -513,19 +507,6 @@ export default function CivilAiLauncher() {
             </div>
 
             <div className="flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(213,43,30,0.05),_transparent_34%)] px-4 py-4">
-              <div className="mb-4 flex flex-wrap gap-2">
-                {QUICK_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    onClick={() => setDraft(prompt)}
-                    className="rounded-full border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-600 shadow-sm transition hover:border-[var(--cc-primary)]/35 hover:bg-[var(--cc-primary)]/5 hover:text-[var(--cc-primary)]"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-
               <div className="space-y-3">
                 {messages.map((message) => (
                   <div
