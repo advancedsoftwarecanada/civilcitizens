@@ -13,6 +13,7 @@ import { redirectToAuthModal } from '../../_lib/authModal'
 import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import {
+  HiOutlineArrowPath,
   HiOutlineMicrophone,
   HiOutlineVideoCamera,
   HiOutlineXMark,
@@ -951,20 +952,17 @@ export default function MessageCallClient({
   }))
   const viewerParticipant = thread.participants.find((participant) => participant.isViewer) ?? null
   const viewerDisplayName = participantDisplayName(viewerParticipant)
+  const otherParticipants = thread.participants.filter((participant) => !participant.isViewer)
   const primaryPeer = stagePeers[0] ?? null
   const overflowPeers = stagePeers.slice(1)
   const primaryPeerDisplayName = primaryPeer ? participantDisplayName(primaryPeer.participant) || primaryPeer.displayName : callTitle
   const primaryRemoteStream = primaryPeer ? remoteStreams[primaryPeer.peerId] ?? null : null
   const primaryRemoteHasVideo = streamHasVideoTrack(primaryRemoteStream)
   const localPreviewVisible = activeCall.mode === 'video' && cameraEnabled && (mediaReady || isPreparingMedia)
-  const stageSummary =
-    rtcStatus === 'connected'
-      ? 'Live'
-      : rtcStatus === 'connecting'
-        ? 'Connecting'
-        : activeCall.status === 'ringing'
-          ? 'Ringing'
-          : 'Ready'
+  const headerTitle =
+    otherParticipants.length > 1
+      ? `${participantDisplayName(otherParticipants[0])} + ${otherParticipants.length - 1} other${otherParticipants.length === 2 ? '' : 's'}`
+      : primaryPeerDisplayName
 
   return (
     <div className="h-dvh overflow-hidden bg-[#080b14] text-white">
@@ -975,12 +973,8 @@ export default function MessageCallClient({
           </div>
         ) : null}
 
-        <div className="absolute left-4 top-4 z-30 max-w-[min(70vw,30rem)] rounded-2xl border border-white/10 bg-slate-950/35 px-4 py-3 shadow-[0_18px_55px_rgba(0,0,0,0.35)] backdrop-blur-md">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/55">Civil Call</p>
-          <h1 className="mt-1 text-lg font-semibold text-white sm:text-xl">{primaryPeerDisplayName}</h1>
-          <p className="mt-1 text-sm text-white/70">
-            {callSubtitle} · {stageSummary} · {stagePeers.length + 1} live participant{stagePeers.length === 0 ? '' : 's'}
-          </p>
+        <div className="absolute left-4 top-4 z-30 max-w-[min(72vw,24rem)] rounded-2xl border border-white/10 bg-slate-950/35 px-4 py-3 shadow-[0_18px_55px_rgba(0,0,0,0.35)] backdrop-blur-md">
+          <h1 className="text-lg font-semibold text-white sm:text-xl">{headerTitle}</h1>
         </div>
 
         <main className="relative flex h-full w-full items-stretch justify-stretch overflow-hidden">
@@ -1080,12 +1074,6 @@ export default function MessageCallClient({
                 </div>
               </div>
             </div>
-
-            <div className="absolute inset-x-0 bottom-[5.75rem] z-20 flex justify-center px-4 sm:bottom-28">
-              <div className="rounded-full border border-white/10 bg-slate-950/38 px-4 py-2 text-xs font-semibold text-white/70 shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-md">
-                {primaryPeer ? (primaryRemoteStream ? 'Connected' : 'Waiting for connection') : 'Ringing'}
-              </div>
-            </div>
           </section>
         </main>
 
@@ -1140,9 +1128,7 @@ export default function MessageCallClient({
               className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-white/12 text-xs font-semibold text-white transition hover:bg-white/18 disabled:opacity-60 sm:h-16 sm:w-16"
               aria-label={rtcStatus === 'connecting' ? 'Connecting call' : rtcStatus === 'connected' ? 'Reconnect call' : 'Join call'}
             >
-              <span className="text-[11px] font-semibold uppercase tracking-[0.16em]">
-                {rtcStatus === 'connecting' ? '...' : rtcStatus === 'connected' ? 'Re' : 'Go'}
-              </span>
+              <HiOutlineArrowPath className={clsx('h-5 w-5', rtcStatus === 'connecting' ? 'animate-spin' : '')} />
             </button>
             <button
               type="button"
