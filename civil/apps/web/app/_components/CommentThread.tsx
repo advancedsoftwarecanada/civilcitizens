@@ -5,6 +5,7 @@ import clsx from 'clsx'
 import type { IconType } from 'react-icons'
 import { LuArrowBigDown, LuArrowBigUp, LuMessageSquare } from 'react-icons/lu'
 import CommentComposer from './CommentComposer'
+import ContentModerationMenu from './ContentModerationMenu'
 import { pushToast } from './useToasts'
 import { formatUserDisplayName } from '../_lib/text'
 import CivilCard from './CivilCard'
@@ -37,6 +38,8 @@ type CommentThreadProps = {
   comments: ApiComment[]
   onReply: (parentId: string | null, body: string) => Promise<void>
   onVote: (commentId: string, value: -1 | 0 | 1) => Promise<void>
+  onCommentReported?: (commentId: string) => void
+  onCommentAuthorBlocked?: (authorId: string) => void
   currentUser?: {
     id: string
     handle: string
@@ -50,6 +53,8 @@ type CommentThreadProps = {
 type CommentContextProps = {
   onReply: (parentId: string | null, body: string) => Promise<void>
   onVote: (commentId: string, value: -1 | 0 | 1) => Promise<void>
+  onCommentReported?: (commentId: string) => void
+  onCommentAuthorBlocked?: (authorId: string) => void
   highlightedCommentId?: string | null
   currentUser?: {
     id: string
@@ -171,7 +176,7 @@ function formatRelativeTime(iso: string) {
   return rtf.format(-rounded, unit)
 }
 
-function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, currentUser }: CommentContextProps & { comment: ApiComment; depth: number }) {
+function CommentItem({ comment, depth, onReply, onVote, onCommentReported, onCommentAuthorBlocked, highlightedCommentId, currentUser }: CommentContextProps & { comment: ApiComment; depth: number }) {
   const [replying, setReplying] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
   const [pendingVote, setPendingVote] = useState(false)
@@ -188,6 +193,8 @@ function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, cu
   const authorDisplayName = formatUserDisplayName(comment.author.name, comment.author.handle) || comment.author.handle
   const authorCoverUrl = comment.author.coverUrl ?? null
   const hasAuthorCover = Boolean(authorCoverUrl)
+  const isOwnComment = Boolean(currentUser?.id && currentUser.id === comment.author.id)
+  const commentTargetLabel = `Comment by @${comment.author.handle}`
 
   const handleVote = useCallback(
     async (nextValue: -1 | 0 | 1) => {
@@ -267,20 +274,41 @@ function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, cu
         )}
       >
         <div className="min-w-0 space-y-3">
-          <div className="max-w-full">
-            <CivilCard
-              href={`/u/${comment.author.handle}`}
-              size="sm"
-              name={authorDisplayName}
-              avatarAlt={authorDisplayName}
-              avatarInitials={authorDisplayName}
-              avatarSrc={comment.author.avatarUrl}
-              coverUrl={authorCoverUrl}
-              isVerified={Boolean(comment.author.isVerified)}
-              isBusiness={Boolean(comment.author.isPremium)}
-              titleSuffix={createdLabel ? `• ${createdLabel}` : undefined}
-              className={clsx('w-fit max-w-full', !hasAuthorCover && 'border-slate-200')}
-            />
+          <div className="flex items-start justify-between gap-3">
+            <div className="max-w-full min-w-0">
+              <CivilCard
+                href={`/u/${comment.author.handle}`}
+                size="sm"
+                name={authorDisplayName}
+                avatarAlt={authorDisplayName}
+                avatarInitials={authorDisplayName}
+                avatarSrc={comment.author.avatarUrl}
+                coverUrl={authorCoverUrl}
+                isVerified={Boolean(comment.author.isVerified)}
+                isBusiness={Boolean(comment.author.isPremium)}
+                titleSuffix={createdLabel ? `• ${createdLabel}` : undefined}
+                className={clsx('w-fit max-w-full', !hasAuthorCover && 'border-slate-200')}
+              />
+            </div>
+            {!isOwnComment ? (
+              <ContentModerationMenu
+                className="shrink-0"
+                buttonClassName="h-9 w-9 border-slate-200 bg-white text-slate-600 shadow-sm hover:border-slate-300 hover:bg-slate-50"
+                buttonLabel="Comment settings"
+                reportTarget={{
+                  targetType: 'COMMENT',
+                  targetId: comment.id,
+                  targetLabel: commentTargetLabel,
+                }}
+                blockTarget={{
+                  type: 'user',
+                  id: comment.author.id,
+                  label: authorDisplayName,
+                }}
+                onReported={() => onCommentReported?.(comment.id)}
+                onBlocked={() => onCommentAuthorBlocked?.(comment.author.id)}
+              />
+            ) : null}
           </div>
             {collapsed ? (
               <div className="text-xs text-slate-400">
@@ -344,6 +372,8 @@ function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, cu
               depth={depth + 1}
               onReply={onReply}
               onVote={onVote}
+              onCommentReported={onCommentReported}
+              onCommentAuthorBlocked={onCommentAuthorBlocked}
               highlightedCommentId={highlightedCommentId}
               currentUser={currentUser}
             />
@@ -354,7 +384,7 @@ function CommentItem({ comment, depth, onReply, onVote, highlightedCommentId, cu
   )
 }
 
-export default function CommentThread({ comments, onReply, onVote, currentUser }: CommentThreadProps) {
+export default function CommentThread({ comments, onReply, onVote, onCommentReported, onCommentAuthorBlocked, currentUser }: CommentThreadProps) {
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -405,6 +435,8 @@ export default function CommentThread({ comments, onReply, onVote, currentUser }
           depth={0}
           onReply={onReply}
           onVote={onVote}
+          onCommentReported={onCommentReported}
+          onCommentAuthorBlocked={onCommentAuthorBlocked}
           highlightedCommentId={highlightedCommentId}
           currentUser={currentUser}
         />

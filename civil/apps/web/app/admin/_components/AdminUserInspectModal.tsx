@@ -32,7 +32,7 @@ type InspectUserSummary = {
 
 type InspectReport = {
   id: string
-  targetType: 'POST' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT'
+  targetType: 'POST' | 'COMMENT' | 'ORGANIZATION' | 'MARKET_LISTING' | 'MARKET_PRODUCT'
   targetLabel: string | null
   targetUrl: string | null
   reasons: string[]
@@ -111,6 +111,8 @@ function formatTargetType(value: InspectReport['targetType']) {
   switch (value) {
     case 'POST':
       return 'Post'
+    case 'COMMENT':
+      return 'Comment'
     case 'ORGANIZATION':
       return 'Organization'
     case 'MARKET_LISTING':

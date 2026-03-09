@@ -6742,6 +6742,39 @@ async function applyModerationQuarantine(
   }
 }
 
+async function createModerationReportAndQuarantine(
+  tx: Prisma.TransactionClient,
+  args: {
+    reporterUserId: string
+    target: ResolvedModerationTarget
+    reasons: Array<(typeof ModerationReportReasonValues)[number]>
+    details: string | null
+    quarantineAppliedAt?: Date
+  },
+) {
+  const quarantineAppliedAt = args.quarantineAppliedAt ?? new Date()
+
+  const report = await tx.contentReport.create({
+    data: {
+      reporterUserId: args.reporterUserId,
+      targetType: args.target.targetType,
+      targetId: args.target.targetId,
+      targetLabel: args.target.targetLabel,
+      targetUrl: args.target.targetUrl,
+      reportedUserId: args.target.reportedUserId,
+      reportedBusinessId: args.target.reportedBusinessId,
+      reasons: args.reasons,
+      details: args.details,
+      status: ContentReportStatus.OPEN,
+      quarantineAppliedAt,
+    },
+    select: { id: true },
+  })
+
+  await applyModerationQuarantine(tx, args.target.targetType, args.target.targetId)
+  return report
+}
+
 function hashMeetingPassword(raw: string): string {
   return createHash('sha256').update(raw).digest('hex')
 }
@@ -7106,6 +7139,11 @@ type CommentNode = {
     isVerified: boolean
   }
   replies: CommentNode[]
+}
+
+function filterCommentRowsForViewer(commentRows: CommentWithUser[], blockState: ViewerBlockState) {
+  if (!commentRows.length || blockState.blockedUserIds.size === 0) return commentRows
+  return commentRows.filter((comment) => !blockState.blockedUserIds.has(comment.userId))
 }
 
 function calculateCommentHotScore({
@@ -11565,8 +11603,10 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
       viewerCommentVotes = voteMap
     }
 
+    const visibleCommentRows = filterCommentRowsForViewer(commentRows, blockState)
+
     return reply.send({
-      comments: buildCommentTree(commentRows, viewerCommentVotes, { sort: sortMode }),
+      comments: buildCommentTree(visibleCommentRows, viewerCommentVotes, { sort: sortMode }),
     })
   }),
 )
@@ -22557,8 +22597,15 @@ const ModerationReportReasonValues = [
   'other',
 ] as const
 
+const ModerationReportTargetTypeValues = ['POST', 'COMMENT', 'ORGANIZATION', 'MARKET_LISTING', 'MARKET_PRODUCT'] as const
+
+const ModerationReportTargetBody = z.object({
+  targetType: z.enum(ModerationReportTargetTypeValues),
+  targetId: z.string().trim().min(1).max(191),
+})
+
 const ModerationReportBody = z.object({
-  targetType: z.enum(['POST', 'ORGANIZATION', 'MARKET_LISTING', 'MARKET_PRODUCT']),
+  targetType: z.enum(ModerationReportTargetTypeValues),
   targetId: z.string().trim().min(1).max(191),
   reasons: z.array(z.enum(ModerationReportReasonValues)).min(1).max(10),
   details: z.string().trim().max(2000).optional().nullable(),
@@ -22566,10 +22613,12 @@ const ModerationReportBody = z.object({
 
 const UserBlockBody = z.object({
   userId: z.string().cuid(),
+  reportTarget: ModerationReportTargetBody.optional().nullable(),
 })
 
 const BusinessBlockBody = z.object({
   businessId: z.string().cuid(),
+  reportTarget: ModerationReportTargetBody.optional().nullable(),
 })
 
 const AdminModerationReportsQuery = z.object({
@@ -25188,25 +25237,13 @@ app.post('/moderation/reports', async (req: FastifyRequest, reply: FastifyReply)
     const now = new Date()
 
     const report = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const created = await tx.contentReport.create({
-        data: {
-          reporterUserId,
-          targetType,
-          targetId: target.targetId,
-          targetLabel: target.targetLabel,
-          targetUrl: target.targetUrl,
-          reportedUserId: target.reportedUserId,
-          reportedBusinessId: target.reportedBusinessId,
-          reasons,
-          details,
-          status: ContentReportStatus.OPEN,
-          quarantineAppliedAt: now,
-        },
-        select: { id: true },
+      return createModerationReportAndQuarantine(tx, {
+        reporterUserId,
+        target,
+        reasons,
+        details,
+        quarantineAppliedAt: now,
       })
-
-      await applyModerationQuarantine(tx, targetType, target.targetId)
-      return created
     })
 
     return reply.code(201).send({ ok: true, reportId: report.id })
@@ -25228,18 +25265,33 @@ app.post('/moderation/blocks/users', async (req: FastifyRequest, reply: FastifyR
     })
     if (!blockedUser) return reply.code(404).send({ error: 'user_not_found' })
 
-    await prisma.userBlock.upsert({
-      where: {
-        blockerUserId_blockedUserId: {
+    const reportTarget = body.data.reportTarget
+      ? await resolveModerationTarget(body.data.reportTarget.targetType as ModerationTargetType, body.data.reportTarget.targetId)
+      : null
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.userBlock.upsert({
+        where: {
+          blockerUserId_blockedUserId: {
+            blockerUserId,
+            blockedUserId: blockedUser.id,
+          },
+        },
+        update: {},
+        create: {
           blockerUserId,
           blockedUserId: blockedUser.id,
         },
-      },
-      update: {},
-      create: {
-        blockerUserId,
-        blockedUserId: blockedUser.id,
-      },
+      })
+
+      if (reportTarget) {
+        await createModerationReportAndQuarantine(tx, {
+          reporterUserId: blockerUserId,
+          target: reportTarget,
+          reasons: ['other'],
+          details: 'Auto-generated from a member block action so moderators can review abusive content within 24 hours.',
+        })
+      }
     })
 
     return reply.send({ ok: true })
@@ -25260,18 +25312,33 @@ app.post('/moderation/blocks/organizations', async (req: FastifyRequest, reply: 
     })
     if (!business) return reply.code(404).send({ error: 'organization_not_found' })
 
-    await prisma.businessBlock.upsert({
-      where: {
-        blockerUserId_blockedBusinessId: {
+    const reportTarget = body.data.reportTarget
+      ? await resolveModerationTarget(body.data.reportTarget.targetType as ModerationTargetType, body.data.reportTarget.targetId)
+      : null
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.businessBlock.upsert({
+        where: {
+          blockerUserId_blockedBusinessId: {
+            blockerUserId,
+            blockedBusinessId: business.id,
+          },
+        },
+        update: {},
+        create: {
           blockerUserId,
           blockedBusinessId: business.id,
         },
-      },
-      update: {},
-      create: {
-        blockerUserId,
-        blockedBusinessId: business.id,
-      },
+      })
+
+      if (reportTarget) {
+        await createModerationReportAndQuarantine(tx, {
+          reporterUserId: blockerUserId,
+          target: reportTarget,
+          reasons: ['other'],
+          details: 'Auto-generated from a member block action so moderators can review abusive content within 24 hours.',
+        })
+      }
     })
 
     return reply.send({ ok: true })
@@ -26861,10 +26928,12 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
       viewerCommentVotes = voteMap
     }
 
+    const visibleCommentRows = filterCommentRowsForViewer(commentRows, viewerBlockState)
+
     return {
       post: formatPost(post, { viewerId, viewerReaction, viewerPollOptionId }),
       paths: getCanonicalPaths(post),
-      comments: buildCommentTree(commentRows, viewerCommentVotes),
+      comments: buildCommentTree(visibleCommentRows, viewerCommentVotes),
     }
   }),
 )
@@ -26955,10 +27024,12 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       viewerCommentVotes = voteMap
     }
 
+    const visibleCommentRows = filterCommentRowsForViewer(commentRows, viewerBlockState)
+
     return {
       post: formatPost(post, { viewerId, viewerReaction, viewerPollOptionId }),
       paths: getCanonicalPaths(post),
-      comments: buildCommentTree(commentRows, viewerCommentVotes),
+      comments: buildCommentTree(visibleCommentRows, viewerCommentVotes),
     }
   }),
 )
