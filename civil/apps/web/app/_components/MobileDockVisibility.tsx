@@ -21,6 +21,7 @@ export default function MobileDockVisibility() {
   if (
     !hasResolvedPathname ||
     resolvedPathname.startsWith('/welcome') ||
+    resolvedPathname.startsWith('/verify') ||
     resolvedPathname.startsWith('/install/') ||
     (isInviteRoute && inviteGuestMode !== false) ||
     isPostThreadRoute ||

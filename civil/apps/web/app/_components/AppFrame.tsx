@@ -30,6 +30,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
     !hasResolvedPathname ||
     TOP_NAV_HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
+    resolvedPathname.startsWith('/verify') ||
     hideForInstall ||
     hideForInviteGuest ||
     hideForMeetingRoom
@@ -37,6 +38,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
     !hasResolvedPathname ||
     SIDEBAR_HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
+    resolvedPathname.startsWith('/verify') ||
     hideForInstall ||
     hideForInviteGuest ||
     hideForMeetingRoom

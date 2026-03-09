@@ -9,7 +9,7 @@ import { pushToast } from './useToasts'
 const DISMISS_STORAGE_KEY = 'cc:iosOpenInAppBanner:dismissedUntil'
 const DISMISS_TTL_MS = 12 * 60 * 60 * 1000
 
-const SKIP_PATH_PREFIXES = ['/install/', '/welcome', '/login', '/register', '/forgot', '/reset', '/privacy', '/terms']
+const SKIP_PATH_PREFIXES = ['/install/', '/welcome', '/verify', '/login', '/register', '/forgot', '/reset', '/privacy', '/terms']
 
 function isContentPath(pathname: string): boolean {
   if (!pathname || pathname === '/') return false

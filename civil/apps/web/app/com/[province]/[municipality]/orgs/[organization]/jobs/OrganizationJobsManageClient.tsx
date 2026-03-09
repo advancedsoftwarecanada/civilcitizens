@@ -26,12 +26,16 @@ type JobApplicationItem = {
   createdAt: string
   status: string
   threadId: string | null
+  civicStatus: 'citizen' | 'permanent_resident' | 'work_permit' | 'study_permit' | 'unspecified'
+  workAuthorization: 'authorized' | 'not_authorized' | 'unspecified'
   applicant: {
     id: string
     handle: string
     name: string | null
   }
 }
+
+type ApplicationFilterValue = 'all' | 'citizen' | 'permanent_resident' | 'work_permit' | 'study_permit' | 'unspecified'
 
 type ApplicantProfileCard = {
   handle: string
@@ -49,6 +53,20 @@ function statusLabel(status: JobItem['status']) {
   return 'Expired'
 }
 
+function civicStatusLabel(value: JobApplicationItem['civicStatus']) {
+  if (value === 'citizen') return 'Canadian Citizen'
+  if (value === 'permanent_resident') return 'Permanent Resident'
+  if (value === 'work_permit') return 'Valid Work Permit'
+  if (value === 'study_permit') return 'Valid Study Permit'
+  return 'Not Specified'
+}
+
+function workAuthorizationLabel(value: JobApplicationItem['workAuthorization']) {
+  if (value === 'authorized') return 'Yes'
+  if (value === 'not_authorized') return 'No'
+  return 'Prefer not to say'
+}
+
 export default function OrganizationJobsManageClient({
   province,
   municipality,
@@ -64,6 +82,7 @@ export default function OrganizationJobsManageClient({
   const [loadingApplicationsFor, setLoadingApplicationsFor] = useState<string | null>(null)
   const [updatingApplicationId, setUpdatingApplicationId] = useState<string | null>(null)
   const [applicantCardsByHandle, setApplicantCardsByHandle] = useState<Record<string, ApplicantProfileCard>>({})
+  const [applicationFiltersByJobId, setApplicationFiltersByJobId] = useState<Record<string, ApplicationFilterValue>>({})
 
   const manageBaseHref = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/jobs/manage`
 
@@ -324,13 +343,47 @@ export default function OrganizationJobsManageClient({
 
               {applicationsByJobId[job.id]?.length ? (
                 <div className="mt-3 space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
-                  {(applicationsByJobId[job.id] ?? []).map((application) => (
+                  <div className="flex items-center justify-between gap-3 px-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Applications</p>
+                    <select
+                      value={applicationFiltersByJobId[job.id] ?? 'all'}
+                      onChange={(event) => {
+                        const nextValue = event.target.value as ApplicationFilterValue
+                        setApplicationFiltersByJobId((prev) => ({ ...prev, [job.id]: nextValue }))
+                      }}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                    >
+                      <option value="all">All statuses</option>
+                      <option value="citizen">Canadian Citizen</option>
+                      <option value="permanent_resident">Permanent Resident</option>
+                      <option value="work_permit">Valid Work Permit</option>
+                      <option value="study_permit">Valid Study Permit</option>
+                      <option value="unspecified">Not Specified</option>
+                    </select>
+                  </div>
+                  {(applicationsByJobId[job.id] ?? [])
+                    .filter((application) => {
+                      const activeFilter = applicationFiltersByJobId[job.id] ?? 'all'
+                      return activeFilter === 'all' ? true : application.civicStatus === activeFilter
+                    })
+                    .map((application) => (
                     <div key={application.id} className="rounded-lg border border-slate-200 bg-white p-2">
                       <div className="flex items-center justify-between gap-2">
                         <Link href={`/u/${application.applicant.handle}`} className="text-sm font-semibold text-[var(--cc-primary)] hover:underline">
                           {application.applicant.name || application.applicant.handle}
                         </Link>
                         <span className="text-xs text-slate-500">{new Date(application.createdAt).toLocaleDateString()} • {application.status}</span>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 font-semibold text-slate-700">
+                          Work Authorization: {civicStatusLabel(application.civicStatus)}
+                        </span>
+                        {(application.civicStatus === 'work_permit' || application.civicStatus === 'study_permit' || application.civicStatus === 'unspecified') ? (
+                          <span className="rounded-full border border-slate-200 px-2 py-1">
+                            Authorized to work in Canada: {workAuthorizationLabel(application.workAuthorization)}
+                          </span>
+                        ) : null}
                       </div>
 
                       <Link

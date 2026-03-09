@@ -61,8 +61,13 @@ export default function VerifiedAvatar({
       : badgeVariant === 'verified'
         ? 'ring-1 ring-[var(--cc-primary)] ring-offset-1 ring-offset-white'
         : ''
-  const badgeImage = badgeVariant === 'business' ? '/business.png' : '/verified.png'
-  const badgeAlt = badgeVariant === 'business' ? 'Business badge' : badgeVariant === 'verified' ? 'Verified badge' : undefined
+  const badgeImage = badgeVariant === 'business' ? '/document-verified.png' : '/self-verified.png'
+  const badgeAlt =
+    badgeVariant === 'business'
+      ? 'Document verified badge'
+      : badgeVariant === 'verified'
+        ? 'Self-verified Canadian citizen badge'
+        : undefined
 
   const wrapperProps = {
     className: clsx('relative inline-flex items-center justify-center', shapeClassName, className),
