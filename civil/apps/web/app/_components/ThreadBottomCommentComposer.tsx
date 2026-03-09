@@ -131,9 +131,9 @@ export default function ThreadBottomCommentComposer({
             }
           }}
           autoComplete="off"
-          autoCorrect="off"
+          autoCorrect="on"
           autoCapitalize="sentences"
-          spellCheck={false}
+          spellCheck
           enterKeyHint="send"
           inputMode="text"
           placeholder={placeholder}
