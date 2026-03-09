@@ -46,6 +46,16 @@ html.cc-native-ios {
   --cc-native-shell-top-gap: 0.75rem;
 }
 
+html.cc-native-android {
+  --cc-native-safe-top-offset: max(var(--safe-area-top), 0.9rem);
+  --cc-top-nav-offset: calc(var(--cc-top-nav-height) + var(--cc-native-safe-top-offset));
+  --cc-native-shell-top-gap: 0.35rem;
+  --mobile-dock-bottom-pad: max(0.15rem, min(var(--safe-area-bottom), 0.35rem));
+  --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
+  --mobile-thread-composer-height: var(--mobile-dock-height);
+  --mobile-dock-clearance: var(--mobile-dock-height);
+}
+
 #cc-launch-overlay {
   position: fixed;
   inset: 0;
