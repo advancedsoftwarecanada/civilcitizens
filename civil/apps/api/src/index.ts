@@ -324,6 +324,7 @@ const CIVIL_AI_MAX_PROMPT_CHARS = 12000
 const CIVIL_AI_MAX_SYSTEM_PROMPT_CHARS = 8500
 const CIVIL_AI_MAX_TRANSCRIPT_CHARS = 2800
 const CIVIL_AI_MAX_MESSAGE_CHARS = 700
+const CIVIL_AI_MAX_REFERENCE_CARDS = 3
 const civilAiResolvedModelCache = new Map<string, { model: string | null; expiresAt: number }>()
 
 const DEFAULT_CIVIL_AI_PROMPT = `Civil AI is a practical Canadian civic assistant inside Civil Citizens.
@@ -1933,10 +1934,44 @@ function extractCivilAiTopicQuery(question: string) {
     .join(' ')
 }
 
+function isCivilAiGeneralChatQuestion(question: string) {
+  const normalized = question.trim().toLowerCase()
+  if (!normalized) return false
+
+  return /(^|\b)(joke|jokes|funny|humor|meme|memes|lol|lmao|roast|roast me|say something funny|tell me something funny|hello|hi|hey|good morning|good afternoon|good evening|how are you|thanks|thank you)(\b|$)/.test(normalized)
+}
+
+function hasCivilAiCivicSignal(question: string) {
+  const normalized = question.trim().toLowerCase()
+  if (!normalized) return false
+
+  return /(community|communities|local|near me|nearby|my area|my city|my town|riding|event|events|meeting|meetup|job|jobs|hiring|employment|marketplace|listing|listings|buy|organization|organizations|group|groups|association|associations|post|posts|discussion|discussions|civic|council|mayor|bylaw|permit|housing|transit|school|election|vote|voting|policy|policies|government)/.test(normalized)
+}
+
+function finalizeCivilAiReferences(question: string, references: CivilAiCardReference[]) {
+  if (!references.length) return [] as CivilAiCardReference[]
+  if (isCivilAiGeneralChatQuestion(question) && !hasCivilAiCivicSignal(question)) {
+    return [] as CivilAiCardReference[]
+  }
+
+  const seen = new Set<string>()
+  const trimmed: CivilAiCardReference[] = []
+  for (const reference of references) {
+    const key = `${reference.kind}:${reference.id}:${reference.href}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    trimmed.push(reference)
+    if (trimmed.length >= CIVIL_AI_MAX_REFERENCE_CARDS) break
+  }
+  return trimmed
+}
+
 export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   const normalized = question.toLowerCase()
   const topicQuery = extractCivilAiTopicQuery(question)
   const profileIntent = detectCivilAiProfileIntent(question)
+  const generalChatIntent = isCivilAiGeneralChatQuestion(question)
+  const civicSignal = hasCivilAiCivicSignal(question)
 
   const explicitEvents = /(event|events|festival|meeting|meetup|meetups|metup|metups|networking|networking event|networking events|parade|rally|attend)/.test(normalized)
   const explicitJobs = /(job|jobs|hiring|employment|position|positions|open role|open roles)/.test(normalized)
@@ -1950,6 +1985,27 @@ export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
   const asksOverview = /(what matters|what should i know|what should i pay attention|summary|summarize)/.test(normalized)
   const todayOnly = /(today|tonight|this afternoon|this evening)/.test(normalized)
   const hasIssueTopic = topicQuery.length > 0
+
+  if (!profileIntent.wantsProfile && generalChatIntent && !civicSignal) {
+    return {
+      wantsProfile: false,
+      wantsEvents: false,
+      wantsJobs: false,
+      wantsMarket: false,
+      wantsCommunities: false,
+      wantsOrganizations: false,
+      wantsPosts: false,
+      todayOnly: false,
+      topicQuery: '',
+      eventLimit: 0,
+      jobLimit: 0,
+      marketLimit: 0,
+      organizationLimit: 0,
+      postLimit: 0,
+      includeViewerOrganizations: false,
+      reasons: ['general chat request detected'],
+    }
+  }
 
   let wantsEvents = explicitEvents || asksWhatIsHappening || todayOnly
   let wantsJobs = explicitJobs
@@ -8968,7 +9024,7 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
 
   return {
     viewerContext,
-    references: references.slice(0, 8),
+    references: finalizeCivilAiReferences(latestQuestion, references),
     grounding: {
       retrievalPlan: retrieval,
       searchPass,
