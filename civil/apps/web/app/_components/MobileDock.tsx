@@ -518,7 +518,7 @@ export default function MobileDock() {
               (item.key === 'messages' && (pathname?.startsWith('/messages') || pathname?.startsWith('/channels'))) ||
               (item.key === 'ai' && civilAiOpen) ||
               (item.key === 'more' && moreOpen)
-            
+
             const count =
               item.key === 'cart'
                 ? marketCartCount
