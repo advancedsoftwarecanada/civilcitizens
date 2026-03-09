@@ -19,7 +19,7 @@ import { redirectToAuthModal } from '../../../_lib/authModal'
 import { useAdminAccess } from '../../../admin/_hooks/useAdminAccess'
 
 type ReportStatus = 'OPEN' | 'REVIEWED'
-type ReportFilter = ReportStatus | 'ALL'
+type ReportFilter = ReportStatus | 'ALL' | 'OVERDUE'
 
 type ReportUser = {
   id: string
@@ -63,6 +63,11 @@ type ModerationReportResponse = {
   items?: ModerationReport[]
 }
 
+type ModerationEnforcementSelection = {
+  ejectReportedUser: boolean
+  suspendReportedOrganization: boolean
+}
+
 type SupportRequest = {
   id: string
   type: 'CUSTOMER_SERVICE' | 'FEATURE_REQUEST'
@@ -92,6 +97,13 @@ function formatDateTime(value: string | null) {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function isOver24Hours(value: string | null) {
+  if (!value) return false
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  return Date.now() - date.getTime() >= 24 * 60 * 60 * 1000
 }
 
 function formatReasonLabel(value: string) {
@@ -176,6 +188,7 @@ export default function AdminModerationReportsPage() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [filter, setFilter] = useState<ReportFilter>('OPEN')
   const [notesById, setNotesById] = useState<Record<string, string>>({})
+  const [enforcementById, setEnforcementById] = useState<Record<string, ModerationEnforcementSelection>>({})
   const [reviewingId, setReviewingId] = useState<string | null>(null)
   const [supportRequests, setSupportRequests] = useState<SupportRequest[]>([])
   const [supportStatus, setSupportStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -224,6 +237,18 @@ export default function AdminModerationReportsPage() {
           for (const report of nextReports) {
             if (!(report.id in next)) {
               next[report.id] = report.reviewNotes ?? ''
+            }
+          }
+          return next
+        })
+        setEnforcementById((current) => {
+          const next = { ...current }
+          for (const report of nextReports) {
+            if (!(report.id in next)) {
+              next[report.id] = {
+                ejectReportedUser: Boolean(report.reportedUser),
+                suspendReportedOrganization: Boolean(report.reportedBusiness),
+              }
             }
           }
           return next
@@ -304,9 +329,19 @@ export default function AdminModerationReportsPage() {
   }, [accessLoading, isSuperAdmin, loadReports, loadSupportRequests])
 
   const openCount = useMemo(() => reports.filter((report) => report.status === 'OPEN').length, [reports])
+  const overdueCount = useMemo(
+    () => reports.filter((report) => report.status === 'OPEN' && isOver24Hours(report.createdAt)).length,
+    [reports],
+  )
   const reviewedCount = useMemo(() => reports.filter((report) => report.status === 'REVIEWED').length, [reports])
   const visibleReports = useMemo(
-    () => (filter === 'ALL' ? reports : reports.filter((report) => report.status === filter)),
+    () => {
+      if (filter === 'ALL') return reports
+      if (filter === 'OVERDUE') {
+        return reports.filter((report) => report.status === 'OPEN' && isOver24Hours(report.createdAt))
+      }
+      return reports.filter((report) => report.status === filter)
+    },
     [filter, reports],
   )
   const openSupportCount = useMemo(() => supportRequests.filter((request) => request.status === 'OPEN').length, [supportRequests])
@@ -317,11 +352,17 @@ export default function AdminModerationReportsPage() {
   )
 
   const handleReview = useCallback(
-    async (reportId: string) => {
+    async (report: ModerationReport) => {
       const authToken = token ?? (typeof window !== 'undefined' ? window.localStorage.getItem('token') : null)
       if (!authToken) {
         redirectToAuthModal('login')
         return
+      }
+
+      const reportId = report.id
+      const enforcement = enforcementById[reportId] ?? {
+        ejectReportedUser: Boolean(report.reportedUser),
+        suspendReportedOrganization: Boolean(report.reportedBusiness),
       }
 
       setReviewingId(reportId)
@@ -334,10 +375,18 @@ export default function AdminModerationReportsPage() {
           },
           body: JSON.stringify({
             reviewNotes: notesById[reportId]?.trim() || null,
+            ejectReportedUser: enforcement.ejectReportedUser,
+            suspendReportedOrganization: enforcement.suspendReportedOrganization,
           }),
         })
 
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string
+          enforcement?: {
+            suspendedUser?: boolean
+            suspendedOrganization?: boolean
+          }
+        } | null
         if (!response.ok) {
           pushToast(payload?.error ?? 'Unable to update this report.', 'error')
           return
@@ -363,7 +412,12 @@ export default function AdminModerationReportsPage() {
               : report,
           ),
         )
-        pushToast('Report marked reviewed.', 'success')
+
+        const appliedActions = [
+          payload?.enforcement?.suspendedUser ? 'user ejected' : null,
+          payload?.enforcement?.suspendedOrganization ? 'organization suspended' : null,
+        ].filter(Boolean)
+        pushToast(appliedActions.length ? `Report reviewed and ${appliedActions.join(' and ')}.` : 'Report marked reviewed.', 'success')
       } catch (error) {
         console.error('[admin/moderation/reports] Failed to review report', error)
         pushToast('Unable to update this report.', 'error')
@@ -371,7 +425,7 @@ export default function AdminModerationReportsPage() {
         setReviewingId(null)
       }
     },
-    [me, notesById, token],
+    [enforcementById, me, notesById, token],
   )
 
   const handleSupportReview = useCallback(
@@ -478,8 +532,9 @@ export default function AdminModerationReportsPage() {
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <SummaryCard label="Open Reports" value={openCount} tone="danger" />
+        <SummaryCard label="Over 24h" value={overdueCount} tone="danger" />
         <SummaryCard label="Reviewed Reports" value={reviewedCount} tone="success" />
         <SummaryCard label="Open Support" value={openSupportCount} tone="danger" />
         <SummaryCard label="Reviewed Support" value={reviewedSupportCount} tone="success" />
@@ -493,7 +548,7 @@ export default function AdminModerationReportsPage() {
             <h2 className="mt-1 text-xl font-semibold text-slate-900">Reported Content</h2>
           </div>
           <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {(['OPEN', 'REVIEWED', 'ALL'] as ReportFilter[]).map((value) => (
+            {(['OPEN', 'OVERDUE', 'REVIEWED', 'ALL'] as ReportFilter[]).map((value) => (
               <button
                 key={value}
                 type="button"
@@ -503,7 +558,7 @@ export default function AdminModerationReportsPage() {
                   filter === value ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500 hover:text-slate-700',
                 )}
               >
-                {value === 'ALL' ? 'All' : value === 'OPEN' ? 'Open' : 'Reviewed'}
+                {value === 'ALL' ? 'All' : value === 'OPEN' ? 'Open' : value === 'OVERDUE' ? 'Over 24h' : 'Reviewed'}
               </button>
             ))}
           </div>
@@ -525,9 +580,16 @@ export default function AdminModerationReportsPage() {
           {visibleReports.map((report) => {
             const reviewerName = report.reviewedBy ? (report.reviewedBy.name?.trim() || `@${report.reviewedBy.handle}`) : null
             const subjectBusinessHref = report.reportedBusiness ? buildBusinessHref(report.reportedBusiness) : null
+            const isOverdue = report.status === 'OPEN' && isOver24Hours(report.createdAt)
 
             return (
-              <article key={report.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-subtle">
+              <article
+                key={report.id}
+                className={clsx(
+                  'rounded-3xl border bg-white p-5 shadow-subtle',
+                  isOverdue ? 'border-rose-300 ring-1 ring-rose-200' : 'border-slate-200',
+                )}
+              >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">{formatTargetType(report.targetType)}</p>
@@ -545,6 +607,11 @@ export default function AdminModerationReportsPage() {
                     >
                       {report.status === 'OPEN' ? 'Open' : 'Reviewed'}
                     </span>
+                    {isOverdue ? (
+                      <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-rose-700">
+                        Over 24h
+                      </span>
+                    ) : null}
                     {report.targetUrl ? (
                       <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-mono text-slate-500">
                         {report.targetUrl}
@@ -658,6 +725,11 @@ export default function AdminModerationReportsPage() {
 
                 {report.status === 'OPEN' ? (
                   <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    {isOverdue ? (
+                      <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-800">
+                        This report has been open for more than 24 hours and should be actioned immediately.
+                      </div>
+                    ) : null}
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.25em] text-slate-400">Review</p>
@@ -666,15 +738,69 @@ export default function AdminModerationReportsPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          void handleReview(report.id)
+                          void handleReview(report)
                         }}
                         disabled={reviewingId === report.id}
                         className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
                       >
                         <HiOutlineCheckCircle className="h-4 w-4" />
-                        <span>{reviewingId === report.id ? 'Saving…' : 'Mark reviewed'}</span>
+                        <span>{reviewingId === report.id ? 'Saving…' : 'Review report'}</span>
                       </button>
                     </div>
+                    {report.reportedUser || report.reportedBusiness ? (
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {report.reportedUser ? (
+                          <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={enforcementById[report.id]?.ejectReportedUser ?? Boolean(report.reportedUser)}
+                              onChange={(event) => {
+                                const checked = event.target.checked
+                                setEnforcementById((current) => ({
+                                  ...current,
+                                  [report.id]: {
+                                    ejectReportedUser: checked,
+                                    suspendReportedOrganization: current[report.id]?.suspendReportedOrganization ?? Boolean(report.reportedBusiness),
+                                  },
+                                }))
+                              }}
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
+                            />
+                            <span>
+                              <span className="block font-semibold text-slate-900">Eject reported user</span>
+                              <span className="mt-1 block text-xs leading-5 text-slate-500">
+                                Suspend this account and quarantine all of their posts and comments.
+                              </span>
+                            </span>
+                          </label>
+                        ) : null}
+                        {report.reportedBusiness ? (
+                          <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                            <input
+                              type="checkbox"
+                              checked={enforcementById[report.id]?.suspendReportedOrganization ?? Boolean(report.reportedBusiness)}
+                              onChange={(event) => {
+                                const checked = event.target.checked
+                                setEnforcementById((current) => ({
+                                  ...current,
+                                  [report.id]: {
+                                    ejectReportedUser: current[report.id]?.ejectReportedUser ?? Boolean(report.reportedUser),
+                                    suspendReportedOrganization: checked,
+                                  },
+                                }))
+                              }}
+                              className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
+                            />
+                            <span>
+                              <span className="block font-semibold text-slate-900">Suspend reported organization</span>
+                              <span className="mt-1 block text-xs leading-5 text-slate-500">
+                                Suspend the organization record and hide its organization-authored posts.
+                              </span>
+                            </span>
+                          </label>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <label htmlFor={`review-${report.id}`} className="mt-4 block text-sm font-semibold text-slate-900">
                       Review notes
                     </label>
