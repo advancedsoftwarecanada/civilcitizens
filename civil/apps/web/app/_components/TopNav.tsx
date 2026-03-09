@@ -514,7 +514,7 @@ export default function TopNav() {
   )
 
   return (
-    <header className="fixed left-0 right-0 top-0 z-30 hidden border-b border-white/50 bg-white/80 backdrop-blur md:block">
+    <header className="fixed left-0 right-0 top-0 z-30 hidden border-b border-white/50 bg-white/80 pt-[var(--cc-native-safe-top-offset)] backdrop-blur md:block">
       <div className="mx-auto flex w-full max-w-[1800px] items-center gap-2 px-4 py-3 sm:gap-4 sm:px-6 xl:px-10">
         <Link
           href="/home"
