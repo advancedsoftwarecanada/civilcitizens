@@ -75,7 +75,7 @@ function PostDetailImages({ images, mediaUrl }: { images?: string[] | null; medi
       >
         {allImages.map((src, index) => {
           let className = 'relative aspect-square w-full overflow-hidden bg-slate-100 hover:opacity-95 transition cursor-zoom-in'
-          
+
           if (allImages.length === 1) {
             className = 'relative w-full overflow-hidden bg-slate-100 cursor-zoom-in'
           } else if (allImages.length === 3 && index === 0) {
