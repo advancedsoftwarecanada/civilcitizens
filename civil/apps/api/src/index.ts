@@ -2458,6 +2458,14 @@ type CommunityMetaPayload = {
   } | null
 }
 
+type AccountModerationState = {
+  status: 'SUSPENDED'
+  suspendedAt?: string
+  suspendedByUserId?: string | null
+  suspensionReason?: string | null
+  sourceReportId?: string | null
+}
+
 const buildFollowKey = (province: string, communitySlug: string) => `${province}:${communitySlug}`
 
 function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): CommunityMetaPayload | null {
@@ -2506,6 +2514,43 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
     statusUpdatedAt,
     reference,
   }
+}
+
+function readAccountModerationState(value: Prisma.JsonValue | null | undefined): AccountModerationState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const payload = value as Record<string, unknown>
+  const rawState = payload.accountModeration
+  if (!rawState || typeof rawState !== 'object' || Array.isArray(rawState)) return null
+
+  const state = rawState as Record<string, unknown>
+  if (state.status !== 'SUSPENDED') return null
+
+  return {
+    status: 'SUSPENDED',
+    suspendedAt: typeof state.suspendedAt === 'string' ? state.suspendedAt : undefined,
+    suspendedByUserId: typeof state.suspendedByUserId === 'string' ? state.suspendedByUserId : null,
+    suspensionReason: typeof state.suspensionReason === 'string' ? state.suspensionReason : null,
+    sourceReportId: typeof state.sourceReportId === 'string' ? state.sourceReportId : null,
+  }
+}
+
+function isAccountSuspended(value: Prisma.JsonValue | null | undefined) {
+  return readAccountModerationState(value)?.status === 'SUSPENDED'
+}
+
+async function loadActiveAuthUserById(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      communityMeta: true,
+    },
+  })
+
+  if (!user || isAccountSuspended(user.communityMeta)) return null
+  return user
 }
 
 function filterCachedSuggestions(
@@ -3868,7 +3913,8 @@ async function resolveStreamUserId(req: FastifyRequest): Promise<string | null> 
   try {
     const payload = await app.jwt.verify<{ sub?: string }>(tokenParam)
     if (payload && typeof payload.sub === 'string' && payload.sub) {
-      return payload.sub
+      const user = await loadActiveAuthUserById(payload.sub)
+      return user?.id ?? null
     }
   } catch (err) {
     app.log.warn({ err }, 'notifications_stream_token_invalid')
@@ -6211,7 +6257,7 @@ async function searchCommunityPostsForQuery(query: string, limit: number): Promi
 
 async function loadAuthenticatedUser(req: FastifyRequest) {
   const payload = await (req as any).jwtVerify()
-  return prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true, name: true } })
+  return loadActiveAuthUserById(payload.sub)
 }
 
 async function resolveUserId(req: FastifyRequest): Promise<string | null> {
@@ -6223,7 +6269,10 @@ async function resolveUserId(req: FastifyRequest): Promise<string | null> {
 
   try {
     const payload = (await (req as any).jwtVerify()) as { sub?: string }
-    if (payload?.sub && typeof payload.sub === 'string') return payload.sub
+    if (payload?.sub && typeof payload.sub === 'string') {
+      const user = await loadActiveAuthUserById(payload.sub)
+      return user?.id ?? null
+    }
   } catch {
     // ignore
   }
@@ -6420,9 +6469,9 @@ async function resolveModerationTarget(targetType: ModerationTargetType, targetI
     const fallbackSlug = post.seoSlug ?? post.id
     const targetUrl =
       post.business && post.business.provinceCode && post.business.communitySlug
-        ? `/${post.business.provinceCode.toLowerCase()}/${post.business.communitySlug.toLowerCase()}/posts/${fallbackSlug}`
+        ? `/c/${post.business.provinceCode.toLowerCase()}/${post.business.communitySlug.toLowerCase()}/posts/${fallbackSlug}`
         : post.provinceCode && post.communitySlug
-          ? `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${fallbackSlug}`
+          ? `/c/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${fallbackSlug}`
           : `/u/${post.author.handle}/posts/${fallbackSlug}`
 
     return {
@@ -6600,10 +6649,10 @@ function buildPostHrefForAdmin(post: {
 }) {
   const slug = post.seoSlug ?? post.id
   if (post.business?.provinceCode && post.business.communitySlug) {
-    return `/${post.business.provinceCode.toLowerCase()}/${post.business.communitySlug.toLowerCase()}/posts/${slug}`
+    return `/c/${post.business.provinceCode.toLowerCase()}/${post.business.communitySlug.toLowerCase()}/posts/${slug}`
   }
   if (post.provinceCode && post.communitySlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
+    return `/c/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
   }
   if (post.author?.handle) {
     return `/u/${post.author.handle}/posts/${slug}`
@@ -6773,6 +6822,107 @@ async function createModerationReportAndQuarantine(
 
   await applyModerationQuarantine(tx, args.target.targetType, args.target.targetId)
   return report
+}
+
+function buildModerationSuspensionReason(args: {
+  reportId: string
+  targetType: ModerationTargetType
+  targetId: string
+}) {
+  return `Suspended after moderation review for ${args.targetType.toLowerCase()} ${args.targetId} on report ${args.reportId}.`
+}
+
+async function suspendUserForModeration(
+  tx: Prisma.TransactionClient,
+  args: {
+    userId: string
+    suspendedByUserId: string
+    sourceReportId: string
+    reason: string
+  },
+) {
+  const user = await tx.user.findUnique({
+    where: { id: args.userId },
+    select: { communityMeta: true },
+  })
+  if (!user) return false
+
+  const baseMeta = readBaseCommunityMeta(user.communityMeta)
+  const currentModeration =
+    baseMeta.accountModeration && typeof baseMeta.accountModeration === 'object' && !Array.isArray(baseMeta.accountModeration)
+      ? ({ ...(baseMeta.accountModeration as Record<string, unknown>) } as Record<string, unknown>)
+      : {}
+  currentModeration.status = 'SUSPENDED'
+  currentModeration.suspendedAt = new Date().toISOString()
+  currentModeration.suspendedByUserId = args.suspendedByUserId
+  currentModeration.suspensionReason = args.reason
+  currentModeration.sourceReportId = args.sourceReportId
+  baseMeta.accountModeration = currentModeration
+
+  const affectedComments = await tx.comment.findMany({
+    where: { userId: args.userId, moderationStatus: ModerationStatus.VISIBLE },
+    select: {
+      postId: true,
+      post: {
+        select: {
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
+    },
+  })
+
+  await Promise.all([
+    tx.user.update({
+      where: { id: args.userId },
+      data: { communityMeta: baseMeta as Prisma.InputJsonValue },
+    }),
+    tx.post.updateMany({
+      where: { authorId: args.userId },
+      data: { moderationStatus: ModerationStatus.QUARANTINED },
+    }),
+    tx.comment.updateMany({
+      where: { userId: args.userId },
+      data: { moderationStatus: ModerationStatus.QUARANTINED },
+    }),
+  ])
+
+  const affectedPosts = new Map<string, { createdAt: Date; lastActivityAt: Date }>()
+  for (const comment of affectedComments) {
+    if (!comment.post || affectedPosts.has(comment.postId)) continue
+    affectedPosts.set(comment.postId, {
+      createdAt: comment.post.createdAt,
+      lastActivityAt: comment.post.updatedAt,
+    })
+  }
+
+  for (const [postId, aggregateState] of affectedPosts) {
+    await refreshPostAggregates(tx, postId, aggregateState, { bumpActivity: false })
+  }
+
+  return true
+}
+
+async function suspendBusinessForModeration(
+  tx: Prisma.TransactionClient,
+  args: {
+    businessId: string
+  },
+) {
+  const updated = await tx.business.updateMany({
+    where: { id: args.businessId },
+    data: {
+      status: BusinessStatus.SUSPENDED,
+      moderationStatus: ModerationStatus.QUARANTINED,
+    },
+  })
+
+  await tx.post.updateMany({
+    where: { businessId: args.businessId },
+    data: { moderationStatus: ModerationStatus.QUARANTINED },
+  })
+
+  return updated.count > 0
 }
 
 function hashMeetingPassword(raw: string): string {
@@ -10309,13 +10459,16 @@ registerCommunityRoute('post', '/communities/postal-lookup', async (req: Fastify
 })
 
 // Basic auth hook (placeholder)
-app.addHook('preHandler', async (req: FastifyRequest) => {
+app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
   const auth = req.headers.authorization
   if (auth?.startsWith('Bearer ')) {
     try {
       const payload = (await (req as any).jwtVerify()) as { sub: string }
-      // minimal: attach user id
-      ;(req as any).user = { id: payload.sub }
+      const user = await loadActiveAuthUserById(payload.sub)
+      if (!user) {
+        return reply.code(403).send({ error: 'account_suspended' })
+      }
+      ;(req as any).user = { id: user.id }
     } catch {
       // ignore, public routes allowed
     }
@@ -12033,6 +12186,7 @@ app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) =>
       },
     })
     if (!user) return reply.code(401).send({ error: 'invalid_credentials' })
+    if (isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
     const ok = await bcrypt.compare(password, (user as any).passwordHash)
     if (!ok) return reply.code(401).send({ error: 'invalid_credentials' })
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
@@ -12061,6 +12215,7 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
       },
     })
     if (!user) return reply.code(401).send({ error: 'unauthorized' })
+    if (isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
 
     const homeFollow = await prisma.communityFollow.findFirst({ where: { userId: payload.sub, home: true } })
     let homeCommunity: null | {
@@ -12111,6 +12266,7 @@ app.post('/auth/status-declaration', async (req: FastifyRequest, reply: FastifyR
 
     const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
     if (!user) return reply.code(401).send({ error: 'unauthorized' })
+  if (isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
 
     const baseMeta = readBaseCommunityMeta(user.communityMeta)
     const currentMeta = parseCommunityMeta(user.communityMeta ?? null)
@@ -22628,6 +22784,8 @@ const AdminModerationReportsQuery = z.object({
 
 const AdminModerationReportReviewBody = z.object({
   reviewNotes: z.string().trim().max(2000).optional().nullable(),
+  ejectReportedUser: z.boolean().optional().default(false),
+  suspendReportedOrganization: z.boolean().optional().default(false),
 })
 
 const SupportRequestBody = z.object({
@@ -29589,20 +29747,60 @@ app.post('/admin/moderation/reports/:reportId/review', async (req: FastifyReques
   const body = AdminModerationReportReviewBody.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
-  const updated = await prisma.contentReport.updateMany({
-    where: { id: params.data.reportId },
-    data: {
-      status: ContentReportStatus.REVIEWED,
-      reviewedAt: new Date(),
-      reviewedByUserId: user.id,
-      reviewNotes: body.data.reviewNotes?.trim() || null,
-      updatedAt: new Date(),
-    },
+  const enforcement = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const report = await tx.contentReport.findUnique({
+      where: { id: params.data.reportId },
+      select: {
+        id: true,
+        targetType: true,
+        targetId: true,
+        reportedUserId: true,
+        reportedBusinessId: true,
+      },
+    })
+    if (!report) return null
+
+    const suspendedUser =
+      body.data.ejectReportedUser && report.reportedUserId
+        ? await suspendUserForModeration(tx, {
+            userId: report.reportedUserId,
+            suspendedByUserId: user.id,
+            sourceReportId: report.id,
+            reason: buildModerationSuspensionReason({
+              reportId: report.id,
+              targetType: report.targetType,
+              targetId: report.targetId,
+            }),
+          })
+        : false
+
+    const suspendedOrganization =
+      body.data.suspendReportedOrganization && report.reportedBusinessId
+        ? await suspendBusinessForModeration(tx, {
+            businessId: report.reportedBusinessId,
+          })
+        : false
+
+    await tx.contentReport.update({
+      where: { id: params.data.reportId },
+      data: {
+        status: ContentReportStatus.REVIEWED,
+        reviewedAt: new Date(),
+        reviewedByUserId: user.id,
+        reviewNotes: body.data.reviewNotes?.trim() || null,
+        updatedAt: new Date(),
+      },
+    })
+
+    return {
+      suspendedUser,
+      suspendedOrganization,
+    }
   })
 
-  if (!updated.count) return reply.code(404).send({ error: 'report_not_found' })
+  if (!enforcement) return reply.code(404).send({ error: 'report_not_found' })
 
-  return reply.send({ ok: true })
+  return reply.send({ ok: true, enforcement })
 })
 
 app.get('/admin/support/requests', async (req: FastifyRequest, reply: FastifyReply) => {
