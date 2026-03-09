@@ -2136,7 +2136,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                 className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] lg:hidden"
                 style={{
                   bottom: hideGlobalMobileDockInThread
-                    ? `${Math.round(mobileKeyboardInset)}px`
+                    ? `calc(var(--mobile-dock-bottom-offset) + ${Math.round(mobileKeyboardInset)}px)`
                     : `calc(var(--mobile-dock-clearance) + ${Math.round(mobileKeyboardInset)}px)`,
                 }}
               >
