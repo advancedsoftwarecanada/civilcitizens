@@ -1717,7 +1717,7 @@ async function loadCivilAiViewerContext(userId: string): Promise<CivilAiViewerCo
       bio: user.bio ? sanitizePlainText(user.bio) : null,
       avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
       coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
-      isVerified: Boolean(user.premiumStatus),
+      isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(user.communityMeta ?? null)),
       isPremium: Boolean(user.premiumStatus),
       experiences: experienceItems,
     },
@@ -2733,6 +2733,10 @@ function isPremium(status: PremiumStatus | null | undefined) {
   return status === 'ACTIVE'
 }
 
+function isSelfVerifiedCanadianCitizen(meta: CommunityMetaPayload | null | undefined) {
+  return meta?.civicStatus === 'citizen' && meta?.verificationMethod === 'self_declaration'
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return error.stack ?? error.message
@@ -3114,11 +3118,13 @@ const FRIEND_USER_SELECT = {
   avatarUrl: true,
   coverUrl: true,
   premiumStatus: true,
+  communityMeta: true,
 } satisfies Prisma.UserSelect
 
 type FriendUser = Prisma.UserGetPayload<{ select: typeof FRIEND_USER_SELECT }>
 
 function formatFriendUser(user: FriendUser) {
+  const communityMeta = parseCommunityMeta(user.communityMeta ?? null)
   return {
     id: user.id,
     handle: user.handle,
@@ -3126,7 +3132,7 @@ function formatFriendUser(user: FriendUser) {
     avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
     coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
     isPremium: isPremium(user.premiumStatus),
-    isVerified: isPremium(user.premiumStatus),
+    isVerified: isSelfVerifiedCanadianCitizen(communityMeta),
   }
 }
 
@@ -5379,6 +5385,7 @@ type UserSearchRecord = {
   avatarUrl: string | null
   coverUrl: string | null
   premiumStatus: PremiumStatus | null
+  communityMeta: Prisma.JsonValue | null
 }
 
 type UserSearchResultPayload = {
@@ -5469,6 +5476,7 @@ type PostSearchResultPayload = {
     name: string
     slug: string
     logoUrl: string | null
+    isVerified: boolean
   } | null
   href: string
 }
@@ -5586,6 +5594,7 @@ async function searchUsersForQuery({
       avatarUrl: true,
       coverUrl: true,
       premiumStatus: true,
+      communityMeta: true,
     },
   })) as UserSearchRecord[]
 
@@ -5623,7 +5632,7 @@ async function searchUsersForQuery({
     avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
     coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
     isPremium: isPremium(user.premiumStatus),
-    isVerified: isPremium(user.premiumStatus),
+    isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(user.communityMeta ?? null)),
     homeCommunity: homeMap.get(user.id) ?? null,
   }))
 }
@@ -6177,6 +6186,7 @@ async function searchCommunityPostsForQuery(query: string, limit: number): Promi
                 name: formatted.organization.name,
                 slug: formatted.organization.slug,
                 logoUrl: formatted.organization.logoUrl,
+                isVerified: formatted.organization.isVerified,
               }
             : null,
           href,
@@ -7068,6 +7078,7 @@ type CommentWithUser = Prisma.CommentGetPayload<{
         avatarUrl: true
         coverUrl: true
         premiumStatus: true
+        communityMeta: true
       }
     }
   }
@@ -7154,7 +7165,7 @@ function mapComment(row: CommentWithUser, viewerVote: number | null = null): Com
       avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
       coverUrl: normalizeMediaUrl(row.user.coverUrl ?? null),
       isPremium: isPremium(row.user.premiumStatus),
-      isVerified: isPremium(row.user.premiumStatus),
+      isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(row.user.communityMeta ?? null)),
     },
     replies: [],
   }
@@ -7517,6 +7528,7 @@ const POST_INCLUDE = {
       avatarUrl: true,
       coverUrl: true,
       premiumStatus: true,
+      communityMeta: true,
     },
   },
   business: {
@@ -7543,6 +7555,7 @@ const POST_INCLUDE = {
           avatarUrl: true,
           coverUrl: true,
           premiumStatus: true,
+          communityMeta: true,
         },
       },
       business: {
@@ -7684,6 +7697,7 @@ type RecentCommentWithUser = Prisma.CommentGetPayload<{
         avatarUrl: true
         coverUrl: true
         premiumStatus: true
+        communityMeta: true
       }
     }
   }
@@ -7709,6 +7723,7 @@ async function getRecentCommentsByPostIds(postIds: string[], limitPerPost = 5) {
           avatarUrl: true,
           coverUrl: true,
           premiumStatus: true,
+          communityMeta: true,
         },
       },
     },
@@ -7733,7 +7748,7 @@ async function getRecentCommentsByPostIds(postIds: string[], limitPerPost = 5) {
         avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
         coverUrl: normalizeMediaUrl(row.user.coverUrl ?? null),
         isPremium: isPremium(row.user.premiumStatus),
-        isVerified: isPremium(row.user.premiumStatus),
+        isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(row.user.communityMeta ?? null)),
       },
     })
     grouped[row.postId] = bucket
@@ -7994,7 +8009,7 @@ function formatPost(
       avatarUrl: normalizeMediaUrl(post.author.avatarUrl ?? null),
       coverUrl: normalizeMediaUrl((post.author as any).coverUrl ?? null),
       isPremium: isPremium(post.author.premiumStatus),
-      isVerified: isPremium(post.author.premiumStatus),
+      isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(post.author.communityMeta ?? null)),
     },
     recentComments: options.recentComments ?? [],
     counts: {
@@ -8709,6 +8724,7 @@ async function loadCivilAiCommunityPosts(communityId: string, limit: number, que
               name: formatted.organization.name,
               slug: formatted.organization.slug,
               logoUrl: formatted.organization.logoUrl,
+              isVerified: formatted.organization.isVerified,
             }
           : null,
         href,
@@ -12033,7 +12049,7 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
       ...normalizedUser,
       homeCommunity,
       isPremium: isPremium(user.premiumStatus),
-      isVerified: isPremium(user.premiumStatus),
+      isVerified: isSelfVerifiedCanadianCitizen(communityMeta),
       premiumSince: user.premiumSince ?? null,
       premiumRenewsAt: user.premiumRenewsAt ?? null,
       civicStatus: communityMeta?.civicStatus ?? null,
@@ -20833,7 +20849,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
     if (!canView) return reply.code(403).send({ error: 'forbidden' })
 
     const [owner, managers, followers] = await Promise.all([
-      prisma.user.findUnique({ where: { id: org.ownerId }, select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true, premiumStatus: true } }),
+      prisma.user.findUnique({ where: { id: org.ownerId }, select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true, premiumStatus: true, communityMeta: true } }),
       prisma.businessMembership.findMany({
         where: { businessId: org.id, userId: { not: org.ownerId } },
         orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
@@ -20841,7 +20857,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
           userId: true,
           role: true,
           createdAt: true,
-          user: { select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true, premiumStatus: true } },
+          user: { select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true, premiumStatus: true, communityMeta: true } },
         },
       }),
       prisma.businessFollow.findMany({
@@ -20850,7 +20866,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
         select: {
           userId: true,
           createdAt: true,
-          user: { select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true, premiumStatus: true } },
+          user: { select: { id: true, handle: true, name: true, avatarUrl: true, coverUrl: true, premiumStatus: true, communityMeta: true } },
         },
       }),
     ])
@@ -20871,7 +20887,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
                 avatarUrl: normalizeMediaUrl(owner.avatarUrl ?? null),
                 coverUrl: normalizeMediaUrl(owner.coverUrl ?? null),
                 isPremium: isPremium(owner.premiumStatus),
-                isVerified: isPremium(owner.premiumStatus),
+                isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(owner.communityMeta ?? null)),
               },
               memberState:
                 system.members[owner.id] ??
@@ -20898,6 +20914,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
             avatarUrl: string | null
             coverUrl: string | null
             premiumStatus: PremiumStatus | null
+            communityMeta: Prisma.JsonValue | null
           }
         }) => ({
           userId: row.userId,
@@ -20910,7 +20927,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
             avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
             coverUrl: normalizeMediaUrl(row.user.coverUrl ?? null),
             isPremium: isPremium(row.user.premiumStatus),
-            isVerified: isPremium(row.user.premiumStatus),
+            isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(row.user.communityMeta ?? null)),
           },
           memberState: system.members[row.userId] ?? null,
         }),
@@ -20928,6 +20945,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
               avatarUrl: string | null
               coverUrl: string | null
               premiumStatus: PremiumStatus | null
+              communityMeta: Prisma.JsonValue | null
             }
           }) => ({
             userId: row.userId,
@@ -20940,7 +20958,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/governance/members', as
               avatarUrl: normalizeMediaUrl(row.user.avatarUrl ?? null),
               coverUrl: normalizeMediaUrl(row.user.coverUrl ?? null),
               isPremium: isPremium(row.user.premiumStatus),
-              isVerified: isPremium(row.user.premiumStatus),
+              isVerified: isSelfVerifiedCanadianCitizen(parseCommunityMeta(row.user.communityMeta ?? null)),
             },
             memberState: system.members[row.userId] ?? null,
           }),
@@ -27425,7 +27443,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
     const user = {
       ...restProfile,
       isPremium: isPremium(premiumStatus),
-      isVerified: isPremium(premiumStatus),
+      isVerified: isSelfVerifiedCanadianCitizen(profileMeta),
       dateOfBirth: profileMeta?.dateOfBirth && profileMeta.shareDateOfBirth !== false ? profileMeta.dateOfBirth : null,
       countryOfBirth: profileMeta?.countryOfBirth && profileMeta.shareCountryOfBirth !== false ? profileMeta.countryOfBirth : null,
       friendCount: friendsCount,
