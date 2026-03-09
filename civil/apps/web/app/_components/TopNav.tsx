@@ -522,7 +522,7 @@ export default function TopNav() {
           aria-label="Civil home"
         >
           <Image src="/favicon.png" alt="Civil" width={32} height={32} className="h-8 w-8 md:hidden" priority />
-          <Image src="/logo.svg" alt="Civil" width={112} height={32} className="hidden h-7 w-auto md:block" priority />
+          <Image src="/logo.svg" alt="Civil" width={144} height={42} className="hidden h-9 w-auto md:block lg:h-10" priority />
         </Link>
 
         {showSearch ? (

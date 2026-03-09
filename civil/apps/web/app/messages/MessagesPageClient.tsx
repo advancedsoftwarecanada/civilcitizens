@@ -229,6 +229,7 @@ function isMobileMessagesViewport() {
 const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
 const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
 const MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS = 'var(--mobile-thread-composer-height)'
+const MOBILE_THREAD_MESSAGE_CLEARANCE_PX = 20
 
 const threadHasUnreadFallback = (thread: ThreadSummary) => {
   const viewer = thread.participants.find((participant) => participant.isViewer)
@@ -403,6 +404,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       requestAnimationFrame(() => {
         container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
       })
+      window.setTimeout(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+      }, 180)
     })
   }, [])
 
@@ -1257,7 +1261,14 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const messages = messagesByThread[selectedThreadId] ?? []
     return sortMessagesChronologically(messages)
   }, [messagesByThread, selectedThreadId])
+  const latestActiveMessageId = activeMessages[activeMessages.length - 1]?.id ?? null
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
+
+  useEffect(() => {
+    if (!isMobileViewport || !selectedThreadId || !latestActiveMessageId) return
+    if (preserveScrollRef.current?.threadId === selectedThreadId) return
+    scrollMessagesToBottom('auto')
+  }, [isMobileViewport, latestActiveMessageId, scrollMessagesToBottom, selectedThreadId])
 
   useEffect(() => {
     const candidates = new Set<string>()
@@ -1722,7 +1733,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
     const mobileComposerBottomSpacer = showMobileDockComposer
-      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS} + var(--mobile-dock-bottom-pad) + ${Math.round(mobileKeyboardInset)}px)`
+      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS} + var(--mobile-dock-bottom-pad) + ${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px + ${Math.round(mobileKeyboardInset)}px)`
       : undefined
 
     const sendActiveThreadMessage = () => {
@@ -2006,7 +2017,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                 Load previous
               </button>
             ) : null}
-            <div ref={messagesViewportRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2">
+            <div
+              ref={messagesViewportRef}
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2"
+              style={mobileComposerBottomSpacer ? { scrollPaddingBottom: mobileComposerBottomSpacer } : undefined}
+            >
               <div
                 className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-0' : 'pb-1')}
                 style={mobileComposerBottomSpacer ? { paddingBottom: mobileComposerBottomSpacer } : undefined}
