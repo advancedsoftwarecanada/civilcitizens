@@ -8,6 +8,8 @@
   --cc-top-nav-offset: var(--cc-top-nav-height);
   --cc-native-safe-top-offset: 0px;
   --cc-native-shell-top-gap: 0px;
+  --cc-runtime-top-inset: 0px;
+  --cc-runtime-bottom-inset: 0px;
   --cc-primary: #d52b1e;
   --cc-primary-700: #b0261a;
   --cc-border: #e2e8f0;
@@ -42,20 +44,33 @@
 }
 
 html.cc-native-ios {
-  --cc-native-safe-top-offset: var(--safe-area-top);
+  --cc-native-safe-top-offset: max(var(--safe-area-top), var(--cc-runtime-top-inset));
   --cc-top-nav-offset: calc(var(--cc-top-nav-height) + var(--cc-native-safe-top-offset));
   --cc-native-shell-top-gap: 0.75rem;
 }
 
 html.cc-native-android {
-  --cc-native-safe-top-offset: max(var(--safe-area-top), 0.9rem);
+  --cc-native-safe-top-offset: max(var(--safe-area-top), var(--cc-runtime-top-inset), 0.9rem);
   --cc-top-nav-offset: calc(var(--cc-top-nav-height) + var(--cc-native-safe-top-offset));
   --cc-native-shell-top-gap: 0.35rem;
-  --mobile-dock-bottom-offset: max(var(--safe-area-bottom), 0.7rem);
-  --mobile-dock-bottom-pad: max(0.15rem, min(var(--safe-area-bottom), 0.3rem));
+  --mobile-dock-bottom-offset: max(var(--safe-area-bottom), var(--cc-runtime-bottom-inset));
+  --mobile-dock-bottom-pad: max(0.15rem, min(max(var(--safe-area-bottom), var(--cc-runtime-bottom-inset)), 0.3rem));
   --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
   --mobile-thread-composer-height: var(--mobile-dock-height);
   --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom-offset));
+}
+
+@media (max-width: 1023px) {
+  html.cc-native-android [data-mobile-dock='true']::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: var(--mobile-dock-bottom-offset);
+    background: #000;
+    pointer-events: none;
+  }
 }
 
 #cc-launch-overlay {
