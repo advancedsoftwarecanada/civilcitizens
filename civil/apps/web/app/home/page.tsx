@@ -9,11 +9,13 @@ export default function HomePage() {
       <FeedPageClient
         scope="all"
         sidebarActive="home"
-        title="Civil Pulse"
-        description="The broadest view of your civic world, balancing local posts, organizations, events, and opportunity across Civil."
-        emptyState="Your Civil Pulse is quiet right now. Follow more communities, people, and organizations to build a sharper civic signal."
+        title="Home Feed"
+        description="Posts, events, and jobs from across your Civil network."
+        emptyState="Your home feed is quiet right now. Follow more communities, people, and organizations to fill it out."
         emptyStateCta={{ label: 'Explore Communities', href: '/communities' }}
         defaultSort="hot"
+        showFeedSummary={false}
+        showSupplementalFeedItems={false}
         sortOptions={[
           {
             value: 'hot',

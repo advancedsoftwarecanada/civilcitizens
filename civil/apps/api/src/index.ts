@@ -31699,7 +31699,7 @@ const CreateJobBody = z.object({
   salaryCurrency: z.string().trim().length(3).default('CAD'),
   salaryPeriod: z.string().trim().max(40).optional().nullable(),
   duties: z.string().trim().min(20).max(20000),
-  roleRequirements: z.string().trim().min(20).max(20000),
+  roleRequirements: z.string().trim().min(20).max(20000).optional(),
   description: z.string().trim().max(20000).optional().nullable(),
   photoUrl: z.string().trim().url().max(2000).optional().nullable(),
   location: JobLocationInput,
@@ -31717,7 +31717,7 @@ const UpdateJobBody = z.object({
   salaryCurrency: z.string().trim().length(3).default('CAD'),
   salaryPeriod: z.string().trim().max(40).optional().nullable(),
   duties: z.string().trim().min(20).max(20000),
-  roleRequirements: z.string().trim().min(20).max(20000),
+  roleRequirements: z.string().trim().min(20).max(20000).optional(),
   description: z.string().trim().max(20000).optional().nullable(),
   photoUrl: z.string().trim().url().max(2000).optional().nullable(),
   location: JobLocationInput,
@@ -31890,6 +31890,7 @@ type JobListRow = {
 }
 
 function mapJobListRow(row: JobListRow) {
+  const richDescription = row.description?.trim() || row.duties
   return {
     id: row.id,
     title: row.title,
@@ -31900,9 +31901,9 @@ function mapJobListRow(row: JobListRow) {
     salaryMax: row.salaryMax,
     salaryCurrency: row.salaryCurrency,
     salaryPeriod: row.salaryPeriod,
-    description: row.description,
+    description: richDescription,
     photoUrl: normalizeMediaUrl(row.photoUrl),
-    duties: row.duties,
+    duties: richDescription,
     roleRequirements: row.roleRequirements,
     location: buildJobLocationValue({
       locationType: row.locationType,
@@ -33032,6 +33033,8 @@ app.put('/communities/:province/:municipality/orgs/:slug/jobs/:jobId', async (re
     }
 
     const location = parseStructuredJobLocation(body.data.location)
+    const normalizedDescription = body.data.description?.trim() || body.data.duties.trim()
+    const normalizedRoleRequirements = body.data.roleRequirements?.trim() || normalizedDescription
     const updated = await prisma.$executeRaw`
       UPDATE "JobPosting"
       SET
@@ -33041,9 +33044,9 @@ app.put('/communities/:province/:municipality/orgs/:slug/jobs/:jobId', async (re
         "salaryMax" = ${body.data.salaryMax ?? null},
         "salaryCurrency" = ${body.data.salaryCurrency.toUpperCase()},
         "salaryPeriod" = ${body.data.salaryPeriod ?? null},
-        "duties" = ${body.data.duties.trim()},
-        "roleRequirements" = ${body.data.roleRequirements.trim()},
-        "description" = ${body.data.description?.trim() ?? null},
+        "duties" = ${normalizedDescription},
+        "roleRequirements" = ${normalizedRoleRequirements},
+        "description" = ${normalizedDescription},
         "photoUrl" = ${body.data.photoUrl?.trim() ?? null},
         "locationType" = ${location.locationType}::"JobWorkplaceType",
         "locationProvinceCode" = ${location.locationProvinceCode},
@@ -33202,6 +33205,8 @@ app.post('/communities/:province/:municipality/orgs/:slug/jobs', async (req: Fas
     }
 
     const location = parseStructuredJobLocation(body.data.location)
+  const normalizedDescription = body.data.description?.trim() || body.data.duties.trim()
+  const normalizedRoleRequirements = body.data.roleRequirements?.trim() || normalizedDescription
     const baseSlug = trimSlugLength(slugifyText(body.data.title), 80) || 'job'
 
     const existingSlugRows = await prisma.$queryRaw<Array<{ slug: string }>>`
@@ -33227,7 +33232,7 @@ app.post('/communities/:province/:municipality/orgs/:slug/jobs', async (req: Fas
       VALUES (
         ${randomUUID()}, ${orgResult.org.id}, ${userId}, ${body.data.title.trim()}, ${slug}, ${body.data.employmentType}::"JobEmploymentType",
         ${body.data.salaryMin ?? null}, ${body.data.salaryMax ?? null}, ${body.data.salaryCurrency.toUpperCase()}, ${body.data.salaryPeriod ?? null},
-        ${body.data.duties.trim()}, ${body.data.roleRequirements.trim()}, ${body.data.description?.trim() ?? null},
+        ${normalizedDescription}, ${normalizedRoleRequirements}, ${normalizedDescription},
         ${location.locationType}::"JobWorkplaceType", ${location.locationProvinceCode}, ${location.locationCommunitySlug}, ${location.locationLabel},
         ${body.data.industryId}, ${body.data.subIndustryId ?? null},
         ${body.data.publish ? Prisma.sql`'active'::"JobStatus"` : Prisma.sql`'draft'::"JobStatus"`},

@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import CivilCard from '../../../../../../_components/CivilCard'
 import Modal from '../../../../../../_components/Modal'
 import RichTextEditor from '../../../../../../_components/RichTextEditor'
 import { pushToast } from '../../../../../../_components/useToasts'
@@ -11,16 +13,32 @@ import { getStoredToken } from '../../../../../../_lib/tokenStorage'
 type JobItem = {
   id: string
   title: string
+  photoUrl: string | null
   employmentType: string
+  salaryMin: number | null
+  salaryMax: number | null
+  salaryCurrency: string | null
+  salaryPeriod: string | null
   description: string | null
   duties: string
   roleRequirements: string
   location: string
   applicantCount: number
   expiresAt: string
+  sponsored: boolean
   industry: {
+    slug: string
     name: string
     subIndustry: { name: string; slug: string } | null
+  }
+  organization: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl: string | null
+    coverUrl: string | null
   }
 }
 
@@ -35,22 +53,27 @@ function parseLocationLabel(value: string): string {
   return 'Location not set'
 }
 
-function toPlainTextPreview(value: string | null | undefined): string {
-  const raw = typeof value === 'string' ? value : ''
-  if (!raw) return ''
+function salaryLabel(job: JobItem) {
+  const currency = job.salaryCurrency ?? 'CAD'
+  if (typeof job.salaryMin !== 'number' && typeof job.salaryMax !== 'number') return null
+  const min = typeof job.salaryMin === 'number' ? job.salaryMin.toLocaleString() : null
+  const max = typeof job.salaryMax === 'number' ? job.salaryMax.toLocaleString() : null
+  const range = min && max ? `${currency} ${min} - ${max}` : `${currency} ${min ?? max}`
+  return job.salaryPeriod ? `${range} / ${job.salaryPeriod}` : range
+}
 
-  return raw
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim()
+function getJobDetailHref(job: JobItem) {
+  if (!job.organization.provinceCode || !job.organization.communitySlug) return null
+  return `/com/${encodeURIComponent(job.organization.provinceCode.toLowerCase())}/${encodeURIComponent(job.organization.communitySlug)}/orgs/${encodeURIComponent(job.organization.slug)}/jobs/${encodeURIComponent(job.id)}`
+}
+
+function getOrganizationJobsHref(job: JobItem) {
+  if (!job.organization.provinceCode || !job.organization.communitySlug) return null
+  return `/com/${encodeURIComponent(job.organization.provinceCode.toLowerCase())}/${encodeURIComponent(job.organization.communitySlug)}/orgs/${encodeURIComponent(job.organization.slug)}/jobs`
+}
+
+function employmentTypeLabel(value: string): string {
+  return value.replace(/_/g, ' ').toLowerCase()
 }
 
 function normalizeApiErrorMessage(value: unknown): string | null {
@@ -225,34 +248,75 @@ export default function OrganizationJobsPageClient({
       {loading ? <p className="text-sm text-slate-500">Loading jobs…</p> : null}
       {!loading && activeJobs.length === 0 ? <p className="text-sm text-slate-500">No active jobs posted right now.</p> : null}
       {activeJobs.map((job) => (
-        <article key={job.id} className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold text-slate-900">{job.title}</h3>
-              <p className="text-xs text-slate-600">
-                {job.industry.name}
-                {job.industry.subIndustry ? ` • ${job.industry.subIndustry.name}` : ''}
-              </p>
+        <article key={job.id} className="group rounded-2xl bg-white p-3 transition hover:bg-slate-50/70">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            <div className="w-full sm:w-60 sm:flex-none">
+              {getJobDetailHref(job) ? (
+                <Link href={getJobDetailHref(job)!} className="block">
+                  <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32">
+                    {job.photoUrl ? <img src={job.photoUrl} alt={job.title} className="h-full w-full object-cover" loading="lazy" /> : null}
+                  </div>
+                </Link>
+              ) : (
+                <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32">
+                  {job.photoUrl ? <img src={job.photoUrl} alt={job.title} className="h-full w-full object-cover" loading="lazy" /> : null}
+                </div>
+              )}
+
+              {getOrganizationJobsHref(job) ? (
+                <Link href={getOrganizationJobsHref(job)!} className="mt-3 block">
+                  <CivilCard
+                    size="rail"
+                    name={job.organization.name}
+                    avatarAlt={job.organization.name}
+                    avatarInitials={job.organization.name}
+                    avatarSrc={job.organization.logoUrl}
+                    coverUrl={job.organization.coverUrl}
+                    isBusiness
+                  />
+                </Link>
+              ) : null}
             </div>
-            <span className="rounded-full border border-slate-200 px-2 py-1 text-xs text-slate-600">{job.employmentType.replace(/_/g, ' ')}</span>
-          </div>
 
-          <p className="mt-2 text-sm text-slate-700">{toPlainTextPreview(job.description || job.duties)}</p>
-          <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
-            <span className="rounded-full border border-slate-200 px-2 py-0.5">{parseLocationLabel(job.location)}</span>
-            <span className="rounded-full border border-slate-200 px-2 py-0.5">{job.applicantCount} applicants</span>
-            <span className="rounded-full border border-slate-200 px-2 py-0.5">Closes {new Date(job.expiresAt).toLocaleDateString()}</span>
-          </div>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                {getJobDetailHref(job) ? (
+                  <Link href={getJobDetailHref(job)!} className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)] hover:underline">
+                    {job.title}
+                  </Link>
+                ) : (
+                  <h3 className="text-xl font-semibold tracking-tight text-slate-900">{job.title}</h3>
+                )}
 
-          <div className="mt-3">
-            <button
-              type="button"
-              className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => setApplyingJob(job)}
-              disabled={appliedJobIds.includes(job.id)}
-            >
-              {appliedJobIds.includes(job.id) ? 'Applied' : 'Apply'}
-            </button>
+                {job.sponsored ? (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Sponsored Job Post</span>
+                ) : appliedJobIds.includes(job.id) ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Applied</span>
+                ) : (
+                  <span className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-600">{employmentTypeLabel(job.employmentType)}</span>
+                )}
+              </div>
+
+              <p className="text-base text-slate-700">{parseLocationLabel(job.location)}</p>
+
+              <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                <span className="rounded-full border border-slate-200 px-2 py-0.5">{job.industry.name}{job.industry.subIndustry ? ` • ${job.industry.subIndustry.name}` : ''}</span>
+                <span className="rounded-full border border-slate-200 px-2 py-0.5">{job.applicantCount} applicants</span>
+                {salaryLabel(job) ? <span className="rounded-full border border-slate-200 px-2 py-0.5">{salaryLabel(job)}</span> : null}
+                <span className="rounded-full border border-slate-200 px-2 py-0.5">Closes {new Date(job.expiresAt).toLocaleDateString()}</span>
+              </div>
+
+              <div className="pt-1">
+                <button
+                  type="button"
+                  className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => setApplyingJob(job)}
+                  disabled={appliedJobIds.includes(job.id)}
+                >
+                  {appliedJobIds.includes(job.id) ? 'Applied' : 'Apply'}
+                </button>
+              </div>
+            </div>
           </div>
         </article>
       ))}

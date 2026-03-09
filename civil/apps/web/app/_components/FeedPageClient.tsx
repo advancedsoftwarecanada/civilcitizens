@@ -36,6 +36,8 @@ export type FeedPageClientProps = {
   community?: string
   defaultSort?: FeedSortMode
   sortOptions?: Array<{ value: FeedSortMode; label: string; description?: string }>
+  showFeedSummary?: boolean
+  showSupplementalFeedItems?: boolean
 }
 
 type CommunityFollowRow = {
@@ -264,6 +266,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     community,
     defaultSort = 'new',
     sortOptions = [],
+    showFeedSummary = true,
+    showSupplementalFeedItems = true,
   } = props
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
@@ -467,7 +471,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
 
     void loadActivity()
-  }, [community, communityOptions, province, scope, sortMode])
+  }, [community, province, scope, sortMode])
 
   useEffect(() => {
     seenPostIdsRef.current.clear()
@@ -790,10 +794,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const isTopLevelCommunitiesFeed = scope === 'communities' && !province && !community
   const isPulseHighlightsFeed = scope === 'all' && sortMode === 'hot'
   const hasSupplementalActivity = activityItems.length > 0
-  const showSupplementalActivity = (isTopLevelCommunitiesFeed || isPulseHighlightsFeed) && hasSupplementalActivity
-  const supplementalTitle = isPulseHighlightsFeed ? 'Civil Pulse Highlights' : 'Community Activity'
+  const showSupplementalActivity = showSupplementalFeedItems && (isTopLevelCommunitiesFeed || isPulseHighlightsFeed) && hasSupplementalActivity
+  const supplementalTitle = isPulseHighlightsFeed ? 'Events and jobs in your feed' : 'Community activity'
   const supplementalDescription = isPulseHighlightsFeed
-    ? 'A live mix of nearby events, open roles, and local momentum shaping your Civil Pulse.'
+    ? 'Nearby events and open jobs surfaced alongside posts in your home feed.'
     : 'Events and jobs from the communities you follow, surfaced alongside local posts.'
   const uniquePostCommunityCount = useMemo(() => {
     const keys = new Set<string>()
@@ -819,13 +823,13 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const feedSnapshot = useMemo(() => {
     if (scope === 'all') {
       return {
-        eyebrow: 'Pulse Snapshot',
-        title: sortMode === 'hot' ? 'Smart mode is balancing civic signal, place, and momentum.' : 'Latest mode is showing the freshest updates in your wider Civil orbit.',
+        eyebrow: 'Feed Summary',
+        title: sortMode === 'hot' ? 'Posts, events, and jobs currently surfacing in your home feed.' : 'The newest posts, events, and jobs in your home feed.',
         cards: [
-          { label: 'Posts in rotation', value: formatSnapshotValue(visiblePosts.length) },
-          { label: 'Communities represented', value: formatSnapshotValue(Math.max(uniquePostCommunityCount, communityOptions.length)) },
-          { label: 'Live events', value: formatSnapshotValue(activityEvents.length) },
-          { label: 'Open roles', value: formatSnapshotValue(activityJobs.length) },
+          { label: 'Posts', value: formatSnapshotValue(visiblePosts.length) },
+          { label: 'Communities', value: formatSnapshotValue(Math.max(uniquePostCommunityCount, communityOptions.length)) },
+          { label: 'Events', value: formatSnapshotValue(activityEvents.length) },
+          { label: 'Jobs', value: formatSnapshotValue(activityJobs.length) },
         ],
       }
     }
@@ -1165,32 +1169,34 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-[var(--cc-radius)] border border-slate-200 bg-white shadow-subtle">
-        <div className="border-b border-slate-200/80 px-6 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--cc-primary)]">{feedSnapshot.eyebrow}</p>
-          <p className="mt-2 text-sm text-slate-600">{feedSnapshot.title}</p>
-        </div>
-        <div className="grid grid-cols-2 gap-px bg-slate-200/80 sm:grid-cols-4">
-          {feedSnapshot.cards.map((card) => (
-            <div key={card.label} className="bg-white px-5 py-4">
-              <p className="text-2xl font-semibold tracking-tight text-slate-900">{card.value}</p>
-              <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      {showFeedSummary ? (
+        <section className="overflow-hidden rounded-[var(--cc-radius)] border border-slate-200 bg-white shadow-subtle">
+          <div className="border-b border-slate-200/80 px-6 py-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--cc-primary)]">{feedSnapshot.eyebrow}</p>
+            <p className="mt-2 text-sm text-slate-600">{feedSnapshot.title}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-px bg-slate-200/80 sm:grid-cols-4">
+            {feedSnapshot.cards.map((card) => (
+              <div key={card.label} className="bg-white px-5 py-4">
+                <p className="text-2xl font-semibold tracking-tight text-slate-900">{card.value}</p>
+                <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{card.label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div ref={feedItemsContainerRef} className="min-w-0 space-y-4">
         {showSupplementalActivity ? (
           <section className="overflow-hidden rounded-[calc(var(--cc-radius)+4px)] border border-[var(--cc-primary)]/12 bg-[linear-gradient(180deg,rgba(255,255,255,1)_0%,rgba(249,250,251,0.98)_100%)] shadow-[0_24px_56px_rgba(15,23,42,0.08)]">
             <div className="border-b border-slate-200/80 bg-[linear-gradient(135deg,rgba(185,28,28,0.06)_0%,rgba(255,255,255,0)_55%)] px-6 py-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Live Layer</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Feed</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{supplementalTitle}</h2>
               <p className="mt-1 max-w-2xl text-sm text-slate-600">{supplementalDescription}</p>
             </div>
             <div className="px-6 py-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-slate-500">Ranked across time, proximity, and local momentum.</p>
+                <p className="text-sm text-slate-500">Ranked by recency, proximity, and activity.</p>
                 <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">
                   <Link href="/events">Events</Link>
                   <Link href="/work">Jobs</Link>
