@@ -1754,9 +1754,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           }}
           placeholder="Write a message"
           autoComplete="off"
-          autoCorrect="off"
+          autoCorrect="on"
           autoCapitalize="sentences"
-          spellCheck={false}
+          spellCheck
           enterKeyHint="send"
           inputMode="text"
           className="h-11 flex-1 rounded-full border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:ring-1 focus:ring-[var(--cc-primary)]"
@@ -1837,9 +1837,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           }}
           placeholder="Write a message"
           autoComplete="off"
-          autoCorrect="off"
+          autoCorrect="on"
           autoCapitalize="sentences"
-          spellCheck={false}
+          spellCheck
           enterKeyHint="send"
           inputMode="text"
           className="min-h-[3rem] w-full resize-none border-none bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
