@@ -5,6 +5,9 @@
 :root {
   --cc-viewport-height: 100vh;
   --cc-top-nav-height: 4.5rem;
+  --cc-top-nav-offset: var(--cc-top-nav-height);
+  --cc-native-safe-top-offset: 0px;
+  --cc-native-shell-top-gap: 0px;
   --cc-primary: #d52b1e;
   --cc-primary-700: #b0261a;
   --cc-border: #e2e8f0;
@@ -35,6 +38,12 @@
   :root {
     --mobile-dock-bottom-pad: max(calc(0.95rem + 20px), var(--safe-area-bottom));
   }
+}
+
+html.cc-native-ios {
+  --cc-native-safe-top-offset: var(--safe-area-top);
+  --cc-top-nav-offset: calc(var(--cc-top-nav-height) + var(--cc-native-safe-top-offset));
+  --cc-native-shell-top-gap: 0.75rem;
 }
 
 #cc-launch-overlay {

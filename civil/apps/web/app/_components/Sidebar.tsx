@@ -91,14 +91,14 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const verified = Boolean(effectiveMe?.isVerified)
   const business = Boolean(effectiveMe?.isPremium)
   const navCount = PRIMARY_NAV.length
-  const sidebarTopOffsetPx = 72
+  const sidebarTopOffsetExpr = 'var(--cc-top-nav-offset)'
   const sidebarBottomPadPx = 10
   const profileHeightPx = 56
   const profileGapPx = 8
   const navTopGapPx = 8
   const navGapPx = 6
   const totalNavGapPx = (navCount - 1) * navGapPx
-  const navAvailableHeightExpr = `100vh - ${sidebarTopOffsetPx}px - ${sidebarBottomPadPx}px - ${profileHeightPx}px - ${profileGapPx}px - ${navTopGapPx}px - ${totalNavGapPx}px`
+  const navAvailableHeightExpr = `var(--cc-viewport-height) - ${sidebarTopOffsetExpr} - ${sidebarBottomPadPx}px - ${profileHeightPx}px - ${profileGapPx}px - ${navTopGapPx}px - ${totalNavGapPx}px`
   const spacingVars = {
     '--sidebar-pad': '10px',
     '--sidebar-gap': `${navGapPx}px`,
@@ -151,7 +151,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
 
   return (
     <aside
-      className="hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pt-[72px] lg:pb-[10px] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]"
+      className="hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pt-[var(--cc-top-nav-offset)] lg:pb-[10px] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]"
       style={{ ...spacingVars, ...sidebarBleedStyle }}
     >
       <CivilCard

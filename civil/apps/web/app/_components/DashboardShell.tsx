@@ -22,9 +22,9 @@ export default function DashboardShell({
   containerClassName,
   gridClassName,
   mainClassName,
-  mainTopClassName = 'pt-8',
+  mainTopClassName = 'pt-4 md:pt-8',
   rightRailClassName,
-  rightRailTopClassName = 'pt-8',
+  rightRailTopClassName = 'pt-4 md:pt-8',
 }: DashboardShellProps) {
   const gridTemplate = rightRail
     ? 'grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] xl:gap-10'
@@ -37,7 +37,7 @@ export default function DashboardShell({
           <main className={clsx('min-h-0 min-w-0', mainTopClassName, mainClassName)}>
             {children}
             {rightRail && showMobileRightRail ? (
-              <aside className={clsx('min-w-0 pt-6 lg:hidden [&_.sticky]:static', rightRailClassName)}>{rightRail}</aside>
+              <aside className={clsx('min-w-0 pt-4 lg:hidden [&_.sticky]:static', rightRailClassName)}>{rightRail}</aside>
             ) : null}
           </main>
           {rightRail ? (

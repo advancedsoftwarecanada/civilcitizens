@@ -48,8 +48,9 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
       data-app-frame="true"
       className={clsx(
         'min-h-0',
+        !hideForInstall && !hideForMeetingRoom && 'pt-[calc(var(--cc-native-safe-top-offset)+var(--cc-native-shell-top-gap))]',
         !hideForMeetingRoom && 'pb-[var(--mobile-dock-clearance)] lg:pb-0',
-        !topNavHidden && !hideForMeetingRoom && 'md:pt-[4.5rem]',
+        !topNavHidden && !hideForMeetingRoom && 'md:pt-[var(--cc-top-nav-offset)]',
       )}
     >
       {!sidebarHidden ? <Sidebar /> : null}

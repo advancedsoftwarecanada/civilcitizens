@@ -405,6 +405,7 @@ export default function MobileDock() {
           '--drawer-pad': 'clamp(12px, 1.4vh, 15px)',
           '--drawer-gap': 'clamp(6px, 0.7vh, 8px)',
           '--drawer-top-gap': 'clamp(6px, 0.9vh, 10px)',
+          '--drawer-top-safe-pad': 'calc(var(--cc-native-safe-top-offset) + var(--cc-native-shell-top-gap) + clamp(10px, 1.2vh, 14px))',
           '--drawer-item-pad': 'clamp(10px, 1.8vh, 12px)',
           '--drawer-item-radius': 'clamp(15px, 1.9vw, 19px)',
           '--drawer-icon-pad': 'clamp(12px, 1.6vh, 14px)',
@@ -571,7 +572,7 @@ export default function MobileDock() {
           />
           <div
             className={clsx(
-              'absolute inset-y-0 left-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-[var(--drawer-pad)] pb-[calc(env(safe-area-inset-bottom)+var(--drawer-pad))] pt-[calc(var(--drawer-pad)*0.85)] shadow-2xl transition-transform duration-300',
+              'absolute inset-y-0 left-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-[var(--drawer-pad)] pb-[calc(env(safe-area-inset-bottom)+var(--drawer-pad))] pt-[var(--drawer-top-safe-pad)] shadow-2xl transition-transform duration-300',
               menuOpen ? 'translate-x-0' : '-translate-x-full',
             )}
             style={drawerSpacingVars}
@@ -670,9 +671,10 @@ export default function MobileDock() {
           />
           <div
             className={clsx(
-              'absolute inset-y-0 right-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-6 shadow-2xl transition-transform duration-300',
+              'absolute inset-y-0 right-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-[var(--drawer-top-safe-pad)] shadow-2xl transition-transform duration-300',
               moreOpen ? 'translate-x-0' : 'translate-x-full',
             )}
+            style={drawerSpacingVars}
           >
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -688,7 +690,7 @@ export default function MobileDock() {
                 <HiOutlineXMark className="text-lg" />
               </button>
             </div>
-            <div className="mt-6 flex-1 overflow-y-auto pb-12">
+            <div className="mt-[calc(var(--drawer-top-gap)*1.6)] flex-1 overflow-y-auto pb-12">
               {morePanelContent}
             </div>
           </div>
