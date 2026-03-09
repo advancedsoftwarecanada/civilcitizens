@@ -16,7 +16,6 @@ type JobItem = {
   employmentType: string
   description: string | null
   duties: string
-  roleRequirements: string
   location: string
   applicantCount: number
   expiresAt: string
@@ -35,24 +34,6 @@ function parseLocationLabel(value: string): string {
     return (labelPart ?? '').trim() || 'Community'
   }
   return 'Location not set'
-}
-
-function toPlainTextPreview(value: string | null | undefined): string {
-  const raw = typeof value === 'string' ? value : ''
-  if (!raw) return ''
-
-  return raw
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim()
 }
 
 function normalizeApiErrorMessage(value: unknown): string | null {
@@ -299,12 +280,7 @@ export default function OrganizationJobDetailClient({
 
         <section>
           <h3 className="text-sm font-semibold text-slate-900">Description</h3>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{toPlainTextPreview(job.description || job.duties)}</p>
-        </section>
-
-        <section>
-          <h3 className="text-sm font-semibold text-slate-900">Role Requirements</h3>
-          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{toPlainTextPreview(job.roleRequirements)}</p>
+          <div className="prose prose-sm mt-2 max-w-none text-slate-700" dangerouslySetInnerHTML={{ __html: job.description || job.duties }} />
         </section>
 
         <div className="flex gap-2">
