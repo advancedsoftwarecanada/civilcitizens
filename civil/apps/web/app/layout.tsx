@@ -11,6 +11,7 @@ import AnalyticsTracker from './_components/AnalyticsTracker'
 import GoogleAnalytics from './_components/GoogleAnalytics'
 import AppFrame from './_components/AppFrame'
 import NotificationTapRouter from './_components/NotificationTapRouter'
+import NativeViewportInsets from './_components/NativeViewportInsets'
 import IosPwaPushPrompt from './_components/IosPwaPushPrompt'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
@@ -110,6 +111,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <TopNavVisibility />
           <ViewerBootstrap />
           <LaunchOverlayCleanup />
+          <NativeViewportInsets />
           <Suspense fallback={null}>
             <NotificationTapRouter />
           </Suspense>
