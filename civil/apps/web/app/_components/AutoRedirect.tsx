@@ -1,7 +1,7 @@
 "use client"
 import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { hasHomeCommunity } from '../_lib/me'
+import { getAuthedEntryPath } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 
@@ -17,6 +17,7 @@ export default function AutoRedirect() {
     if (!token) return
     void router.prefetch('/home')
     void router.prefetch('/welcome')
+    void router.prefetch('/verify')
   }, [router])
 
   useEffect(() => {
@@ -31,7 +32,7 @@ export default function AutoRedirect() {
 
     if (cachedMe) {
       didNavigateRef.current = true
-      router.replace(hasHomeCommunity(cachedMe) ? '/home' : '/welcome')
+      router.replace(getAuthedEntryPath(cachedMe))
       return
     }
 
@@ -50,7 +51,7 @@ export default function AutoRedirect() {
           return
         }
         didNavigateRef.current = true
-        router.replace(hasHomeCommunity(data) ? '/home' : '/welcome')
+        router.replace(getAuthedEntryPath(data))
       })
       .catch(() => {
         if (!cancelled) {

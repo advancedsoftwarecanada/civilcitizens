@@ -423,6 +423,10 @@ export type MediaAssetId = z.infer<typeof MediaAssetIdSchema>
 export const UpdateProfileInput = z.object({
   firstName: z.string().trim().min(1).max(40),
   lastName: z.string().trim().min(1).max(60),
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  countryOfBirth: z.string().trim().min(1).max(120).optional(),
+  shareDateOfBirth: z.boolean().optional(),
+  shareCountryOfBirth: z.boolean().optional(),
   bio: z
     .string()
     .max(10000, { message: 'Bio must be 10,000 characters or fewer' })

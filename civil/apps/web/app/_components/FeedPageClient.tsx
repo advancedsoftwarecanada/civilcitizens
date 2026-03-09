@@ -10,7 +10,7 @@ import { RightRail } from './RightRail'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
-import { hasHomeCommunity, type MeResponse } from '../_lib/me'
+import { hasDeclaredCivilStatus, hasHomeCommunity, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import PostFeedItem from './PostFeedItem'
@@ -589,6 +589,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         router.replace('/welcome')
         return
       }
+      if (scope === 'all' && !province && !community && !hasDeclaredCivilStatus(cachedMe)) {
+        router.replace('/verify')
+        return
+      }
       setMe(cachedMe)
     }
 
@@ -626,6 +630,11 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
         if (!hasHomeCommunity(resolvedMe)) {
           router.replace('/welcome')
+          return
+        }
+
+        if (scope === 'all' && !province && !community && !hasDeclaredCivilStatus(resolvedMe)) {
+          router.replace('/verify')
           return
         }
 
@@ -951,12 +960,16 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       ? 'rounded-[var(--cc-radius)] border border-white/[0.18] bg-transparent shadow-[0_24px_56px_rgba(15,23,42,0.14)]'
       : 'surface-card',
   )
-  const composerOverlayClassName = hasComposerCover
-    ? 'bg-[linear-gradient(180deg,rgba(15,23,42,0.24)_0%,rgba(15,23,42,0.18)_24%,rgba(15,23,42,0.12)_52%,rgba(15,23,42,0.08)_100%)]'
-    : 'bg-transparent'
+  const composerOverlayClassName = 'bg-transparent'
+  const composerHeaderPanelClassName = hasComposerCover
+    ? 'inline-flex max-w-xl flex-col rounded-[1.35rem] border border-white/16 bg-slate-950/18 px-4 py-3 backdrop-blur-md shadow-[0_18px_40px_rgba(15,23,42,0.16)]'
+    : ''
   const composerTitleClassName = hasComposerCover
     ? 'text-white/80 [text-shadow:0_1px_2px_rgba(15,23,42,0.55)]'
     : 'text-slate-400'
+  const composerDescriptionClassName = hasComposerCover
+    ? 'mt-1 text-sm text-white/78 [text-shadow:0_1px_2px_rgba(15,23,42,0.45)]'
+    : 'mt-1 text-sm text-slate-500'
   const composerSortShellClassName = hasComposerCover
     ? 'border border-white/[0.18] bg-slate-950/[0.20] backdrop-blur-md'
     : 'bg-slate-100'
@@ -1084,9 +1097,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         <span className={clsx('absolute inset-0', composerOverlayClassName)} aria-hidden="true" />
         <div className="relative z-[1] flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           {scope !== 'organizations' ? (
-            <div>
+            <div className={composerHeaderPanelClassName || undefined}>
               <p className={clsx('text-xs font-semibold uppercase tracking-[0.35em]', composerTitleClassName)}>{title}</p>
-              {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+              {description ? <p className={composerDescriptionClassName}>{description}</p> : null}
             </div>
           ) : null}
           {sortOptions.length > 1 ? (

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
 import { HiOutlineUserPlus, HiOutlineBriefcase, HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
+import CivilCard from '../../_components/CivilCard'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
@@ -44,6 +45,8 @@ type UserProfile = {
   avatarPostId?: string | null
   coverPostId?: string | null
   createdAt?: string
+  dateOfBirth?: string | null
+  countryOfBirth?: string | null
   experiences?: UserExperience[]
   isPremium?: boolean
   isVerified?: boolean
@@ -120,6 +123,13 @@ function formatDate(iso?: string) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+}
+
+function formatBirthDate(iso?: string | null) {
+  if (!iso) return ''
+  const date = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
 function formatDateRange(iso?: string | null) {
@@ -393,8 +403,8 @@ export default function UserPostsPage({ params }: PageProps) {
   }, [profile?.experiences])
   const experienceCount = sortedExperiences.length
   const coverDisplayUrl = profile?.coverUrl ?? null
-  const editCoverHref = '/profile/edit?photo=cover#photos'
-  const editAvatarHref = '/profile/edit?photo=avatar#photos'
+  const editCoverHref = '/profile/edit?photo=cover'
+  const editAvatarHref = '/profile/edit?photo=avatar'
   const ownerDisplayName = formatUserDisplayName(viewer?.name, viewer?.handle) || viewer?.handle || 'Citizen'
   const ownerFirstName = ownerDisplayName.split(' ')[0] ?? 'Citizen'
   const ownerInitials = ownerDisplayName || 'C'
@@ -414,6 +424,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const communityCount = profile?.communityCount ?? 0
   const organizationCount = profile?.organizationCount ?? 0
   const connectionCount = profile?.connectionCount ?? 0
+  const publicBirthDate = formatBirthDate(profile?.dateOfBirth)
+  const publicBirthCountry = profile?.countryOfBirth?.trim() ?? ''
   const isSendingFriendRequest = friendshipAction === 'send'
   const isAcceptingFriendRequest = friendshipAction === 'accept'
   const isRejectingFriendRequest = friendshipAction === 'reject'
@@ -1095,110 +1107,60 @@ export default function UserPostsPage({ params }: PageProps) {
         rightRailClassName="pt-8"
         mainClassName="space-y-8 pb-12"
       >
-        <div className={profile ? 'space-y-0' : undefined}>
+        <div className={profile ? 'space-y-6' : undefined}>
           {profile ? (
-            <section className="relative rounded-[36px] rounded-b-none border border-white/60 bg-white/40 shadow-[0_35px_120px_rgba(15,23,42,0.12)]">
-              {coverThreadUrl ? (
-                <Link
-                  href={coverThreadUrl}
-                  className="relative block h-48 w-full overflow-hidden rounded-t-[36px] transition hover:brightness-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-primary)] sm:h-60"
-                  aria-label="View the cover photo post"
-                >
-                  <div className="absolute inset-0">
-                    {coverDisplayUrl ? (
-                      <img src={coverDisplayUrl} alt={`${profile.name ?? profile.handle} cover`} className="absolute inset-0 h-full w-full object-cover" />
-                    ) : (
-                      <div className="absolute inset-0 bg-gradient-to-r from-[#fde2d7] via-[#f7f0ff] to-[#dff3ff]" />
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/0 to-black/20" />
-                    {isOwner ? (
-                      <Link
-                        href={editCoverHref}
-                        className="absolute bottom-3 left-3 inline-flex items-center justify-center rounded-full border border-white/70 bg-gray-900/85 p-2 text-white shadow-md backdrop-blur transition hover:brightness-110"
-                        aria-label="Update your cover photo"
-                      >
-                        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                          <circle cx="12" cy="13" r="3" />
-                        </svg>
-                      </Link>
-                    ) : null}
-                  </div>
-                </Link>
-              ) : (
-                <div className="relative h-48 w-full overflow-hidden rounded-t-[36px] sm:h-60">
-                  {coverDisplayUrl ? (
-                    <>
-                      <img src={coverDisplayUrl} alt={`${profile.name ?? profile.handle} cover`} className="absolute inset-0 h-full w-full object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/0 to-black/20" />
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 bg-gradient-to-r from-[#fde2d7] via-[#f7f0ff] to-[#dff3ff]" />
-                  )}
-                  {isOwner ? (
-                    <Link
-                      href={editCoverHref}
-                      className="absolute bottom-3 left-3 inline-flex items-center justify-center rounded-full border border-white/70 bg-gray-900/85 p-2 text-white shadow-md backdrop-blur transition hover:brightness-110"
-                      aria-label="Update your cover photo"
-                    >
-                      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                        <circle cx="12" cy="13" r="3" />
-                      </svg>
-                    </Link>
-                  ) : null}
-                </div>
-              )}
-            </section>
+            <CivilCard
+              size="hero"
+              name={profileDisplayName}
+              avatarAlt={profileDisplayName}
+              avatarInitials={profileDisplayName}
+              avatarSrc={profile.avatarUrl}
+              avatarHref={avatarThreadUrl ?? undefined}
+              coverUrl={coverDisplayUrl}
+              isVerified={Boolean(profile.isVerified)}
+              isBusiness={Boolean(profile.isPremium)}
+              interactive={false}
+              className="w-full"
+            />
           ) : null}
+
           <section
-            className={clsx(
-              'rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8',
-              profile && 'rounded-t-none border-t-0',
-            )}
+            className="rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8"
           >
             {profile ? (
               <>
-                <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
-                      <div className="absolute inset-0 rounded-full bg-gradient-to-br from-rose-200 via-amber-100 to-sky-200 blur-lg" aria-hidden="true" />
-                      <VerifiedAvatar
-                        src={profile.avatarUrl}
-                        alt={profileDisplayName}
-                        initials={profileDisplayName}
-                        size={96}
-                        isVerified={Boolean(profile.isVerified)}
-                        isBusiness={Boolean(profile.isPremium)}
-                        className="relative rounded-full border-4 border-white"
-                        href={avatarThreadUrl ?? undefined}
-                      />
-                      {isOwner ? (
-                        <Link
-                          href={editAvatarHref}
-                          className="absolute bottom-0 left-0 inline-flex translate-x-[-30%] translate-y-[30%] items-center justify-center rounded-full border border-white/80 bg-gray-900/85 p-2 text-white shadow-md backdrop-blur transition hover:brightness-110"
-                          aria-label="Update your profile photo"
-                        >
-                          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M5 7h3l2-3h4l2 3h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                            <circle cx="12" cy="13" r="3" />
-                          </svg>
-                        </Link>
-                      ) : null}
-                    </div>
-                    <div>
-                      <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{profileDisplayName}</h1>
-                      <p className="text-sm text-slate-500">@{profile.handle}</p>
-                      <p className="text-sm text-slate-500">Joined {formatDate(profile.createdAt) || '—'}</p>
-                    </div>
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div className="space-y-1 text-slate-600">
+                    <p className="text-lg font-semibold text-slate-900">@{profile.handle}</p>
+                    <p className="text-sm">Joined {formatDate(profile.createdAt) || '—'}</p>
+                    {publicBirthDate || publicBirthCountry ? (
+                      <div className="flex flex-wrap gap-2 pt-1 text-xs font-medium text-slate-600">
+                        {publicBirthDate ? <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Born {publicBirthDate}</span> : null}
+                        {publicBirthCountry ? <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Born in {publicBirthCountry}</span> : null}
+                      </div>
+                    ) : null}
                   </div>
                   {isOwner ? (
-                    <a
-                      href="/profile/edit"
-                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-                    >
-                      Edit profile
-                    </a>
+                    <div className="flex flex-wrap gap-3">
+                      <Link
+                        href={editAvatarHref}
+                        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                      >
+                        Profile photo
+                      </Link>
+                      <Link
+                        href={editCoverHref}
+                        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                      >
+                        Cover photo
+                      </Link>
+                      <a
+                        href="/profile/edit"
+                        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+                      >
+                        Edit profile
+                      </a>
+                    </div>
                   ) : (
                     <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
                       {renderFriendshipPrimaryCta()}

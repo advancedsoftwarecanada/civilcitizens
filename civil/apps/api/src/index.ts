@@ -2386,6 +2386,15 @@ type CitySummaryType = z.infer<typeof CitySummarySchema>
 type CommunityMetaPayload = {
   nearbyCommunities?: CitySummaryType[]
   computedAt?: string
+  dateOfBirth?: string
+  countryOfBirth?: string
+  shareDateOfBirth?: boolean
+  shareCountryOfBirth?: boolean
+  civicStatus?: 'citizen' | 'permanent_resident' | 'work_permit' | 'study_permit' | 'unspecified'
+  workAuthorization?: 'authorized' | 'not_authorized' | 'unspecified'
+  verificationMethod?: 'self_declaration'
+  statusDeclaredAt?: string
+  statusUpdatedAt?: string
   reference?: {
     provinceCode?: string | null
     communitySlug?: string | null
@@ -2406,9 +2415,39 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
       ? (payload.reference as { provinceCode?: string | null; communitySlug?: string | null; cityName?: string | null })
       : null
   const computedAt = typeof payload.computedAt === 'string' ? payload.computedAt : undefined
+  const dateOfBirth = typeof payload.dateOfBirth === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(payload.dateOfBirth) ? payload.dateOfBirth : undefined
+  const countryOfBirth = typeof payload.countryOfBirth === 'string' && payload.countryOfBirth.trim() ? payload.countryOfBirth.trim() : undefined
+  const shareDateOfBirth = typeof payload.shareDateOfBirth === 'boolean' ? payload.shareDateOfBirth : undefined
+  const shareCountryOfBirth = typeof payload.shareCountryOfBirth === 'boolean' ? payload.shareCountryOfBirth : undefined
+  const civicStatus =
+    payload.civicStatus === 'citizen' ||
+    payload.civicStatus === 'permanent_resident' ||
+    payload.civicStatus === 'work_permit' ||
+    payload.civicStatus === 'study_permit' ||
+    payload.civicStatus === 'unspecified'
+      ? payload.civicStatus
+      : undefined
+  const workAuthorization =
+    payload.workAuthorization === 'authorized' ||
+    payload.workAuthorization === 'not_authorized' ||
+    payload.workAuthorization === 'unspecified'
+      ? payload.workAuthorization
+      : undefined
+  const verificationMethod = payload.verificationMethod === 'self_declaration' ? 'self_declaration' : undefined
+  const statusDeclaredAt = typeof payload.statusDeclaredAt === 'string' ? payload.statusDeclaredAt : undefined
+  const statusUpdatedAt = typeof payload.statusUpdatedAt === 'string' ? payload.statusUpdatedAt : undefined
   return {
     nearbyCommunities: nearby,
     computedAt,
+    dateOfBirth,
+    countryOfBirth,
+    shareDateOfBirth,
+    shareCountryOfBirth,
+    civicStatus,
+    workAuthorization,
+    verificationMethod,
+    statusDeclaredAt,
+    statusUpdatedAt,
     reference,
   }
 }
@@ -10201,6 +10240,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       coverMediaId: true,
       avatarPostId: true,
       coverPostId: true,
+      communityMeta: true,
       createdAt: true,
     },
   })
@@ -10331,6 +10371,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   const nameParts = (user.name ?? '').trim().split(/\s+/).filter(Boolean)
   const firstName = nameParts[0] ?? ''
   const lastName = nameParts.slice(1).join(' ')
+  const communityMeta = parseCommunityMeta(user.communityMeta ?? null)
 
   let homeCommunity: Record<string, any> | null = null
   if (homeFollow) {
@@ -10365,6 +10406,10 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       coverMediaId: user.coverMediaId ?? null,
       avatarPostId: user.avatarPostId ?? null,
       coverPostId: user.coverPostId ?? null,
+      dateOfBirth: communityMeta?.dateOfBirth ?? null,
+      countryOfBirth: communityMeta?.countryOfBirth ?? null,
+      shareDateOfBirth: communityMeta?.shareDateOfBirth ?? true,
+      shareCountryOfBirth: communityMeta?.shareCountryOfBirth ?? true,
       createdAt: user.createdAt,
       experiences: experienceItems,
     },
@@ -10385,7 +10430,7 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   const parse = UpdateProfileInput.safeParse(req.body)
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-  const { firstName, lastName, bio, experiences, avatarMediaId, coverMediaId } = parse.data
+  const { firstName, lastName, dateOfBirth, countryOfBirth, shareDateOfBirth, shareCountryOfBirth, bio, experiences, avatarMediaId, coverMediaId } = parse.data
   const normalizedFirstName = firstName.trim().toLowerCase()
   const normalizedLastName = lastName.trim().toLowerCase()
   const fullName = `${normalizedFirstName} ${normalizedLastName}`.trim()
@@ -10429,11 +10474,29 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const baseHandle = buildHandleBase(normalizedFirstName, normalizedLastName)
       const handle = await generateUniqueHandle(baseHandle, tx, userId)
+      const currentUser = await tx.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+      const communityMeta = readBaseCommunityMeta(currentUser?.communityMeta ?? null)
+
+      if (dateOfBirth) {
+        communityMeta.dateOfBirth = dateOfBirth
+      } else {
+        delete communityMeta.dateOfBirth
+      }
+
+      if (countryOfBirth?.trim()) {
+        communityMeta.countryOfBirth = countryOfBirth.trim()
+      } else {
+        delete communityMeta.countryOfBirth
+      }
+
+      communityMeta.shareDateOfBirth = shareDateOfBirth ?? true
+      communityMeta.shareCountryOfBirth = shareCountryOfBirth ?? true
 
       const userUpdateData: Prisma.UserUncheckedUpdateInput = {
         name: fullName,
         bio: bio?.trim() ? sanitizePlainText(bio).trim() : null,
         handle,
+        communityMeta: communityMeta as Prisma.InputJsonValue,
       }
 
       if (avatarMediaId) {
@@ -11879,6 +11942,7 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
         name: true,
         avatarUrl: true,
         coverUrl: true,
+        communityMeta: true,
         premiumStatus: true,
         premiumSince: true,
         premiumRenewsAt: true,
@@ -11908,6 +11972,7 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     }
 
     const normalizedUser = normalizeUserMedia(user)
+    const communityMeta = parseCommunityMeta(user.communityMeta ?? null)
     return reply.send({
       ...normalizedUser,
       homeCommunity,
@@ -11915,6 +11980,48 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
       isVerified: isPremium(user.premiumStatus),
       premiumSince: user.premiumSince ?? null,
       premiumRenewsAt: user.premiumRenewsAt ?? null,
+      civicStatus: communityMeta?.civicStatus ?? null,
+      workAuthorization: communityMeta?.workAuthorization ?? null,
+      verificationMethod: communityMeta?.verificationMethod ?? null,
+      statusDeclaredAt: communityMeta?.statusDeclaredAt ?? null,
+      statusUpdatedAt: communityMeta?.statusUpdatedAt ?? null,
+    })
+  } catch {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+})
+
+app.post('/auth/status-declaration', async (req: FastifyRequest, reply: FastifyReply) => {
+  try {
+    const payload = await (req as any).jwtVerify()
+    const body = UpdateCivilStatusBody.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+    if (!user) return reply.code(401).send({ error: 'unauthorized' })
+
+    const baseMeta = readBaseCommunityMeta(user.communityMeta)
+    const currentMeta = parseCommunityMeta(user.communityMeta ?? null)
+    const nowIso = new Date().toISOString()
+    const workAuthorization =
+      body.data.civicStatus === 'citizen' || body.data.civicStatus === 'permanent_resident'
+        ? 'authorized'
+        : body.data.workAuthorization ?? 'unspecified'
+
+    baseMeta.civicStatus = body.data.civicStatus
+    baseMeta.workAuthorization = workAuthorization
+    baseMeta.verificationMethod = 'self_declaration'
+    baseMeta.statusDeclaredAt = currentMeta?.statusDeclaredAt ?? nowIso
+    baseMeta.statusUpdatedAt = nowIso
+
+    await prisma.user.update({ where: { id: payload.sub }, data: { communityMeta: baseMeta } })
+
+    return reply.send({
+      civicStatus: body.data.civicStatus,
+      workAuthorization,
+      verificationMethod: 'self_declaration',
+      statusDeclaredAt: currentMeta?.statusDeclaredAt ?? nowIso,
+      statusUpdatedAt: nowIso,
     })
   } catch {
     return reply.code(401).send({ error: 'unauthorized' })
@@ -27109,6 +27216,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         coverPostId: true,
         createdAt: true,
         premiumStatus: true,
+        communityMeta: true,
       },
     })
 
@@ -27255,12 +27363,15 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       ...userRecord,
       experiences: mappedExperiences,
     }) as typeof userRecord & { experiences: typeof mappedExperiences }
+    const profileMeta = parseCommunityMeta(userRecord.communityMeta ?? null)
 
-    const { premiumStatus, ...restProfile } = normalizedProfile
+    const { premiumStatus, communityMeta, ...restProfile } = normalizedProfile
     const user = {
       ...restProfile,
       isPremium: isPremium(premiumStatus),
       isVerified: isPremium(premiumStatus),
+      dateOfBirth: profileMeta?.dateOfBirth && profileMeta.shareDateOfBirth !== false ? profileMeta.dateOfBirth : null,
+      countryOfBirth: profileMeta?.countryOfBirth && profileMeta.shareCountryOfBirth !== false ? profileMeta.countryOfBirth : null,
       friendCount: friendsCount,
       followerCount: followersCount,
       followingCount,
@@ -31730,6 +31841,12 @@ const ApplyJobBody = z.object({
   motivationHtml: z.string().trim().min(20).max(20000),
 })
 
+const UpdateCivilStatusBody = z.object({
+  civicStatus: z.enum(['citizen', 'permanent_resident', 'work_permit', 'study_permit', 'unspecified']),
+  workAuthorization: z.enum(['authorized', 'not_authorized', 'unspecified']).optional(),
+  affirmed: z.literal(true),
+})
+
 const JobEntityId = z.string().trim().refine(
   (value) => z.string().cuid().safeParse(value).success || z.string().uuid().safeParse(value).success,
   'invalid_id',
@@ -33423,7 +33540,8 @@ app.get('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/application
         u."id" as "applicantId",
         u."handle" as "applicantHandle",
         u."name" as "applicantName",
-        u."avatarUrl" as "applicantAvatarUrl"
+        u."avatarUrl" as "applicantAvatarUrl",
+        u."communityMeta" as "applicantCommunityMeta"
       FROM "JobApplication" ja
       JOIN "JobPosting" jp ON jp."id" = ja."jobPostingId"
       JOIN "User" u ON u."id" = ja."applicantUserId"
@@ -33440,6 +33558,7 @@ app.get('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/application
       applicantHandle: string
       applicantName: string | null
       applicantAvatarUrl: string | null
+      applicantCommunityMeta: Prisma.JsonValue | null
     }>
 
     try {
@@ -33464,19 +33583,26 @@ app.get('/communities/:province/:municipality/orgs/:slug/jobs/:jobId/application
         applicantHandle: string
         applicantName: string | null
         applicantAvatarUrl: string | null
-      }) => ({
-        id: row.id,
-        motivationHtml: row.motivationHtml,
-        status: row.status,
-        threadId: row.threadId,
-        createdAt: row.createdAt.toISOString(),
-        applicant: {
-          id: row.applicantId,
-          handle: row.applicantHandle,
-          name: row.applicantName,
-          avatarUrl: normalizeMediaUrl(row.applicantAvatarUrl),
-        },
-      })),
+        applicantCommunityMeta: Prisma.JsonValue | null
+      }) => {
+        const applicantMeta = parseCommunityMeta(row.applicantCommunityMeta)
+
+        return {
+          id: row.id,
+          motivationHtml: row.motivationHtml,
+          status: row.status,
+          threadId: row.threadId,
+          createdAt: row.createdAt.toISOString(),
+          civicStatus: applicantMeta?.civicStatus ?? 'unspecified',
+          workAuthorization: applicantMeta?.workAuthorization ?? 'unspecified',
+          applicant: {
+            id: row.applicantId,
+            handle: row.applicantHandle,
+            name: row.applicantName,
+            avatarUrl: normalizeMediaUrl(row.applicantAvatarUrl),
+          },
+        }
+      }),
     })
   }),
 )
