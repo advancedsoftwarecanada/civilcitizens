@@ -108,7 +108,6 @@ export default function ForgotPasswordPage() {
             Email or handle
             <input
               className={`mt-2 w-full rounded-2xl border px-4 py-3 text-base text-slate-900 placeholder:text-slate-400 transition focus-visible:outline-none ${inputClass}`}
-              placeholder="you@civil.ca or @handle"
               value={emailOrHandle}
               onChange={(event) => setEmailOrHandle(event.target.value)}
             />

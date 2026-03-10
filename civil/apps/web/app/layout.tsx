@@ -15,6 +15,7 @@ import NativeViewportInsets from './_components/NativeViewportInsets'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
 import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
+import PlaceholderSanitizer from './_components/PlaceholderSanitizer'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -107,6 +108,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
         </div>
         <div id="cc-app-root">
           <GoogleAnalytics />
+          <PlaceholderSanitizer />
           <TopNavVisibility />
           <ViewerBootstrap />
           <LaunchOverlayCleanup />

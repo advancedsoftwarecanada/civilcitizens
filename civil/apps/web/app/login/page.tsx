@@ -137,12 +137,12 @@ function LoginPageInner() {
         <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
           <label className="block text-sm font-medium text-slate-700">
             Email or handle
-            <input className={`${inputClass('emailOrHandle')} mt-2`} placeholder="you@civil.ca or @handle" value={emailOrHandle} onChange={(event) => setId(event.target.value)} />
+            <input className={`${inputClass('emailOrHandle')} mt-2`} value={emailOrHandle} onChange={(event) => setId(event.target.value)} />
             {hasFieldError('emailOrHandle') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('emailOrHandle')}</div> : null}
           </label>
           <label className="block text-sm font-medium text-slate-700">
             Password
-            <input className={`${inputClass('password')} mt-2`} placeholder="Enter your password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            <input className={`${inputClass('password')} mt-2`} type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
             {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
           </label>
           {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
