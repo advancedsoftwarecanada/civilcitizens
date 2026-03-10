@@ -205,6 +205,12 @@ html.cc-launch-pending #cc-app-root {
   #cc-app-root {
     min-height: var(--cc-viewport-height);
   }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: transparent;
+    opacity: 0;
+  }
 }
 
 @media (hover: hover) and (pointer: fine) {
