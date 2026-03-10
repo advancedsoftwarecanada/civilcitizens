@@ -9,6 +9,7 @@ import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
 import { setAuthToken } from '../_lib/authSession'
 import AppleInstallRedirect from '../_components/AppleInstallRedirect'
+import Modal from '../_components/Modal'
 
 type FieldErrors = Record<string, string[]>
 
@@ -29,6 +30,14 @@ type RegisterErrorResponse = {
   message?: string
 }
 
+type LegalDocumentKey = 'terms' | 'privacy' | 'safety'
+
+const LEGAL_DOCUMENTS: Record<LegalDocumentKey, { title: string; href: string }> = {
+  terms: { title: 'Terms of Service', href: '/terms' },
+  privacy: { title: 'Privacy Policy', href: '/privacy' },
+  safety: { title: 'Child Safety & Protection Standards', href: '/safety' },
+}
+
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 const ORG_INVITE_TOKEN_KEY = 'civil.orgInviteToken'
 
@@ -40,11 +49,13 @@ export default function RegisterPage() {
   const [lastName, setLastName] = useState('')
   const [password, setPassword] = useState('')
   const [acceptTerms, setAcceptTerms] = useState(false)
+  const [legalDocument, setLegalDocument] = useState<LegalDocumentKey | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const previewHandle = useMemo(() => buildHandleBase(firstName, lastName), [firstName, lastName])
+  const activeLegalDocument = legalDocument ? LEGAL_DOCUMENTS[legalDocument] : null
 
   const hasFieldError = (key: string) => Array.isArray(fieldErrors[key]) && fieldErrors[key].length > 0
   const firstFieldError = (key: string) => fieldErrors[key]?.[0] ?? null
@@ -216,12 +227,12 @@ export default function RegisterPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-sm font-medium text-slate-700">
               First name
-              <input className={`${inputClass('firstName')} mt-2`} placeholder="Jane" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
+              <input className={`${inputClass('firstName')} mt-2`} value={firstName} onChange={(event) => setFirstName(event.target.value)} />
               {hasFieldError('firstName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('firstName')}</div> : null}
             </label>
             <label className="block text-sm font-medium text-slate-700">
               Last name
-              <input className={`${inputClass('lastName')} mt-2`} placeholder="Citizen" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+              <input className={`${inputClass('lastName')} mt-2`} value={lastName} onChange={(event) => setLastName(event.target.value)} />
               {hasFieldError('lastName') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('lastName')}</div> : null}
             </label>
           </div>
@@ -230,37 +241,75 @@ export default function RegisterPage() {
           </div>
           <label className="block text-sm font-medium text-slate-700">
             Email
-            <input className={`${inputClass('email')} mt-2`} placeholder="you@civil.ca" value={email} onChange={(event) => setEmail(event.target.value)} />
+            <input className={`${inputClass('email')} mt-2`} value={email} onChange={(event) => setEmail(event.target.value)} />
             {hasFieldError('email') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('email')}</div> : null}
           </label>
           <label className="block text-sm font-medium text-slate-700">
             Password
-            <input className={`${inputClass('password')} mt-2`} placeholder="At least 8 characters" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            <input className={`${inputClass('password')} mt-2`} type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
             {hasFieldError('password') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('password')}</div> : null}
           </label>
-          <label className="flex items-start gap-3 text-sm text-slate-600">
-            <input type="checkbox" className="mt-1" checked={acceptTerms} onChange={(event) => setAcceptTerms(event.target.checked)} />
-            <span>
-              I agree to the{' '}
-              <a href="/terms" className="underline" target="_blank" rel="noopener noreferrer">
+          <div className="flex items-start gap-3 text-sm text-slate-600">
+            <input
+              id="accept-terms"
+              type="checkbox"
+              className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/25"
+              checked={acceptTerms}
+              onChange={(event) => setAcceptTerms(event.target.checked)}
+            />
+            <div className="leading-6">
+              <label htmlFor="accept-terms" className="cursor-pointer">
+                I agree to the{' '}
+              </label>
+              <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('terms')}>
                 Terms of Service
-              </a>{' '}
+              </button>{' '}
               and{' '}
-              <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
+              <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('privacy')}>
                 Privacy Policy
-              </a>{' '}
+              </button>{' '}
               and{' '}
-              <a href="/safety" className="underline" target="_blank" rel="noopener noreferrer">
+              <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('safety')}>
                 Child Safety &amp; Protection Standards
-              </a>
-            </span>
-          </label>
+              </button>
+            </div>
+          </div>
           {hasFieldError('acceptTerms') ? <div className="mt-1 text-xs text-red-600">⚠️ {firstFieldError('acceptTerms')}</div> : null}
           {formError ? <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</div> : null}
           <button className="w-full rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-base font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={isSubmitting}>
             {isSubmitting ? 'Creating account…' : 'Create account'}
           </button>
         </form>
+        <Modal
+          open={Boolean(activeLegalDocument)}
+          onClose={() => setLegalDocument(null)}
+          title={activeLegalDocument?.title}
+          maxWidthClassName="max-w-5xl"
+        >
+          {activeLegalDocument ? (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-500">
+                Review this document without leaving registration. Your form entries stay in place.
+              </p>
+              <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-50">
+                <iframe
+                  src={`${activeLegalDocument.href}?mode=modal`}
+                  title={activeLegalDocument.title}
+                  className="h-[70vh] w-full bg-white"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setLegalDocument(null)}
+                  className="rounded-2xl bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
+                >
+                  Back to registration
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </Modal>
       </AuthScreen>
     </>
   )

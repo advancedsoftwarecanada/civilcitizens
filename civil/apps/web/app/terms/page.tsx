@@ -4,18 +4,27 @@ export const metadata = {
   title: 'Terms & Conditions | Civil Citizens',
 }
 
-export default function TermsPage() {
+type TermsPageProps = {
+  searchParams?: {
+    mode?: string
+  }
+}
+
+export default function TermsPage({ searchParams }: TermsPageProps) {
   const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+  const isModal = searchParams?.mode === 'modal'
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-4xl space-y-6">
-        <Link
-          href="/"
-          className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-        >
-          Return home
-        </Link>
+        {isModal ? null : (
+          <Link
+            href="/"
+            className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+          >
+            Return home
+          </Link>
+        )}
 
         <article className="surface-card space-y-6 p-6 sm:p-8">
           <header className="space-y-2">
