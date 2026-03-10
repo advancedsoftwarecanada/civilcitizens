@@ -228,7 +228,6 @@ function isMobileMessagesViewport() {
 
 const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
 const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
-const MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS = 'var(--mobile-thread-composer-height)'
 const MOBILE_THREAD_MESSAGE_CLEARANCE_PX = 20
 
 const threadHasUnreadFallback = (thread: ThreadSummary) => {
@@ -379,8 +378,13 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const router = useRouter()
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const mobileComposerLastTouchAtRef = useRef(0)
+  const threadPanelRef = useRef<HTMLDivElement | null>(null)
+  const threadHeaderRef = useRef<HTMLElement | null>(null)
+  const mobileComposerShellRef = useRef<HTMLDivElement | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const bottomSettleTimeoutsRef = useRef<number[]>([])
   const smoothScrollPendingRef = useRef(false)
   const preserveScrollRef = useRef<{
     threadId: string
@@ -414,6 +418,37 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     })
   }, [])
 
+  const scheduleMessagesBottomSettle = useCallback(
+    (behavior: ScrollBehavior = 'auto') => {
+      if (typeof window === 'undefined') return
+      for (const timeoutId of bottomSettleTimeoutsRef.current) {
+        window.clearTimeout(timeoutId)
+      }
+      bottomSettleTimeoutsRef.current = []
+
+      scrollMessagesToBottom(behavior)
+
+      for (const delay of [60, 140, 260, 420]) {
+        const timeoutId = window.setTimeout(() => {
+          scrollMessagesToBottom('auto')
+        }, delay)
+        bottomSettleTimeoutsRef.current.push(timeoutId)
+      }
+    },
+    [scrollMessagesToBottom],
+  )
+
+  const handleMobileComposerPressStart = useCallback((event: { preventDefault: () => void; stopPropagation: () => void }) => {
+    event.preventDefault()
+    event.stopPropagation()
+  }, [])
+
+  const markMobileComposerTouch = useCallback(() => {
+    mobileComposerLastTouchAtRef.current = Date.now()
+  }, [])
+
+  const shouldIgnoreMobileComposerClick = useCallback(() => Date.now() - mobileComposerLastTouchAtRef.current < 750, [])
+
   useEffect(() => {
     if (!initialThreadId) return
     initialThreadIdRef.current = initialThreadId
@@ -433,6 +468,16 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       document.body.style.overflow = ''
     }
   }, [lightboxUrl])
+
+  useEffect(() => {
+    return () => {
+      if (typeof window === 'undefined') return
+      for (const timeoutId of bottomSettleTimeoutsRef.current) {
+        window.clearTimeout(timeoutId)
+      }
+      bottomSettleTimeoutsRef.current = []
+    }
+  }, [])
   const [me, setMe] = useState<MeResponse | null>(null)
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadCursor, setThreadCursor] = useState<string | null>(null)
@@ -466,10 +511,12 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [contactsBucketReady, setContactsBucketReady] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const composerInputRef = useRef<HTMLInputElement | null>(null)
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [composerFocused, setComposerFocused] = useState(false)
   const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0)
+  const [mobileThreadPanelHeight, setMobileThreadPanelHeight] = useState<string | null>(null)
+  const [mobileMessagesViewportHeight, setMobileMessagesViewportHeight] = useState<string | null>(null)
   const isNativeIosRef = useRef(false)
 
   useEffect(() => {
@@ -726,8 +773,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         })
         if (selectedThreadRef.current === threadId) {
           forceBottomScrollThreadRef.current = threadId
-          smoothScrollPendingRef.current = true
-          scrollMessagesToBottom('smooth')
+          smoothScrollPendingRef.current = false
+          scheduleMessagesBottomSettle('auto')
           markThreadReadLocally(threadId, message.createdAt)
           void markThreadRead(threadId, message.id)
           // Dispatch event to update TopNav count immediately
@@ -979,17 +1026,16 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           throw new Error('failed_send')
         }
         const payload = (await response.json()) as { message: MessagePayload }
-        smoothScrollPendingRef.current = true
+        smoothScrollPendingRef.current = false
         forceBottomScrollThreadRef.current = threadId
         setMessagesByThread((prev) => {
           const existing = prev[threadId] ?? []
           if (existing.some((item) => item.id === payload.message.id)) return prev
           return { ...prev, [threadId]: sortMessagesChronologically([...existing, payload.message]) }
         })
-        scrollMessagesToBottom('smooth')
+        scheduleMessagesBottomSettle('auto')
         setComposerText('')
         setAttachments([])
-        dismissMobileKeyboard()
         void markThreadRead(threadId, payload.message.id)
       } catch (err) {
         console.error('Failed to send message', err)
@@ -1208,6 +1254,40 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
   const hideGlobalMobileDockInThread = isMobileViewport && Boolean(activeThread)
 
+  const syncMobileThreadLayout = useCallback(() => {
+    if (typeof window === 'undefined') return
+    if (!isMobileViewport || !activeThread) {
+      setMobileThreadPanelHeight(null)
+      setMobileMessagesViewportHeight(null)
+      return
+    }
+
+    const panel = threadPanelRef.current
+    const header = threadHeaderRef.current
+    if (!panel || !header) return
+
+    const viewport = window.visualViewport
+    const viewportTop = viewport?.offsetTop ?? 0
+    const viewportHeight = viewport?.height ?? window.innerHeight
+    const viewportBottom = viewportTop + viewportHeight
+    const panelRect = panel.getBoundingClientRect()
+    const headerRect = header.getBoundingClientRect()
+    const composerRect = mobileComposerShellRef.current?.getBoundingClientRect() ?? null
+    const mobileHeightReduction = Math.max(72, Math.round(viewportHeight * 0.12))
+    const visiblePanelHeight = Math.max(260, Math.floor(viewportBottom - panelRect.top - mobileHeightReduction))
+    const listBottom = composerRect ? composerRect.top : viewportBottom
+    const availableListHeight = Math.max(140, Math.floor(listBottom - headerRect.bottom - 16))
+
+    setMobileThreadPanelHeight((prev) => {
+      const next = `${visiblePanelHeight}px`
+      return prev === next ? prev : next
+    })
+    setMobileMessagesViewportHeight((prev) => {
+      const next = `${availableListHeight}px`
+      return prev === next ? prev : next
+    })
+  }, [activeThread, isMobileViewport])
+
   useEffect(() => {
     if (typeof document === 'undefined') return
     const root = document.documentElement
@@ -1220,6 +1300,43 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       root.classList.remove('cc-messages-thread-context')
     }
   }, [hideGlobalMobileDockInThread])
+
+  useEffect(() => {
+    syncMobileThreadLayout()
+  }, [syncMobileThreadLayout])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleLayoutChange = () => {
+      syncMobileThreadLayout()
+    }
+
+    const viewport = window.visualViewport
+    viewport?.addEventListener('resize', handleLayoutChange)
+    viewport?.addEventListener('scroll', handleLayoutChange)
+    window.addEventListener('resize', handleLayoutChange)
+    window.addEventListener('orientationchange', handleLayoutChange)
+    window.addEventListener('focusin', handleLayoutChange)
+    window.addEventListener('focusout', handleLayoutChange)
+
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(handleLayoutChange) : null
+    if (resizeObserver) {
+      if (threadPanelRef.current) resizeObserver.observe(threadPanelRef.current)
+      if (threadHeaderRef.current) resizeObserver.observe(threadHeaderRef.current)
+      if (mobileComposerShellRef.current) resizeObserver.observe(mobileComposerShellRef.current)
+    }
+
+    return () => {
+      viewport?.removeEventListener('resize', handleLayoutChange)
+      viewport?.removeEventListener('scroll', handleLayoutChange)
+      window.removeEventListener('resize', handleLayoutChange)
+      window.removeEventListener('orientationchange', handleLayoutChange)
+      window.removeEventListener('focusin', handleLayoutChange)
+      window.removeEventListener('focusout', handleLayoutChange)
+      resizeObserver?.disconnect()
+    }
+  }, [syncMobileThreadLayout])
 
   useEffect(() => {
     if (filteredOrderedThreads.length === 0) {
@@ -1273,8 +1390,13 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   useEffect(() => {
     if (!isMobileViewport || !selectedThreadId || !latestActiveMessageId) return
     if (preserveScrollRef.current?.threadId === selectedThreadId) return
-    scrollMessagesToBottom('auto')
-  }, [isMobileViewport, latestActiveMessageId, scrollMessagesToBottom, selectedThreadId])
+    scheduleMessagesBottomSettle('auto')
+  }, [isMobileViewport, latestActiveMessageId, scheduleMessagesBottomSettle, selectedThreadId])
+
+  useEffect(() => {
+    if (!isMobileViewport || !selectedThreadId || !activeThread) return
+    scheduleMessagesBottomSettle('auto')
+  }, [activeThread, isMobileViewport, mobileKeyboardInset, mobileMessagesViewportHeight, scheduleMessagesBottomSettle, selectedThreadId])
 
   useEffect(() => {
     const candidates = new Set<string>()
@@ -1739,9 +1861,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
     const composerKeyboardOffset = isNativeIosRef.current ? 0 : Math.round(mobileKeyboardInset)
-    const mobileComposerBottomSpacer = showMobileDockComposer
-      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS} + ${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px)`
-      : undefined
+    const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px` : undefined
 
     const sendActiveThreadMessage = () => {
       if (activeThread) {
@@ -1751,14 +1871,14 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
 
     const composerNode = showMobileDockComposer ? (
       <div className="mx-auto flex w-full max-w-screen-2xl items-center gap-2" role="group" aria-label="Message composer">
-        <input
-          type="text"
+        <textarea
           ref={composerInputRef}
           value={composerText}
           onChange={(event) => setComposerText(event.target.value)}
           onFocus={() => {
             setComposerFocused(true)
             requestAnimationFrame(() => syncMobileKeyboardState())
+            scheduleMessagesBottomSettle('auto')
           }}
           onBlur={() => {
             setComposerFocused(false)
@@ -1777,7 +1897,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           spellCheck
           enterKeyHint="send"
           inputMode="text"
-          className="h-11 flex-1 rounded-full border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:ring-1 focus:ring-[var(--cc-primary)]"
+          rows={1}
+          className="h-11 min-h-[2.75rem] flex-1 resize-none rounded-full border border-slate-200 bg-white px-4 py-[0.8rem] text-sm leading-5 text-slate-900 outline-none placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:ring-1 focus:ring-[var(--cc-primary)]"
         />
         <input
           type="file"
@@ -1790,7 +1911,23 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         />
         <button
           type="button"
-          onClick={() => fileInputRef.current?.click()}
+          onPointerDown={handleMobileComposerPressStart}
+          onMouseDown={handleMobileComposerPressStart}
+          onTouchStart={handleMobileComposerPressStart}
+          onTouchEnd={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            markMobileComposerTouch()
+            fileInputRef.current?.click()
+          }}
+          onClick={(event) => {
+            if (shouldIgnoreMobileComposerClick()) {
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+            fileInputRef.current?.click()
+          }}
           disabled={isUploading}
           className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-700 disabled:opacity-50"
           title="Add photo"
@@ -1799,7 +1936,23 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         </button>
         <button
           type="button"
-          onClick={sendActiveThreadMessage}
+          onPointerDown={handleMobileComposerPressStart}
+          onMouseDown={handleMobileComposerPressStart}
+          onTouchStart={handleMobileComposerPressStart}
+          onTouchEnd={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            markMobileComposerTouch()
+            sendActiveThreadMessage()
+          }}
+          onClick={(event) => {
+            if (shouldIgnoreMobileComposerClick()) {
+              event.preventDefault()
+              event.stopPropagation()
+              return
+            }
+            sendActiveThreadMessage()
+          }}
           disabled={(!composerText.trim() && attachments.length === 0) || sending || isUploading}
           className={clsx(
             'inline-flex h-11 w-11 items-center justify-center rounded-full text-white transition',
@@ -1842,6 +1995,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           onFocus={() => {
             setComposerFocused(true)
             requestAnimationFrame(() => syncMobileKeyboardState())
+            scheduleMessagesBottomSettle('auto')
           }}
           onBlur={() => {
             setComposerFocused(false)
@@ -1901,8 +2055,12 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     )
 
     return (
-      <div className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 p-4 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
-        <header className="flex items-center gap-3 border-b border-slate-100 pb-3">
+      <div
+        ref={threadPanelRef}
+        className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 px-4 pb-4 pt-5 shadow-[0_25px_70px_rgba(15,23,42,0.08)] sm:p-4"
+        style={isMobileViewport && mobileThreadPanelHeight ? { height: mobileThreadPanelHeight } : undefined}
+      >
+        <header ref={threadHeaderRef} className="flex items-center gap-3 border-b border-slate-100 pb-3">
           <button
             type="button"
             className="-ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] lg:hidden"
@@ -2031,7 +2189,6 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
             >
               <div
                 className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-0' : 'pb-1')}
-                style={mobileComposerBottomSpacer ? { paddingBottom: mobileComposerBottomSpacer } : undefined}
               >
                 {activeMessages.length === 0 && loadingThreadId === activeThread.id ? (
                   <p className="text-center text-sm text-slate-500">Loading messages…</p>
@@ -2130,7 +2287,12 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                     </div>
                   )
                 })}
-                <div ref={messagesEndRef} aria-hidden="true" className="h-px w-full shrink-0" />
+                <div
+                  ref={messagesEndRef}
+                  aria-hidden="true"
+                  className="w-full shrink-0"
+                  style={mobileComposerBottomSpacer ? { height: mobileComposerBottomSpacer } : { height: `${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px` }}
+                />
               </div>
             </div>
             {showMobileDockComposer ? null : (
@@ -2141,6 +2303,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         {showMobileDockComposer && typeof document !== 'undefined'
           ? createPortal(
               <div
+                ref={mobileComposerShellRef}
                 className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] lg:hidden"
                 style={{
                   bottom: hideGlobalMobileDockInThread
@@ -2258,7 +2421,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       mainClassName={keyboardAwareViewportClass}
     >
       {isMobileViewport ? (
-        <div className="h-full min-h-0">{activeThread ? renderMessages() : inboxPanel}</div>
+        <div className={clsx('h-full min-h-0', activeThread ? 'pt-2' : '')}>{activeThread ? renderMessages() : inboxPanel}</div>
       ) : (
         <div className="h-full min-h-0">{renderMessages()}</div>
       )}
