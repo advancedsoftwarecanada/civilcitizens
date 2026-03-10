@@ -44,14 +44,16 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
     hideForInstall ||
     hideForInviteGuest ||
     hideForMeetingRoom
+  const showShellTopOffset = !topNavHidden && !hideForInstall && !hideForMeetingRoom
+  const showMobileDockClearance = !sidebarHidden && !hideForMeetingRoom
 
   return (
     <div
       data-app-frame="true"
       className={clsx(
         'min-h-0',
-        !hideForInstall && !hideForMeetingRoom && 'pt-[calc(var(--cc-native-safe-top-offset)+var(--cc-native-shell-top-gap))]',
-        !hideForMeetingRoom && 'pb-[var(--mobile-dock-clearance)] lg:pb-0',
+        showShellTopOffset && 'pt-[calc(var(--cc-native-safe-top-offset)+var(--cc-native-shell-top-gap))]',
+        showMobileDockClearance && 'pb-[var(--mobile-dock-clearance)] lg:pb-0',
         !topNavHidden && !hideForMeetingRoom && 'md:pt-[var(--cc-top-nav-offset)]',
       )}
     >
