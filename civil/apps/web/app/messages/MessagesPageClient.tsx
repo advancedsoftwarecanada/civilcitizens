@@ -82,6 +82,13 @@ type MessagePayload = {
   isMine: boolean
 }
 
+type PendingAttachmentMessage = {
+  id: string
+  threadId: string
+  body: string
+  createdAt: string
+}
+
 type ThreadCall = {
   id: string
   threadId: string
@@ -494,6 +501,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [streamKey, setStreamKey] = useState(0)
   const [attachments, setAttachments] = useState<string[]>([])
   const [isUploading, setIsUploading] = useState(false)
+  const [pendingAttachmentMessagesByThread, setPendingAttachmentMessagesByThread] = useState<Record<string, PendingAttachmentMessage[]>>({})
   const [manageMembersOpen, setManageMembersOpen] = useState(false)
   const [groupCandidatesLoading, setGroupCandidatesLoading] = useState(false)
   const [groupCandidates, setGroupCandidates] = useState<ThreadUser[]>([])
@@ -1004,14 +1012,21 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   }, [selectedThreadId, messagesByThread, loadingThreadId, fetchThreadDetail])
 
   const sendMessage = useCallback(
-    async (threadId: string) => {
-      const trimmed = composerText.trim()
-      if (!trimmed && attachments.length === 0) return
+    async (
+      threadId: string,
+      options?: {
+        body?: string
+        attachments?: string[]
+      },
+    ) => {
+      const trimmed = (options?.body ?? composerText).trim()
+      const nextAttachments = options?.attachments ?? attachments
+      if (!trimmed && nextAttachments.length === 0) return false
       setSending(true)
       try {
         const requestPayload: { body?: string; attachments?: string[] } = {}
         if (trimmed) requestPayload.body = trimmed
-        if (attachments.length > 0) requestPayload.attachments = attachments
+        if (nextAttachments.length > 0) requestPayload.attachments = nextAttachments
 
         const response = await authedFetch(`/messages/threads/${threadId}/messages`, {
           method: 'POST',
@@ -1020,7 +1035,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         })
         if (response.status === 401) {
           redirectToAuthModal('login')
-          return
+          return false
         }
         if (!response.ok) {
           throw new Error('failed_send')
@@ -1037,20 +1052,25 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         setComposerText('')
         setAttachments([])
         void markThreadRead(threadId, payload.message.id)
+        return true
       } catch (err) {
         console.error('Failed to send message', err)
         pushToast('Unable to send this message. Please try again.', 'error')
+        return false
       } finally {
         setSending(false)
       }
     },
-    [authedFetch, composerText, attachments, markThreadRead, scrollMessagesToBottom],
+    [authedFetch, composerText, attachments, markThreadRead],
   )
 
   const handleFileSelect = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0]
       if (!file) return
+      const threadId = selectedThreadRef.current
+      const bodyText = composerText
+      const pendingMessageId = threadId ? `pending-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : null
 
       // Reset input
       event.target.value = ''
@@ -1058,6 +1078,21 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       if (file.size > 25 * 1024 * 1024) {
         pushToast('File is too large (max 25MB).', 'error')
         return
+      }
+
+      if (threadId && pendingMessageId) {
+        setPendingAttachmentMessagesByThread((prev) => ({
+          ...prev,
+          [threadId]: [
+            ...(prev[threadId] ?? []),
+            {
+              id: pendingMessageId,
+              threadId,
+              body: bodyText.trim(),
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }))
       }
 
       setIsUploading(true)
@@ -1164,7 +1199,19 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         }
 
         if (mediaUrl) {
-          setAttachments((prev) => [...prev, mediaUrl!])
+          if (!threadId) {
+            setAttachments((prev) => [...prev, mediaUrl])
+            return
+          }
+
+          const sent = await sendMessage(threadId, {
+            body: bodyText,
+            attachments: [mediaUrl],
+          })
+
+          if (!sent) {
+            setAttachments((prev) => [...prev, mediaUrl])
+          }
         } else {
           throw new Error('Processing timeout')
         }
@@ -1173,10 +1220,24 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         const msg = err instanceof Error ? err.message : 'Failed to upload image.'
         pushToast(msg, 'error')
       } finally {
+        if (threadId && pendingMessageId) {
+          setPendingAttachmentMessagesByThread((prev) => {
+            const nextItems = (prev[threadId] ?? []).filter((item) => item.id !== pendingMessageId)
+            if (nextItems.length === 0) {
+              const next = { ...prev }
+              delete next[threadId]
+              return next
+            }
+            return {
+              ...prev,
+              [threadId]: nextItems,
+            }
+          })
+        }
         setIsUploading(false)
       }
     },
-    [],
+    [composerText, sendMessage],
   )
 
   const removeAttachment = useCallback(
@@ -1384,6 +1445,10 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const messages = messagesByThread[selectedThreadId] ?? []
     return sortMessagesChronologically(messages)
   }, [messagesByThread, selectedThreadId])
+  const activePendingAttachmentMessages = useMemo(() => {
+    if (!selectedThreadId) return []
+    return pendingAttachmentMessagesByThread[selectedThreadId] ?? []
+  }, [pendingAttachmentMessagesByThread, selectedThreadId])
   const latestActiveMessageId = activeMessages[activeMessages.length - 1]?.id ?? null
   const activeThreadHasMore = selectedThreadId ? Boolean(messageCursors[selectedThreadId]) : false
 
@@ -1397,6 +1462,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     if (!isMobileViewport || !selectedThreadId || !activeThread) return
     scheduleMessagesBottomSettle('auto')
   }, [activeThread, isMobileViewport, mobileKeyboardInset, mobileMessagesViewportHeight, scheduleMessagesBottomSettle, selectedThreadId])
+
+  useEffect(() => {
+    if (!selectedThreadId || activePendingAttachmentMessages.length === 0) return
+    scheduleMessagesBottomSettle('auto')
+  }, [activePendingAttachmentMessages.length, scheduleMessagesBottomSettle, selectedThreadId])
 
   useEffect(() => {
     const candidates = new Set<string>()
@@ -2285,6 +2355,34 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                           />
                         </Link>
                       ) : null}
+                    </div>
+                  )
+                })}
+                {activePendingAttachmentMessages.map((message) => {
+                  const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
+                  return (
+                    <div key={message.id} className="flex w-full justify-end">
+                      <div className="flex flex-col items-end">
+                        <p className="mb-1 text-xs font-semibold text-slate-500">You</p>
+                        <div className="ml-auto flex min-w-[10rem] max-w-[80%] items-center gap-2 rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-sm text-white shadow opacity-85">
+                          <HiOutlineArrowPath className="h-4 w-4 shrink-0 animate-spin" />
+                          <div className="min-w-0">
+                            <p className="font-medium">Uploading image…</p>
+                            {message.body ? <p className="mt-1 truncate text-xs text-white/85">{message.body}</p> : null}
+                          </div>
+                        </div>
+                        <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Sending…</span>
+                      </div>
+                      <Link href={me?.handle ? `/u/${encodeURIComponent(me.handle)}` : '/profile'} className="ml-2 mt-5 shrink-0">
+                        <VerifiedAvatar
+                          src={me?.avatarUrl ?? null}
+                          alt={viewerDisplayName}
+                          initials={viewerDisplayName}
+                          size={30}
+                          isVerified={Boolean(me?.isVerified)}
+                          isBusiness={Boolean(me?.isPremium)}
+                        />
+                      </Link>
                     </div>
                   )
                 })}
