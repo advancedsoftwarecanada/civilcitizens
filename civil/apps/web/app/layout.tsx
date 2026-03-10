@@ -16,6 +16,7 @@ import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
 import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
 import PlaceholderSanitizer from './_components/PlaceholderSanitizer'
+import AppScrollbar from './_components/AppScrollbar'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -125,6 +126,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <IosOpenInAppBanner />
           <AppFrame modal={modal}>{children}</AppFrame>
           <IncomingMessageCallOverlay />
+          <AppScrollbar />
           <MobileDockVisibility />
           <Toasts />
         </div>
