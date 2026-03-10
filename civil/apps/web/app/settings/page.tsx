@@ -36,6 +36,7 @@ import {
   isNativePushOptedOut,
   type PushPermissionState,
 } from '../_lib/nativePush'
+import { resetHomeNativePushPromptAttempt, resetHomeWebPushPromptAttempt } from '../_lib/homePushPromptState'
 import {
   canEnablePush as canEnableWebPush,
   disablePush as disableWebPush,
@@ -43,7 +44,6 @@ import {
   getPermissionState as getWebPushPermissionState,
   isPushEnabled as isWebPushEnabled,
 } from '../_lib/pushClient'
-import { resetIosPwaPushPromptForNextOpen } from '../_lib/iosPwaPushPromptState'
 import { pushToast } from '../_components/useToasts'
 
 type SettingsActionCardItem = {
@@ -393,6 +393,7 @@ export default function SettingsPage() {
 
         await disableNativePushNotifications()
         setNativePushOptedOut(true)
+        resetHomeNativePushPromptAttempt()
       } finally {
         setNativePushBusy(false)
       }
@@ -420,7 +421,7 @@ export default function SettingsPage() {
         setWebPushEnabled(false)
         setWebPushPermission(getWebPushPermissionState())
         if (result.ok) {
-          resetIosPwaPushPromptForNextOpen()
+          resetHomeWebPushPromptAttempt()
         }
         if (!result.ok) setWebPushMessage(result.message ?? 'Unable to disable notifications.')
       } finally {
