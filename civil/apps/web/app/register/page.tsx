@@ -248,6 +248,10 @@ export default function RegisterPage() {
               and{' '}
               <a href="/privacy" className="underline" target="_blank" rel="noopener noreferrer">
                 Privacy Policy
+              </a>{' '}
+              and{' '}
+              <a href="/safety" className="underline" target="_blank" rel="noopener noreferrer">
+                Child Safety &amp; Protection Standards
               </a>
             </span>
           </label>
