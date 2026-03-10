@@ -69,13 +69,13 @@ export default function Home() {
   ]
 
   return (
-    <main className="min-h-[var(--cc-viewport-height)] text-slate-900">
+    <main className="relative isolate min-h-[var(--cc-viewport-height)] text-slate-900">
       <AutoRedirect />
+      <BackgroundVideo fixed />
 
       {/* HERO */}
       <section className="hero-section relative isolate flex min-h-[var(--cc-viewport-height)] items-center overflow-hidden py-12 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="text-center">
@@ -180,8 +180,7 @@ export default function Home() {
 
       {/* COMMERCE */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
@@ -275,8 +274,7 @@ export default function Home() {
 
       {/* DRIVE FOR CANADA */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
@@ -326,8 +324,7 @@ export default function Home() {
 
       {/* CIVIL CAREERS */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
@@ -413,8 +410,7 @@ export default function Home() {
 
       {/* CIVIL AI */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
@@ -488,8 +484,7 @@ export default function Home() {
 
       {/* CHAMBERS OF CITIZENS */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
@@ -547,8 +542,7 @@ export default function Home() {
 
       {/* CIVIL FAMILY ACCOUNTS */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
@@ -619,8 +613,7 @@ export default function Home() {
 
       {/* FOOTER HERO CTA */}
       <section className="hero-section relative isolate overflow-hidden py-14 text-white">
-        <BackgroundVideo fixed videoClassName="opacity-100" />
-        <div className="absolute inset-0 z-[1] bg-slate-950/65" aria-hidden="true" />
+        <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4 text-center space-y-4">
           <div className="mx-auto max-w-xs sm:max-w-sm">
             <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />

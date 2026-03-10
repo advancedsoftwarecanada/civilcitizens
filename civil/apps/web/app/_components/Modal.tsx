@@ -29,10 +29,18 @@ export default function Modal({
     container.dataset.ccModalMount = 'true'
     document.body.appendChild(container)
     const previousOverflow = document.body.style.overflow
+    const appRoot = document.getElementById('cc-app-root')
+    const previousAppRootOverflow = appRoot?.style.overflow
     document.body.style.overflow = 'hidden'
+    if (appRoot) {
+      appRoot.style.overflow = 'hidden'
+    }
     setPortalEl(container)
     return () => {
       document.body.style.overflow = previousOverflow
+      if (appRoot) {
+        appRoot.style.overflow = previousAppRootOverflow ?? ''
+      }
       container.remove()
       setPortalEl(null)
     }
