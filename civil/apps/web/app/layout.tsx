@@ -12,7 +12,6 @@ import GoogleAnalytics from './_components/GoogleAnalytics'
 import AppFrame from './_components/AppFrame'
 import NotificationTapRouter from './_components/NotificationTapRouter'
 import NativeViewportInsets from './_components/NativeViewportInsets'
-import IosPwaPushPrompt from './_components/IosPwaPushPrompt'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
 import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
@@ -121,7 +120,6 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <Suspense fallback={null}>
             <ScrollManager />
           </Suspense>
-          <IosPwaPushPrompt />
           <IosOpenInAppBanner />
           <AppFrame modal={modal}>{children}</AppFrame>
           <IncomingMessageCallOverlay />
