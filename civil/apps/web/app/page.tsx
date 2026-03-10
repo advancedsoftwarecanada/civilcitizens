@@ -649,6 +649,10 @@ export default function Home() {
               Child Safety &amp; Protection Standards
             </Link>
             <span aria-hidden="true">•</span>
+            <Link href="/help" className="underline underline-offset-4 transition hover:text-white">
+              Help Center
+            </Link>
+            <span aria-hidden="true">•</span>
             <Link href="/terms" className="underline underline-offset-4 transition hover:text-white">
               Terms &amp; Conditions
             </Link>
