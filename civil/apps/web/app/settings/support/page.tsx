@@ -218,6 +218,13 @@ export default function SettingsSupportPage() {
             <p className="mt-2 max-w-3xl text-sm text-slate-600">
               Customer-service requests, feature requests, and your filed content reports all live here so support history stays in one place.
             </p>
+            <p className="mt-2 max-w-3xl text-sm text-slate-600">
+              Civil Citizens allows users to report child safety concerns in-app. To learn more about reporting requirements, visit the{' '}
+              <Link href="/help#child-safety-reporting" className="font-semibold text-[var(--cc-primary)] hover:underline">
+                Help Center
+              </Link>
+              .
+            </p>
           </div>
           <Link
             href="/settings"
@@ -290,6 +297,9 @@ export default function SettingsSupportPage() {
             <p className="mt-3 text-sm font-semibold text-slate-900">Reported Content</p>
             <p className="mt-1 text-xs leading-5 text-slate-500">
               Content reports start from the settings icon on the exact post, organization, listing, or product, then appear here.
+            </p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              Child safety reports should be filed from the in-app reporting menu on the specific content, profile, or listing so Civil can preserve exact context for moderator review.
             </p>
           </button>
         </div>

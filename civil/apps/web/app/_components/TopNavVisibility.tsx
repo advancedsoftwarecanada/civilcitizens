@@ -6,6 +6,7 @@ import { useInviteViewStore } from '../_lib/inviteViewStore'
 import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 
 const HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
+const PUBLIC_HIDDEN_PATHS = new Set(['/reset', '/terms', '/privacy', '/safety', '/help'])
 
 export default function TopNavVisibility() {
   const pathname = usePathname()
@@ -16,6 +17,7 @@ export default function TopNavVisibility() {
   const hideNav =
     !hasResolvedPathname ||
     HIDDEN_PATHS.has(resolvedPathname) ||
+    PUBLIC_HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify') ||
     resolvedPathname.startsWith('/install/') ||

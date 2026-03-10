@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { IconType } from 'react-icons'
@@ -143,6 +144,7 @@ export default function ContentModerationMenu({
   const [details, setDetails] = useState('')
   const [busy, setBusy] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const childSafetySelected = selectedReasons.includes('child_safety')
 
   useEffect(() => {
     if (!menuOpen) return
@@ -359,6 +361,20 @@ export default function ContentModerationMenu({
             })}
           </div>
 
+          {childSafetySelected ? (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+              <p className="font-semibold">Child safety reporting</p>
+              <p className="mt-1">
+                Civil Citizens allows users to report child safety concerns in-app. To learn more about reporting
+                requirements, visit the{' '}
+                <Link href="/help#child-safety-reporting" className="font-semibold underline">
+                  Help Center
+                </Link>
+                .
+              </p>
+            </div>
+          ) : null}
+
           <div className="space-y-2">
             <label htmlFor="report-details" className="text-sm font-semibold text-slate-900">
               Details
@@ -373,7 +389,7 @@ export default function ContentModerationMenu({
               maxLength={2000}
             />
             <p className="text-xs leading-5 text-slate-500">
-              Filed reports appear in <a href="/settings/support#reported-content" className="font-semibold text-[var(--cc-primary)] hover:underline">Customer Support</a> after submission.
+              Filed reports appear in <a href="/settings/support#reported-content" className="font-semibold text-[var(--cc-primary)] hover:underline">Customer Support</a> after submission. Reporting requirements are available in the <a href="/help#child-safety-reporting" className="font-semibold text-[var(--cc-primary)] hover:underline">Help Center</a>.
             </p>
           </div>
 

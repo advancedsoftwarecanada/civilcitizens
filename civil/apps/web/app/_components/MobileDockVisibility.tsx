@@ -20,6 +20,11 @@ export default function MobileDockVisibility() {
 
   if (
     !hasResolvedPathname ||
+    resolvedPathname === '/reset' ||
+    resolvedPathname === '/terms' ||
+    resolvedPathname === '/privacy' ||
+    resolvedPathname === '/safety' ||
+    resolvedPathname === '/help' ||
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify') ||
     resolvedPathname.startsWith('/install/') ||
