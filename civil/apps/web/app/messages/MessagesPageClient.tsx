@@ -380,6 +380,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const smoothScrollPendingRef = useRef(false)
   const preserveScrollRef = useRef<{
     threadId: string
@@ -399,12 +400,15 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const container = messagesViewportRef.current
     if (!container) return
     requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: 'end', behavior })
       container.scrollTo({ top: container.scrollHeight, behavior })
       // Run a second frame in case async layout (images/preview cards) shifts height right after render.
       requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' })
         container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
       })
       window.setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' })
         container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
       }, 180)
     })
@@ -466,9 +470,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [composerFocused, setComposerFocused] = useState(false)
   const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0)
+  const isNativeIosRef = useRef(false)
 
   useEffect(() => {
     if (typeof window === 'undefined') return
+    isNativeIosRef.current = document.documentElement.classList.contains('cc-native-ios')
     const mediaQuery = window.matchMedia('(max-width: 1023px)')
     const syncMobileViewport = () => setIsMobileViewport(mediaQuery.matches)
     syncMobileViewport()
@@ -1732,8 +1738,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const title = getThreadTitle(activeThread)
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
+    const composerKeyboardOffset = isNativeIosRef.current ? 0 : Math.round(mobileKeyboardInset)
     const mobileComposerBottomSpacer = showMobileDockComposer
-      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS} + var(--mobile-dock-bottom-pad) + ${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px + ${Math.round(mobileKeyboardInset)}px)`
+      ? `calc(${MOBILE_THREAD_COMPOSER_DOCK_HEIGHT_CSS} + ${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px)`
       : undefined
 
     const sendActiveThreadMessage = () => {
@@ -1898,7 +1905,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         <header className="flex items-center gap-3 border-b border-slate-100 pb-3">
           <button
             type="button"
-            className="lg:hidden -ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-slate-900"
+            className="-ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] lg:hidden"
             onClick={() => setSelectedThreadId(null)}
           >
             <HiOutlineChevronLeft className="h-5 w-5" />
@@ -2123,6 +2130,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                     </div>
                   )
                 })}
+                <div ref={messagesEndRef} aria-hidden="true" className="h-px w-full shrink-0" />
               </div>
             </div>
             {showMobileDockComposer ? null : (
@@ -2136,8 +2144,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                 className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] lg:hidden"
                 style={{
                   bottom: hideGlobalMobileDockInThread
-                    ? `calc(var(--mobile-dock-bottom-offset) + ${Math.round(mobileKeyboardInset)}px)`
-                    : `calc(var(--mobile-dock-clearance) + ${Math.round(mobileKeyboardInset)}px)`,
+                    ? `calc(var(--mobile-dock-bottom-offset) + ${composerKeyboardOffset}px)`
+                    : `calc(var(--mobile-dock-clearance) + ${composerKeyboardOffset}px)`,
                 }}
               >
                 {composerNode}
@@ -2237,8 +2245,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
 
   const keyboardAwareViewportClass = hideGlobalMobileDockInThread
-    ? 'min-h-0 h-[var(--cc-viewport-height)] pb-2 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
-    : 'min-h-0 h-[calc(var(--cc-viewport-height)-var(--mobile-dock-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
+    ? 'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap))] pb-2 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
+    : 'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
 
   return (
     <DashboardShell
