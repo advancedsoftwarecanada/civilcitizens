@@ -1,14 +1,15 @@
 # Push notifications (builds-only)
 
-This setup enables APNs push notifications with device registration flowing into the Civil API.
+This setup enables native push notifications with device registration flowing into the Civil API.
 
 ## Architecture (current)
 
 - iOS Capacitor shell registers with APNs.
-- The shell POSTs the device token to the API endpoint `/mobile/push/register`.
-- The standalone service in `builds/push/apns-service/` can still be used to send direct APNs test pushes with your Apple `.p8` key.
+- Android Capacitor shell registers with FCM.
+- The shell POSTs the native device token to the API endpoint `/mobile/push/register`.
+- The standalone service in `builds/push/apns-service/` sends native pushes through APNs for iOS and FCM HTTP v1 for Android.
 
-This remains build-oriented for iOS shell + APNs verification.
+This remains build-oriented for native shell verification.
 
 ## 1) Create/download the APNs `.p8`
 
@@ -31,9 +32,34 @@ Set in the API environment:
 - `PUSH_DELIVERY_URL="http://<push-service-host>:8787"`
 - `PUSH_ADMIN_SECRET="<same-admin-secret-used-by-apns-service>"`
 
-This must match the iOS plist value (`CIVILPushRegisterSecret`).
+This must match the native app registration secret.
 
-## 3) Run the standalone APNs service (optional, for direct test sends)
+## 3) Android Firebase requirements
+
+Android native push will not work until both of these are present:
+
+- `builds/mobile/capacitor/android/app/google-services.json`
+- FCM sender credentials in the standalone push service environment
+
+The Firebase Android app must use this exact package name:
+
+- `ca.civilcitizens`
+
+Place the Firebase Android app config file here:
+
+- `builds/mobile/capacitor/android/app/google-services.json`
+
+For the sender, provide either:
+
+- `FCM_SERVICE_ACCOUNT_JSON='<raw Firebase service-account JSON>'`
+
+Or split variables:
+
+- `FCM_PROJECT_ID="<project-id>"`
+- `FCM_CLIENT_EMAIL="<service-account-email>"`
+- `FCM_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"`
+
+## 4) Run the standalone native push service (optional, for direct test sends)
 
 From `builds/push/apns-service/`:
 
@@ -46,12 +72,13 @@ From `builds/push/apns-service/`:
   - `export APNS_BUNDLE_ID="ca.civilcitizens"`
   - `export PUSH_ADMIN_SECRET="<choose-a-secret>"`
   - `export PUSH_REGISTER_SECRET="<choose-a-secret>"`
+  - `export FCM_SERVICE_ACCOUNT_JSON='{"type":"service_account",...}'`
 
 - `pnpm start`
 
 The service listens on `http://localhost:8787` by default.
 
-## 4) Point the iOS app at API registration
+## 5) Point the native app at API registration
 
 Edit this file (build-only):
 - `builds/mobile/capacitor/ios/App/App/Info.plist`
@@ -63,7 +90,12 @@ Set:
 Notes:
 - If testing against a local API server, use your Mac LAN IP (not `localhost`).
 
-## 5) Build + run on a real device
+Android notes:
+
+- `builds/mobile/capacitor/android/app/build.gradle` already checks for `google-services.json`.
+- If that file is missing, the Android app can build, but push registration will not work.
+
+## 6) Build + run on a real device
 
 In Xcode:
 - Ensure Signing is correct for your device.
@@ -75,7 +107,15 @@ In Xcode logs you should see:
 
 The API should receive `POST /mobile/push/register` and return `{ "ok": true }`.
 
-## 6) Send a test push (standalone APNs sender)
+On Android:
+
+- Sync/build the Capacitor app after adding `google-services.json`.
+- Install on a real device.
+- Allow notifications when prompted.
+
+The API should receive `POST /mobile/push/register` with `platform: "android"` and return `{ "ok": true }`.
+
+## 7) Send a test push (standalone sender)
 
 - Copy the token hex string.
 - Run:
@@ -84,6 +124,13 @@ The API should receive `POST /mobile/push/register` and return `{ "ok": true }`.
   -H 'content-type: application/json' \
   -H 'x-admin-secret: <choose-a-secret>' \
   -d '{"deviceToken":"<hex>","title":"Civil","message":"Hello from APNs"}'`
+
+Android:
+
+`curl -X POST http://localhost:8787/send-test \
+  -H 'content-type: application/json' \
+  -H 'x-admin-secret: <choose-a-secret>' \
+  -d '{"platform":"android","deviceToken":"<fcm-token>","title":"Civil","message":"Hello from FCM"}'`
 
 ## Troubleshooting
 
@@ -97,3 +144,8 @@ The API should receive `POST /mobile/push/register` and return `{ "ok": true }`.
 
 - If the phone never prompts for notification permission:
   - Remove/reinstall the app, or check Settings → Notifications → Civil.
+
+- If Android never produces a token:
+  - Confirm `builds/mobile/capacitor/android/app/google-services.json` exists.
+  - Confirm the Firebase project in `google-services.json` matches the FCM service-account credentials.
+  - Confirm the push sender has either `FCM_SERVICE_ACCOUNT_JSON` or all of `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`, and `FCM_PRIVATE_KEY`.

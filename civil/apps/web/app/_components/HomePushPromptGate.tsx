@@ -1,14 +1,14 @@
 'use client'
 
 import { useEffect } from 'react'
-import { ensureNativePushRegistration, isAppleNativeApp, isNativePushOptedOut } from '../_lib/nativePush'
+import { ensureNativePushRegistration, isNativeApp, isNativePushOptedOut } from '../_lib/nativePush'
 
 const HOME_PUSH_PROMPT_KEY = 'cc:homePushPromptAttempted'
 
 export default function HomePushPromptGate() {
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!isAppleNativeApp()) return
+    if (!isNativeApp()) return
     if (isNativePushOptedOut()) return
 
     const attempted = window.localStorage.getItem(HOME_PUSH_PROMPT_KEY)
