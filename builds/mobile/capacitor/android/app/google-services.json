@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "871183708995",
+    "project_id": "civilcitizens-54f99",
+    "storage_bucket": "civilcitizens-54f99.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:871183708995:android:dde153820d2ec1ff7c35f6",
+        "android_client_info": {
+          "package_name": "ca.civilcitizens"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA6IicZWll27d4532V8C6Q_o69K6Rj_MIo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,11 +1,11 @@
-# Civil APNs Service (standalone)
+# Civil Push Service (standalone)
 
-This is a tiny standalone APNs sender + device-token registry that lives entirely in `builds/`.
+This is a tiny standalone native push sender + device-token registry that lives entirely in `builds/`.
 It exists because we are **not modifying** the main `CIVIL/` backend right now.
 
 ## What it does
 
-- `POST /register` — store an iOS device token (from the app).
+- `POST /register` — store a native device token from the app.
 - `POST /send-test` — send a test push to a specific device token.
 
 ## Install
@@ -17,12 +17,22 @@ From this folder:
 
 ## Environment variables
 
-Required for sending:
+Required for iOS / APNs sending:
 
 - `APNS_KEY_PATH` — path to your `.p8` file (ex: `builds/mobile/ios/signing/apns/AuthKey_XXXX.p8`)
 - `APNS_KEY_ID` — Apple Key ID
 - `APNS_TEAM_ID` — Apple Team ID
 - `APNS_BUNDLE_ID` — bundle id / APNs topic (ex: `ca.civilcitizens`)
+
+Required for Android / FCM sending:
+
+- `FCM_PROJECT_ID` — Firebase project id
+- `FCM_CLIENT_EMAIL` — service account client email
+- `FCM_PRIVATE_KEY` — service account private key, with `\n` escaped newlines
+
+Alternative Android credential input:
+
+- `FCM_SERVICE_ACCOUNT_JSON` — raw service-account JSON string
 
 Optional:
 
@@ -34,13 +44,20 @@ Optional:
 ## Test flow (recommended)
 
 1) Start the service.
-2) Build/run the iOS app on a real device.
-3) The app will log the APNs device token and call `/register`.
+2) Build/run the native app on a real device.
+3) The app will register its native device token and call `/register`.
 4) Send a test push:
 
 - `curl -X POST http://localhost:8787/send-test \
   -H 'content-type: application/json' \
   -H 'x-admin-secret: YOUR_SECRET' \
-  -d '{"deviceToken":"<hex>","title":"Civil","message":"Hello from APNs"}'`
+  -d '{"platform":"ios","deviceToken":"<hex>","title":"Civil","message":"Hello from APNs"}'`
 
 If APNs returns `403` or `400`, the response body usually explains why (bad token, topic mismatch, wrong environment, etc.).
+
+Android example:
+
+- `curl -X POST http://localhost:8787/send-test \
+  -H 'content-type: application/json' \
+  -H 'x-admin-secret: YOUR_SECRET' \
+  -d '{"platform":"android","deviceToken":"<fcm-token>","title":"Civil","message":"Hello from FCM"}'`

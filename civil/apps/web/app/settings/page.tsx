@@ -32,7 +32,7 @@ import {
   enableNativePushOptIn,
   disableNativePushNotifications,
   ensureNativePushRegistration,
-  isAppleNativeApp,
+  isNativeApp,
   isNativePushOptedOut,
   type PushPermissionState,
 } from '../_lib/nativePush'
@@ -304,7 +304,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!isAppleNativeApp()) return
+    if (!isNativeApp()) return
 
     setShowNativePushControl(true)
     setNativePushOptedOut(isNativePushOptedOut())
@@ -322,7 +322,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (isAppleNativeApp()) return
+    if (isNativeApp()) return
 
     setShowWebPushControl(true)
     setWebPushPermission(getWebPushPermissionState())
@@ -608,13 +608,13 @@ export default function SettingsPage() {
               {showNativePushControl ? (
                 <SettingsToggleCard
                   icon={HiOutlineBell}
-                  title="iOS Notifications"
-                  description="Allow the installed app to receive push notifications from Civil."
+                  title="App Notifications"
+                  description="Allow the installed Civil app to receive push notifications on this device."
                   enabled={isNativePushToggleOn}
                   busy={nativePushBusy}
                   note={
                     isNativePushToggleOn && nativePushState !== 'granted'
-                      ? 'If notifications still do not appear, check your iPhone Settings > Notifications > Civil.'
+                      ? 'If notifications still do not appear, check your device notification settings for Civil.'
                       : null
                   }
                   actionLabel={

@@ -3273,6 +3273,20 @@ async function loadActivePushTokens(userId: string, platform = 'ios'): Promise<s
   }
 }
 
+type NativePushPlatform = 'ios' | 'android'
+
+async function loadActiveNativePushTargets(userId: string): Promise<Array<{ platform: NativePushPlatform; token: string }>> {
+  const [iosTokens, androidTokens] = await Promise.all([
+    loadActivePushTokens(userId, 'ios'),
+    loadActivePushTokens(userId, 'android'),
+  ])
+
+  return [
+    ...iosTokens.map((token) => ({ platform: 'ios' as const, token })),
+    ...androidTokens.map((token) => ({ platform: 'android' as const, token })),
+  ]
+}
+
 async function revokePushToken(token: string, platform: string): Promise<void> {
   try {
     await ensurePushDeviceRegistryTable()
@@ -3296,6 +3310,83 @@ function parseApnsReason(payloadText: string): string {
     return typeof parsed?.reason === 'string' ? parsed.reason : ''
   } catch {
     return ''
+  }
+}
+
+function parseFcmErrorCode(payloadText: string): string {
+  try {
+    const parsed = JSON.parse(payloadText || '{}')
+    const details = Array.isArray(parsed?.error?.details) ? (parsed.error.details as unknown[]) : []
+    const typed = details.find(
+      (item: unknown) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).errorCode === 'string',
+    ) as Record<string, unknown> | undefined
+    if (typed && typeof typed.errorCode === 'string') return typed.errorCode
+    return typeof parsed?.error?.status === 'string' ? parsed.error.status : ''
+  } catch {
+    return ''
+  }
+}
+
+async function deliverNativePushToToken(args: {
+  platform: NativePushPlatform
+  deviceToken: string
+  title: string
+  message: string
+  badge?: number
+  sound?: string
+  data?: Record<string, unknown>
+}) {
+  const response = await fetch(`${PUSH_DELIVERY_URL}/send-test`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(PUSH_ADMIN_SECRET ? { 'x-admin-secret': PUSH_ADMIN_SECRET } : {}),
+    },
+    body: JSON.stringify({
+      platform: args.platform,
+      deviceToken: args.deviceToken,
+      title: args.title,
+      message: args.message,
+      badge: args.badge,
+      sound: args.sound,
+      data: args.data,
+    }),
+  })
+
+  const raw = await response.text().catch(() => '')
+  if (!response.ok) {
+    console.error('push_delivery_failed', {
+      platform: args.platform,
+      status: response.status,
+      deviceTokenSuffix: args.deviceToken.slice(-8),
+      payload: raw,
+    })
+    return
+  }
+
+  try {
+    const parsed = JSON.parse(raw || '{}')
+    const deliveryStatus = Number(parsed?.result?.status || 0)
+    const deliveryText = typeof parsed?.result?.text === 'string' ? parsed.result.text : ''
+    if (deliveryStatus >= 200 && deliveryStatus < 300) return
+
+    const reason = args.platform === 'ios' ? parseApnsReason(deliveryText) : parseFcmErrorCode(deliveryText)
+    console.error('push_delivery_failed', {
+      platform: args.platform,
+      status: response.status,
+      deliveryStatus,
+      reason,
+      deviceTokenSuffix: args.deviceToken.slice(-8),
+    })
+
+    if (
+      (args.platform === 'ios' && (reason === 'BadDeviceToken' || reason === 'Unregistered')) ||
+      (args.platform === 'android' && (reason === 'UNREGISTERED' || reason === 'INVALID_ARGUMENT' || reason === 'NOT_FOUND'))
+    ) {
+      void revokePushToken(args.deviceToken, args.platform)
+    }
+  } catch {
+    // ignore
   }
 }
 
@@ -3555,60 +3646,23 @@ async function sendMobilePushNotification(record: NotificationRecord, actor: Ret
   const alert = buildPushAlert(record, actor)
   if (!alert) return
 
-  const tokens = await loadActivePushTokens(record.userId, 'ios')
-  if (!tokens.length) return
+  const targets = await loadActiveNativePushTargets(record.userId)
+  if (!targets.length) return
 
   await Promise.allSettled(
-    tokens.map(async (deviceToken) => {
-      const response = await fetch(`${PUSH_DELIVERY_URL}/send-test`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(PUSH_ADMIN_SECRET ? { 'x-admin-secret': PUSH_ADMIN_SECRET } : {}),
+    targets.map(({ platform, token }) =>
+      deliverNativePushToToken({
+        platform,
+        deviceToken: token,
+        title: alert.title,
+        message: alert.message,
+        sound: 'civil-general.caf',
+        data: {
+          kind: 'notification',
+          url: getNotificationDeepLink(record) ?? '/notifications',
         },
-        body: JSON.stringify({
-          deviceToken,
-          title: alert.title,
-          message: alert.message,
-          sound: 'civil-general.caf',
-          data: {
-            kind: 'notification',
-            url: getNotificationDeepLink(record) ?? '/notifications',
-          },
-        }),
-      })
-
-      const raw = await response.text().catch(() => '')
-      if (!response.ok) {
-        console.error('push_delivery_failed', {
-          status: response.status,
-          deviceTokenSuffix: deviceToken.slice(-8),
-          payload: raw,
-        })
-        return
-      }
-
-      try {
-        const parsed = JSON.parse(raw || '{}')
-        const apnsStatus = Number(parsed?.result?.status || 0)
-        const apnsText = typeof parsed?.result?.text === 'string' ? parsed.result.text : ''
-        if (apnsStatus >= 200 && apnsStatus < 300) return
-
-        const reason = parseApnsReason(apnsText)
-        console.error('push_delivery_failed', {
-          status: response.status,
-          apnsStatus,
-          reason,
-          deviceTokenSuffix: deviceToken.slice(-8),
-        })
-
-        if (reason === 'BadDeviceToken' || reason === 'Unregistered') {
-          void revokePushToken(deviceToken, 'ios')
-        }
-      } catch {
-        // ignore
-      }
-    }),
+      }),
+    ),
   )
 }
 
@@ -3675,64 +3729,27 @@ async function sendMobilePushForMessageCreated(args: {
 
   await Promise.allSettled(
     targets.map(async (participant) => {
-      const tokens = await loadActivePushTokens(participant.userId, 'ios')
-      if (!tokens.length) return
+      const deviceTargets = await loadActiveNativePushTargets(participant.userId)
+      if (!deviceTargets.length) return
 
       const badge = await loadUnreadMessageCount(participant.userId)
 
       await Promise.allSettled(
-        tokens.map(async (deviceToken) => {
-          const response = await fetch(`${PUSH_DELIVERY_URL}/send-test`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              ...(PUSH_ADMIN_SECRET ? { 'x-admin-secret': PUSH_ADMIN_SECRET } : {}),
+        deviceTargets.map(({ platform, token }) =>
+          deliverNativePushToToken({
+            platform,
+            deviceToken: token,
+            title,
+            message: body,
+            badge,
+            sound: 'civil-message.caf',
+            data: {
+              kind: 'message',
+              threadId: args.threadId,
+              url: pushUrl,
             },
-            body: JSON.stringify({
-              deviceToken,
-              title,
-              message: body,
-              badge,
-              sound: 'civil-message.caf',
-              data: {
-                kind: 'message',
-                threadId: args.threadId,
-                url: pushUrl,
-              },
-            }),
-          })
-
-          const raw = await response.text().catch(() => '')
-          if (!response.ok) {
-            console.error('push_delivery_failed', {
-              status: response.status,
-              deviceTokenSuffix: deviceToken.slice(-8),
-              payload: raw,
-            })
-            return
-          }
-
-          try {
-            const parsed = JSON.parse(raw || '{}')
-            const apnsStatus = Number(parsed?.result?.status || 0)
-            const apnsText = typeof parsed?.result?.text === 'string' ? parsed.result.text : ''
-            if (apnsStatus >= 200 && apnsStatus < 300) return
-
-            const reason = parseApnsReason(apnsText)
-            console.error('push_delivery_failed', {
-              status: response.status,
-              apnsStatus,
-              reason,
-              deviceTokenSuffix: deviceToken.slice(-8),
-            })
-
-            if (reason === 'BadDeviceToken' || reason === 'Unregistered') {
-              void revokePushToken(deviceToken, 'ios')
-            }
-          } catch {
-            // ignore
-          }
-        }),
+          }),
+        ),
       )
     }),
   )
