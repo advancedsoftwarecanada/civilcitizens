@@ -18,7 +18,11 @@ export default function NativeViewportInsets() {
 
     const root = document.documentElement
 
-    const syncInsets = () => {
+    const syncViewportMetrics = () => {
+      const viewport = window.visualViewport
+      const viewportHeight = viewport?.height ?? window.innerHeight
+      root.style.setProperty('--cc-viewport-height', `${Math.round(viewportHeight)}px`)
+
       const bridge = getCapacitorBridge()
       const platform = typeof bridge?.getPlatform === 'function' ? bridge.getPlatform() : null
       if (!platform) {
@@ -27,8 +31,6 @@ export default function NativeViewportInsets() {
         return
       }
 
-      const viewport = window.visualViewport
-      const viewportHeight = viewport?.height ?? window.innerHeight
       const viewportOffsetTop = viewport?.offsetTop ?? 0
       const runtimeTopInset = Math.max(0, viewportOffsetTop)
       const runtimeBottomInset = Math.max(0, window.innerHeight - viewportHeight - viewportOffsetTop)
@@ -37,19 +39,19 @@ export default function NativeViewportInsets() {
       root.style.setProperty('--cc-runtime-bottom-inset', `${Math.round(runtimeBottomInset)}px`)
     }
 
-    syncInsets()
+    syncViewportMetrics()
 
     const viewport = window.visualViewport
-    viewport?.addEventListener('resize', syncInsets)
-    viewport?.addEventListener('scroll', syncInsets)
-    window.addEventListener('resize', syncInsets)
-    window.addEventListener('orientationchange', syncInsets)
+    viewport?.addEventListener('resize', syncViewportMetrics)
+    viewport?.addEventListener('scroll', syncViewportMetrics)
+    window.addEventListener('resize', syncViewportMetrics)
+    window.addEventListener('orientationchange', syncViewportMetrics)
 
     return () => {
-      viewport?.removeEventListener('resize', syncInsets)
-      viewport?.removeEventListener('scroll', syncInsets)
-      window.removeEventListener('resize', syncInsets)
-      window.removeEventListener('orientationchange', syncInsets)
+      viewport?.removeEventListener('resize', syncViewportMetrics)
+      viewport?.removeEventListener('scroll', syncViewportMetrics)
+      window.removeEventListener('resize', syncViewportMetrics)
+      window.removeEventListener('orientationchange', syncViewportMetrics)
     }
   }, [])
 
