@@ -510,8 +510,8 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [marketUnreadCount, setMarketUnreadCount] = useState(0)
   const [contactsBucketReady, setContactsBucketReady] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const composerTextareaRef = useRef<HTMLInputElement | null>(null)
+  const composerInputRef = useRef<HTMLInputElement | null>(null)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [composerFocused, setComposerFocused] = useState(false)
   const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0)
@@ -1871,8 +1871,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
 
     const composerNode = showMobileDockComposer ? (
       <div className="mx-auto flex w-full max-w-screen-2xl items-center gap-2" role="group" aria-label="Message composer">
-        <textarea
+        <input
           ref={composerInputRef}
+          type="text"
           value={composerText}
           onChange={(event) => setComposerText(event.target.value)}
           onFocus={() => {
@@ -1897,8 +1898,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           spellCheck
           enterKeyHint="send"
           inputMode="text"
-          rows={1}
-          className="h-11 min-h-[2.75rem] flex-1 resize-none rounded-full border border-slate-200 bg-white px-4 py-[0.8rem] text-sm leading-5 text-slate-900 outline-none placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:ring-1 focus:ring-[var(--cc-primary)]"
+          className="h-11 flex-1 rounded-full border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:ring-1 focus:ring-[var(--cc-primary)]"
         />
         <input
           type="file"
@@ -1988,8 +1988,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
             ))}
           </div>
         ) : null}
-        <textarea
+        <input
           ref={composerTextareaRef}
+          type="text"
           value={composerText}
           onChange={(event) => setComposerText(event.target.value)}
           onFocus={() => {
@@ -2014,7 +2015,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           spellCheck
           enterKeyHint="send"
           inputMode="text"
-          className="min-h-[3rem] w-full resize-none border-none bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
+          className="h-12 w-full border-none bg-transparent px-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
         />
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
