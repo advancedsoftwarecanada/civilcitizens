@@ -1860,7 +1860,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     const title = getThreadTitle(activeThread)
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
-    const composerKeyboardOffset = isNativeIosRef.current ? 0 : Math.round(mobileKeyboardInset)
+    const composerKeyboardOffset = Math.max(0, Math.round(mobileKeyboardInset))
     const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px` : undefined
 
     const sendActiveThreadMessage = () => {
