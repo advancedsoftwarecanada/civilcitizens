@@ -57,8 +57,8 @@ export function CheckoutModal(props: CheckoutModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8">
-      <div className="w-full max-w-lg">
+    <div className="cc-safe-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="cc-safe-modal-panel flex w-full max-w-lg items-center">
         <Elements
           stripe={stripePromise}
           options={{

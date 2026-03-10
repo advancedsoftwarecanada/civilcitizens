@@ -59,8 +59,8 @@ export default function PhotoUpdateModal({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+    <div className="cc-safe-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="cc-safe-modal-panel flex w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
@@ -71,7 +71,7 @@ export default function PhotoUpdateModal({
           </button>
         </div>
 
-        <div className="mt-5 space-y-4">
+        <div className="mt-5 space-y-4 overflow-y-auto pr-1">
           <div className="space-y-4">
             <div className="overflow-hidden rounded-xl border bg-slate-50">
               {cropperImageUrl ? (
@@ -156,7 +156,7 @@ export default function PhotoUpdateModal({
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-3">
+        <div className="mt-6 flex shrink-0 justify-end gap-3">
           <button type="button" onClick={onClose} className="rounded border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
             Cancel
           </button>
