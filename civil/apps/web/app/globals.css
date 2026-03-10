@@ -293,7 +293,7 @@ html.cc-launch-pending #cc-app-root {
 
 .hero-section {
   background: transparent;
-  min-height: 100vh;
+  min-height: var(--cc-viewport-height);
   display: flex;
   align-items: center;
 }

@@ -41,18 +41,18 @@ export function AuthScreen({
 }: AuthScreenProps) {
   const hasSidePanel = !hideSidePanel
   const containerClass = hasSidePanel
-    ? 'mx-auto flex min-h-screen max-w-6xl flex-col gap-10 px-4 py-12 sm:px-8 lg:flex-row lg:items-stretch'
-    : 'mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-10 px-4 py-12 sm:px-8'
+    ? 'mx-auto flex min-h-[var(--cc-viewport-height)] max-w-6xl flex-col gap-10 px-4 py-12 sm:px-8 lg:flex-row lg:items-stretch'
+    : 'mx-auto flex min-h-[var(--cc-viewport-height)] max-w-xl flex-col justify-center gap-10 px-4 py-12 sm:px-8'
   const outerClass = useWallpaper
-    ? 'relative min-h-screen overflow-hidden'
-    : 'min-h-screen bg-gradient-to-br from-white via-[#fff4f3] to-[#eef6ff]'
+    ? 'relative isolate min-h-[var(--cc-viewport-height)]'
+    : 'min-h-[var(--cc-viewport-height)] bg-gradient-to-br from-white via-[#fff4f3] to-[#eef6ff]'
 
   return (
     <div className={outerClass}>
       {useWallpaper ? (
         <>
           <BackgroundVideo fixed />
-          <div className="absolute inset-0 bg-slate-950/50" aria-hidden="true" />
+          <div className="fixed inset-0 z-[1] bg-slate-950/50 pointer-events-none" aria-hidden="true" />
         </>
       ) : null}
       <div className={`${useWallpaper ? 'relative z-10' : ''} ${containerClass}`}>
