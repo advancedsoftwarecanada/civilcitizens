@@ -13,6 +13,7 @@ import AppFrame from './_components/AppFrame'
 import NotificationTapRouter from './_components/NotificationTapRouter'
 import NativeViewportInsets from './_components/NativeViewportInsets'
 import NativeKeyboardUi from './_components/NativeKeyboardUi'
+import PushRegistrationSync from './_components/PushRegistrationSync'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
 import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
@@ -116,6 +117,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <LaunchOverlayCleanup />
           <NativeViewportInsets />
           <NativeKeyboardUi />
+          <PushRegistrationSync />
           <Suspense fallback={null}>
             <NotificationTapRouter />
           </Suspense>
