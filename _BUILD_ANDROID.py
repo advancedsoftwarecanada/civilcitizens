@@ -22,6 +22,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent
+MOBILE_SHELL_DIR = REPO_ROOT / "builds" / "mobile" / "capacitor"
 ANDROID_PROJECT_DIR = REPO_ROOT / "builds" / "mobile" / "capacitor" / "android"
 ANDROID_OUTPUT_APK = ANDROID_PROJECT_DIR / "app" / "build" / "outputs" / "apk" / "release" / "app-release.apk"
 ANDROID_OUTPUT_AAB = ANDROID_PROJECT_DIR / "app" / "build" / "outputs" / "bundle" / "release" / "app-release.aab"
@@ -78,6 +79,10 @@ def main() -> int:
         print(f"Error: missing Android project at {ANDROID_PROJECT_DIR}", file=sys.stderr)
         return 2
 
+    if not MOBILE_SHELL_DIR.is_dir():
+        print(f"Error: missing mobile shell at {MOBILE_SHELL_DIR}", file=sys.stderr)
+        return 2
+
     if not ANDROID_STUDIO_JAVA.is_dir():
         print(f"Error: missing Android Studio Java runtime at {ANDROID_STUDIO_JAVA}", file=sys.stderr)
         return 2
@@ -103,6 +108,7 @@ def main() -> int:
 
     print(f"Using Android version code {version_code} from {version_source}")
 
+    _run(["pnpm", "install", "--frozen-lockfile"], cwd=MOBILE_SHELL_DIR, env=env)
     _run(["./gradlew", "clean", "assembleRelease", "bundleRelease"], cwd=ANDROID_PROJECT_DIR, env=env)
 
     if not ANDROID_OUTPUT_APK.is_file():
