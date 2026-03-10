@@ -121,7 +121,7 @@ export default function AppScrollbar() {
       <div className="absolute inset-y-2 right-1 flex w-3 justify-center rounded-full bg-[linear-gradient(180deg,rgba(248,250,252,0.42)_0%,rgba(226,232,240,0.2)_100%)]">
         <button
           type="button"
-          className="pointer-events-auto absolute left-0 right-0 rounded-full border border-white/70 bg-[linear-gradient(180deg,#c01c15_0%,#851812_100%)] shadow-[0_8px_18px_rgba(133,24,18,0.24)] transition hover:brightness-105"
+          className="pointer-events-auto absolute left-0 right-0 rounded-full border border-white/70 bg-[var(--cc-primary)] shadow-[0_8px_18px_rgba(133,24,18,0.24)] transition hover:bg-[var(--cc-primary-700)]"
           style={thumbStyle}
           onPointerDown={(event) => {
             const root = getRootScroller()

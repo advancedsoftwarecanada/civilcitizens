@@ -21,6 +21,10 @@
   --cc-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
   --cc-shadow-lg: 0 26px 60px rgba(15, 23, 42, 0.12);
   --cc-radius: 20px;
+  --cc-modal-safe-top: 1rem;
+  --cc-modal-safe-right: 1rem;
+  --cc-modal-safe-bottom: 1rem;
+  --cc-modal-safe-left: 1rem;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
@@ -63,6 +67,13 @@ html.cc-native-android {
   --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom-offset));
 }
 
+:root {
+  --cc-modal-safe-top: calc(var(--cc-native-safe-top-offset) + 0.75rem);
+  --cc-modal-safe-right: max(1rem, var(--safe-area-right));
+  --cc-modal-safe-bottom: calc(max(var(--safe-area-bottom), var(--cc-runtime-bottom-inset)) + 0.75rem);
+  --cc-modal-safe-left: max(1rem, var(--safe-area-left));
+}
+
 @media (max-width: 1023px) {
   html.cc-native-android [data-mobile-dock='true']::after {
     content: '';
@@ -73,6 +84,26 @@ html.cc-native-android {
     height: var(--mobile-dock-bottom-offset);
     background: #000;
     pointer-events: none;
+  }
+}
+
+.cc-safe-modal-overlay {
+  padding-top: var(--cc-modal-safe-top);
+  padding-right: var(--cc-modal-safe-right);
+  padding-bottom: var(--cc-modal-safe-bottom);
+  padding-left: var(--cc-modal-safe-left);
+}
+
+.cc-safe-modal-panel {
+  max-height: calc(var(--cc-viewport-height) - var(--cc-modal-safe-top) - var(--cc-modal-safe-bottom));
+}
+
+@media (min-width: 640px) {
+  .cc-safe-modal-overlay {
+    padding-top: max(1.5rem, var(--cc-modal-safe-top));
+    padding-right: max(1.5rem, var(--cc-modal-safe-right));
+    padding-bottom: max(1.5rem, var(--cc-modal-safe-bottom));
+    padding-left: max(1.5rem, var(--cc-modal-safe-left));
   }
 }
 

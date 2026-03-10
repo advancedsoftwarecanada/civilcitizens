@@ -153,8 +153,8 @@ export default function IosPwaPushPrompt() {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[1200] flex items-end justify-center bg-slate-950/65 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-6 sm:items-center sm:p-6">
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.35)]" role="dialog" aria-modal="true" aria-label="Enable notifications">
+    <div className="cc-safe-modal-overlay fixed inset-0 z-[1200] flex items-end justify-center bg-slate-950/65 sm:items-center">
+      <div className="cc-safe-modal-panel w-full max-w-md overflow-y-auto rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.35)]" role="dialog" aria-modal="true" aria-label="Enable notifications">
         <p className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
           You can manage notifications in your Account Settings later.
         </p>
