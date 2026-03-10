@@ -220,6 +220,21 @@ html.cc-launch-pending #cc-app-root {
   }
 }
 
+@layer utilities {
+  .min-h-screen {
+    min-height: var(--cc-viewport-height) !important;
+  }
+
+  .h-screen,
+  .h-dvh {
+    height: var(--cc-viewport-height) !important;
+  }
+
+  .max-h-screen {
+    max-height: var(--cc-viewport-height) !important;
+  }
+}
+
 .text-primary-cc {
   color: var(--cc-primary);
 }
