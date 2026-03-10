@@ -76,15 +76,15 @@ export default function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 overflow-y-auto"
+      className="cc-safe-modal-overlay fixed inset-0 z-50 overflow-y-auto"
       onClick={closeOnBackdrop ? onClose : undefined}
       onClickCapture={onCaptureClick}
       data-cc-modal-root
     >
       <div className="absolute inset-0 bg-black/50" />
-      <div className="relative flex min-h-full items-start justify-center p-4 sm:p-6">
+      <div className="relative flex min-h-full items-start justify-center">
         <div
-          className={`relative w-full ${widthClass} rounded-lg bg-white shadow-xl max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col`}
+          className={`cc-safe-modal-panel relative flex w-full ${widthClass} flex-col rounded-lg bg-white shadow-xl`}
           onClick={(e) => e.stopPropagation()}
         >
           {title ? (

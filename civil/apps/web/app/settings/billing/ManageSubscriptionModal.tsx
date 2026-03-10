@@ -77,8 +77,8 @@ export function ManageSubscriptionModal({ open, token, summary, onClose, onUpdat
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 py-8">
-      <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-8 shadow-2xl">
+    <div className="cc-safe-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70">
+      <div className="cc-safe-modal-panel w-full max-w-2xl overflow-y-auto rounded-3xl border border-slate-200 bg-white p-8 shadow-2xl">
         <div className="mb-6 flex items-start justify-between gap-6">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Premium membership</p>
