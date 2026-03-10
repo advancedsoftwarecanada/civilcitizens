@@ -10,6 +10,7 @@
   --cc-native-shell-top-gap: 0px;
   --cc-runtime-top-inset: 0px;
   --cc-runtime-bottom-inset: 0px;
+  --cc-keyboard-inset: 0px;
   --cc-primary: #d52b1e;
   --cc-primary-700: #b0261a;
   --cc-scrollbar-track: rgba(15, 23, 42, 0.09);
@@ -247,6 +248,8 @@ html.cc-launch-pending #cc-app-root {
     overflow-y: scroll;
     overscroll-behavior-y: contain;
     -webkit-overflow-scrolling: touch;
+    scroll-padding-top: calc(var(--cc-native-safe-top-offset) + 1rem);
+    scroll-padding-bottom: calc(max(1rem, var(--safe-area-bottom)) + var(--cc-keyboard-inset));
     scrollbar-width: none;
   }
 
@@ -259,6 +262,14 @@ html.cc-launch-pending #cc-app-root {
   textarea::placeholder {
     color: transparent;
     opacity: 0;
+  }
+
+  input,
+  textarea,
+  select,
+  [contenteditable='true'] {
+    scroll-margin-top: calc(var(--cc-native-safe-top-offset) + 1rem);
+    scroll-margin-bottom: calc(max(1rem, var(--safe-area-bottom)) + var(--cc-keyboard-inset));
   }
 }
 
