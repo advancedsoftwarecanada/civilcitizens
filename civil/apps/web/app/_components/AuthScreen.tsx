@@ -52,7 +52,7 @@ export function AuthScreen({
       {useWallpaper ? (
         <>
           <BackgroundVideo fixed />
-          <div className="fixed inset-0 z-[1] bg-slate-950/50 pointer-events-none" aria-hidden="true" />
+          <div className="fixed inset-0 -z-10 bg-slate-950/50 pointer-events-none" aria-hidden="true" />
         </>
       ) : null}
       <div className={`${useWallpaper ? 'relative z-10' : ''} ${containerClass}`}>

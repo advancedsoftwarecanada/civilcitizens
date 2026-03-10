@@ -20,6 +20,10 @@ export default function ScrollManager() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const scrollToTop = () => {
+      const appRoot = document.getElementById('cc-app-root')
+      if (appRoot) {
+        appRoot.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+      }
       window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
       if (document.documentElement) document.documentElement.scrollTop = 0
       if (document.body) document.body.scrollTop = 0
