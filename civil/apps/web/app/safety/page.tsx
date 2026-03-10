@@ -89,6 +89,13 @@ export default function SafetyPage() {
               violating child safety standards.
             </p>
             <p>
+              To learn more about reporting requirements, visit the{' '}
+              <Link href="/help#child-safety-reporting" className="underline">
+                Help Center
+              </Link>
+              .
+            </p>
+            <p>
               Reports are reviewed by moderators and may result in immediate content removal, account suspension, or
               escalation to authorities where appropriate.
             </p>

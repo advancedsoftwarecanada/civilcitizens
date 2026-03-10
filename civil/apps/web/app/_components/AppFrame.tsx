@@ -9,7 +9,8 @@ import { useInviteViewStore } from '../_lib/inviteViewStore'
 import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 
 const TOP_NAV_HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
-const SIDEBAR_HIDDEN_PATHS = new Set([...TOP_NAV_HIDDEN_PATHS, '/reset', '/terms', '/privacy'])
+const PUBLIC_SHELLLESS_PATHS = new Set(['/reset', '/terms', '/privacy', '/safety', '/help'])
+const SIDEBAR_HIDDEN_PATHS = new Set([...TOP_NAV_HIDDEN_PATHS, ...PUBLIC_SHELLLESS_PATHS])
 
 type AppFrameProps = {
   children: ReactNode
@@ -29,6 +30,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
   const topNavHidden =
     !hasResolvedPathname ||
     TOP_NAV_HIDDEN_PATHS.has(resolvedPathname) ||
+    PUBLIC_SHELLLESS_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify') ||
     hideForInstall ||

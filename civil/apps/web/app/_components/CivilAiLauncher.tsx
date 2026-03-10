@@ -309,6 +309,10 @@ export default function CivilAiLauncher() {
   const sendLoadingRef = useRef(false)
   const launcherHiddenForRoute =
     CIVIL_AI_HIDDEN_PATHS.has(resolvedPathname) ||
+    resolvedPathname === '/privacy' ||
+    resolvedPathname === '/terms' ||
+    resolvedPathname === '/safety' ||
+    resolvedPathname === '/help' ||
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify')
   const hasCompleteAccount = Boolean(me && hasHomeCommunity(me) && hasDeclaredCivilStatus(me))
