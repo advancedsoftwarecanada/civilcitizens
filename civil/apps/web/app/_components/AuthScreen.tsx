@@ -41,11 +41,11 @@ export function AuthScreen({
 }: AuthScreenProps) {
   const hasSidePanel = !hideSidePanel
   const containerClass = hasSidePanel
-    ? 'mx-auto flex min-h-[var(--cc-viewport-height)] max-w-6xl flex-col gap-10 px-4 py-12 sm:px-8 lg:flex-row lg:items-stretch'
-    : 'mx-auto flex min-h-[var(--cc-viewport-height)] max-w-xl flex-col gap-10 px-4 py-6 sm:justify-center sm:px-8 sm:py-12'
+    ? 'cc-auth-screen__container mx-auto flex min-h-[var(--cc-viewport-height)] max-w-6xl flex-col gap-10 px-4 py-12 sm:px-8 lg:flex-row lg:items-stretch'
+    : 'cc-auth-screen__container mx-auto flex min-h-[var(--cc-viewport-height)] max-w-xl flex-col justify-center gap-10 px-4 py-12 sm:px-8'
   const outerClass = useWallpaper
-    ? 'relative isolate min-h-[var(--cc-viewport-height)]'
-    : 'min-h-[var(--cc-viewport-height)] bg-gradient-to-br from-white via-[#fff4f3] to-[#eef6ff]'
+    ? 'cc-auth-screen relative isolate min-h-[var(--cc-viewport-height)]'
+    : 'cc-auth-screen min-h-[var(--cc-viewport-height)] bg-gradient-to-br from-white via-[#fff4f3] to-[#eef6ff]'
 
   return (
     <div className={outerClass}>

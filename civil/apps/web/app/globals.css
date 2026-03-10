@@ -76,6 +76,18 @@ html.cc-native-android {
 }
 
 @media (max-width: 1023px) {
+  html.cc-native-android body::after {
+    content: '';
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--mobile-dock-bottom-offset);
+    background: #000;
+    pointer-events: none;
+    z-index: 35;
+  }
+
   html.cc-native-android [data-mobile-dock='true']::after {
     content: '';
     position: absolute;
@@ -97,6 +109,14 @@ html.cc-native-android {
 
 .cc-safe-modal-panel {
   max-height: calc(var(--cc-viewport-height) - var(--cc-modal-safe-top) - var(--cc-modal-safe-bottom));
+}
+
+@media (max-width: 639px) {
+  html.cc-keyboard-open .cc-auth-screen .cc-auth-screen__container {
+    justify-content: flex-start;
+    padding-top: calc(var(--cc-native-safe-top-offset) + 1rem);
+    padding-bottom: calc(max(1rem, var(--safe-area-bottom)) + 0.75rem);
+  }
 }
 
 @media (min-width: 640px) {
