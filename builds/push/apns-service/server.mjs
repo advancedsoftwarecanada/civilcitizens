@@ -3,6 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApnsClientFromEnv } from './apns.mjs'
+import { createFcmClientFromEnv } from './fcm.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -67,6 +68,11 @@ function normalizeSound(value) {
   return trimmed
 }
 
+function normalizePlatform(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  return normalized === 'android' ? 'android' : 'ios'
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
@@ -110,6 +116,7 @@ const server = http.createServer(async (req, res) => {
 
       const deviceToken = typeof body.deviceToken === 'string' ? body.deviceToken.trim() : ''
       if (!deviceToken) return sendJson(res, 400, { error: 'missing_deviceToken' })
+      const platform = normalizePlatform(body.platform)
 
       const title = typeof body.title === 'string' ? body.title : 'Civil'
       const message = typeof body.message === 'string' ? body.message : 'Test notification'
@@ -125,9 +132,9 @@ const server = http.createServer(async (req, res) => {
         badge = Math.max(0, Math.floor(Number(body.badge)))
       }
 
-      const apns = await createApnsClientFromEnv()
-      const result = await apns.send({ deviceToken, title, body: message, badge, data, sound })
-      return sendJson(res, 200, { ok: true, result })
+      const client = platform === 'android' ? await createFcmClientFromEnv() : await createApnsClientFromEnv()
+      const result = await client.send({ deviceToken, title, body: message, badge, data, sound })
+      return sendJson(res, 200, { ok: true, platform, result })
     }
 
     return notFound(res)
