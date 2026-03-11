@@ -136,15 +136,15 @@ export default function MobileDock() {
   const router = useRouter()
   const cachedViewer = useViewerStore((s) => s.me)
   const familyView = useViewerStore((s) => s.familyView)
-  const sidebarNavItems = useMemo(() => getSidebarNavItems(familyView), [familyView])
+  const [resolvedViewer, setResolvedViewer] = useState<MeResponse | null>(null)
+  const effectiveViewer = resolvedViewer ?? cachedViewer
+  const sidebarNavItems = useMemo(() => getSidebarNavItems(familyView, effectiveViewer), [effectiveViewer, familyView])
   const navButtons = useMemo(() => (familyView ? FAMILY_NAV_BUTTONS : DEFAULT_NAV_BUTTONS), [familyView])
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuMounted, setMenuMounted] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [moreMounted, setMoreMounted] = useState(false)
   const isOrganizationsDirectory = pathname === '/organizations/directory'
-  const [resolvedViewer, setResolvedViewer] = useState<MeResponse | null>(null)
-  const effectiveViewer = resolvedViewer ?? cachedViewer
   const isFamilyLockedSession = Boolean(familyView) || effectiveViewer?.accountType === 'family_member'
   const familyCardIdentity = getFamilyLockedCardIdentity(effectiveViewer, familyView)
   const [hydrated, setHydrated] = useState(false)
@@ -467,7 +467,15 @@ export default function MobileDock() {
       pathname?.startsWith('/friends') || Boolean(pathname?.match(/^\/u\/[^/]+\/friends(?:\/|$)/))
 
     if (isFriendsDirectoryRoute) {
-      return <RightRail hideCommunities showPendingFriendRequests sticky={false} />
+      return (
+        <div className="space-y-4">
+          <MessagesNavBlock
+            active="friends"
+            visibleItems={hasFamilyModeEnabled(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+          />
+          <RightRail hideCommunities showPendingFriendRequests sticky={false} />
+        </div>
+      )
     }
     if (pathname?.startsWith('/network')) {
       return pathname === '/network'
