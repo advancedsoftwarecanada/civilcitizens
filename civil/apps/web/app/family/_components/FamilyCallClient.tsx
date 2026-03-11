@@ -174,7 +174,6 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
   const autoJoinStartedRef = useRef(false)
   const mediaPreferenceRef = useRef<{ micEnabled: boolean; cameraEnabled: boolean } | null>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const rtcSocketRef = useRef<WebSocket | null>(null)
   const rtcLocalPeerIdRef = useRef<string | null>(null)
@@ -259,6 +258,14 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
     (stream: MediaStream | null) => {
       if (!localVideoRef.current) return
       attachStreamToMediaElement(localVideoRef.current, cameraEnabled ? stream : null, { muted: true })
+    },
+    [attachStreamToMediaElement, cameraEnabled],
+  )
+
+  const handleLocalVideoRef = useCallback(
+    (node: HTMLVideoElement | null) => {
+      localVideoRef.current = node
+      attachStreamToMediaElement(node, cameraEnabled ? localStreamRef.current : null, { muted: true })
     },
     [attachStreamToMediaElement, cameraEnabled],
   )
@@ -753,10 +760,6 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
   }, [cameraEnabled, micEnabled])
 
   useEffect(() => {
-    attachStreamToMediaElement(remoteVideoRef.current, rtcPeers[0] ? remoteStreams[rtcPeers[0].peerId] ?? null : null)
-  }, [attachStreamToMediaElement, remoteStreams, rtcPeers])
-
-  useEffect(() => {
     if (!activeCall) return
     if (status !== 'ready') return
     if (autoJoinStartedRef.current) return
@@ -881,7 +884,9 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
         <main className="relative flex h-full w-full items-center justify-center px-4 pb-36 pt-24 sm:px-8">
           <div className="relative flex h-full w-full max-w-6xl items-center justify-center overflow-hidden rounded-[2rem] border border-white/10 bg-slate-950/35 shadow-[0_30px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
             <video
-              ref={remoteVideoRef}
+              ref={(node) => {
+                attachStreamToMediaElement(node, primaryRemoteStream, { muted: false })
+              }}
               className={clsx(
                 'absolute inset-0 h-full w-full object-cover',
                 primaryRemoteHasVideo ? 'opacity-100' : 'pointer-events-none opacity-0',
@@ -889,6 +894,16 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
               autoPlay
               playsInline
             />
+
+            {primaryRemoteStream && !primaryRemoteHasVideo ? (
+              <audio
+                autoPlay
+                ref={(node) => {
+                  attachStreamToMediaElement(node, primaryRemoteStream, { muted: false })
+                }}
+                className="hidden"
+              />
+            ) : null}
 
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_34%),linear-gradient(180deg,rgba(15,23,42,0.08),rgba(2,6,23,0.5))]" />
 
@@ -909,7 +924,7 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
 
             {localPreviewVisible ? (
               <div className="absolute bottom-5 right-5 z-20 overflow-hidden rounded-[1.4rem] border border-white/15 bg-slate-900/65 shadow-[0_18px_45px_rgba(0,0,0,0.38)] backdrop-blur sm:bottom-6 sm:right-6">
-                <video ref={localVideoRef} className="h-28 w-24 object-cover sm:h-36 sm:w-28" autoPlay muted playsInline />
+                <video ref={handleLocalVideoRef} className="h-28 w-24 object-cover sm:h-36 sm:w-28" autoPlay muted playsInline />
               </div>
             ) : null}
           </div>
