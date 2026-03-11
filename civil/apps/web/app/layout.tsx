@@ -17,6 +17,7 @@ import NativeKeyboardUi from './_components/NativeKeyboardUi'
 import PushRegistrationSync from './_components/PushRegistrationSync'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
+import IncomingFamilyCallOverlay from './_components/IncomingFamilyCallOverlay'
 import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
 import PlaceholderSanitizer from './_components/PlaceholderSanitizer'
 import AppScrollbar from './_components/AppScrollbar'
@@ -131,6 +132,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           </Suspense>
           <IosOpenInAppBanner />
           <AppFrame modal={modal}>{children}</AppFrame>
+          <IncomingFamilyCallOverlay />
           <IncomingMessageCallOverlay />
           <AppScrollbar />
           <MobileDockVisibility />

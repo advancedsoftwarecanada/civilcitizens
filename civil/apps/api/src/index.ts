@@ -3541,6 +3541,66 @@ async function resolveFamilyFeedTargetMember(
   return loadFamilyMemberAuthViewerById(memberId, authContext.userId)
 }
 
+function resolveFamilyProfileAccess(
+  authContext: ViewerAuthContext | null,
+  targetMember: FamilyAuthMember,
+): 'self' | 'family' | 'friend' | null {
+  if (!authContext) return null
+
+  if (authContext.actor === 'user') {
+    return authContext.userId === targetMember.parentId ? 'family' : null
+  }
+
+  if (authContext.member.id === targetMember.id) return 'self'
+  if (authContext.member.parentId === targetMember.parentId) return 'family'
+
+  const viewerFriendships = getStoredFamilyFriendships(authContext.member.parent.communityMeta)
+  if (hasAcceptedFamilyFriendship(viewerFriendships, authContext.member.id, targetMember.id)) {
+    return 'friend'
+  }
+
+  return null
+}
+
+async function resolveReadableFamilyFeedTargetMember(
+  authContext: ViewerAuthContext,
+  requestedMemberId?: string | null,
+) {
+  const memberId = requestedMemberId?.trim()
+  if (authContext.actor === 'family_member') {
+    if (!memberId || memberId === authContext.member.id) return authContext.member
+    const targetMember = await loadFamilyMemberAuthViewerById(memberId)
+    if (!targetMember) return null
+    return resolveFamilyProfileAccess(authContext, targetMember) ? targetMember : null
+  }
+
+  if (!memberId) return null
+  return loadFamilyMemberAuthViewerById(memberId, authContext.userId)
+}
+
+function buildFamilyProfileRelationshipPayload(
+  authContext: ViewerAuthContext | null,
+  access: 'self' | 'family' | 'friend' | null,
+) {
+  const friendshipStatus =
+    authContext?.actor === 'family_member'
+      ? access === 'self'
+        ? 'self'
+        : access === 'friend'
+          ? 'friends'
+          : 'none'
+      : 'none'
+
+  return {
+    friendshipStatus,
+    friendshipId: undefined,
+    friendshipSince: null,
+    connectionStatus: friendshipStatus === 'self' ? 'self' : 'none',
+    connectionId: undefined,
+    connectionSince: null,
+  }
+}
+
 function normalizeFamilyMemberDraftSummary(draft: { id: string; createdAt: Date; updatedAt: Date }) {
   return {
     id: draft.id,
@@ -5463,7 +5523,11 @@ async function resolveStreamUserId(req: FastifyRequest): Promise<string | null> 
   const tokenParam = typeof query.token === 'string' && query.token.trim().length > 0 ? query.token.trim() : undefined
   if (!tokenParam) return null
   try {
-    const payload = await app.jwt.verify<{ sub?: string }>(tokenParam)
+    const payload = await app.jwt.verify<AuthJwtPayload>(tokenParam)
+    if (payload?.actor === 'family_member' && typeof payload.sub === 'string' && typeof payload.parentId === 'string') {
+      const member = await loadFamilyMemberAuthViewerById(payload.sub, payload.parentId)
+      return member?.parentId ?? null
+    }
     if (payload && typeof payload.sub === 'string' && payload.sub) {
       const user = await loadActiveAuthUserById(payload.sub)
       return user?.id ?? null
@@ -6433,6 +6497,161 @@ async function usersAreAcceptedConnections(userId: string, targetUserId: string)
 async function loadFriendIdSet(userId: string): Promise<Set<string>> {
   const ids = await loadAcceptedFriendIds(userId)
   return new Set(ids)
+}
+
+type FamilyCallRecord = {
+  id: string
+  memberId: string
+  parentId: string
+  roomId: string
+  mode: 'audio' | 'video'
+  status: 'ringing' | 'active' | 'ended'
+  initiatorActor: 'parent' | 'child'
+  createdAt: string
+  updatedAt: string
+  startedAt: string | null
+  lastJoinedAt: string | null
+  endedAt: string | null
+}
+
+const FAMILY_CALL_KEY_PREFIX = 'family:call:'
+const FAMILY_CALL_MEMBER_KEY_PREFIX = 'family:call:member:'
+const FAMILY_CALL_TTL_MS = 1000 * 60 * 60 * 12
+
+function buildFamilyCallKey(callId: string) {
+  return `${FAMILY_CALL_KEY_PREFIX}${callId}`
+}
+
+function buildFamilyCallMemberKey(memberId: string) {
+  return `${FAMILY_CALL_MEMBER_KEY_PREFIX}${memberId}`
+}
+
+function isFamilyCallRecord(value: unknown): value is FamilyCallRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.id === 'string' &&
+    typeof record.memberId === 'string' &&
+    typeof record.parentId === 'string' &&
+    typeof record.roomId === 'string' &&
+    (record.mode === 'audio' || record.mode === 'video') &&
+    (record.status === 'ringing' || record.status === 'active' || record.status === 'ended') &&
+    (record.initiatorActor === 'parent' || record.initiatorActor === 'child') &&
+    typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string'
+  )
+}
+
+async function loadFamilyCallRecord(callId: string) {
+  const raw = await redis.get(buildFamilyCallKey(callId))
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return isFamilyCallRecord(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+async function writeFamilyCallRecord(record: FamilyCallRecord) {
+  await redis.set(buildFamilyCallKey(record.id), JSON.stringify(record), 'PX', FAMILY_CALL_TTL_MS)
+  if (record.status === 'ended') {
+    const memberKey = buildFamilyCallMemberKey(record.memberId)
+    const current = await redis.get(memberKey)
+    if (current === record.id) {
+      await redis.del(memberKey)
+    }
+    return
+  }
+  await redis.set(buildFamilyCallMemberKey(record.memberId), record.id, 'PX', FAMILY_CALL_TTL_MS)
+}
+
+async function loadFamilyCallForMember(memberId: string) {
+  const callId = await redis.get(buildFamilyCallMemberKey(memberId))
+  if (!callId) return null
+  const record = await loadFamilyCallRecord(callId)
+  if (!record || record.status === 'ended') {
+    await redis.del(buildFamilyCallMemberKey(memberId))
+    return null
+  }
+  return record
+}
+
+function buildFamilyRtcUserId(memberId: string) {
+  return `family-member:${memberId}`
+}
+
+function formatFamilyCallParticipantUser(user: { id: string; handle: string; name: string | null; avatarUrl: string | null; coverUrl?: string | null; premiumStatus?: PremiumStatus | null }) {
+  return {
+    id: user.id,
+    handle: user.handle,
+    name: user.name,
+    avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+    coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
+    isPremium: isPremium(user.premiumStatus ?? null),
+    isVerified: false,
+  }
+}
+
+function formatFamilyCallSummary(args: {
+  call: FamilyCallRecord
+  member: FamilyAuthMember
+  viewerRole: 'parent' | 'child'
+}) {
+  const memberSummary = normalizeFamilyMemberSummary(args.member)
+  const parentUser = formatFriendUser(args.member.parent)
+  const childUser = formatNormalizedFamilyMemberThreadUser(memberSummary)
+  const initiator = args.call.initiatorActor === 'parent' ? parentUser : childUser
+  const counterpart = args.viewerRole === 'parent' ? childUser : parentUser
+  const viewerRtcUserId = args.viewerRole === 'parent' ? args.member.parentId : buildFamilyRtcUserId(args.member.id)
+  return {
+    member: {
+      id: memberSummary.id,
+      displayName: memberSummary.displayName,
+      username: memberSummary.username,
+      avatarUrl: memberSummary.avatarUrl,
+      relationshipLabel: memberSummary.relationshipLabel,
+      modeBand: memberSummary.modeBand,
+      modeLabel: memberSummary.modeLabel,
+    },
+    parent: parentUser,
+    viewerRole: args.viewerRole,
+    counterpart,
+    call: {
+      id: args.call.id,
+      memberId: args.call.memberId,
+      parentId: args.call.parentId,
+      roomId: args.call.roomId,
+      mode: args.call.mode,
+      status: args.call.status,
+      createdAt: args.call.createdAt,
+      updatedAt: args.call.updatedAt,
+      startedAt: args.call.startedAt,
+      lastJoinedAt: args.call.lastJoinedAt,
+      endedAt: args.call.endedAt,
+      initiatorActor: args.call.initiatorActor,
+      initiator,
+      isInitiator: (args.call.initiatorActor === 'parent' && args.viewerRole === 'parent') ||
+        (args.call.initiatorActor === 'child' && args.viewerRole === 'child'),
+      viewerRtcUserId,
+    },
+  }
+}
+
+async function loadFamilyCallContext(authContext: ViewerAuthContext, memberId: string) {
+  const targetMember =
+    authContext.actor === 'family_member'
+      ? authContext.member.id === memberId
+        ? authContext.member
+        : null
+      : await loadFamilyMemberAuthViewerById(memberId, authContext.userId)
+
+  if (!targetMember) return null
+
+  return {
+    member: targetMember,
+    viewerRole: authContext.actor === 'family_member' ? 'child' as const : 'parent' as const,
+  }
 }
 
 async function loadThreadForUser(threadId: string, userId: string) {
@@ -13581,7 +13800,7 @@ app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) =
   const query = z.object({ memberId: z.string().trim().min(1).optional() }).safeParse(req.query ?? {})
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-  const targetMember = await resolveFamilyFeedTargetMember(authContext, query.data.memberId)
+  const targetMember = await resolveReadableFamilyFeedTargetMember(authContext, query.data.memberId)
   if (!targetMember) {
     return reply.code(authContext.actor === 'user' ? 400 : 404).send({
       error: authContext.actor === 'user' ? 'family_member_required' : 'family_member_not_found',
@@ -17347,6 +17566,184 @@ app.post('/messages/calls/:id/end', async (req: FastifyRequest, reply: FastifyRe
       reason: 'hangup',
     })
     return reply.send({ success: true })
+  }),
+)
+
+app.get('/family/calls/member/:memberId', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ memberId: z.string().trim().min(1) }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const context = await loadFamilyCallContext(authContext, params.data.memberId)
+    if (!context) return reply.code(404).send({ error: 'family_member_not_found' })
+
+    const call = await loadFamilyCallForMember(context.member.id)
+    return reply.send({
+      member: normalizeFamilyMemberSummary(context.member),
+      parent: formatFriendUser(context.member.parent),
+      viewerRole: context.viewerRole,
+      call: call ? formatFamilyCallSummary({ call, member: context.member, viewerRole: context.viewerRole }).call : null,
+    })
+  }),
+)
+
+app.post('/family/calls/start', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+    const parse = z.object({ memberId: z.string().trim().min(1), mode: z.enum(['audio', 'video']) }).safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const context = await loadFamilyCallContext(authContext, parse.data.memberId)
+    if (!context) return reply.code(404).send({ error: 'family_member_not_found' })
+
+    if (parse.data.mode === 'audio' && !context.member.allowChildAudioCalls) {
+      return reply.code(403).send({ error: 'audio_calls_not_allowed' })
+    }
+    if (parse.data.mode === 'video' && !context.member.allowChildVideoCalls) {
+      return reply.code(403).send({ error: 'video_calls_not_allowed' })
+    }
+
+    const existing = await loadFamilyCallForMember(context.member.id)
+    if (existing) {
+      return reply.send(formatFamilyCallSummary({ call: existing, member: context.member, viewerRole: context.viewerRole }))
+    }
+
+    const nowIso = new Date().toISOString()
+    const call: FamilyCallRecord = {
+      id: randomUUID(),
+      memberId: context.member.id,
+      parentId: context.member.parentId,
+      roomId: `family-call-${randomUUID()}`,
+      mode: parse.data.mode,
+      status: 'ringing',
+      initiatorActor: context.viewerRole,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      startedAt: null,
+      lastJoinedAt: null,
+      endedAt: null,
+    }
+    await writeFamilyCallRecord(call)
+
+    const summary = formatFamilyCallSummary({ call, member: context.member, viewerRole: context.viewerRole })
+    await dispatchRealtimeEvent(context.member.parentId, {
+      type: 'family.call.invited',
+      data: {
+        memberId: context.member.id,
+        targetRole: context.viewerRole === 'parent' ? 'child' : 'parent',
+        ...summary,
+      },
+    })
+
+    return reply.code(201).send(summary)
+  }),
+)
+
+app.post('/family/calls/:id/rtc/session', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().trim().min(1) }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+    const body = MessageCallRtcSessionInput.safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+    const existing = await loadFamilyCallRecord(params.data.id)
+    if (!existing) return reply.code(404).send({ error: 'family_call_not_found' })
+    if (existing.status === 'ended') return reply.code(410).send({ error: 'call_ended' })
+
+    const context = await loadFamilyCallContext(authContext, existing.memberId)
+    if (!context || context.member.parentId !== existing.parentId) {
+      return reply.code(404).send({ error: 'family_call_not_found' })
+    }
+
+    const nowIso = new Date().toISOString()
+    const shouldActivateCall = existing.status === 'active' || existing.initiatorActor !== context.viewerRole
+    const updatedCall: FamilyCallRecord = {
+      ...existing,
+      status: shouldActivateCall ? 'active' : existing.status,
+      updatedAt: nowIso,
+      startedAt: shouldActivateCall ? (existing.startedAt ?? nowIso) : existing.startedAt,
+      lastJoinedAt: nowIso,
+    }
+    await writeFamilyCallRecord(updatedCall)
+
+    const rtcUserId = context.viewerRole === 'parent' ? context.member.parentId : buildFamilyRtcUserId(context.member.id)
+    const defaultDisplayName =
+      context.viewerRole === 'parent'
+        ? context.member.parent.name?.trim() || context.member.parent.handle
+        : normalizeFamilyMemberSummary(context.member).displayName
+
+    const rtc = await issueMeetingRtcSession({
+      roomId: updatedCall.roomId,
+      userId: rtcUserId,
+      role: 'participant',
+      displayName: body.data.displayName?.trim() || defaultDisplayName,
+      deviceId: body.data.deviceId ?? null,
+      capabilities: body.data.capabilities ?? {
+        audio: updatedCall.mode === 'audio' || updatedCall.mode === 'video',
+        video: updatedCall.mode === 'video',
+      },
+    })
+    if ('error' in rtc) return reply.code(502).send({ error: rtc.error })
+
+    const summary = formatFamilyCallSummary({ call: updatedCall, member: context.member, viewerRole: context.viewerRole })
+    await dispatchRealtimeEvent(context.member.parentId, {
+      type: 'family.call.updated',
+      data: {
+        memberId: context.member.id,
+        targetRole: null,
+        ...summary,
+      },
+    })
+
+    return reply.send({
+      ...rtc.session,
+      member: summary.member,
+      parent: summary.parent,
+      viewerRole: summary.viewerRole,
+      counterpart: summary.counterpart,
+      call: summary.call,
+    })
+  }),
+)
+
+app.post('/family/calls/:id/end', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+    const params = z.object({ id: z.string().trim().min(1) }).safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const existing = await loadFamilyCallRecord(params.data.id)
+    if (!existing) return reply.code(404).send({ error: 'family_call_not_found' })
+
+    const context = await loadFamilyCallContext(authContext, existing.memberId)
+    if (!context || context.member.parentId !== existing.parentId) {
+      return reply.code(404).send({ error: 'family_call_not_found' })
+    }
+
+    const endedCall: FamilyCallRecord = {
+      ...existing,
+      status: 'ended',
+      updatedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+    }
+    await writeFamilyCallRecord(endedCall)
+
+    await dispatchRealtimeEvent(context.member.parentId, {
+      type: 'family.call.ended',
+      data: { callId: endedCall.id, memberId: context.member.id },
+    })
+
+    return reply.send(formatFamilyCallSummary({ call: endedCall, member: context.member, viewerRole: context.viewerRole }))
   }),
 )
 
