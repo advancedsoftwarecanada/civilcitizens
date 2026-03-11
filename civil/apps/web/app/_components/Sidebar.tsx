@@ -20,19 +20,23 @@ import CivilCard from './CivilCard'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
-import { hasFamilyModeEnabled, type MeResponse } from '../_lib/me'
+import { hasFamilyModeEnabled, type FamilyModeSummary, type MeResponse } from '../_lib/me'
 import type { FamilyViewState } from '../_lib/familyView'
 
+type SidebarViewer = {
+  name?: string | null
+  handle?: string
+  avatarUrl?: string | null
+  coverUrl?: string | null
+  email?: string | null
+  isPremium?: boolean
+  isVerified?: boolean
+  accountType?: MeResponse['accountType']
+  familyMode?: FamilyModeSummary | null
+}
+
 type SidebarProps = {
-  me?: {
-    name?: string | null
-    handle?: string
-    avatarUrl?: string | null
-    coverUrl?: string | null
-    email?: string | null
-    isPremium?: boolean
-    isVerified?: boolean
-  }
+  me?: SidebarViewer
   active?: 'home' | 'chambers' | 'communities' | 'community' | string
 }
 
@@ -68,14 +72,17 @@ const FAMILY_CHILD_NAV: SidebarNavItem[] = [
 
 export function getSidebarNavItems(
   familyView: FamilyViewState | null | undefined,
-  me?: MeResponse | null,
+  me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
 ): SidebarNavItem[] {
   if (!familyView) {
     if (me?.accountType === 'user' && hasFamilyModeEnabled(me)) {
+      const [homeItem, messagesItem, friendsItem] = PRIMARY_NAV
+      if (!homeItem || !messagesItem || !friendsItem) return PRIMARY_NAV
+
       return [
-        PRIMARY_NAV[0],
-        PRIMARY_NAV[1],
-        PRIMARY_NAV[2],
+        homeItem,
+        messagesItem,
+        friendsItem,
         { key: 'family', label: 'Family', href: '/family', icon: HiOutlineUsers },
         ...PRIMARY_NAV.slice(3),
       ]

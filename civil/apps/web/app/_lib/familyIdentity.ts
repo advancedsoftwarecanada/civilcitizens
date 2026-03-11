@@ -1,6 +1,8 @@
 import type { FamilyViewBand, FamilyViewState } from './familyView'
 import type { MeResponse } from './me'
 
+type FamilyIdentityViewer = Pick<MeResponse, 'name' | 'avatarUrl' | 'coverUrl'>
+
 function toDataUrl(svg: string) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
@@ -8,8 +10,10 @@ function toDataUrl(svg: string) {
 function initialsFromName(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   if (parts.length === 0) return 'C'
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
-  return `${parts[0]?.charAt(0) ?? ''}${parts[parts.length - 1]?.charAt(0) ?? ''}`.toUpperCase()
+  const firstPart = parts[0]
+  const lastPart = parts[parts.length - 1]
+  if (parts.length === 1 && firstPart) return firstPart.slice(0, 2).toUpperCase()
+  return `${firstPart?.charAt(0) ?? ''}${lastPart?.charAt(0) ?? ''}`.toUpperCase()
 }
 
 function paletteForBand(modeBand: FamilyViewBand) {
@@ -57,7 +61,7 @@ export function buildFamilyCoverDataUrl(name: string, modeBand: FamilyViewBand) 
   `)
 }
 
-export function getFamilyLockedCardIdentity(viewer: MeResponse | null | undefined, familyView: FamilyViewState | null | undefined) {
+export function getFamilyLockedCardIdentity(viewer: FamilyIdentityViewer | null | undefined, familyView: FamilyViewState | null | undefined) {
   if (familyView) {
     return {
       name: viewer?.name ?? familyView.displayName,
