@@ -39,6 +39,10 @@ import {
 const THREAD_PAGE_LIMIT = 20
 const MESSAGE_PAGE_LIMIT = 20
 
+function isFamilyConversationThreadId(threadId: string) {
+  return threadId.startsWith('family-parent-') || threadId.startsWith('family-member-')
+}
+
 type ThreadUser = {
   id: string
   handle: string
@@ -1220,10 +1224,11 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const markThreadRead = useCallback(
     async (threadId: string, messageId?: string) => {
       try {
+        const payload = isFamilyConversationThreadId(threadId) || !messageId ? {} : { messageId }
         await authedFetch(`/messages/threads/${threadId}/read`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(messageId ? { messageId } : {}),
+          body: JSON.stringify(payload),
         })
         window.dispatchEvent(new CustomEvent('message.read'))
       } catch (err) {
@@ -2914,7 +2919,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             </p>
           </div>
           {activeThreadSupportsCalling ? (
-            <div className="hidden shrink-0 items-center gap-2 sm:flex">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               {activeThreadCall ? (
                 <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 sm:inline-flex">
                   Active call
@@ -2982,42 +2987,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             </details>
           ) : null}
         </header>
-        {activeThreadSupportsCalling ? (
-          <div className="flex items-center justify-end gap-2 border-b border-slate-100 pb-3 pt-2 sm:hidden">
-            <button
-              type="button"
-              onClick={() => {
-                void startThreadCall('audio')
-              }}
-              disabled={callActionMode !== null}
-              className={clsx(
-                'inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:opacity-50',
-                isFamilyCallBlocked('audio')
-                  ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-              )}
-              title={activeThreadCall ? 'Join audio call' : 'Start audio call'}
-            >
-              <HiOutlinePhone className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void startThreadCall('video')
-              }}
-              disabled={callActionMode !== null}
-              className={clsx(
-                'inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:opacity-50',
-                isFamilyCallBlocked('video')
-                  ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-              )}
-              title={activeThreadCall ? 'Join video call' : 'Start video call'}
-            >
-              <HiOutlineVideoCamera className="h-5 w-5" />
-            </button>
-          </div>
-        ) : null}
         <div className="mt-4 min-h-0 flex-1 overflow-hidden">
           <div className="flex h-full min-h-0 flex-col">
             {activeThreadHasMore ? (
