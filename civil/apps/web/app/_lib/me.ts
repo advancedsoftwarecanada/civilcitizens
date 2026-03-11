@@ -83,6 +83,6 @@ export function isPremiumMember(me: MeResponse | null | undefined): boolean {
   return Boolean(me?.isPremium)
 }
 
-export function hasFamilyModeEnabled(me: MeResponse | null | undefined): boolean {
+export function hasFamilyModeEnabled(me: Pick<MeResponse, 'familyMode'> | null | undefined): boolean {
   return Boolean(me?.familyMode?.enabled)
 }

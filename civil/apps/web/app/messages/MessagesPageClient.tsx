@@ -531,20 +531,21 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
         pushToast(payload?.error ?? 'Unable to send this message right now.', 'error')
         return
       }
+      const message = payload.message
 
       setComposerText('')
       setMessagesByThreadId((prev) => ({
         ...prev,
-        [activeThread.id]: sortMessagesChronologically([...(prev[activeThread.id] ?? []), payload.message as MessagePayload]),
+        [activeThread.id]: sortMessagesChronologically([...(prev[activeThread.id] ?? []), message]),
       }))
       setThreads((prev) => {
         const nextThread = prev.find((thread) => thread.id === activeThread.id)
         if (!nextThread) return prev
         const updatedThread: ThreadSummary = {
           ...nextThread,
-          lastMessage: payload.message,
-          lastMessageAt: payload.message.createdAt,
-          updatedAt: payload.message.createdAt,
+          lastMessage: message,
+          lastMessageAt: message.createdAt,
+          updatedAt: message.createdAt,
           unread: false,
           unreadCount: 0,
         }
