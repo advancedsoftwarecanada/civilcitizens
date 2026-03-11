@@ -275,6 +275,8 @@ export default function NotificationsClient() {
           pushToast(action === 'accept' ? 'Guest speaker invite accepted.' : 'Guest speaker invite declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'event_sponsor_invite') {
           pushToast(action === 'accept' ? 'Sponsor invite accepted.' : 'Sponsor invite declined.', action === 'accept' ? 'success' : 'info')
+        } else if (notification.type === 'family_child_friend_request') {
+          pushToast(action === 'accept' ? 'Family friend request accepted.' : 'Family friend request dismissed.', action === 'accept' ? 'success' : 'info')
         } else {
           pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
         }

@@ -139,11 +139,20 @@ export function getNotificationRequestStatus(notification: NotificationItem): Fr
 }
 
 export function isActionableNotification(notification: NotificationItem): boolean {
-  return notification.type === 'friend_request' || notification.type === 'event_guest_speaker_invite' || notification.type === 'event_sponsor_invite'
+  return (
+    notification.type === 'friend_request' ||
+    notification.type === 'family_child_friend_request' ||
+    notification.type === 'event_guest_speaker_invite' ||
+    notification.type === 'event_sponsor_invite'
+  )
 }
 
 export function getActorDisplayName(notification: NotificationItem) {
   if (notification.type === 'family_child_media_change') {
+    const childDisplayName = typeof notification.payload?.childDisplayName === 'string' ? notification.payload.childDisplayName.trim() : ''
+    if (childDisplayName) return childDisplayName
+  }
+  if (notification.type === 'family_child_friend_removed' || notification.type === 'family_child_blocked_user') {
     const childDisplayName = typeof notification.payload?.childDisplayName === 'string' ? notification.payload.childDisplayName.trim() : ''
     if (childDisplayName) return childDisplayName
   }
@@ -204,6 +213,27 @@ export function getNotificationMessage(notification: NotificationItem) {
     case 'family_child_media_change': {
       const categoryLabel = notification.payload?.category === 'cover' ? 'cover photo' : 'profile photo'
       return `changed their ${categoryLabel}`
+    }
+    case 'family_child_friend_request': {
+      const requesterChild = notification.payload?.requesterChild
+      const childDisplayName = requesterChild && typeof requesterChild === 'object' && !Array.isArray(requesterChild)
+        ? typeof (requesterChild as Record<string, unknown>).displayName === 'string'
+          ? ((requesterChild as Record<string, unknown>).displayName as string).trim()
+          : ''
+        : ''
+      return childDisplayName ? `${childDisplayName} wants to connect with your child` : 'wants to connect with your child'
+    }
+    case 'family_child_friend_removed': {
+      const targetHandle = typeof notification.payload?.targetHandle === 'string' ? notification.payload.targetHandle.trim() : ''
+      const targetName = typeof notification.payload?.targetName === 'string' ? notification.payload.targetName.trim() : ''
+      const targetLabel = targetHandle ? `@${targetHandle}` : targetName || 'a friend'
+      return `removed ${targetLabel} from Family friends`
+    }
+    case 'family_child_blocked_user': {
+      const targetHandle = typeof notification.payload?.targetHandle === 'string' ? notification.payload.targetHandle.trim() : ''
+      const targetName = typeof notification.payload?.targetName === 'string' ? notification.payload.targetName.trim() : ''
+      const targetLabel = targetHandle ? `@${targetHandle}` : targetName || 'a user'
+      return `blocked ${targetLabel}`
     }
     default:
       return 'shared an update'

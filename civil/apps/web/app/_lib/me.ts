@@ -20,11 +20,15 @@ export type FamilyMemberSessionSummary = {
   parentId: string
   parentHandle: string
   parentName?: string | null
+  username?: string | null
   relationshipLabel: string
   modeBand: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
   modeLabel: string
   age: number
   allowChildOwnMediaEdits?: boolean
+  allowChildOwnUsernameEdits?: boolean
+  allowChildAudioCalls?: boolean
+  allowChildVideoCalls?: boolean
   notifyParentOnMediaChanges?: boolean
   suspended: boolean
   suspendedAt?: string | null

@@ -31,6 +31,7 @@ import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { SearchResults } from './search/SearchResults'
 import MessagesNavBlock from './MessagesNavBlock'
+import { hasFamilyModeEnabled } from '../_lib/me'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
 import { clearFamilyView } from '../_lib/familyView'
 
@@ -142,9 +143,10 @@ export default function MobileDock() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [moreMounted, setMoreMounted] = useState(false)
   const isOrganizationsDirectory = pathname === '/organizations/directory'
-  const [viewer, setViewer] = useState<MeResponse | null>(null)
-  const isFamilyLockedSession = Boolean(familyView) || (viewer ?? cachedViewer)?.accountType === 'family_member'
-  const familyCardIdentity = getFamilyLockedCardIdentity(viewer ?? cachedViewer, familyView)
+  const [resolvedViewer, setResolvedViewer] = useState<MeResponse | null>(null)
+  const effectiveViewer = resolvedViewer ?? cachedViewer
+  const isFamilyLockedSession = Boolean(familyView) || effectiveViewer?.accountType === 'family_member'
+  const familyCardIdentity = getFamilyLockedCardIdentity(effectiveViewer, familyView)
   const [hydrated, setHydrated] = useState(false)
   const [hasSession, setHasSession] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -170,7 +172,7 @@ export default function MobileDock() {
     setHasSession(true)
 
     if (cachedViewer) {
-      setViewer(cachedViewer)
+      setResolvedViewer(cachedViewer)
       return
     }
 
@@ -180,7 +182,7 @@ export default function MobileDock() {
         const data = await ensureViewerMe({ token })
         if (cancelled) return
         if (data) {
-          setViewer(data)
+          setResolvedViewer(data)
           return
         }
         if (!window.localStorage.getItem('token')) {
@@ -498,7 +500,10 @@ export default function MobileDock() {
       if (userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'connections') {
         return (
           <div className="space-y-4">
-            <MessagesNavBlock active={userRelationshipRoute.kind === 'friends' ? 'friends' : 'network'} />
+            <MessagesNavBlock
+              active={userRelationshipRoute.kind === 'friends' ? 'friends' : 'network'}
+              visibleItems={hasFamilyModeEnabled(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+            />
             <RightRail
               hideContacts
               hideCommunities={userRelationshipRoute.kind === 'friends'}
@@ -617,16 +622,16 @@ export default function MobileDock() {
             <div className="relative">
               <div onClick={viewer?.handle ? handleCloseMenu : undefined}>
                 <CivilCard
-                  href={familyCardIdentity?.href ?? (viewer?.handle ? `/u/${viewer.handle}` : undefined)}
+                  href={familyCardIdentity?.href ?? (effectiveViewer?.handle ? `/u/${effectiveViewer.handle}` : undefined)}
                   size="rail"
-                  name={familyCardIdentity?.name ?? viewer?.name ?? 'Civil Citizen'}
+                  name={familyCardIdentity?.name ?? effectiveViewer?.name ?? 'Civil Citizen'}
                   subtitle={familyCardIdentity?.subtitle ?? 'View profile'}
-                  avatarAlt={familyCardIdentity?.avatarAlt ?? viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
-                  avatarInitials={familyCardIdentity?.avatarInitials ?? viewer?.name ?? viewer?.handle ?? 'C'}
-                  avatarSrc={familyCardIdentity?.avatarSrc ?? viewer?.avatarUrl ?? null}
-                  coverUrl={familyCardIdentity?.coverUrl ?? viewer?.coverUrl ?? null}
-                  isVerified={familyCardIdentity?.isVerified ?? Boolean(viewer?.isVerified)}
-                  isBusiness={familyCardIdentity?.isBusiness ?? Boolean(viewer?.isPremium)}
+                  avatarAlt={familyCardIdentity?.avatarAlt ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'Civil citizen'}
+                  avatarInitials={familyCardIdentity?.avatarInitials ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'C'}
+                  avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveViewer?.avatarUrl ?? null}
+                  coverUrl={familyCardIdentity?.coverUrl ?? effectiveViewer?.coverUrl ?? null}
+                  isVerified={familyCardIdentity?.isVerified ?? Boolean(effectiveViewer?.isVerified)}
+                  isBusiness={familyCardIdentity?.isBusiness ?? Boolean(effectiveViewer?.isPremium)}
                   className="w-[calc(100%-48px)] rounded-[var(--drawer-item-radius)]"
                 />
               </div>

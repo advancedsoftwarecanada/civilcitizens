@@ -43,6 +43,13 @@ export function NotificationCard({
   const targetUrl = getNotificationTargetUrl(notification)
   const actorCoverUrl = notification.actor?.coverUrl ?? null
   const hasActorCover = Boolean(actorCoverUrl)
+  const requesterChild = notification.type === 'family_child_friend_request' && notification.payload?.requesterChild && typeof notification.payload.requesterChild === 'object' && !Array.isArray(notification.payload.requesterChild)
+    ? (notification.payload.requesterChild as Record<string, unknown>)
+    : null
+  const requesterChildName = typeof requesterChild?.displayName === 'string' ? requesterChild.displayName : null
+  const requesterChildUsername = typeof requesterChild?.username === 'string' ? requesterChild.username : null
+  const requesterChildAvatarUrl = typeof requesterChild?.avatarUrl === 'string' ? requesterChild.avatarUrl : null
+  const requesterChildCoverUrl = typeof requesterChild?.coverUrl === 'string' ? requesterChild.coverUrl : null
 
   const handleCardClick = () => {
     if (!targetUrl) return
@@ -129,6 +136,31 @@ export function NotificationCard({
           <p className="text-[15px] leading-5 text-slate-700">{message}</p>
           <p className="mt-1 text-xs text-slate-500">{formatRelativeTime(notification.createdAt)}</p>
         </div>
+        {requesterChildName ? (
+          <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+            {requesterChildCoverUrl ? <img src={requesterChildCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+            <div className={clsx('absolute inset-0', requesterChildCoverUrl ? 'bg-slate-950/45' : 'bg-transparent')} />
+            <div className="relative z-[1] flex items-center gap-3">
+              <VerifiedAvatar
+                src={requesterChildAvatarUrl}
+                alt={requesterChildName}
+                initials={requesterChildName}
+                size={42}
+                className="shrink-0"
+              />
+              <div className="min-w-0">
+                <p className={clsx('truncate text-sm font-semibold', requesterChildCoverUrl ? 'text-white' : 'text-slate-900')}>
+                  {requesterChildName}
+                </p>
+                {requesterChildUsername ? (
+                  <p className={clsx('truncate text-xs', requesterChildCoverUrl ? 'text-white/80' : 'text-slate-500')}>
+                    @{requesterChildUsername}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
         {actionable && onRequestAction && allowResponse ? (
           <div className="flex flex-wrap gap-2">
             <button
