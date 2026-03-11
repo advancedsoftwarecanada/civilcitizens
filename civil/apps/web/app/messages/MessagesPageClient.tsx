@@ -554,7 +554,45 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
   }, [activeThread, composerText, selectedIsParentThread, selectedThreadId])
 
   const handleStartCall = useCallback(async (mode: 'audio' | 'video') => {
-    if (!activeThread || selectedIsParentThread) return
+    if (selectedIsParentThread) {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      if ((mode === 'audio' && !callPermissions.audio) || (mode === 'video' && !callPermissions.video)) return
+      if (!viewer.id) return
+
+      setCallActionMode(mode)
+      try {
+        const response = await fetch(buildApiUrl('/family/calls/start'), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ memberId: viewer.id, mode }),
+        })
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { call?: { id?: string | null } | null; error?: string } | null
+        if (!response.ok || !payload?.call?.id) {
+          pushToast(payload?.error ?? 'Unable to start this Family call right now.', 'error')
+          return
+        }
+        router.push(`/family/call/${encodeURIComponent(viewer.id)}?call=${encodeURIComponent(payload.call.id)}`)
+      } catch (error) {
+        console.error('Failed to start parent Family call', error)
+        pushToast('Unable to start this Family call right now.', 'error')
+      } finally {
+        setCallActionMode(null)
+      }
+      return
+    }
+
+    if (!activeThread) return
     if ((mode === 'audio' && !callPermissions.audio) || (mode === 'video' && !callPermissions.video)) return
 
     const token = getStoredToken()
@@ -589,7 +627,7 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
     } finally {
       setCallActionMode(null)
     }
-  }, [activeThread, callPermissions.audio, callPermissions.video, router, selectedIsParentThread])
+  }, [activeThread, callPermissions.audio, callPermissions.video, router, selectedIsParentThread, viewer.id])
 
   const activeThreadTitle = activeThread ? getThreadTitle({ ...activeThread, lastMessage: null } as ThreadSummary) : ''
   const activeThreadPrimaryUser = activeThread?.participants.find((participant) => !participant.isViewer)?.user ?? null
@@ -734,7 +772,23 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
                         Your parent profile is available here from the Family shell. Friend conversations stay separate and only show threads created for this child account.
                       </p>
                     </div>
-                    <div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleStartCall('audio')}
+                        disabled={callActionMode !== null || !callPermissions.audio}
+                        className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {callActionMode === 'audio' ? 'Calling...' : 'Audio Call'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleStartCall('video')}
+                        disabled={callActionMode !== null || !callPermissions.video}
+                        className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {callActionMode === 'video' ? 'Starting video...' : 'Video Call'}
+                      </button>
                       <Link href={parentProfileHref} className="inline-flex rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
                         View Parent Profile
                       </Link>

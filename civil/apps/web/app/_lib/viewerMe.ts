@@ -73,6 +73,19 @@ function clearCachedViewer() {
 let inFlight: Promise<MeResponse | null> | null = null
 let inFlightToken: string | null = null
 
+const DEV_SESSION_RECOVERY_ATTEMPTS = 8
+const DEV_SESSION_RECOVERY_DELAY_MS = 1200
+
+function shouldUseDevSessionRecovery() {
+  if (typeof window === 'undefined') return false
+  const host = window.location.hostname.trim().toLowerCase()
+  return host === 'dev.civilcitizens.ca' || host === 'localhost' || host === '127.0.0.1'
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
 export async function ensureViewerMe(options?: {
   token?: string | null
   cache?: RequestCache
@@ -117,10 +130,26 @@ export async function ensureViewerMe(options?: {
   inFlightToken = authToken
   inFlight = (async () => {
     try {
-      const res = await fetch(buildApiUrl('/auth/me'), {
-        headers: { authorization: `Bearer ${authToken}` },
-        cache,
-      })
+      const maxAttempts = shouldUseDevSessionRecovery() ? DEV_SESSION_RECOVERY_ATTEMPTS : 1
+      let res: Response | null = null
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        res = await fetch(buildApiUrl('/auth/me'), {
+          headers: { authorization: `Bearer ${authToken}` },
+          cache,
+        })
+
+        if (res.status !== 401 || attempt === maxAttempts) {
+          break
+        }
+
+        await wait(DEV_SESSION_RECOVERY_DELAY_MS)
+      }
+
+      if (!res) {
+        const fallback = useViewerStore.getState().me
+        return isMeForToken(fallback, tokenSub) ? fallback : null
+      }
 
       if (res.status === 401) {
         clearAuthSession()

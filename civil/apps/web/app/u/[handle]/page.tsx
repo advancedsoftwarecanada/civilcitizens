@@ -60,10 +60,21 @@ type UserProfile = {
   experiences?: UserExperience[]
   isPremium?: boolean
   isVerified?: boolean
+  postCount?: number
   friendCount?: number
   communityCount?: number
   organizationCount?: number
   connectionCount?: number
+  accountType?: 'user' | 'family_member'
+  familyProfile?: {
+    memberId: string
+    relationshipLabel: string
+    modeBand: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+    modeLabel: string
+    access: 'self' | 'family' | 'friend'
+    allowChildAudioCalls?: boolean
+    allowChildVideoCalls?: boolean
+  } | null
 }
 
 type UserExperience = {
@@ -1002,8 +1013,86 @@ export default function UserPostsPage({ params }: PageProps) {
     }
   }
 
+  const isFamilyParentProfile = Boolean(
+    resolvedViewer?.accountType === 'family_member' &&
+      resolvedViewer.familyMemberSession?.parentHandle?.toLowerCase() === handleParam.toLowerCase(),
+  )
+  const isFamilyMemberSession = resolvedViewer?.accountType === 'family_member'
+  const isFamilyAccountProfile = profile?.accountType === 'family_member'
+  const canFamilyMessageProfile = Boolean(isFamilyParentProfile || canDirectlyReachProfile)
+  const canFamilyUnfriendProfile = Boolean(!isFamilyParentProfile && resolvedRelationship.friendshipStatus === 'friends')
+  const canFamilyBlockProfile = Boolean(!isFamilyParentProfile)
+  const familyCallMemberId =
+    profile?.accountType === 'family_member' && profile.familyProfile?.memberId
+      ? profile.familyProfile.memberId
+      : resolvedViewer?.accountType === 'family_member' && isFamilyParentProfile
+        ? resolvedViewer.id
+        : ''
+  const familyCallAudioAllowed =
+    profile?.accountType === 'family_member'
+      ? profile.familyProfile?.allowChildAudioCalls == null || Boolean(profile.familyProfile.allowChildAudioCalls)
+      : resolvedViewer?.familyMemberSession?.allowChildAudioCalls == null || Boolean(resolvedViewer.familyMemberSession.allowChildAudioCalls)
+  const familyCallVideoAllowed =
+    profile?.accountType === 'family_member'
+      ? profile.familyProfile?.allowChildVideoCalls == null || Boolean(profile.familyProfile.allowChildVideoCalls)
+      : resolvedViewer?.familyMemberSession?.allowChildVideoCalls == null || Boolean(resolvedViewer.familyMemberSession.allowChildVideoCalls)
+  const canFamilyAudioCallProfile = Boolean(
+    familyCallMemberId &&
+      ((profile?.accountType === 'family_member' && profile.familyProfile?.access !== 'self') || isFamilyParentProfile) &&
+      familyCallAudioAllowed,
+  )
+  const canFamilyVideoCallProfile = Boolean(
+    familyCallMemberId &&
+      ((profile?.accountType === 'family_member' && profile.familyProfile?.access !== 'self') || isFamilyParentProfile) &&
+      familyCallVideoAllowed,
+  )
+
+  const handleStartFamilyCall = useCallback(async (mode: 'audio' | 'video') => {
+    const token = requireAuthToken()
+    if (!token) return
+
+    if (!familyCallMemberId) {
+      pushToast('Unable to start this Family call right now.', 'error')
+      return
+    }
+
+    setCallActionMode(mode)
+    try {
+      const res = await fetch(buildApiUrl('/family/calls/start'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ memberId: familyCallMemberId, mode }),
+      })
+      const payload = (await res.json().catch(() => null)) as { call?: { id?: string | null } | null; error?: string } | null
+      if (res.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!res.ok || !payload?.call?.id) {
+        pushToast(payload?.error ?? 'Unable to start this Family call right now.', 'error')
+        return
+      }
+
+      router.push(`/family/call/${encodeURIComponent(familyCallMemberId)}?call=${encodeURIComponent(payload.call.id)}`)
+    } catch (err) {
+      console.error('Failed to start Family call', err)
+      pushToast('Unable to start this Family call right now.', 'error')
+    } finally {
+      setCallActionMode(null)
+    }
+  }, [familyCallMemberId, router])
+
   const handleStartDirectCall = async (mode: 'audio' | 'video') => {
     if (!profile) return
+
+    if (familyCallMemberId) {
+      await handleStartFamilyCall(mode)
+      return
+    }
+
     if (!canDirectlyReachProfile) return
 
     const token = requireAuthToken()
@@ -1144,24 +1233,6 @@ export default function UserPostsPage({ params }: PageProps) {
   }
   const avatarThreadUrl = avatarPostUrl ?? buildFallbackThreadUrl(profile?.avatarPostId)
   const coverThreadUrl = coverPostUrl ?? buildFallbackThreadUrl(profile?.coverPostId)
-  const isFamilyParentProfile = Boolean(
-    resolvedViewer?.accountType === 'family_member' &&
-      resolvedViewer.familyMemberSession?.parentHandle?.toLowerCase() === handleParam.toLowerCase(),
-  )
-  const isFamilyMemberSession = resolvedViewer?.accountType === 'family_member'
-  const canFamilyMessageProfile = Boolean(isFamilyParentProfile || canDirectlyReachProfile)
-  const canFamilyUnfriendProfile = Boolean(!isFamilyParentProfile && resolvedRelationship.friendshipStatus === 'friends')
-  const canFamilyBlockProfile = Boolean(!isFamilyParentProfile)
-  const canFamilyAudioCallProfile = Boolean(
-    !isFamilyParentProfile &&
-      canDirectlyReachProfile &&
-      (resolvedViewer?.familyMemberSession?.allowChildAudioCalls == null || resolvedViewer.familyMemberSession.allowChildAudioCalls),
-  )
-  const canFamilyVideoCallProfile = Boolean(
-    !isFamilyParentProfile &&
-      canDirectlyReachProfile &&
-      (resolvedViewer?.familyMemberSession?.allowChildVideoCalls == null || resolvedViewer.familyMemberSession.allowChildVideoCalls),
-  )
 
   const renderFamilyProfileActions = () => (
     <div className="flex flex-wrap gap-2">
@@ -1225,6 +1296,64 @@ export default function UserPostsPage({ params }: PageProps) {
       ) : null}
     </div>
   )
+
+  if (isFamilyAccountProfile && profile?.familyProfile?.memberId) {
+    const familyAccountHeader = (
+      <div className="space-y-6">
+        <CivilCard
+          size="hero"
+          name={profileDisplayName}
+          avatarAlt={profileDisplayName}
+          avatarInitials={profileDisplayName}
+          avatarSrc={profile.avatarUrl}
+          coverUrl={coverDisplayUrl}
+          isVerified={Boolean(profile.isVerified)}
+          isBusiness={Boolean(profile.isPremium)}
+          interactive={false}
+          className="w-full"
+        />
+        <section className="rounded-[32px] border border-white/60 bg-white/85 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Family Profile</p>
+          <h1 className="mt-2 text-2xl font-semibold text-slate-950">{profileDisplayName}</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            {profile.familyProfile.access === 'friend'
+              ? 'Family updates shared with approved Family friends only.'
+              : 'Family updates shared inside your Family circle.'}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium text-slate-600">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">@{profile.handle}</span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+              {profile.familyProfile.relationshipLabel} • {profile.familyProfile.modeLabel}
+            </span>
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-4 text-center text-slate-600 sm:grid-cols-2">
+            <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Posts</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{formatCount(profile.postCount ?? 0)}</p>
+            </div>
+            <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Member since</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{formatDate(profile.createdAt) || '—'}</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+
+    return (
+      <FamilyFeedClient
+        memberId={profile.familyProfile.memberId}
+        readOnly
+        title="Family"
+        description={`Updates from ${profileDisplayName}.`}
+        emptyState="No Family updates yet."
+        memberDisplayName={profileDisplayName}
+        memberModeBand={profile.familyProfile.modeBand}
+        memberAvatarUrl={profile.avatarUrl}
+        headerContent={familyAccountHeader}
+      />
+    )
+  }
 
   if (isFamilyParentProfile) {
     const familyProfileHeader = profile ? (

@@ -20,6 +20,7 @@ import CivilCard from './CivilCard'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
+import { hasFamilyModeEnabled, type MeResponse } from '../_lib/me'
 import type { FamilyViewState } from '../_lib/familyView'
 
 type SidebarProps = {
@@ -65,8 +66,22 @@ const FAMILY_CHILD_NAV: SidebarNavItem[] = [
   { key: 'account', label: 'Settings', href: '/settings/family/settings', icon: HiOutlineUserCircle },
 ]
 
-export function getSidebarNavItems(familyView: FamilyViewState | null | undefined): SidebarNavItem[] {
-  if (!familyView) return PRIMARY_NAV
+export function getSidebarNavItems(
+  familyView: FamilyViewState | null | undefined,
+  me?: MeResponse | null,
+): SidebarNavItem[] {
+  if (!familyView) {
+    if (me?.accountType === 'user' && hasFamilyModeEnabled(me)) {
+      return [
+        PRIMARY_NAV[0],
+        PRIMARY_NAV[1],
+        PRIMARY_NAV[2],
+        { key: 'family', label: 'Family', href: '/family', icon: HiOutlineUsers },
+        ...PRIMARY_NAV.slice(3),
+      ]
+    }
+    return PRIMARY_NAV
+  }
   return FAMILY_CHILD_NAV
 }
 
@@ -91,7 +106,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const profileHref = familyCardIdentity?.href ?? (effectiveMe?.handle ? `/u/${effectiveMe.handle}` : '/profile/edit')
   const verified = familyCardIdentity?.isVerified ?? Boolean(effectiveMe?.isVerified)
   const business = familyCardIdentity?.isBusiness ?? Boolean(effectiveMe?.isPremium)
-  const navItems = getSidebarNavItems(familyView)
+  const navItems = getSidebarNavItems(familyView, effectiveMe)
   const navCount = navItems.length
   const sidebarTopOffsetExpr = 'var(--cc-top-nav-offset)'
   const sidebarBottomPadPx = 10
