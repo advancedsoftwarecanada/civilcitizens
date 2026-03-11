@@ -1955,22 +1955,99 @@ function hasCivilAiCivicSignal(question: string) {
   return /(community|communities|local|near me|nearby|my area|my city|my town|riding|event|events|meeting|meetup|job|jobs|hiring|employment|marketplace|listing|listings|buy|organization|organizations|group|groups|association|associations|post|posts|discussion|discussions|civic|council|mayor|bylaw|permit|housing|transit|school|election|vote|voting|policy|policies|government)/.test(normalized)
 }
 
-function finalizeCivilAiReferences(question: string, references: CivilAiCardReference[]) {
+function extractCivilAiReferenceKeywords(question: string) {
+  const normalized = normalizeSearchTerm(question).toLowerCase()
+  if (!normalized) return [] as string[]
+
+  return Array.from(
+    new Set(
+      normalized
+        .split(' ')
+        .map((token) => token.trim())
+        .filter((token) => token.length > 2)
+        .filter((token) => !CIVIL_AI_TOPIC_STOPWORDS.has(token))
+        .filter((token) => token !== 'civil' && token !== 'citizens'),
+    ),
+  ).slice(0, 10)
+}
+
+function scoreCivilAiReferenceRelevance(question: string, reference: CivilAiCardReference) {
+  const normalizedQuestion = normalizeSearchTerm(question).toLowerCase()
+  const topicQuery = extractCivilAiTopicQuery(question)
+  const keywords = extractCivilAiReferenceKeywords(question)
+  const title = normalizeSearchTerm(reference.title).toLowerCase()
+  const subtitle = normalizeSearchTerm(reference.subtitle ?? '').toLowerCase()
+  const summary = normalizeSearchTerm(reference.summary ?? '').toLowerCase()
+  const badge = normalizeSearchTerm(reference.badge ?? '').toLowerCase()
+  const combined = [title, subtitle, summary, badge, reference.kind].filter(Boolean).join(' ')
+
+  let score = 0
+  if (topicQuery && topicQuery.length >= 5) {
+    if (title.includes(topicQuery)) score += 7
+    else if (subtitle.includes(topicQuery) || summary.includes(topicQuery)) score += 4
+  }
+
+  for (const keyword of keywords) {
+    if (title.includes(keyword)) {
+      score += 3
+      continue
+    }
+    if (subtitle.includes(keyword)) {
+      score += 2
+      continue
+    }
+    if (summary.includes(keyword) || badge.includes(keyword)) {
+      score += 1
+    }
+  }
+
+  const explicitEventIntent = /(event|events|festival|meeting|meetup|meetups|networking|rally|parade|attend)/.test(normalizedQuestion)
+  const explicitJobIntent = /(job|jobs|hiring|employment|position|positions|open role|open roles|work)/.test(normalizedQuestion)
+  const explicitMarketIntent = /(buy|buying|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalizedQuestion)
+  const explicitOrganizationIntent = /(organization|organizations|group|groups|association|associations|who should i talk to|who is working on|which org|which organization|which organizations|which groups)/.test(normalizedQuestion)
+  const explicitPostIntent = /(post|posts|article|articles|discussion|discussions|conversation|conversations|debate|debates|people saying|talking about|discussing|buzz)/.test(normalizedQuestion)
+  const explicitCommunityIntent = /(community|communities|riding|municipality|city|town|district|area|neighbourhood|neighborhood)/.test(normalizedQuestion)
+  const asksAboutOwnPost = /(i wrote|i posted|my post|my posts|my article|my articles|article i wrote|post i wrote)/.test(normalizedQuestion)
+
+  if (explicitEventIntent && reference.kind === 'event') score += 4
+  if (explicitJobIntent && reference.kind === 'job') score += 4
+  if (explicitMarketIntent && reference.kind === 'market') score += 4
+  if (explicitOrganizationIntent && reference.kind === 'organization') score += 4
+  if (explicitPostIntent && reference.kind === 'post') score += 4
+  if (explicitCommunityIntent && reference.kind === 'community') score += 3
+  if (asksAboutOwnPost) score += reference.kind === 'post' ? 5 : -3
+
+  if ((explicitPostIntent || asksAboutOwnPost) && (reference.kind === 'community' || reference.kind === 'organization') && !keywords.some((keyword) => combined.includes(keyword))) {
+    score -= 2
+  }
+
+  return score
+}
+
+export function finalizeCivilAiReferences(question: string, references: CivilAiCardReference[]) {
   if (!references.length) return [] as CivilAiCardReference[]
   if (isCivilAiGeneralChatQuestion(question) && !hasCivilAiCivicSignal(question)) {
     return [] as CivilAiCardReference[]
   }
 
   const seen = new Set<string>()
-  const trimmed: CivilAiCardReference[] = []
+  const scored: Array<{ reference: CivilAiCardReference; score: number }> = []
   for (const reference of references) {
     const key = `${reference.kind}:${reference.id}:${reference.href}`
     if (seen.has(key)) continue
     seen.add(key)
-    trimmed.push(reference)
-    if (trimmed.length >= CIVIL_AI_MAX_REFERENCE_CARDS) break
+    scored.push({ reference, score: scoreCivilAiReferenceRelevance(question, reference) })
   }
-  return trimmed
+
+  scored.sort((left, right) => right.score - left.score)
+  const topScore = scored[0]?.score ?? 0
+  if (topScore <= 0) return [] as CivilAiCardReference[]
+
+  const minimumScore = topScore >= 7 ? Math.max(3, topScore - 4) : Math.max(2, topScore - 2)
+  return scored
+    .filter((entry) => entry.score >= minimumScore)
+    .slice(0, CIVIL_AI_MAX_REFERENCE_CARDS)
+    .map((entry) => entry.reference)
 }
 
 export function planCivilAiRetrieval(question: string): CivilAiRetrievalPlan {
