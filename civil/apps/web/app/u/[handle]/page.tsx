@@ -235,7 +235,9 @@ export default function UserPostsPage({ params }: PageProps) {
   const router = useRouter()
   const cachedViewer = useViewerStore((s) => s.me)
   const familyView = useViewerStore((s) => s.familyView)
+  const viewerHydrated = useViewerStore((s) => s.hydrated)
   const [viewer, setViewer] = useState<Viewer | null>(null)
+  const [viewerReady, setViewerReady] = useState(false)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [mediaLookupPosts, setMediaLookupPosts] = useState<ApiPost[]>([])
@@ -254,13 +256,18 @@ export default function UserPostsPage({ params }: PageProps) {
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
   const [familyBlockLoading, setFamilyBlockLoading] = useState(false)
   const resolvedViewer = cachedViewer ?? viewer
+  const hasStoredToken = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : false
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-    if (!token) return
+    if (!token) {
+      setViewerReady(true)
+      return
+    }
 
     if (cachedViewer) {
       setViewer(cachedViewer)
+      setViewerReady(true)
       return
     }
 
@@ -270,6 +277,8 @@ export default function UserPostsPage({ params }: PageProps) {
       setViewer(data)
     } catch {
       /* ignore */
+    } finally {
+      setViewerReady(true)
     }
   }, [cachedViewer])
 
@@ -346,15 +355,24 @@ export default function UserPostsPage({ params }: PageProps) {
   }, [loadViewer])
 
   useEffect(() => {
+    if (cachedViewer) {
+      setViewerReady(true)
+    }
+  }, [cachedViewer])
+
+  useEffect(() => {
     setMediaLookupFetched(false)
     setMediaLookupPosts([])
   }, [handleParam])
 
   useEffect(() => {
+    if (hasStoredToken && !resolvedViewer) return
+    if (!viewerHydrated) return
+    if (!viewerReady) return
     loadProfilePosts(sortMode).catch(() => {
       /* noop */
     })
-  }, [loadProfilePosts, sortMode])
+  }, [hasStoredToken, loadProfilePosts, resolvedViewer, sortMode, viewerHydrated, viewerReady])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
