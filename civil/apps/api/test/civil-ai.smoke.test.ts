@@ -263,6 +263,7 @@ let buildCivilAiMarketSearchScope: (args: {
 let scoreSearchTextMatch: (text: string, query: string) => number
 let buildCivilAiEffectiveQuestion: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string
 let sanitizeCivilAiResponseContent: (content: string, references: Array<{ href: string }>) => string
+let finalizeCivilAiReferences: (question: string, references: Array<{ kind: string; id: string; title: string; subtitle: string | null; summary: string | null; href: string; imageUrl: string | null; badge: string | null }>) => Array<{ kind: string; id: string; title: string }>
 let buildCivilAiPromptInput: (systemPrompt: string, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => string
 let buildCivilAiDirectAnswer: (question: string, viewerContext: {
   user: {
@@ -384,6 +385,7 @@ beforeAll(async () => {
   scoreSearchTextMatch = mod.scoreSearchTextMatch as typeof scoreSearchTextMatch
   buildCivilAiEffectiveQuestion = mod.buildCivilAiEffectiveQuestion as typeof buildCivilAiEffectiveQuestion
   sanitizeCivilAiResponseContent = mod.sanitizeCivilAiResponseContent as typeof sanitizeCivilAiResponseContent
+  finalizeCivilAiReferences = mod.finalizeCivilAiReferences as typeof finalizeCivilAiReferences
   buildCivilAiPromptInput = mod.buildCivilAiPromptInput as typeof buildCivilAiPromptInput
   buildCivilAiDirectAnswer = mod.buildCivilAiDirectAnswer as typeof buildCivilAiDirectAnswer
   buildCivilAiGroundedAnswer = mod.buildCivilAiGroundedAnswer as typeof buildCivilAiGroundedAnswer
@@ -514,6 +516,73 @@ describe('Civil AI smoke', () => {
     expect(sanitized).toContain('Civil Citizens Meetup')
     expect(sanitized).toContain('Civil card below')
     expect(sanitized).not.toContain('https://dev.civilcitizens.ca/com/on/newmarket-aurora/orgs/civil-citizens-of-newmarket-aurora/events/event_123')
+  })
+
+  test('reference finalizer drops unrelated community cards for a post-specific query', () => {
+    const references = finalizeCivilAiReferences('What is the child safety policy for Civil? Show me the article I wrote.', [
+      {
+        kind: 'post',
+        id: 'post_1',
+        title: 'Civil for Families',
+        subtitle: 'Andrew Normore',
+        summary: 'Child safety policy and family protections on Civil.',
+        href: '/post/civil-for-families',
+        imageUrl: null,
+        badge: 'Post',
+      },
+      {
+        kind: 'community',
+        id: 'community_1',
+        title: 'York—Durham',
+        subtitle: 'Ontario',
+        summary: 'Community page for York—Durham, Ontario.',
+        href: '/com/on/york-durham',
+        imageUrl: null,
+        badge: 'Community',
+      },
+      {
+        kind: 'community',
+        id: 'community_2',
+        title: 'Newmarket—Aurora',
+        subtitle: 'Ontario',
+        summary: 'Community page for Newmarket—Aurora, Ontario.',
+        href: '/com/on/newmarket-aurora',
+        imageUrl: null,
+        badge: 'Community',
+      },
+    ])
+
+    expect(references).toHaveLength(1)
+    expect(references[0]?.kind).toBe('post')
+    expect(references[0]?.title).toBe('Civil for Families')
+  })
+
+  test('reference finalizer keeps event cards for event-specific broad questions', () => {
+    const references = finalizeCivilAiReferences('What events are happening near me today?', [
+      {
+        kind: 'event',
+        id: 'event_1',
+        title: 'Town Hall on Housing',
+        subtitle: 'Tonight at 7 PM',
+        summary: 'Local housing event in your area.',
+        href: '/events/event_1',
+        imageUrl: null,
+        badge: 'Event',
+      },
+      {
+        kind: 'community',
+        id: 'community_1',
+        title: 'York—Durham',
+        subtitle: 'Ontario',
+        summary: 'Community page for York—Durham, Ontario.',
+        href: '/com/on/york-durham',
+        imageUrl: null,
+        badge: 'Community',
+      },
+    ])
+
+    expect(references).toHaveLength(1)
+    expect(references[0]?.kind).toBe('event')
   })
 
   test('prompt input stays within the bounded budget and preserves the newest exchange', () => {
