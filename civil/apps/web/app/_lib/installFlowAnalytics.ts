@@ -2,7 +2,7 @@
 
 import { buildApiUrl } from './api'
 
-type InstallFlow = 'ios_pwa' | 'ios_switch_to_safari' | 'android_pwa' | 'android_apk'
+type InstallFlow = 'ios_pwa' | 'ios_switch_to_safari' | 'ios_app_store' | 'android_pwa' | 'android_apk'
 type InstallEvent =
   | 'view'
   | 'install_cta_clicked'
