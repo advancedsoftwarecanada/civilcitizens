@@ -3541,14 +3541,53 @@ async function resolveFamilyFeedTargetMember(
   return loadFamilyMemberAuthViewerById(memberId, authContext.userId)
 }
 
-function resolveFamilyProfileAccess(
+async function resolveFamilyProfileAccess(
   authContext: ViewerAuthContext | null,
   targetMember: FamilyAuthMember,
-): 'self' | 'family' | 'friend' | null {
+): Promise<'self' | 'family' | 'friend' | null> {
   if (!authContext) return null
 
   if (authContext.actor === 'user') {
-    return authContext.userId === targetMember.parentId ? 'family' : null
+    if (authContext.userId === targetMember.parentId) return 'family'
+
+    const directParentFriendship = await prisma.friendship.findFirst({
+      where: {
+        status: FriendshipStatus.ACCEPTED,
+        OR: [
+          { requesterId: authContext.userId, addresseeId: targetMember.parentId },
+          { requesterId: targetMember.parentId, addresseeId: authContext.userId },
+        ],
+      },
+      select: { id: true },
+    })
+    if (directParentFriendship) return 'friend'
+
+    const [viewerMembers, viewerUser] = await Promise.all([
+      loadNormalizedFamilyMembersForParent(authContext.userId),
+      prisma.user.findUnique({ where: { id: authContext.userId }, select: { communityMeta: true } }),
+    ])
+    const viewerFriendships = getStoredFamilyFriendships(viewerUser?.communityMeta)
+    const targetFriendships = getStoredFamilyFriendships(targetMember.parent.communityMeta)
+
+    const hasDirectStoredParentLink =
+      viewerFriendships.some(
+        (friendship) => friendship.peerMemberId === targetMember.id && friendship.peerParentId === targetMember.parentId,
+      ) ||
+      targetFriendships.some(
+        (friendship) => friendship.memberId === targetMember.id && friendship.peerParentId === authContext.userId,
+      )
+
+    if (hasDirectStoredParentLink) return 'friend'
+    if (viewerMembers.length === 0) return null
+
+    const hasFriendAccess = viewerMembers.some((member: ReturnType<typeof normalizeFamilyMemberSummary>) => {
+      return (
+        hasAcceptedFamilyFriendship(viewerFriendships, member.id, targetMember.id) ||
+        hasAcceptedFamilyFriendship(targetFriendships, targetMember.id, member.id)
+      )
+    })
+
+    return hasFriendAccess ? 'friend' : null
   }
 
   if (authContext.member.id === targetMember.id) return 'self'
@@ -3571,11 +3610,13 @@ async function resolveReadableFamilyFeedTargetMember(
     if (!memberId || memberId === authContext.member.id) return authContext.member
     const targetMember = await loadFamilyMemberAuthViewerById(memberId)
     if (!targetMember) return null
-    return resolveFamilyProfileAccess(authContext, targetMember) ? targetMember : null
+    return (await resolveFamilyProfileAccess(authContext, targetMember)) ? targetMember : null
   }
 
   if (!memberId) return null
-  return loadFamilyMemberAuthViewerById(memberId, authContext.userId)
+  const targetMember = await loadFamilyMemberAuthViewerById(memberId)
+  if (!targetMember) return null
+  return (await resolveFamilyProfileAccess(authContext, targetMember)) ? targetMember : null
 }
 
 function buildFamilyProfileRelationshipPayload(
@@ -32039,6 +32080,7 @@ app.post('/posts/impressions', async (req: FastifyRequest, reply: FastifyReply) 
 app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     try {
+    const authContext = await loadViewerAuthContext(req)
     const params = HandleParam.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
@@ -32061,7 +32103,102 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       },
     })
 
-    if (!userRecord) return reply.code(404).send({ error: 'user_not_found' })
+    if (!userRecord) {
+      const familyMember = await findFamilyMemberByUsername(handle)
+      if (!familyMember) {
+        req.log.info(
+          {
+            handle,
+            authActor: authContext?.actor ?? null,
+            viewerUserId: authContext?.actor === 'user' ? authContext.userId : null,
+            viewerMemberId: authContext?.actor === 'family_member' ? authContext.member.id : null,
+          },
+          'family_profile_not_found_by_handle',
+        )
+        return reply.code(404).send({ error: 'user_not_found' })
+      }
+
+      const access = await resolveFamilyProfileAccess(authContext, familyMember)
+      if (!access) {
+        req.log.info(
+          {
+            handle,
+            authActor: authContext?.actor ?? null,
+            viewerUserId: authContext?.actor === 'user' ? authContext.userId : null,
+            viewerMemberId: authContext?.actor === 'family_member' ? authContext.member.id : null,
+            targetMemberId: familyMember.id,
+            targetParentId: familyMember.parentId,
+            targetParentHandle: familyMember.parent.handle,
+          },
+          'family_profile_access_denied',
+        )
+        return reply.code(404).send({ error: 'user_not_found' })
+      }
+
+      req.log.info(
+        {
+          handle,
+          authActor: authContext?.actor ?? null,
+          viewerUserId: authContext?.actor === 'user' ? authContext.userId : null,
+          viewerMemberId: authContext?.actor === 'family_member' ? authContext.member.id : null,
+          targetMemberId: familyMember.id,
+          targetParentId: familyMember.parentId,
+          access,
+        },
+        'family_profile_access_granted',
+      )
+
+      const normalizedMember = normalizeFamilyMemberSummary(familyMember)
+      const friendCount = getStoredFamilyFriendships(familyMember.parent.communityMeta)
+        .filter((entry) => entry.memberId === familyMember.id)
+        .length
+      const postCount = await prisma.post.count({
+        where: {
+          authorId: familyMember.parentId,
+          type: FAMILY_FEED_POST_TYPE,
+          title: buildFamilyFeedPostTitle(familyMember.id),
+        },
+      })
+
+      return reply.send({
+        user: {
+          id: normalizedMember.id,
+          handle: normalizedMember.username,
+          name: normalizedMember.displayName,
+          bio: null,
+          avatarUrl: normalizedMember.avatarUrl,
+          coverUrl: normalizedMember.coverUrl,
+          avatarPostId: null,
+          coverPostId: null,
+          createdAt: normalizedMember.createdAt,
+          dateOfBirth: null,
+          countryOfBirth: null,
+          experiences: [],
+          isPremium: false,
+          isVerified: false,
+          postCount,
+          friendCount,
+          followerCount: 0,
+          followingCount: 0,
+          communityCount: 0,
+          organizationCount: 0,
+          connectionCount: 0,
+          accountType: 'family_member' as const,
+          familyProfile: {
+            memberId: normalizedMember.id,
+            relationshipLabel: normalizedMember.relationshipLabel,
+            modeBand: normalizedMember.modeBand,
+            modeLabel: normalizedMember.modeLabel,
+            access,
+            allowChildAudioCalls: normalizedMember.allowChildAudioCalls,
+            allowChildVideoCalls: normalizedMember.allowChildVideoCalls,
+          },
+        },
+        items: [],
+        nextCursor: undefined,
+        relationship: buildFamilyProfileRelationshipPayload(authContext, access),
+      })
+    }
 
     let followersCount = 0
     let followingCount = 0
@@ -32239,7 +32376,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       community: communityParam,
       municipality,
     } = query.data
-    const viewerId = (req as any).user?.id as string | undefined
+    const viewerId = authContext ? (authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId) : undefined
     const viewerBlockState = await loadViewerBlockState(viewerId)
     let relationship: {
       friendshipStatus: 'self' | 'friends' | 'incoming' | 'outgoing' | 'none'
