@@ -7,6 +7,7 @@ import Sidebar from './Sidebar'
 import CivilAiLauncher from './CivilAiLauncher'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
 import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
+import { useViewerStore } from '../_lib/viewerStore'
 
 const TOP_NAV_HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 const PUBLIC_SHELLLESS_PATHS = new Set(['/reset', '/terms', '/privacy', '/safety', '/help'])
@@ -19,6 +20,7 @@ type AppFrameProps = {
 
 export default function AppFrame({ children, modal }: AppFrameProps) {
   const pathname = usePathname()
+  const familyView = useViewerStore((state) => state.familyView)
   const resolvedPathname = pathname || ''
   const hasResolvedPathname = resolvedPathname.length > 0
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
@@ -28,6 +30,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
   const hideForInstall = hasResolvedPathname && resolvedPathname.startsWith('/install/')
   const hideForMeetingRoom = hasResolvedPathname && isMeetingRoomPath(resolvedPathname)
   const topNavHidden =
+    Boolean(familyView) ||
     !hasResolvedPathname ||
     TOP_NAV_HIDDEN_PATHS.has(resolvedPathname) ||
     PUBLIC_SHELLLESS_PATHS.has(resolvedPathname) ||

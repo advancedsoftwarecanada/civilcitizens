@@ -5,31 +5,37 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { normalizeProvinceCode } from '@civil/shared'
 import {
+  HiOutlineArrowLeftCircle,
   HiOutlineBars3,
   HiOutlineBell,
   HiOutlineChatBubbleOvalLeft,
+  HiOutlineComputerDesktop,
   HiOutlineMagnifyingGlass,
   HiOutlineShoppingCart,
+  HiOutlineUsers,
   HiOutlineXMark,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import CivilCard from './CivilCard'
-import { PRIMARY_NAV } from './Sidebar'
+import { PRIMARY_NAV, getSidebarNavItems } from './Sidebar'
+import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
 import CommunityRightRailClient from './CommunityRightRailClient'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { readMarketCart } from '../market/_lib/cart'
+import { restoreParentAuthSession } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { SearchResults } from './search/SearchResults'
 import MessagesNavBlock from './MessagesNavBlock'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
+import { clearFamilyView } from '../_lib/familyView'
 
-const NAV_BUTTONS: Array<{
-  key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more'
+const DEFAULT_NAV_BUTTONS: Array<{
+  key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more' | 'friends'
   label: string
   icon?: IconType
   imageSrc?: string
@@ -42,9 +48,22 @@ const NAV_BUTTONS: Array<{
   { key: 'more', label: 'More', icon: HiOutlineBars3 },
 ] as const
 
+const FAMILY_NAV_BUTTONS: Array<{
+  key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more' | 'friends'
+  label: string
+  icon?: IconType
+  imageSrc?: string
+}> = [
+  { key: 'home', label: 'Menu', icon: HiOutlineBars3 },
+  { key: 'friends', label: 'Friends', icon: HiOutlineUsers },
+  { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
+  { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
+  { key: 'more', label: 'More', icon: HiOutlineBars3 },
+] as const
+
 const DRAWER_TRANSITION_MS = 320
 
-type NavButtonKey = (typeof NAV_BUTTONS)[number]['key']
+type NavButtonKey = (typeof DEFAULT_NAV_BUTTONS)[number]['key']
 
 type UserRelationshipRoute = {
   handle: string
@@ -115,12 +134,17 @@ export default function MobileDock() {
   const pathname = usePathname()
   const router = useRouter()
   const cachedViewer = useViewerStore((s) => s.me)
+  const familyView = useViewerStore((s) => s.familyView)
+  const sidebarNavItems = useMemo(() => getSidebarNavItems(familyView), [familyView])
+  const navButtons = useMemo(() => (familyView ? FAMILY_NAV_BUTTONS : DEFAULT_NAV_BUTTONS), [familyView])
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuMounted, setMenuMounted] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [moreMounted, setMoreMounted] = useState(false)
   const isOrganizationsDirectory = pathname === '/organizations/directory'
   const [viewer, setViewer] = useState<MeResponse | null>(null)
+  const isFamilyLockedSession = Boolean(familyView) || (viewer ?? cachedViewer)?.accountType === 'family_member'
+  const familyCardIdentity = getFamilyLockedCardIdentity(viewer ?? cachedViewer, familyView)
   const [hydrated, setHydrated] = useState(false)
   const [hasSession, setHasSession] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
@@ -173,6 +197,13 @@ export default function MobileDock() {
 
   useEffect(() => {
     if (!hasSession) return
+    if (isFamilyLockedSession) {
+      setUnreadCount(0)
+      setMessageUnreadCount(0)
+      setOrgChannelUnreadCount(0)
+      setMarketChatUnreadCount(0)
+      return
+    }
 
     const fetchCounts = async () => {
       const token = getStoredToken()
@@ -230,7 +261,7 @@ export default function MobileDock() {
       clearInterval(interval)
       window.removeEventListener('message.read', handleMessageRead)
     }
-  }, [hasSession])
+  }, [hasSession, isFamilyLockedSession])
 
   useEffect(() => {
     if (!hasSession || typeof window === 'undefined') return undefined
@@ -377,6 +408,10 @@ export default function MobileDock() {
         router.push('/market/cart')
         return
       }
+      if (key === 'friends') {
+        router.push('/friends')
+        return
+      }
       if (key === 'notifications') {
         router.push('/notifications')
         return
@@ -397,7 +432,7 @@ export default function MobileDock() {
     [handleOpenMenu, handleOpenMore, router],
   )
 
-  const navGroups = useMemo(() => [{ title: '', items: PRIMARY_NAV }], [])
+  const navGroups = useMemo(() => [{ title: '', items: sidebarNavItems.length ? sidebarNavItems : PRIMARY_NAV }], [sidebarNavItems])
 
   const drawerSpacingVars = useMemo<CSSProperties>(
       () =>
@@ -415,8 +450,8 @@ export default function MobileDock() {
     )
 
   const navGridStyle = useMemo<CSSProperties>(() => ({
-    gridTemplateColumns: `repeat(${NAV_BUTTONS.length}, minmax(0, 1fr))`,
-  }), [])
+    gridTemplateColumns: `repeat(${navButtons.length}, minmax(0, 1fr))`,
+  }), [navButtons.length])
 
   const orgRoute = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
   const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
@@ -510,10 +545,11 @@ export default function MobileDock() {
         aria-label="Mobile navigation"
       >
         <div className="grid gap-0.5" style={navGridStyle}>
-          {NAV_BUTTONS.map((item) => {
+          {navButtons.map((item) => {
             const Icon = item.icon
             const isActive =
               (item.key === 'home' && menuOpen) ||
+              (item.key === 'friends' && pathname?.startsWith('/friends')) ||
               (item.key === 'cart' && (pathname?.startsWith('/market/cart') || pathname?.startsWith('/market/checkout'))) ||
               (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
               (item.key === 'messages' && (pathname?.startsWith('/messages') || pathname?.startsWith('/channels'))) ||
@@ -581,16 +617,16 @@ export default function MobileDock() {
             <div className="relative">
               <div onClick={viewer?.handle ? handleCloseMenu : undefined}>
                 <CivilCard
-                  href={viewer?.handle ? `/u/${viewer.handle}` : undefined}
+                  href={familyCardIdentity?.href ?? (viewer?.handle ? `/u/${viewer.handle}` : undefined)}
                   size="rail"
-                  name={viewer?.name ?? 'Civil Citizen'}
-                  subtitle="View profile"
-                  avatarAlt={viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
-                  avatarInitials={viewer?.name ?? viewer?.handle ?? 'C'}
-                  avatarSrc={viewer?.avatarUrl ?? null}
-                  coverUrl={viewer?.coverUrl ?? null}
-                  isVerified={Boolean(viewer?.isVerified)}
-                  isBusiness={Boolean(viewer?.isPremium)}
+                  name={familyCardIdentity?.name ?? viewer?.name ?? 'Civil Citizen'}
+                  subtitle={familyCardIdentity?.subtitle ?? 'View profile'}
+                  avatarAlt={familyCardIdentity?.avatarAlt ?? viewer?.name ?? viewer?.handle ?? 'Civil citizen'}
+                  avatarInitials={familyCardIdentity?.avatarInitials ?? viewer?.name ?? viewer?.handle ?? 'C'}
+                  avatarSrc={familyCardIdentity?.avatarSrc ?? viewer?.avatarUrl ?? null}
+                  coverUrl={familyCardIdentity?.coverUrl ?? viewer?.coverUrl ?? null}
+                  isVerified={familyCardIdentity?.isVerified ?? Boolean(viewer?.isVerified)}
+                  isBusiness={familyCardIdentity?.isBusiness ?? Boolean(viewer?.isPremium)}
                   className="w-[calc(100%-48px)] rounded-[var(--drawer-item-radius)]"
                 />
               </div>
@@ -603,6 +639,28 @@ export default function MobileDock() {
                 <HiOutlineXMark className="text-lg" />
               </button>
             </div>
+            {familyView ? (
+              <div className="mt-3 rounded-[var(--drawer-item-radius)] border border-[var(--cc-primary)]/15 bg-[var(--cc-primary)]/5 p-3">
+                <div className="flex items-start gap-3">
+                  <span className="rounded-2xl bg-white p-2 text-[var(--cc-primary)] shadow-sm">
+                    <HiOutlineComputerDesktop className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Locked Device</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-slate-950">{familyView.displayName}</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-600">{familyView.relationshipLabel} • Age {familyView.age} • {familyView.modeLabel}</p>
+                    <Link
+                      href="/settings/family/settings"
+                      onClick={handleCloseMenu}
+                      className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+                    >
+                      <HiOutlineArrowLeftCircle className="h-4 w-4" />
+                      Locked device settings
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-[var(--drawer-top-gap)] flex-1 overflow-y-auto pb-[calc(var(--drawer-pad)*0.85)]">
               <div className="relative mb-3">
                 <div className="relative w-full rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">

@@ -7,6 +7,7 @@ import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
 import { HiOutlineUserPlus, HiOutlineBriefcase, HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
 import CivilCard from '../../_components/CivilCard'
+import FamilyFeedClient from '../../_components/FamilyFeedClient'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
@@ -33,6 +34,12 @@ type Viewer = {
   avatarUrl?: string | null
   isPremium?: boolean
   isVerified?: boolean
+  accountType?: 'user' | 'family_member'
+  familyMemberSession?: {
+    parentHandle?: string | null
+    parentName?: string | null
+    modeBand?: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+  } | null
 }
 
 type UserProfile = {
@@ -213,6 +220,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const handleParam = decodeURIComponent(params.handle)
   const router = useRouter()
   const cachedViewer = useViewerStore((s) => s.me)
+  const familyView = useViewerStore((s) => s.familyView)
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
@@ -230,6 +238,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
+  const resolvedViewer = cachedViewer ?? viewer
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -375,7 +384,7 @@ export default function UserPostsPage({ params }: PageProps) {
     [],
   )
 
-  const isOwner = viewer && profile && viewer.handle === profile.handle
+  const isOwner = resolvedViewer && profile && resolvedViewer.handle === profile.handle
   const sortedExperiences = useMemo(() => {
     const items = Array.isArray(profile?.experiences) ? [...profile.experiences] : []
     items.sort((left, right) => {
@@ -405,12 +414,12 @@ export default function UserPostsPage({ params }: PageProps) {
   const coverDisplayUrl = profile?.coverUrl ?? null
   const editCoverHref = '/profile/edit?photo=cover'
   const editAvatarHref = '/profile/edit?photo=avatar'
-  const ownerDisplayName = formatUserDisplayName(viewer?.name, viewer?.handle) || viewer?.handle || 'Citizen'
+  const ownerDisplayName = formatUserDisplayName(resolvedViewer?.name, resolvedViewer?.handle) || resolvedViewer?.handle || 'Citizen'
   const ownerFirstName = ownerDisplayName.split(' ')[0] ?? 'Citizen'
   const ownerInitials = ownerDisplayName || 'C'
   const profileDisplayName = formatUserDisplayName(profile?.name, profile?.handle) || profile?.handle || 'Citizen'
-  const isViewerVerified = Boolean(viewer?.isVerified)
-  const isViewerBusiness = Boolean(viewer?.isPremium)
+  const isViewerVerified = Boolean(resolvedViewer?.isVerified)
+  const isViewerBusiness = Boolean(resolvedViewer?.isPremium)
   const resolvedRelationship: ProfileRelationship =
     relationship ?? {
       friendshipStatus: isOwner ? 'self' : 'none',
@@ -1092,12 +1101,61 @@ export default function UserPostsPage({ params }: PageProps) {
   }
   const avatarThreadUrl = avatarPostUrl ?? buildFallbackThreadUrl(profile?.avatarPostId)
   const coverThreadUrl = coverPostUrl ?? buildFallbackThreadUrl(profile?.coverPostId)
+  const isFamilyParentProfile = Boolean(
+    resolvedViewer?.accountType === 'family_member' &&
+      resolvedViewer.familyMemberSession?.parentHandle?.toLowerCase() === handleParam.toLowerCase(),
+  )
+
+  if (isFamilyParentProfile) {
+    const familyProfileHeader = profile ? (
+      <div className="space-y-6">
+        <CivilCard
+          size="hero"
+          name={profileDisplayName}
+          avatarAlt={profileDisplayName}
+          avatarInitials={profileDisplayName}
+          avatarSrc={profile.avatarUrl}
+          coverUrl={coverDisplayUrl}
+          isVerified={Boolean(profile.isVerified)}
+          isBusiness={Boolean(profile.isPremium)}
+          interactive={false}
+          className="w-full"
+        />
+        <section className="rounded-[32px] border border-white/60 bg-white/85 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Family Profile</p>
+          <h1 className="mt-2 text-2xl font-semibold text-slate-950">{profileDisplayName}</h1>
+          <p className="mt-2 text-sm text-slate-600">Latest Family updates from your parent or guardian only.</p>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium text-slate-600">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">@{profile.handle}</span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Joined {formatDate(profile.createdAt) || '—'}</span>
+            {publicBirthDate ? <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Born {publicBirthDate}</span> : null}
+          </div>
+        </section>
+      </div>
+    ) : (
+      <section className="rounded-[32px] border border-white/60 bg-white/85 p-6 text-sm text-slate-500 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8">
+        {loading ? 'Loading Family profile…' : error ?? 'Family profile not available.'}
+      </section>
+    )
+
+    return (
+      <FamilyFeedClient
+        readOnly
+        title="Family"
+        description={`Updates from ${profile?.name?.trim() || resolvedViewer?.familyMemberSession?.parentName || `@${handleParam}`}.`}
+        emptyState="No Family updates yet. When your parent or guardian posts here, they will appear in latest order."
+        memberDisplayName={resolvedViewer?.name ?? familyView?.displayName ?? 'Family member'}
+        memberModeBand={resolvedViewer?.familyMemberSession?.modeBand ?? familyView?.modeBand ?? 'JUNIOR'}
+        headerContent={familyProfileHeader}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
       <div className="border-b border-white/60 bg-white/70 py-4 shadow-sm backdrop-blur lg:hidden">
         <div className="mx-auto max-w-6xl px-4">
-          <Sidebar me={viewer ?? undefined} />
+          <Sidebar me={resolvedViewer ?? undefined} />
         </div>
       </div>
 

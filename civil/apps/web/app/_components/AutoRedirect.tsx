@@ -3,11 +3,12 @@ import { useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAuthedEntryPath } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
+import { FAMILY_PARENT_TOKEN_KEY } from '../_lib/authSession'
+import { readStoredFamilyView } from '../_lib/familyView'
 import { useViewerStore } from '../_lib/viewerStore'
 
 export default function AutoRedirect() {
   const router = useRouter()
-  const cachedMe = useViewerStore((s) => s.me)
   const hydrated = useViewerStore((s) => s.hydrated)
   const didNavigateRef = useRef(false)
 
@@ -16,6 +17,7 @@ export default function AutoRedirect() {
     const token = window.localStorage.getItem('token')
     if (!token) return
     void router.prefetch('/home')
+    void router.prefetch('/suspended')
     void router.prefetch('/welcome')
     void router.prefetch('/verify')
   }, [router])
@@ -30,19 +32,21 @@ export default function AutoRedirect() {
       return
     }
 
-    if (cachedMe) {
+    const storedFamilyView = readStoredFamilyView()
+    const storedParentToken = window.localStorage.getItem(FAMILY_PARENT_TOKEN_KEY)
+    if (storedFamilyView && storedParentToken) {
       didNavigateRef.current = true
-      router.replace(getAuthedEntryPath(cachedMe))
+      router.replace(storedFamilyView.suspended ? '/suspended' : '/home')
       return
     }
 
-    // Let ViewerBootstrap start the viewer request first, then attach to the same deduped ensureViewerMe call
-    // so the launch overlay can stay up until we know whether to route into the app or show the public landing page.
+    // Always resolve the active token before routing from the public landing page.
+    // Family locked sessions can swap tokens underneath an older cached viewer object.
     if (!hydrated) return
 
     let cancelled = false
 
-    ensureViewerMe({ token })
+    ensureViewerMe({ token, refresh: true, cache: 'no-store' })
       .then((data) => {
         if (cancelled) return
         if (didNavigateRef.current) return
@@ -62,6 +66,6 @@ export default function AutoRedirect() {
     return () => {
       cancelled = true
     }
-  }, [cachedMe, hydrated, router])
+  }, [hydrated, router])
   return null
 }
