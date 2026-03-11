@@ -3,22 +3,25 @@
 import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import MessagesNavBlock from '../_components/MessagesNavBlock'
+import CivilCard from '../_components/CivilCard'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
 import {
   DEFAULT_MESSAGES_NAV_SECTION,
   readStoredMessagesNavSection,
   writeStoredMessagesNavSection,
   type MessagesNavSection,
 } from '../_lib/messagesNav'
-import type { MeResponse } from '../_lib/me'
+import { hasFamilyModeEnabled, type MeResponse } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
+import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
 import {
@@ -111,6 +114,7 @@ type ThreadSummary = {
   type: string
   contextType: string | null
   contextId: string | null
+  inboxSection?: MessagesNavSection | null
   createdAt: string
   updatedAt: string
   lastMessageAt: string
@@ -146,6 +150,8 @@ type FriendListItem = {
   id: string
   status?: string
   since?: string | null
+  locked?: boolean
+  specialKind?: 'family_sponsor' | 'family_child_friend'
   user: ThreadUser
 }
 
@@ -381,8 +387,496 @@ function stripSuppressedUrlsFromBody(body: string, suppressedUrls: Set<string>):
   return output.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-export default function MessagesPageClient({ initialThreadId, initialInboxSection }: MessagesPageClientProps) {
+function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const familySession = viewer.familyMemberSession
+  const parentHandle = familySession?.parentHandle?.trim() ?? ''
+  const parentName = familySession?.parentName?.trim() || parentHandle || 'your parent or guardian'
+  const parentProfileHref = parentHandle ? `/u/${encodeURIComponent(parentHandle)}` : '/friends'
+  const [threads, setThreads] = useState<ThreadSummary[]>([])
+  const [loading, setLoading] = useState(true)
+  const [threadLoading, setThreadLoading] = useState(false)
+  const [activeThread, setActiveThread] = useState<Omit<ThreadSummary, 'lastMessage'> | null>(null)
+  const [messagesByThreadId, setMessagesByThreadId] = useState<Record<string, MessagePayload[]>>({})
+  const [composerText, setComposerText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
+  const selectedThreadId = searchParams?.get('thread')?.trim() ?? ''
+  const parentThreadId = `family-parent-${familySession?.parentId ?? 'parent'}`
+  const selectedMessages = selectedThreadId ? messagesByThreadId[selectedThreadId] ?? [] : []
+  const selectedIsParentThread = selectedThreadId === parentThreadId
+  const callPermissions = {
+    audio: familySession?.allowChildAudioCalls == null ? true : Boolean(familySession.allowChildAudioCalls),
+    video: familySession?.allowChildVideoCalls == null ? true : Boolean(familySession.allowChildVideoCalls),
+  }
+
+  const loadThreads = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const response = await fetch(buildApiUrl('/messages/threads?limit=40'), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as ThreadListResponse | null
+      if (!response.ok) {
+        throw new Error('family_messages_threads_load_failed')
+      }
+      setThreads(Array.isArray(payload?.items) ? payload.items : [])
+    } catch (error) {
+      console.error('Failed to load family child message threads', error)
+      pushToast('Unable to load messages right now.', 'error')
+      setThreads([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadThreads()
+  }, [loadThreads])
+
+  const parentProfiles = useMemo(
+    () => [{ id: familySession?.parentId ?? 'parent', handle: parentHandle, name: parentName, href: `/messages?thread=${encodeURIComponent(parentThreadId)}` }],
+    [familySession?.parentId, parentHandle, parentName, parentThreadId],
+  )
+
+  const loadSelectedThread = useCallback(async () => {
+    if (!selectedThreadId || selectedThreadId === parentThreadId) {
+      setActiveThread(null)
+      return
+    }
+
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setThreadLoading(true)
+    try {
+      const response = await fetch(buildApiUrl(`/messages/threads/${encodeURIComponent(selectedThreadId)}?limit=50`), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as ThreadDetailResponse | { error?: string } | null
+      if (!response.ok || !payload || !('thread' in payload) || !payload.thread) {
+        setActiveThread(null)
+        return
+      }
+      setActiveThread(payload.thread)
+      setMessagesByThreadId((prev) => ({
+        ...prev,
+        [selectedThreadId]: sortMessagesChronologically(Array.isArray(payload.messages) ? payload.messages : []),
+      }))
+    } catch (error) {
+      console.error('Failed to load family message thread', error)
+      pushToast('Unable to open this conversation right now.', 'error')
+      setActiveThread(null)
+    } finally {
+      setThreadLoading(false)
+    }
+  }, [parentThreadId, selectedThreadId])
+
+  useEffect(() => {
+    void loadSelectedThread()
+  }, [loadSelectedThread])
+
+  const handleSendMessage = useCallback(async () => {
+    if (!activeThread || !selectedThreadId || selectedIsParentThread) return
+    const body = composerText.trim()
+    if (!body) return
+
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setSending(true)
+    try {
+      const response = await fetch(buildApiUrl(`/messages/threads/${encodeURIComponent(activeThread.id)}/messages`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ body }),
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as { message?: MessagePayload; error?: string } | null
+      if (!response.ok || !payload?.message) {
+        pushToast(payload?.error ?? 'Unable to send this message right now.', 'error')
+        return
+      }
+
+      setComposerText('')
+      setMessagesByThreadId((prev) => ({
+        ...prev,
+        [activeThread.id]: sortMessagesChronologically([...(prev[activeThread.id] ?? []), payload.message as MessagePayload]),
+      }))
+      setThreads((prev) => {
+        const nextThread = prev.find((thread) => thread.id === activeThread.id)
+        if (!nextThread) return prev
+        const updatedThread: ThreadSummary = {
+          ...nextThread,
+          lastMessage: payload.message,
+          lastMessageAt: payload.message.createdAt,
+          updatedAt: payload.message.createdAt,
+          unread: false,
+          unreadCount: 0,
+        }
+        return [updatedThread, ...prev.filter((thread) => thread.id !== activeThread.id)]
+      })
+    } catch (error) {
+      console.error('Failed to send family message', error)
+      pushToast('Unable to send this message right now.', 'error')
+    } finally {
+      setSending(false)
+    }
+  }, [activeThread, composerText, selectedIsParentThread, selectedThreadId])
+
+  const handleStartCall = useCallback(async (mode: 'audio' | 'video') => {
+    if (!activeThread || selectedIsParentThread) return
+    if ((mode === 'audio' && !callPermissions.audio) || (mode === 'video' && !callPermissions.video)) return
+
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setCallActionMode(mode)
+    try {
+      const response = await fetch(buildApiUrl(`/messages/threads/${encodeURIComponent(activeThread.id)}/call/start`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ mode }),
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as { call?: ThreadCall; error?: string } | null
+      if (!response.ok || !payload?.call?.id) {
+        pushToast(payload?.error ?? 'Unable to start this call right now.', 'error')
+        return
+      }
+      router.push(`/messages/call/${encodeURIComponent(activeThread.id)}?call=${encodeURIComponent(payload.call.id)}`)
+    } catch (error) {
+      console.error('Failed to start family call', error)
+      pushToast('Unable to start this call right now.', 'error')
+    } finally {
+      setCallActionMode(null)
+    }
+  }, [activeThread, callPermissions.audio, callPermissions.video, router, selectedIsParentThread])
+
+  const activeThreadTitle = activeThread ? getThreadTitle({ ...activeThread, lastMessage: null } as ThreadSummary) : ''
+  const activeThreadPrimaryUser = activeThread?.participants.find((participant) => !participant.isViewer)?.user ?? null
+
+  const rightRail = (
+    <div className="space-y-4">
+      <section className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Your Parents</p>
+        <div className="mt-4 space-y-3">
+          {parentProfiles.map((parent) => {
+            const parentDisplayName = formatUserDisplayName(parent.name, parent.handle) || parent.name || parent.handle || 'Parent'
+            return (
+              <CivilCard
+                key={parent.id}
+                href={parent.href}
+                size="rail"
+                name={parentDisplayName}
+                avatarAlt={parentDisplayName}
+                avatarInitials={parentDisplayName}
+                subtitle={parent.handle ? `@${parent.handle}` : 'Parent profile'}
+              />
+            )
+          })}
+        </div>
+      </section>
+      <section className="rounded-[28px] border border-slate-200 bg-white/90 p-5 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-500">Add Friends</p>
+        <p className="mt-2 text-sm text-slate-600">Find friends and send a request from your Family account.</p>
+        <div className="mt-4">
+          <Link href="/friends" className="inline-flex w-full items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)]">
+            Add Friends
+          </Link>
+        </div>
+      </section>
+    </div>
+  )
+
+  return (
+    <DashboardShell rightRail={rightRail} rightRailClassName="pt-0" rightRailTopClassName="pt-0">
+      <div className="space-y-5 pb-8">
+        <section className="rounded-[32px] border border-slate-200 bg-white/90 p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Messages</p>
+              <h1 className="mt-2 text-2xl font-semibold text-slate-950">Your Messages</h1>
+              <p className="mt-1 text-sm text-slate-600">Messages between you and your approved friends appear here.</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              {threads.length} {threads.length === 1 ? 'conversation' : 'conversations'}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="mt-5 space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="h-[84px] animate-pulse rounded-[1.45rem] border border-slate-200 bg-slate-100" />
+              ))}
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+              <div className="space-y-3">
+                <Link
+                  href={`/messages?thread=${encodeURIComponent(parentThreadId)}`}
+                  className={clsx(
+                    'flex items-center gap-3 rounded-[1.6rem] border px-4 py-3 shadow-sm transition hover:border-slate-300 hover:bg-slate-50/70',
+                    selectedIsParentThread ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5' : 'border-[var(--cc-primary)]/25 bg-[var(--cc-primary)]/5',
+                  )}
+                >
+                  <VerifiedAvatar
+                    src={null}
+                    alt={parentName}
+                    initials={parentName}
+                    size={48}
+                    className="shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="truncate text-sm font-semibold text-slate-900">{parentName}</p>
+                      <span className="shrink-0 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--cc-primary)]">Parent</span>
+                    </div>
+                    <p className="mt-1 truncate text-sm text-slate-600">Open your parent profile details.</p>
+                    <p className="mt-1 truncate text-xs text-slate-400">{parentHandle ? `@${parentHandle}` : 'Parent profile'}</p>
+                  </div>
+                </Link>
+
+                <ul className="space-y-3">
+                  {threads.length === 0 ? (
+                    <li>
+                      <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-600 shadow-sm">
+                        No messages yet. Add friends to start building this inbox.
+                      </div>
+                    </li>
+                  ) : null}
+                  {threads.map((thread) => {
+                    const otherParticipants = thread.participants.filter((participant) => !participant.isViewer)
+                    const title = getThreadTitle(thread)
+                    const primaryUser = otherParticipants[0]?.user ?? null
+                    const avatarSrc = primaryUser?.avatarUrl ?? buildFamilyAvatarDataUrl(title, familySession?.modeBand ?? 'JUNIOR')
+                    const lastMessage = thread.lastMessage
+                    const lastSnippet = lastMessage?.body?.trim() || (lastMessage?.attachments.length ? 'Attachment' : 'No messages yet.')
+                    const isSelected = selectedThreadId === thread.id
+                    return (
+                      <li key={thread.id}>
+                        <Link
+                          href={`/messages?thread=${encodeURIComponent(thread.id)}`}
+                          className={clsx(
+                            'flex items-center gap-3 rounded-[1.6rem] border bg-white px-4 py-3 shadow-sm transition hover:border-slate-300 hover:bg-slate-50/70',
+                            isSelected ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5' : 'border-slate-200',
+                          )}
+                        >
+                          <VerifiedAvatar
+                            src={avatarSrc}
+                            alt={title}
+                            initials={title}
+                            size={48}
+                            isVerified={Boolean(primaryUser?.isVerified)}
+                            isBusiness={Boolean(primaryUser?.isPremium)}
+                            className="shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="truncate text-sm font-semibold text-slate-900">{title}</p>
+                              <span className="shrink-0 text-xs text-slate-400">{formatTimestamp(thread.lastMessageAt || thread.updatedAt)}</span>
+                            </div>
+                            <p className="mt-1 truncate text-sm text-slate-600">{lastSnippet}</p>
+                            <p className="mt-1 truncate text-xs text-slate-400">{thread.type === 'group' ? `${thread.participants.length} participants` : primaryUser?.handle ? `@${primaryUser.handle}` : 'Direct conversation'}</p>
+                          </div>
+                        </Link>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+
+              <section className="min-h-[24rem] rounded-[1.8rem] border border-slate-200 bg-slate-50/80 p-4 shadow-inner">
+                {selectedIsParentThread ? (
+                  <div className="flex h-full flex-col justify-between gap-4 rounded-[1.4rem] border border-slate-200 bg-white p-5 shadow-sm">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--cc-primary)]">Parent</p>
+                      <h2 className="mt-2 text-xl font-semibold text-slate-950">{parentName}</h2>
+                      <p className="mt-2 text-sm text-slate-600">
+                        Your parent profile is available here from the Family shell. Friend conversations stay separate and only show threads created for this child account.
+                      </p>
+                    </div>
+                    <div>
+                      <Link href={parentProfileHref} className="inline-flex rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
+                        View Parent Profile
+                      </Link>
+                    </div>
+                  </div>
+                ) : !selectedThreadId ? (
+                  <div className="flex h-full items-center justify-center rounded-[1.4rem] border border-dashed border-slate-200 bg-white px-6 py-10 text-center text-sm text-slate-500">
+                    Select a conversation to open it.
+                  </div>
+                ) : threadLoading ? (
+                  <div className="space-y-3">
+                    <div className="h-16 animate-pulse rounded-[1.2rem] bg-white" />
+                    <div className="h-24 animate-pulse rounded-[1.2rem] bg-white" />
+                    <div className="h-24 animate-pulse rounded-[1.2rem] bg-white" />
+                  </div>
+                ) : !activeThread ? (
+                  <div className="flex h-full items-center justify-center rounded-[1.4rem] border border-dashed border-slate-200 bg-white px-6 py-10 text-center text-sm text-slate-500">
+                    This conversation is not available for this child account.
+                  </div>
+                ) : (
+                  <div className="flex h-full flex-col gap-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <VerifiedAvatar
+                          src={activeThreadPrimaryUser?.avatarUrl ?? buildFamilyAvatarDataUrl(activeThreadTitle, familySession?.modeBand ?? 'JUNIOR')}
+                          alt={activeThreadTitle}
+                          initials={activeThreadTitle}
+                          size={48}
+                          isVerified={Boolean(activeThreadPrimaryUser?.isVerified)}
+                          isBusiness={Boolean(activeThreadPrimaryUser?.isPremium)}
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{activeThreadTitle}</p>
+                          <p className="truncate text-xs text-slate-500">
+                            {activeThread.type === 'group'
+                              ? `${activeThread.participants.length} participants`
+                              : activeThreadPrimaryUser?.handle
+                                ? `@${activeThreadPrimaryUser.handle}`
+                                : 'Direct conversation'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleStartCall('audio')}
+                          disabled={callActionMode !== null || !callPermissions.audio}
+                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {callActionMode === 'audio' ? 'Calling...' : 'Audio Call'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleStartCall('video')}
+                          disabled={callActionMode !== null || !callPermissions.video}
+                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {callActionMode === 'video' ? 'Starting video...' : 'Video Call'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 space-y-3 overflow-y-auto rounded-[1.4rem] border border-slate-200 bg-white p-4 shadow-sm">
+                      {selectedMessages.length === 0 ? (
+                        <div className="flex h-full items-center justify-center text-sm text-slate-500">No messages yet. Say hello to start the conversation.</div>
+                      ) : (
+                        selectedMessages.map((message) => (
+                          <div key={message.id} className={clsx('flex', message.isMine ? 'justify-end' : 'justify-start')}>
+                            <div
+                              className={clsx(
+                                'max-w-[85%] rounded-[1.35rem] px-4 py-3 text-sm shadow-sm',
+                                message.isMine ? 'bg-[var(--cc-primary)] text-white' : 'bg-slate-100 text-slate-800',
+                              )}
+                            >
+                              {message.body ? <p className="whitespace-pre-wrap break-words">{message.body}</p> : null}
+                              {message.attachments.length ? (
+                                <div className={clsx('space-y-1', message.body ? 'mt-2' : '')}>
+                                  {message.attachments.map((attachmentUrl) => (
+                                    <a
+                                      key={attachmentUrl}
+                                      href={attachmentUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className={clsx(
+                                        'block break-all underline underline-offset-2',
+                                        message.isMine ? 'text-white/90' : 'text-[var(--cc-primary)]',
+                                      )}
+                                    >
+                                      {attachmentUrl}
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : null}
+                              <p className={clsx('mt-2 text-[11px]', message.isMine ? 'text-white/80' : 'text-slate-500')}>
+                                {formatTimestamp(message.createdAt)}
+                              </p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <form
+                      className="flex items-end gap-3 rounded-[1.4rem] border border-slate-200 bg-white p-3 shadow-sm"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        void handleSendMessage()
+                      }}
+                    >
+                      <textarea
+                        value={composerText}
+                        onChange={(event) => setComposerText(event.target.value)}
+                        rows={3}
+                        placeholder="Write a message"
+                        className="min-h-[5.5rem] flex-1 resize-none rounded-[1.1rem] border border-slate-200 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)]"
+                      />
+                      <button
+                        type="submit"
+                        disabled={sending || !composerText.trim()}
+                        className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        {sending ? 'Sending...' : 'Send'}
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+        </section>
+      </div>
+    </DashboardShell>
+  )
+}
+
+function StandardMessagesPageClient({ initialThreadId, initialInboxSection, viewer }: MessagesPageClientProps & { viewer?: MeResponse | null }) {
+  const router = useRouter()
+  const isFamilySession = viewer?.accountType === 'family_member'
+  const showFamilyInbox = !isFamilySession && hasFamilyModeEnabled(viewer)
+  const familyParentThreadId = isFamilySession ? `family-parent-${viewer?.familyMemberSession?.parentId ?? 'parent'}` : null
+  const familyParentHandle = viewer?.familyMemberSession?.parentHandle?.trim() ?? ''
+  const familyParentName = viewer?.familyMemberSession?.parentName?.trim() || familyParentHandle || 'Parent account'
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const mobileComposerLastTouchAtRef = useRef(0)
@@ -511,7 +1005,9 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const [leavingGroup, setLeavingGroup] = useState(false)
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
   const [activeInboxSection, setActiveInboxSection] = useState<MessagesNavSection>(
-    initialInboxSection && initialInboxSection !== 'market' ? initialInboxSection : DEFAULT_MESSAGES_NAV_SECTION,
+    initialInboxSection && initialInboxSection !== 'market' && (initialInboxSection !== 'family' || showFamilyInbox)
+      ? initialInboxSection
+      : DEFAULT_MESSAGES_NAV_SECTION,
   )
   const [friendContactIds, setFriendContactIds] = useState<string[]>([])
   const [networkContactIds, setNetworkContactIds] = useState<string[]>([])
@@ -594,7 +1090,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   }, [syncMobileKeyboardState])
 
   useEffect(() => {
-    if (initialInboxSection && initialInboxSection !== 'market') {
+    if (initialInboxSection && initialInboxSection !== 'market' && (initialInboxSection !== 'family' || showFamilyInbox)) {
       setActiveInboxSection(initialInboxSection)
       writeStoredMessagesNavSection(initialInboxSection)
       return
@@ -609,8 +1105,12 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
       return
     }
+    if (stored === 'family' && !showFamilyInbox) {
+      setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
+      return
+    }
     setActiveInboxSection(stored)
-  }, [initialInboxSection, initialThreadId])
+  }, [initialInboxSection, initialThreadId, showFamilyInbox])
 
   useEffect(() => {
     selectedThreadRef.current = selectedThreadId
@@ -673,6 +1173,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
 
   const loadSupplementalUnreadCounts = useCallback(async () => {
+    if (isFamilySession) {
+      setMarketUnreadCount(0)
+      return
+    }
+
     try {
       const marketRes = await authedFetch('/market/chats/unread-count')
       if (marketRes.status === 401) {
@@ -687,7 +1192,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       console.error('Failed to load supplemental message unread counts', error)
       setMarketUnreadCount(0)
     }
-  }, [authedFetch])
+  }, [authedFetch, isFamilySession])
 
   const upsertThread = useCallback((incoming: ThreadSummary) => {
     setThreads((prev) => {
@@ -723,6 +1228,13 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     (payload: RealtimePayload) => {
       if (!payload?.type) return
       if (payload.type === 'thread.created') {
+        const thread = payload.data?.thread as ThreadSummary | undefined
+        if (thread) {
+          upsertThread(thread)
+        }
+        return
+      }
+      if (payload.type === 'thread.updated') {
         const thread = payload.data?.thread as ThreadSummary | undefined
         if (thread) {
           upsertThread(thread)
@@ -891,6 +1403,13 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   )
 
   const loadContactBuckets = useCallback(async () => {
+    if (isFamilySession) {
+      setFriendContactIds([])
+      setNetworkContactIds([])
+      setContactsBucketReady(true)
+      return
+    }
+
     setContactsBucketReady(false)
     try {
       const [friendsRes, connectionsRes] = await Promise.all([authedFetch('/friends'), authedFetch('/connections')])
@@ -920,7 +1439,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     } finally {
       setContactsBucketReady(true)
     }
-  }, [authedFetch])
+  }, [authedFetch, isFamilySession])
 
   const fetchThreadDetail = useCallback(
     async (threadId: string) => {
@@ -1256,6 +1775,12 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   }, [authReady, loadMe, loadThreads, loadContactBuckets, loadSupplementalUnreadCounts])
 
   useEffect(() => {
+    if (!isFamilySession) return
+    setActiveInboxSection('friends')
+    writeStoredMessagesNavSection('friends')
+  }, [isFamilySession])
+
+  useEffect(() => {
     if (!authReady || typeof window === 'undefined') return undefined
     const refresh = () => {
       void loadSupplementalUnreadCounts()
@@ -1273,10 +1798,22 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const networkContactIdSet = useMemo(() => new Set(networkContactIds), [networkContactIds])
   const categorizedThreads = useMemo(() => {
     const groups = sortThreadsForInbox(orderedThreads.filter((thread) => thread.type === 'group'))
-    const directThreads = orderedThreads.filter((thread) => thread.type !== 'group')
+    const family = showFamilyInbox
+      ? sortThreadsForInbox(orderedThreads.filter((thread) => thread.type !== 'group' && thread.inboxSection === 'family'))
+      : ([] as ThreadSummary[])
+    const directThreads = orderedThreads.filter((thread) => thread.type !== 'group' && thread.inboxSection !== 'family')
+    if (isFamilySession) {
+      return {
+        friends: sortThreadsForInbox(directThreads),
+        family: [] as ThreadSummary[],
+        network: [] as ThreadSummary[],
+        groups,
+      }
+    }
     if (!contactsBucketReady) {
       return {
         friends: sortThreadsForInbox(directThreads),
+        family,
         network: [] as ThreadSummary[],
         groups,
       }
@@ -1291,28 +1828,32 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
     )
     return {
       friends: sortThreadsForInbox(friends),
+      family,
       network: sortThreadsForInbox(network),
       groups,
     }
-  }, [contactsBucketReady, friendContactIdSet, me?.id, networkContactIdSet, orderedThreads])
+  }, [contactsBucketReady, friendContactIdSet, isFamilySession, me?.id, networkContactIdSet, orderedThreads, showFamilyInbox])
   const messagesNavUnreadCounts = useMemo(
     () => ({
       friends: countUnreadInThreads(categorizedThreads.friends),
+      family: countUnreadInThreads(categorizedThreads.family),
       network: countUnreadInThreads(categorizedThreads.network),
       groups: countUnreadInThreads(categorizedThreads.groups),
       market: Math.max(0, marketUnreadCount),
     }),
-    [categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadCount],
+    [categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadCount],
   )
   const filteredOrderedThreads = useMemo(() => {
+    if (activeInboxSection === 'family') return categorizedThreads.family
     if (activeInboxSection === 'network') return categorizedThreads.network
     if (activeInboxSection === 'groups') return categorizedThreads.groups
     return categorizedThreads.friends
-  }, [activeInboxSection, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network])
+  }, [activeInboxSection, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network])
   const activeThread = useMemo(
     () => filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null,
     [filteredOrderedThreads, selectedThreadId],
   )
+  const isFamilyParentThreadSelected = Boolean(familyParentThreadId && selectedThreadId === familyParentThreadId)
   const hideGlobalMobileDockInThread = isMobileViewport && Boolean(activeThread)
 
   const syncMobileThreadLayout = useCallback(() => {
@@ -1401,15 +1942,19 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
 
   useEffect(() => {
     if (filteredOrderedThreads.length === 0) {
+      if (familyParentThreadId && selectedThreadId === familyParentThreadId) return
       if (threadsLoading || threads.length === 0) return
       if (selectedThreadId) setSelectedThreadId(null)
+      return
+    }
+    if (familyParentThreadId && selectedThreadId === familyParentThreadId) {
       return
     }
     if (selectedThreadId && filteredOrderedThreads.some((thread) => thread.id === selectedThreadId)) {
       return
     }
     setSelectedThreadId(isMobileMessagesViewport() ? null : filteredOrderedThreads[0]?.id ?? null)
-  }, [filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
+  }, [familyParentThreadId, filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
 
   useEffect(() => {
     if (!selectedThreadId) return
@@ -1640,7 +2185,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   const isActiveGroupThread = activeThread?.type === 'group'
   const isActiveGroupOwner = isActiveGroupThread && activeViewerParticipant?.role === 'admin'
   const activeThreadSupportsCalling = Boolean(
-    activeThread && !activeThread.contextType && (activeThread.type === 'direct' || activeThread.type === 'group'),
+    activeThread &&
+      !activeThread.contextType &&
+      (activeThread.type === 'direct' || activeThread.type === 'group') &&
+      activeThread.id !== familyParentThreadId &&
+      activeThread.inboxSection !== 'family',
   )
   const activeThreadCall = activeThread?.activeCall ?? null
 
@@ -1810,8 +2359,17 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       return <p className="text-sm text-rose-600">{threadsError}</p>
     }
     if (filteredOrderedThreads.length === 0) {
+      if (isFamilySession && activeInboxSection === 'friends') {
+        return null
+      }
       const emptyLabel =
-        activeInboxSection === 'groups' ? 'No group chats yet.' : activeInboxSection === 'network' ? 'No network messages yet.' : 'No friend messages yet.'
+        activeInboxSection === 'groups'
+          ? 'No group chats yet.'
+          : activeInboxSection === 'network'
+            ? 'No network messages yet.'
+            : activeInboxSection === 'family'
+              ? 'No family messages yet.'
+              : 'No friend messages yet.'
       return (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-center text-sm text-slate-500">
           <p>{emptyLabel}</p>
@@ -1843,6 +2401,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
           const primaryParticipant = getPrimaryOtherParticipant(thread, me?.id)
           const threadCoverUrl = isGroupThread ? null : primaryParticipant?.user.coverUrl ?? null
           const groupParticipants = getOtherParticipants(thread, me?.id).slice(0, 4)
+          const isFamilyThread = thread.inboxSection === 'family'
           return (
             <li key={thread.id}>
               <button
@@ -1850,10 +2409,16 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                 className={clsx(
                   'relative w-full overflow-hidden rounded-2xl border px-4 py-3 text-left transition',
                   active
-                    ? 'border-[var(--cc-primary)] shadow-lg shadow-[var(--cc-primary)]/20'
+                    ? isFamilyThread
+                      ? 'border-emerald-500 bg-emerald-50/70 shadow-lg shadow-emerald-200'
+                      : 'border-[var(--cc-primary)] shadow-lg shadow-[var(--cc-primary)]/20'
                     : unread
-                      ? 'border-red-300 bg-red-50/70 shadow-md shadow-red-100 hover:border-red-400'
-                    : 'border-slate-200 bg-white/70 hover:border-slate-300',
+                      ? isFamilyThread
+                        ? 'border-emerald-300 bg-emerald-50/70 shadow-md shadow-emerald-100 hover:border-emerald-400'
+                        : 'border-red-300 bg-red-50/70 shadow-md shadow-red-100 hover:border-red-400'
+                    : isFamilyThread
+                      ? 'border-emerald-200 bg-emerald-50/40 hover:border-emerald-300'
+                      : 'border-slate-200 bg-white/70 hover:border-slate-300',
                 )}
                 onClick={() => handleThreadSelect(thread.id)}
               >
@@ -1896,6 +2461,11 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
                     <div className="flex items-center justify-between gap-2">
                       <p className={clsx('truncate text-sm font-semibold', threadCoverUrl ? 'text-white' : 'text-slate-900')}>{title}</p>
                       <div className="flex items-center gap-2">
+                        {isFamilyThread ? (
+                          <span className={clsx('hidden rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide sm:inline-flex', threadCoverUrl ? 'bg-emerald-400/90 text-slate-950' : 'bg-emerald-100 text-emerald-800')}>
+                            Family
+                          </span>
+                        ) : null}
                         {unreadCount > 0 ? (
                           <span className={clsx('inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold', threadCoverUrl ? 'bg-rose-500/90 text-white' : 'bg-rose-500 text-white')}>
                             {unreadCount > 99 ? '99+' : unreadCount}
@@ -1916,6 +2486,28 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   }
 
   const renderMessages = () => {
+    if (!activeThread && isFamilyParentThreadSelected) {
+      return (
+        <div className="flex h-full flex-col justify-between rounded-[32px] border border-white/70 bg-white/90 px-6 py-6 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Parent</p>
+            <h2 className="mt-3 text-2xl font-semibold text-slate-950">{familyParentName}</h2>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
+              Your parent account is available from the Family shell here, but it does not appear as a normal direct-message thread inside the child inbox.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href={familyParentHandle ? `/u/${encodeURIComponent(familyParentHandle)}` : '/settings/family'}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+            >
+              View Parent Profile
+            </Link>
+          </div>
+        </div>
+      )
+    }
+
     if (!activeThread) {
       return (
         <div className="flex h-full flex-col items-center justify-center rounded-[32px] border border-dashed border-slate-200 bg-slate-50/80 p-8 text-center">
@@ -2420,6 +3012,24 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
   }
 
   const contextActions = useMemo(() => {
+    if (isFamilySession) {
+      return {
+        messagesHref: '/messages?inbox=friends',
+        messagesLabel: 'Friend Messages',
+        directoryHref: '/friends',
+        directoryLabel: 'My Friends',
+        contextLabel: 'Friends Inbox',
+      }
+    }
+    if (activeInboxSection === 'family') {
+      return {
+        messagesHref: '/messages?inbox=family',
+        messagesLabel: 'Family Messages',
+        directoryHref: '/friends?tab=family',
+        directoryLabel: 'Family',
+        contextLabel: 'Family Inbox',
+      }
+    }
     if (activeInboxSection === 'network') {
       return {
         messagesHref: '/messages?inbox=network',
@@ -2445,8 +3055,10 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       directoryLabel: 'All Friends',
       contextLabel: 'Friends Inbox',
     }
-  }, [activeInboxSection, me?.handle])
-  const activeContextUnreadCount = activeInboxSection === 'network'
+  }, [activeInboxSection, isFamilySession, me?.handle])
+  const activeContextUnreadCount = activeInboxSection === 'family'
+    ? messagesNavUnreadCounts.family
+    : activeInboxSection === 'network'
     ? messagesNavUnreadCounts.network
     : activeInboxSection === 'groups'
       ? messagesNavUnreadCounts.groups
@@ -2473,6 +3085,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
             setActiveInboxSection(next)
           }}
           unreadCounts={messagesNavUnreadCounts}
+          visibleItems={isFamilySession ? ['friends', 'groups'] : showFamilyInbox ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
           className="border border-slate-200/90 bg-slate-50/70"
         />
         <div className="grid grid-cols-2 gap-2">
@@ -2520,7 +3133,7 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
       mainClassName={keyboardAwareViewportClass}
     >
       {isMobileViewport ? (
-        <div className={clsx('h-full min-h-0', activeThread ? 'pt-2' : '')}>{activeThread ? renderMessages() : inboxPanel}</div>
+        <div className={clsx('h-full min-h-0', activeThread || isFamilyParentThreadSelected ? 'pt-2' : '')}>{activeThread || isFamilyParentThreadSelected ? renderMessages() : inboxPanel}</div>
       ) : (
         <div className="h-full min-h-0">{renderMessages()}</div>
       )}
@@ -2654,4 +3267,46 @@ export default function MessagesPageClient({ initialThreadId, initialInboxSectio
         : null}
     </DashboardShell>
   )
+}
+
+export default function MessagesPageClient(props: MessagesPageClientProps) {
+  const cachedViewer = useViewerStore((state) => state.me)
+  const [resolvedViewer, setResolvedViewer] = useState<MeResponse | null | undefined>(() => cachedViewer ?? undefined)
+
+  useEffect(() => {
+    if (cachedViewer) {
+      setResolvedViewer(cachedViewer)
+      return
+    }
+
+    const token = getStoredToken()
+    if (!token) {
+      setResolvedViewer(null)
+      return
+    }
+
+    let cancelled = false
+
+    void ensureViewerMe({ token }).then((viewer) => {
+      if (!cancelled) {
+        setResolvedViewer(viewer ?? null)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cachedViewer])
+
+  if (resolvedViewer === undefined) {
+    return (
+      <DashboardShell>
+        <div className="rounded-[32px] border border-slate-200 bg-white/90 p-6 text-sm text-slate-600 shadow-sm">
+          Loading messages…
+        </div>
+      </DashboardShell>
+    )
+  }
+
+  return <StandardMessagesPageClient {...props} viewer={resolvedViewer} />
 }

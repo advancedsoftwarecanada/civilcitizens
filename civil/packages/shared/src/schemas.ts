@@ -475,6 +475,9 @@ export const FamilyMemberInput = z.object({
   dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   relationship: FamilyRelationshipEnum,
   allowChildOwnMediaEdits: z.boolean().optional().default(false),
+  allowChildOwnUsernameEdits: z.boolean().optional().default(true),
+  allowChildAudioCalls: z.boolean().optional().default(true),
+  allowChildVideoCalls: z.boolean().optional().default(true),
   notifyParentOnMediaChanges: z.boolean().optional().default(false),
 })
 export type FamilyMemberInput = z.infer<typeof FamilyMemberInput>

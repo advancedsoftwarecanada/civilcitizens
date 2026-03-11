@@ -3,6 +3,7 @@
 import type { Area } from 'react-easy-crop'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import clsx from 'clsx'
 import {
   HiOutlineArrowLeftCircle,
   HiOutlineComputerDesktop,
@@ -38,11 +39,19 @@ type UploadState = {
   error: string | null
 }
 
+type UsernameCheckState = {
+  status: 'idle' | 'checking' | 'available' | 'taken' | 'invalid'
+  message: string | null
+}
+
 const COVER_EXPORT_WIDTH = 1920
 const COVER_EXPORT_HEIGHT = 640
 const COVER_ASPECT_RATIO = COVER_EXPORT_WIDTH / COVER_EXPORT_HEIGHT
 const AVATAR_EXPORT_SIZE = 1024
 const MAX_CROP_ZOOM = 3
+const FAMILY_USERNAME_MIN_LENGTH = 6
+const FAMILY_USERNAME_MAX_LENGTH = 20
+const FAMILY_USERNAME_PATTERN = /^[A-Za-z0-9]{6,20}$/
 
 const createPhotoDraftState = (): PhotoDraftState => ({
   file: null,
@@ -57,6 +66,15 @@ const createUploadState = (): UploadState => ({
   status: 'idle',
   error: null,
 })
+
+const createUsernameCheckState = (): UsernameCheckState => ({
+  status: 'idle',
+  message: null,
+})
+
+function sanitizeFamilyUsernameInput(value: string) {
+  return value.replace(/[^A-Za-z0-9]/g, '').slice(0, FAMILY_USERNAME_MAX_LENGTH)
+}
 
 function shouldUseDirectUpload(url?: string | null) {
   if (!url) return false
@@ -188,8 +206,13 @@ export default function FamilyLockedSettingsPage() {
     avatar: createUploadState(),
     cover: createUploadState(),
   })
+  const [usernameDraft, setUsernameDraft] = useState('')
+  const [usernameCheck, setUsernameCheck] = useState<UsernameCheckState>(createUsernameCheckState)
+  const [usernameSaving, setUsernameSaving] = useState(false)
   const avatarInputRef = useRef<HTMLInputElement | null>(null)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
+
+  const currentUsername = viewer?.familyMemberSession?.username ?? ''
 
   useEffect(() => {
     if (!familyView) {
@@ -206,6 +229,91 @@ export default function FamilyLockedSettingsPage() {
       })
     }
   }, [photoDrafts])
+
+  useEffect(() => {
+    setUsernameDraft(currentUsername)
+    setUsernameCheck(createUsernameCheckState())
+  }, [currentUsername])
+
+  useEffect(() => {
+    if (!viewer?.familyMemberSession?.allowChildOwnUsernameEdits) {
+      setUsernameCheck(createUsernameCheckState())
+      return
+    }
+
+    const nextUsername = usernameDraft.trim()
+    if (!nextUsername) {
+      setUsernameCheck(createUsernameCheckState())
+      return
+    }
+
+    if (!FAMILY_USERNAME_PATTERN.test(nextUsername)) {
+      setUsernameCheck({
+        status: 'invalid',
+        message: `Use ${FAMILY_USERNAME_MIN_LENGTH}-${FAMILY_USERNAME_MAX_LENGTH} letters or numbers.`,
+      })
+      return
+    }
+
+    if (nextUsername.toLowerCase() === currentUsername.trim().toLowerCase()) {
+      setUsernameCheck({ status: 'available', message: 'Current username.' })
+      return
+    }
+
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token')?.trim() || null : null
+    if (!token) {
+      setUsernameCheck(createUsernameCheckState())
+      return
+    }
+
+    let cancelled = false
+    setUsernameCheck({ status: 'checking', message: 'Checking username…' })
+
+    const timeoutId = window.setTimeout(() => {
+      void fetch(buildApiUrl(`/family/username/check?username=${encodeURIComponent(nextUsername)}`), {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+        cache: 'no-store',
+      })
+        .then(async (response) => {
+          if (cancelled) return
+          if (response.status === 401) {
+            redirectToAuthModal('login')
+            return
+          }
+
+          const payload = (await response.json().catch(() => null)) as { error?: string; available?: boolean } | null
+          if (!response.ok) {
+            if (payload?.error === 'family_member_username_invalid') {
+              setUsernameCheck({
+                status: 'invalid',
+                message: `Use ${FAMILY_USERNAME_MIN_LENGTH}-${FAMILY_USERNAME_MAX_LENGTH} letters or numbers.`,
+              })
+              return
+            }
+            setUsernameCheck({ status: 'invalid', message: 'Unable to check that username right now.' })
+            return
+          }
+
+          setUsernameCheck(
+            payload?.available
+              ? { status: 'available', message: 'Username is available.' }
+              : { status: 'taken', message: 'That username is already in use.' },
+          )
+        })
+        .catch((error) => {
+          if (cancelled) return
+          console.error('Failed to check family username', error)
+          setUsernameCheck({ status: 'invalid', message: 'Unable to check that username right now.' })
+        })
+    }, 350)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [currentUsername, usernameDraft, viewer?.familyMemberSession?.allowChildOwnUsernameEdits])
 
   const updatePhotoDraft = useCallback((category: ProfileMediaCategory, updater: (prev: PhotoDraftState) => PhotoDraftState) => {
     setPhotoDrafts((prev) => ({
@@ -424,11 +532,91 @@ export default function FamilyLockedSettingsPage() {
     }
   }, [closePhotoModal, familyView, photoCaption, photoDrafts, photoModalCategory, setViewer, updatePhotoDraft, updateUploadState, viewer?.familyMemberSession?.allowChildOwnMediaEdits])
 
+  const handleSaveUsername = useCallback(async () => {
+    const nextUsername = usernameDraft.trim()
+    if (!viewer?.familyMemberSession?.allowChildOwnUsernameEdits || !nextUsername) return
+    if (!FAMILY_USERNAME_PATTERN.test(nextUsername)) {
+      setUsernameCheck({
+        status: 'invalid',
+        message: `Use ${FAMILY_USERNAME_MIN_LENGTH}-${FAMILY_USERNAME_MAX_LENGTH} letters or numbers.`,
+      })
+      return
+    }
+
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token')?.trim() || null : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setUsernameSaving(true)
+    try {
+      const response = await fetch(buildApiUrl('/family/username'), {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ username: nextUsername }),
+      })
+
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+        viewer?: typeof viewer
+        username?: string
+      } | null
+
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      if (!response.ok) {
+        if (payload?.error === 'family_member_username_taken') {
+          setUsernameCheck({ status: 'taken', message: 'That username is already in use.' })
+          pushToast('That username is already in use.', 'error')
+          return
+        }
+        if (payload?.error === 'family_member_username_invalid') {
+          setUsernameCheck({
+            status: 'invalid',
+            message: `Use ${FAMILY_USERNAME_MIN_LENGTH}-${FAMILY_USERNAME_MAX_LENGTH} letters or numbers.`,
+          })
+          pushToast('Use 6 to 20 letters or numbers for your username.', 'error')
+          return
+        }
+        if (payload?.error === 'family_member_username_edit_not_allowed') {
+          pushToast('Your parent manages this username right now.', 'error')
+          return
+        }
+        pushToast('Unable to update your username right now.', 'error')
+        return
+      }
+
+      if (payload?.viewer) {
+        setViewer(payload.viewer)
+      }
+      setUsernameCheck({ status: 'available', message: 'Username saved.' })
+      pushToast(`Username updated to ${payload?.username ?? nextUsername}.`, 'success')
+    } catch (error) {
+      console.error('Failed to update family username', error)
+      pushToast('Unable to update your username right now.', 'error')
+    } finally {
+      setUsernameSaving(false)
+    }
+  }, [setViewer, usernameDraft, viewer?.familyMemberSession?.allowChildOwnUsernameEdits])
+
   if (!familyView) return null
 
   const activePhotoDraft = photoModalCategory ? photoDrafts[photoModalCategory] : null
   const activeUploadState = photoModalCategory ? uploadStates[photoModalCategory] : createUploadState()
   const canSubmitPhoto = Boolean(activePhotoDraft?.file)
+  const canSaveUsername =
+    Boolean(viewer?.familyMemberSession?.allowChildOwnUsernameEdits) &&
+    Boolean(usernameDraft.trim()) &&
+    usernameDraft.trim().toLowerCase() !== currentUsername.trim().toLowerCase() &&
+    usernameCheck.status === 'available' &&
+    !usernameSaving
 
   return (
     <DashboardShell rightRail={<RightRail />}>
@@ -492,12 +680,78 @@ export default function FamilyLockedSettingsPage() {
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">Username</h2>
+                <p className="mt-1 text-sm text-slate-600">Pick a name your friends can remember. Use 6 to 20 letters or numbers.</p>
+              </div>
+              <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                Current: {currentUsername || 'Not set'}
+              </div>
+            </div>
+
+            {viewer?.familyMemberSession?.allowChildOwnUsernameEdits ? (
+              <div className="mt-4 space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <label className="block text-sm font-medium text-slate-700">
+                  Username
+                  <input
+                    type="text"
+                    value={usernameDraft}
+                    onChange={(event) => {
+                      setUsernameDraft(sanitizeFamilyUsernameInput(event.target.value))
+                    }}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder="Aytrix6000"
+                    className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-[var(--cc-primary)]"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p
+                    className={clsx(
+                      'text-xs font-medium',
+                      usernameCheck.status === 'taken' || usernameCheck.status === 'invalid'
+                        ? 'text-red-600'
+                        : usernameCheck.status === 'available'
+                          ? 'text-emerald-700'
+                          : 'text-slate-500',
+                    )}
+                  >
+                    {usernameCheck.message ?? 'Letters and numbers only.'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleSaveUsername()
+                    }}
+                    disabled={!canSaveUsername}
+                    className={clsx(
+                      'inline-flex rounded-full px-4 py-2 text-sm font-semibold text-white transition',
+                      canSaveUsername ? 'bg-[var(--cc-primary)] hover:bg-[var(--cc-primary-700)]' : 'cursor-not-allowed bg-slate-300',
+                    )}
+                  >
+                    {usernameSaving ? 'Saving…' : 'Save username'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                Your parent manages this username right now.
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center gap-2 text-slate-900">
               <HiOutlineComputerDesktop className="h-5 w-5 text-slate-500" />
               <h2 className="text-base font-semibold">Locked Device Session</h2>
             </div>
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm leading-6 text-slate-700">
               <p><span className="font-semibold text-slate-950">Child:</span> {familyView.displayName}</p>
+              {currentUsername ? (
+                <p className="mt-1"><span className="font-semibold text-slate-950">Username:</span> {currentUsername}</p>
+              ) : null}
               <p className="mt-1"><span className="font-semibold text-slate-950">Mode:</span> {familyView.modeLabel}</p>
               <p className="mt-1"><span className="font-semibold text-slate-950">Relationship:</span> {familyView.relationshipLabel}</p>
               <p className="mt-1"><span className="font-semibold text-slate-950">Age:</span> {familyView.age}</p>

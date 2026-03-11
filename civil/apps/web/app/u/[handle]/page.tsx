@@ -36,9 +36,12 @@ type Viewer = {
   isVerified?: boolean
   accountType?: 'user' | 'family_member'
   familyMemberSession?: {
+    parentId?: string | null
     parentHandle?: string | null
     parentName?: string | null
     modeBand?: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+    allowChildAudioCalls?: boolean
+    allowChildVideoCalls?: boolean
   } | null
 }
 
@@ -238,6 +241,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
   const [messageLoading, setMessageLoading] = useState(false)
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
+  const [familyBlockLoading, setFamilyBlockLoading] = useState(false)
   const resolvedViewer = cachedViewer ?? viewer
 
   const loadViewer = useCallback(async () => {
@@ -1033,6 +1037,45 @@ export default function UserPostsPage({ params }: PageProps) {
     }
   }
 
+  const handleFamilyBlockUser = async () => {
+    if (!profile || resolvedViewer?.accountType !== 'family_member') return
+    const token = requireAuthToken()
+    if (!token) return
+
+    setFamilyBlockLoading(true)
+    try {
+      const res = await fetch(buildApiUrl('/family/moderation/blocks/users'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: profile.id }),
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to block this user right now.', 'error')
+        return
+      }
+
+      setRelationship((prev) => ({
+        friendshipStatus: prev?.friendshipStatus === 'self' ? 'self' : 'none',
+        friendshipId: undefined,
+        friendshipSince: null,
+        connectionStatus: prev?.connectionStatus === 'self' ? 'self' : 'none',
+        connectionId: undefined,
+        connectionSince: null,
+      }))
+      pushToast('User blocked. Your parent has been notified.', 'success')
+      router.push('/friends')
+    } catch (err) {
+      console.error('Failed to block user from Family shell', err)
+      pushToast('Unable to block this user right now.', 'error')
+    } finally {
+      setFamilyBlockLoading(false)
+    }
+  }
+
   const combinedPostsForMedia = useMemo(() => {
     const seen = new Set<string>()
     const merged: ApiPost[] = []
@@ -1105,6 +1148,83 @@ export default function UserPostsPage({ params }: PageProps) {
     resolvedViewer?.accountType === 'family_member' &&
       resolvedViewer.familyMemberSession?.parentHandle?.toLowerCase() === handleParam.toLowerCase(),
   )
+  const isFamilyMemberSession = resolvedViewer?.accountType === 'family_member'
+  const canFamilyMessageProfile = Boolean(isFamilyParentProfile || canDirectlyReachProfile)
+  const canFamilyUnfriendProfile = Boolean(!isFamilyParentProfile && resolvedRelationship.friendshipStatus === 'friends')
+  const canFamilyBlockProfile = Boolean(!isFamilyParentProfile)
+  const canFamilyAudioCallProfile = Boolean(
+    !isFamilyParentProfile &&
+      canDirectlyReachProfile &&
+      (resolvedViewer?.familyMemberSession?.allowChildAudioCalls == null || resolvedViewer.familyMemberSession.allowChildAudioCalls),
+  )
+  const canFamilyVideoCallProfile = Boolean(
+    !isFamilyParentProfile &&
+      canDirectlyReachProfile &&
+      (resolvedViewer?.familyMemberSession?.allowChildVideoCalls == null || resolvedViewer.familyMemberSession.allowChildVideoCalls),
+  )
+
+  const renderFamilyProfileActions = () => (
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={() => {
+          if (isFamilyParentProfile) {
+            router.push(`/messages?inbox=friends&thread=family-parent-${resolvedViewer?.familyMemberSession?.parentId ?? 'parent'}`)
+            return
+          }
+          void handleStartDirectMessage()
+        }}
+        disabled={messageLoading || callActionMode !== null || !canFamilyMessageProfile}
+      >
+        {messageLoading ? 'Opening...' : 'Message'}
+      </button>
+      <button
+        type="button"
+        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={() => {
+          void handleStartDirectCall('audio')
+        }}
+        disabled={messageLoading || callActionMode !== null || !canFamilyAudioCallProfile}
+      >
+        <HiOutlinePhone className="mr-2 h-4 w-4" aria-hidden="true" />
+        {callActionMode === 'audio' ? 'Calling...' : 'Audio Call'}
+      </button>
+      <button
+        type="button"
+        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={() => {
+          void handleStartDirectCall('video')
+        }}
+        disabled={messageLoading || callActionMode !== null || !canFamilyVideoCallProfile}
+      >
+        <HiOutlineVideoCamera className="mr-2 h-4 w-4" aria-hidden="true" />
+        {callActionMode === 'video' ? 'Starting video...' : 'Video Call'}
+      </button>
+      {canFamilyUnfriendProfile ? (
+        <button
+          type="button"
+          className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => setRemoveFriendModalOpen(true)}
+          disabled={!canFamilyUnfriendProfile}
+        >
+          Unfriend
+        </button>
+      ) : null}
+      {canFamilyBlockProfile ? (
+        <button
+          type="button"
+          className="inline-flex items-center justify-center rounded-full border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:border-red-300 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={() => {
+            void handleFamilyBlockUser()
+          }}
+          disabled={familyBlockLoading || !canFamilyBlockProfile}
+        >
+          {familyBlockLoading ? 'Blocking...' : 'Block'}
+        </button>
+      ) : null}
+    </div>
+  )
 
   if (isFamilyParentProfile) {
     const familyProfileHeader = profile ? (
@@ -1125,6 +1245,7 @@ export default function UserPostsPage({ params }: PageProps) {
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Family Profile</p>
           <h1 className="mt-2 text-2xl font-semibold text-slate-950">{profileDisplayName}</h1>
           <p className="mt-2 text-sm text-slate-600">Latest Family updates from your parent or guardian only.</p>
+          <div className="mt-4">{renderFamilyProfileActions()}</div>
           <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium text-slate-600">
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">@{profile.handle}</span>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Joined {formatDate(profile.createdAt) || '—'}</span>
@@ -1221,42 +1342,48 @@ export default function UserPostsPage({ params }: PageProps) {
                     </div>
                   ) : (
                     <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
-                      {renderFriendshipPrimaryCta()}
-                      {canDirectlyReachProfile ? (
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => {
-                              void handleStartDirectCall('audio')
-                            }}
-                            disabled={messageLoading || callActionMode !== null}
-                          >
-                            <HiOutlinePhone className="mr-2 h-4 w-4" aria-hidden="true" />
-                            {callActionMode === 'audio' ? 'Calling...' : 'Call'}
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => {
-                              void handleStartDirectCall('video')
-                            }}
-                            disabled={messageLoading || callActionMode !== null}
-                          >
-                            <HiOutlineVideoCamera className="mr-2 h-4 w-4" aria-hidden="true" />
-                            {callActionMode === 'video' ? 'Starting video...' : 'Video'}
-                          </button>
-                          <button
-                            type="button"
-                            className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={handleStartDirectMessage}
-                            disabled={messageLoading || callActionMode !== null}
-                          >
-                            {messageLoading ? 'Opening...' : 'Message'}
-                          </button>
-                        </div>
-                      ) : null}
-                      {renderConnectionPrimaryCta()}
+                      {isFamilyMemberSession ? (
+                        renderFamilyProfileActions()
+                      ) : (
+                        <>
+                          {renderFriendshipPrimaryCta()}
+                          {canDirectlyReachProfile ? (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => {
+                                  void handleStartDirectCall('audio')
+                                }}
+                                disabled={messageLoading || callActionMode !== null}
+                              >
+                                <HiOutlinePhone className="mr-2 h-4 w-4" aria-hidden="true" />
+                                {callActionMode === 'audio' ? 'Calling...' : 'Call'}
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => {
+                                  void handleStartDirectCall('video')
+                                }}
+                                disabled={messageLoading || callActionMode !== null}
+                              >
+                                <HiOutlineVideoCamera className="mr-2 h-4 w-4" aria-hidden="true" />
+                                {callActionMode === 'video' ? 'Starting video...' : 'Video'}
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={handleStartDirectMessage}
+                                disabled={messageLoading || callActionMode !== null}
+                              >
+                                {messageLoading ? 'Opening...' : 'Message'}
+                              </button>
+                            </div>
+                          ) : null}
+                          {renderConnectionPrimaryCta()}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
