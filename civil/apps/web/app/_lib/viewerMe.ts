@@ -86,6 +86,15 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
+async function readAuthErrorCode(response: Response): Promise<string | null> {
+  try {
+    const payload = (await response.clone().json()) as { error?: unknown }
+    return typeof payload?.error === 'string' ? payload.error : null
+  } catch {
+    return null
+  }
+}
+
 export async function ensureViewerMe(options?: {
   token?: string | null
   cache?: RequestCache
@@ -154,6 +163,14 @@ export async function ensureViewerMe(options?: {
       if (res.status === 401) {
         clearAuthSession()
         return null
+      }
+
+      if (res.status === 403) {
+        const errorCode = await readAuthErrorCode(res)
+        if (errorCode === 'account_suspended') {
+          clearAuthSession()
+          return null
+        }
       }
 
       if (!res.ok) {

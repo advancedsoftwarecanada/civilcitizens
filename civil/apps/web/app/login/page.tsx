@@ -20,6 +20,7 @@ type LoginErrorResponse = {
 
 const AUTH_ERROR_MESSAGES = {
   invalid_credentials: 'Incorrect email or password. Please try again.',
+  account_suspended: 'Your account is suspended. Please contact support if you think this is a mistake.',
 } as const satisfies Record<string, string>
 
 const isKnownAuthError = (code: string): code is keyof typeof AUTH_ERROR_MESSAGES => code in AUTH_ERROR_MESSAGES
