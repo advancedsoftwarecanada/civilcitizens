@@ -44,6 +44,8 @@ import {
   FollowCommunityInput,
   UnfollowCommunityInput,
   UpdateProfileInput,
+  EnableFamilyModeInput,
+  FamilyMemberInput,
   CursorQuery,
   HandleParam,
   CreateCommentInput,
@@ -1383,6 +1385,11 @@ const CivilAiSearchableDataQuery = z.object({
 })
 
 async function authorizeCivilAiDataRequest(req: FastifyRequest) {
+  const authContext = await loadViewerAuthContext(req)
+  if (authContext?.actor === 'family_member') {
+    return { error: 'family_mode_not_available' as const }
+  }
+
   const userId = await resolveUserId(req)
   if (userId) return { userId }
 
@@ -2456,7 +2463,22 @@ type CommunityMetaPayload = {
     communitySlug?: string | null
     cityName?: string | null
   } | null
+  familyMode?: {
+    enabledAt?: string
+    affirmedProfileTruthAt?: string
+    acceptedChildSafetyInfoAt?: string
+  } | null
+  familyMemberSettings?: Record<
+    string,
+    {
+      allowChildOwnMediaEdits?: boolean
+      notifyParentOnMediaChanges?: boolean
+    }
+  > | null
 }
+
+type FamilyModeBand = 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+type FamilyRelationship = 'son' | 'daughter' | 'child' | 'stepson' | 'stepdaughter' | 'foster_child' | 'ward' | 'other'
 
 type AccountModerationState = {
   status: 'SUSPENDED'
@@ -2500,6 +2522,41 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
   const verificationMethod = payload.verificationMethod === 'self_declaration' ? 'self_declaration' : undefined
   const statusDeclaredAt = typeof payload.statusDeclaredAt === 'string' ? payload.statusDeclaredAt : undefined
   const statusUpdatedAt = typeof payload.statusUpdatedAt === 'string' ? payload.statusUpdatedAt : undefined
+  const familyModeValue = payload.familyMode && typeof payload.familyMode === 'object' && !Array.isArray(payload.familyMode)
+    ? (payload.familyMode as Record<string, unknown>)
+    : null
+  const familyMode = familyModeValue
+    ? {
+        enabledAt: typeof familyModeValue.enabledAt === 'string' ? familyModeValue.enabledAt : undefined,
+        affirmedProfileTruthAt:
+          typeof familyModeValue.affirmedProfileTruthAt === 'string' ? familyModeValue.affirmedProfileTruthAt : undefined,
+        acceptedChildSafetyInfoAt:
+          typeof familyModeValue.acceptedChildSafetyInfoAt === 'string' ? familyModeValue.acceptedChildSafetyInfoAt : undefined,
+      }
+    : null
+  const familyMemberSettingsValue =
+    payload.familyMemberSettings && typeof payload.familyMemberSettings === 'object' && !Array.isArray(payload.familyMemberSettings)
+      ? (payload.familyMemberSettings as Record<string, unknown>)
+      : null
+  const familyMemberSettings = familyMemberSettingsValue
+    ? Object.fromEntries(
+        Object.entries(familyMemberSettingsValue).flatMap(([memberId, rawValue]) => {
+          if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
+          const value = rawValue as Record<string, unknown>
+          return [
+            [
+              memberId,
+              {
+                allowChildOwnMediaEdits:
+                  typeof value.allowChildOwnMediaEdits === 'boolean' ? value.allowChildOwnMediaEdits : undefined,
+                notifyParentOnMediaChanges:
+                  typeof value.notifyParentOnMediaChanges === 'boolean' ? value.notifyParentOnMediaChanges : undefined,
+              },
+            ],
+          ]
+        }),
+      )
+    : null
   return {
     nearbyCommunities: nearby,
     computedAt,
@@ -2512,8 +2569,417 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
     verificationMethod,
     statusDeclaredAt,
     statusUpdatedAt,
+    familyMode,
+    familyMemberSettings,
     reference,
   }
+}
+
+function getLegacyFamilyMemberPermissionSettings(
+  value: Prisma.JsonValue | null | undefined,
+  memberId: string,
+) {
+  const settings = parseCommunityMeta(value)?.familyMemberSettings?.[memberId]
+  return {
+    allowChildOwnMediaEdits: Boolean(settings?.allowChildOwnMediaEdits),
+    notifyParentOnMediaChanges: Boolean(settings?.notifyParentOnMediaChanges),
+  }
+}
+
+function writeLegacyFamilyMemberPermissionSettings(
+  baseMeta: Record<string, unknown>,
+  memberId: string,
+  settings: {
+    allowChildOwnMediaEdits: boolean
+    notifyParentOnMediaChanges: boolean
+  },
+) {
+  const existingValue =
+    baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
+      ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
+      : {}
+
+  existingValue[memberId] = {
+    allowChildOwnMediaEdits: settings.allowChildOwnMediaEdits,
+    notifyParentOnMediaChanges: settings.notifyParentOnMediaChanges,
+  }
+
+  baseMeta.familyMemberSettings = existingValue
+}
+
+function parseProfileNameParts(name: string | null | undefined) {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
+  return {
+    firstName: parts[0] ?? '',
+    lastName: parts.slice(1).join(' '),
+  }
+}
+
+function isParentProfileEligibleForFamilyMode(user: { name?: string | null; communityMeta?: Prisma.JsonValue | null | undefined }) {
+  const nameParts = parseProfileNameParts(user.name)
+  const meta = parseCommunityMeta(user.communityMeta ?? null)
+  return {
+    firstName: Boolean(nameParts.firstName.trim()),
+    lastName: Boolean(nameParts.lastName.trim()),
+    dateOfBirth: Boolean(meta?.dateOfBirth),
+    countryOfBirth: Boolean(meta?.countryOfBirth),
+  }
+}
+
+function calculateAgeFromDateOfBirth(dateOfBirth: Date, now = new Date()) {
+  let age = now.getUTCFullYear() - dateOfBirth.getUTCFullYear()
+  const monthDelta = now.getUTCMonth() - dateOfBirth.getUTCMonth()
+  const dayDelta = now.getUTCDate() - dateOfBirth.getUTCDate()
+  if (monthDelta < 0 || (monthDelta === 0 && dayDelta < 0)) {
+    age -= 1
+  }
+  return age
+}
+
+function getFamilyModeBandFromAge(age: number): FamilyModeBand {
+  if (age <= 8) return 'EARLY_CHILDHOOD'
+  if (age <= 12) return 'JUNIOR'
+  if (age <= 15) return 'TEEN'
+  if (age <= 17) return 'YOUTH'
+  return 'ADULT'
+}
+
+function getFamilyModeBandLabel(band: FamilyModeBand) {
+  if (band === 'EARLY_CHILDHOOD') return 'Early Childhood Mode (5 to 8)'
+  if (band === 'JUNIOR') return 'Junior Mode (9 to 12)'
+  if (band === 'TEEN') return 'Teen Mode (13 to 15)'
+  if (band === 'YOUTH') return 'Youth Mode (16 to 17)'
+  return 'Adult Mode (18+)'
+}
+
+function getFamilyRelationshipLabel(value: FamilyRelationship) {
+  if (value === 'son') return 'Son'
+  if (value === 'daughter') return 'Daughter'
+  if (value === 'child') return 'Child'
+  if (value === 'stepson') return 'Stepson'
+  if (value === 'stepdaughter') return 'Stepdaughter'
+  if (value === 'foster_child') return 'Foster Child'
+  if (value === 'ward') return 'Ward'
+  return 'Other'
+}
+
+function normalizeFamilyMemberSummary(member: {
+  id: string
+  firstName: string
+  lastName: string
+  dateOfBirth: Date
+  relationship: FamilyRelationship
+  friendCode: string
+  avatarUrl?: string | null
+  coverUrl?: string | null
+  allowChildOwnMediaEdits?: boolean
+  notifyParentOnMediaChanges?: boolean
+  suspendedAt: Date | null
+  suspendedById: string | null
+  suspensionNote: string | null
+  createdAt: Date
+  updatedAt: Date
+}) {
+  const age = calculateAgeFromDateOfBirth(member.dateOfBirth)
+  const modeBand = getFamilyModeBandFromAge(age)
+  return {
+    id: member.id,
+    firstName: member.firstName,
+    lastName: member.lastName,
+    relationship: member.relationship,
+    relationshipLabel: getFamilyRelationshipLabel(member.relationship),
+    displayName: `${member.firstName} ${member.lastName}`.trim(),
+    dateOfBirth: member.dateOfBirth.toISOString().slice(0, 10),
+    age,
+    modeBand,
+    modeLabel: getFamilyModeBandLabel(modeBand),
+    friendCode: member.friendCode,
+    avatarUrl: normalizeMediaUrl(member.avatarUrl ?? null),
+    coverUrl: normalizeMediaUrl(member.coverUrl ?? null),
+    allowChildOwnMediaEdits: Boolean(member.allowChildOwnMediaEdits),
+    notifyParentOnMediaChanges: Boolean(member.notifyParentOnMediaChanges),
+    suspended: Boolean(member.suspendedAt),
+    suspendedAt: member.suspendedAt ? member.suspendedAt.toISOString() : null,
+    suspendedById: member.suspendedById,
+    suspensionNote: member.suspensionNote,
+    createdAt: member.createdAt.toISOString(),
+    updatedAt: member.updatedAt.toISOString(),
+  }
+}
+
+async function loadFamilyMemberSummaryForParent(memberId: string, parentId: string) {
+  try {
+    return await prisma.familyMember.findFirst({
+      where: { id: memberId, parentId },
+      select: {
+        id: true,
+        parentId: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        avatarUrl: true,
+        coverUrl: true,
+        allowChildOwnMediaEdits: true,
+        notifyParentOnMediaChanges: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+  } catch (error) {
+    if (!isFamilyMemberTableMissing(error)) throw error
+
+    const parent = await prisma.user.findUnique({
+      where: { id: parentId },
+      select: { communityMeta: true },
+    })
+    const legacySettings = getLegacyFamilyMemberPermissionSettings(parent?.communityMeta, memberId)
+
+    const legacyMember = await prisma.familyMember.findFirst({
+      where: { id: memberId, parentId },
+      select: {
+        id: true,
+        parentId: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    return legacyMember
+      ? {
+          ...legacyMember,
+          avatarUrl: null,
+          coverUrl: null,
+          allowChildOwnMediaEdits: legacySettings.allowChildOwnMediaEdits,
+          notifyParentOnMediaChanges: legacySettings.notifyParentOnMediaChanges,
+        }
+      : null
+  }
+}
+
+async function updateFamilyMemberSummaryForParent(args: {
+  memberId: string
+  parentId: string
+  firstName: string
+  lastName: string
+  dateOfBirth: Date
+  relationship: FamilyRelationship
+  allowChildOwnMediaEdits: boolean
+  notifyParentOnMediaChanges: boolean
+}) {
+  try {
+    return await prisma.familyMember.update({
+      where: { id: args.memberId },
+      data: {
+        firstName: args.firstName,
+        lastName: args.lastName,
+        dateOfBirth: args.dateOfBirth,
+        relationship: args.relationship,
+        allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
+        notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        avatarUrl: true,
+        coverUrl: true,
+        allowChildOwnMediaEdits: true,
+        notifyParentOnMediaChanges: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+  } catch (error) {
+    if (!isFamilyMemberTableMissing(error)) throw error
+
+    const existing = await prisma.familyMember.findFirst({
+      where: { id: args.memberId, parentId: args.parentId },
+      select: { id: true },
+    })
+    if (!existing) return null
+
+    const parent = await prisma.user.findUnique({
+      where: { id: args.parentId },
+      select: { communityMeta: true },
+    })
+    const baseMeta = readBaseCommunityMeta(parent?.communityMeta ?? null)
+    writeLegacyFamilyMemberPermissionSettings(baseMeta, args.memberId, {
+      allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
+      notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
+    })
+    await prisma.user.update({
+      where: { id: args.parentId },
+      data: {
+        communityMeta: baseMeta as Prisma.InputJsonValue,
+      },
+    })
+
+    const legacyMember = await prisma.familyMember.update({
+      where: { id: args.memberId },
+      data: {
+        firstName: args.firstName,
+        lastName: args.lastName,
+        dateOfBirth: args.dateOfBirth,
+        relationship: args.relationship,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    return {
+      ...legacyMember,
+      avatarUrl: null,
+      coverUrl: null,
+      allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
+      notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
+    }
+  }
+}
+
+type FamilyFeedPostRecord = {
+  id: string
+  familyMemberId: string
+  parentId: string
+  body: string
+  images: Prisma.JsonValue | null
+  createdAt: Date
+  updatedAt: Date
+}
+
+const FAMILY_FEED_POST_TYPE = 'family'
+
+function buildFamilyFeedPostTitle(memberId: string) {
+  return `family-feed:${memberId}`
+}
+
+function normalizeFamilyFeedImages(images: Prisma.JsonValue | null): string[] {
+  if (!Array.isArray(images)) return []
+  return images.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+}
+
+function formatFamilyFeedPost(post: Pick<FamilyFeedPostRecord, 'id' | 'familyMemberId' | 'body' | 'images' | 'createdAt' | 'updatedAt'>, member: ReturnType<typeof normalizeFamilyMemberSummary>) {
+  return {
+    id: post.id,
+    familyMemberId: post.familyMemberId,
+    body: post.body,
+    images: normalizeFamilyFeedImages(post.images),
+    createdAt: post.createdAt.toISOString(),
+    updatedAt: post.updatedAt.toISOString(),
+    author: {
+      id: member.id,
+      name: member.displayName,
+      avatarUrl: member.avatarUrl,
+      coverUrl: member.coverUrl,
+      relationshipLabel: member.relationshipLabel,
+      modeBand: member.modeBand,
+      modeLabel: member.modeLabel,
+    },
+  }
+}
+
+async function resolveFamilyFeedTargetMember(
+  authContext: ViewerAuthContext,
+  requestedMemberId?: string | null,
+) {
+  if (authContext.actor === 'family_member') {
+    return authContext.member
+  }
+
+  const memberId = requestedMemberId?.trim()
+  if (!memberId) return null
+  return loadFamilyMemberAuthViewerById(memberId, authContext.userId)
+}
+
+function normalizeFamilyMemberDraftSummary(draft: { id: string; createdAt: Date; updatedAt: Date }) {
+  return {
+    id: draft.id,
+    createdAt: draft.createdAt.toISOString(),
+    updatedAt: draft.updatedAt.toISOString(),
+  }
+}
+
+function normalizeFamilyMemberDraftEditorRecord(draft: {
+  id: string
+  firstName: string | null
+  lastName: string | null
+  dateOfBirth: Date | null
+  relationship: FamilyRelationship | null
+  createdAt: Date
+  updatedAt: Date
+}) {
+  return {
+    id: draft.id,
+    kind: 'draft' as const,
+    firstName: draft.firstName ?? '',
+    lastName: draft.lastName ?? '',
+    relationship: draft.relationship ?? 'son',
+    dateOfBirth: draft.dateOfBirth ? draft.dateOfBirth.toISOString().slice(0, 10) : '',
+    friendCode: null,
+    avatarUrl: null,
+    coverUrl: null,
+    allowChildOwnMediaEdits: false,
+    notifyParentOnMediaChanges: false,
+    createdAt: draft.createdAt.toISOString(),
+    updatedAt: draft.updatedAt.toISOString(),
+  }
+}
+
+function parseFamilyMemberDateOfBirth(rawDateOfBirth: string) {
+  const dateOfBirth = new Date(`${rawDateOfBirth}T00:00:00.000Z`)
+  if (Number.isNaN(dateOfBirth.getTime())) return { error: 'family_member_invalid_dob' as const }
+
+  const age = calculateAgeFromDateOfBirth(dateOfBirth)
+  if (age < 5) return { error: 'family_member_too_young' as const }
+  if (age > 120) return { error: 'family_member_invalid_age' as const }
+
+  return { dateOfBirth, age }
+}
+
+function buildFamilySuspensionMessage(displayName: string) {
+  return `${displayName} has been suspended in Family Mode until a parent or guardian restores the account.`
+}
+
+function buildFamilyFriendCode() {
+  return `${randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()}-${randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()}-${randomUUID().replace(/-/g, '').slice(0, 2).toUpperCase()}`
+}
+
+async function generateUniqueFamilyFriendCode() {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = buildFamilyFriendCode()
+    const existing = await prisma.familyMember.findUnique({ where: { friendCode: candidate }, select: { id: true } })
+    if (!existing) return candidate
+  }
+  throw new Error('family_friend_code_generation_failed')
 }
 
 function readAccountModerationState(value: Prisma.JsonValue | null | undefined): AccountModerationState | null {
@@ -2551,6 +3017,222 @@ async function loadActiveAuthUserById(userId: string) {
 
   if (!user || isAccountSuspended(user.communityMeta)) return null
   return user
+}
+
+type AuthJwtPayload = {
+  sub?: string
+  actor?: 'user' | 'family_member'
+  parentId?: string
+}
+
+type FamilyMemberAuthViewerRecord = {
+  id: string
+  parentId: string
+  firstName: string
+  lastName: string
+  dateOfBirth: Date
+  relationship: FamilyRelationship
+  friendCode: string
+  avatarUrl: string | null
+  coverUrl: string | null
+  allowChildOwnMediaEdits: boolean
+  notifyParentOnMediaChanges: boolean
+  suspendedAt: Date | null
+  suspendedById: string | null
+  suspensionNote: string | null
+  createdAt: Date
+  updatedAt: Date
+  parent: {
+    id: string
+    email: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    coverUrl: string | null
+    communityMeta: Prisma.JsonValue | null
+    premiumStatus: PremiumStatus
+    premiumSince: Date | null
+    premiumRenewsAt: Date | null
+  }
+}
+
+async function loadFamilyMemberAuthViewerById(memberId: string, parentId?: string | null) {
+  let member: FamilyMemberAuthViewerRecord | null = null
+
+  try {
+    member = await prisma.familyMember.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        parentId: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        avatarUrl: true,
+        coverUrl: true,
+        allowChildOwnMediaEdits: true,
+        notifyParentOnMediaChanges: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+        parent: {
+          select: {
+            id: true,
+            email: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            communityMeta: true,
+            premiumStatus: true,
+            premiumSince: true,
+            premiumRenewsAt: true,
+          },
+        },
+      },
+    })
+  } catch (error) {
+    if (!isFamilyMemberTableMissing(error)) throw error
+
+    const legacyMember = await prisma.familyMember.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        parentId: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+        parent: {
+          select: {
+            id: true,
+            email: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            communityMeta: true,
+            premiumStatus: true,
+            premiumSince: true,
+            premiumRenewsAt: true,
+          },
+        },
+      },
+    })
+
+    member = legacyMember
+      ? {
+          ...legacyMember,
+          avatarUrl: null,
+          coverUrl: null,
+          ...getLegacyFamilyMemberPermissionSettings(legacyMember.parent.communityMeta, legacyMember.id),
+        }
+      : null
+  }
+
+  if (!member) return null
+  if (parentId && member.parentId !== parentId) return null
+  if (isAccountSuspended(member.parent.communityMeta)) return null
+  return member
+}
+
+async function buildHomeCommunitySummaryForUserId(userId: string) {
+  const homeFollow = await prisma.communityFollow.findFirst({ where: { userId, home: true } })
+  if (!homeFollow) return null
+
+  const community = findCommunity(homeFollow.provinceCode, homeFollow.communitySlug)
+  const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
+  return {
+    provinceCode: normalizedProvince ?? homeFollow.provinceCode,
+    provinceName: normalizedProvince
+      ? getProvinceDisplayName(normalizedProvince)
+      : homeFollow.provinceCode.toUpperCase(),
+    communitySlug: homeFollow.communitySlug,
+    communityName: community?.name ?? homeFollow.communitySlug,
+  }
+}
+
+function buildFamilyMemberAuthMeResponse(member: {
+  id: string
+  parentId: string
+  firstName: string
+  lastName: string
+  dateOfBirth: Date
+  relationship: FamilyRelationship
+  friendCode: string
+  avatarUrl: string | null
+  coverUrl: string | null
+  allowChildOwnMediaEdits: boolean
+  notifyParentOnMediaChanges: boolean
+  suspendedAt: Date | null
+  suspendedById: string | null
+  suspensionNote: string | null
+  createdAt: Date
+  updatedAt: Date
+  parent: {
+    id: string
+    email: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    coverUrl: string | null
+    communityMeta: Prisma.JsonValue | null
+    premiumStatus: PremiumStatus
+    premiumSince: Date | null
+    premiumRenewsAt: Date | null
+  }
+}, homeCommunity: {
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+} | null) {
+  const normalizedMember = normalizeFamilyMemberSummary(member)
+  const parentMeta = parseCommunityMeta(member.parent.communityMeta ?? null)
+  return {
+    id: normalizedMember.id,
+    email: `${normalizedMember.friendCode.toLowerCase()}@family.local`,
+    handle: `family-${normalizedMember.friendCode.toLowerCase()}`,
+    name: normalizedMember.displayName,
+    avatarUrl: normalizedMember.avatarUrl,
+    coverUrl: normalizedMember.coverUrl,
+    homeCommunity,
+    isPremium: false,
+    isVerified: false,
+    premiumSince: null,
+    premiumRenewsAt: null,
+    civicStatus: parentMeta?.civicStatus ?? null,
+    workAuthorization: parentMeta?.workAuthorization ?? null,
+    verificationMethod: parentMeta?.verificationMethod ?? null,
+    statusDeclaredAt: parentMeta?.statusDeclaredAt ?? null,
+    statusUpdatedAt: parentMeta?.statusUpdatedAt ?? null,
+    familyMode: null,
+    accountType: 'family_member' as const,
+    familyMemberSession: {
+      parentId: member.parent.id,
+      parentHandle: member.parent.handle,
+      parentName: member.parent.name,
+      relationshipLabel: normalizedMember.relationshipLabel,
+      modeBand: normalizedMember.modeBand,
+      modeLabel: normalizedMember.modeLabel,
+      age: normalizedMember.age,
+      allowChildOwnMediaEdits: normalizedMember.allowChildOwnMediaEdits,
+      notifyParentOnMediaChanges: normalizedMember.notifyParentOnMediaChanges,
+      suspended: normalizedMember.suspended,
+      suspendedAt: normalizedMember.suspendedAt,
+      suspensionNote: normalizedMember.suspensionNote,
+    },
+  }
 }
 
 function filterCachedSuggestions(
@@ -3587,6 +4269,17 @@ function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof for
       message: questionPreview ? `${actorLabel}'s poll is ready: ${questionPreview}` : `${actorLabel}'s poll results are now available.`,
     }
   }
+  if (record.type === FAMILY_NOTIFICATION_TYPES.MEDIA_CHANGED) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const childDisplayName = typeof payload?.childDisplayName === 'string' ? payload.childDisplayName.trim() : 'Your child'
+    const categoryLabel = payload?.category === 'cover' ? 'cover photo' : 'profile photo'
+    return {
+      title: 'Child photo updated',
+      message: `${childDisplayName} changed their ${categoryLabel}.`,
+    }
+  }
   return {
     title: 'Civil Citizens',
     message: `${actorLabel} sent you a notification.`,
@@ -3978,6 +4671,10 @@ const POLL_NOTIFICATION_TYPES = {
   RESULTS_AVAILABLE: 'poll_results_available',
 } as const
 
+const FAMILY_NOTIFICATION_TYPES = {
+  MEDIA_CHANGED: 'family_child_media_change',
+} as const
+
 async function notifyFriendRequest(friendshipId: string, requesterId: string, addresseeId: string) {
   await createNotificationRecord({
     userId: addresseeId,
@@ -4220,6 +4917,23 @@ function formatFriendship(friendship: FriendshipWithUsers, viewerId: string) {
     status: friendship.status,
     since: friendship.respondedAt ?? friendship.requestedAt,
     user: formatFriendUser(counterpart),
+  }
+}
+
+const FAMILY_SPONSOR_FRIENDSHIP_PREFIX = 'family-sponsor:'
+
+function buildFamilySponsorFriendshipId(memberId: string) {
+  return `${FAMILY_SPONSOR_FRIENDSHIP_PREFIX}${memberId}`
+}
+
+function formatFamilySponsorFriendship(member: FamilyAuthMember) {
+  return {
+    id: buildFamilySponsorFriendshipId(member.id),
+    status: FriendshipStatus.ACCEPTED,
+    since: member.createdAt,
+    locked: true,
+    specialKind: 'family_sponsor' as const,
+    user: formatFriendUser(member.parent),
   }
 }
 
@@ -6197,6 +6911,7 @@ async function searchCommunityPostsForQuery(query: string, limit: number): Promi
 
   const posts: SearchPostRow[] = await prisma.post.findMany({
     where: {
+      type: { not: FAMILY_FEED_POST_TYPE },
       visibility: 'public',
       provinceCode: { not: null },
       communitySlug: { not: null },
@@ -6273,8 +6988,40 @@ async function searchCommunityPostsForQuery(query: string, limit: number): Promi
 }
 
 async function loadAuthenticatedUser(req: FastifyRequest) {
-  const payload = await (req as any).jwtVerify()
+  const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+  if (!payload?.sub || payload.actor === 'family_member') return null
   return loadActiveAuthUserById(payload.sub)
+}
+
+type FamilyAuthMember = NonNullable<Awaited<ReturnType<typeof loadFamilyMemberAuthViewerById>>>
+
+type ViewerAuthContext =
+  | { actor: 'user'; userId: string }
+  | { actor: 'family_member'; member: FamilyAuthMember }
+
+async function loadViewerAuthContext(req: FastifyRequest): Promise<ViewerAuthContext | null> {
+  try {
+    const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+    if (!payload?.sub || typeof payload.sub !== 'string') return null
+
+    if (payload.actor === 'family_member') {
+      const member = await loadFamilyMemberAuthViewerById(payload.sub, payload.parentId ?? null)
+      if (!member) return null
+      return { actor: 'family_member', member }
+    }
+
+    const user = await loadActiveAuthUserById(payload.sub)
+    if (!user) return null
+    return { actor: 'user', userId: user.id }
+  } catch {
+    return null
+  }
+}
+
+function familyMemberOwnsAssetForSession(asset: { metadata?: Prisma.JsonValue | null }, memberId: string) {
+  const metadata = asset.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false
+  return typeof (metadata as Record<string, unknown>).familyMemberId === 'string' && (metadata as Record<string, unknown>).familyMemberId === memberId
 }
 
 async function resolveUserId(req: FastifyRequest): Promise<string | null> {
@@ -6285,8 +7032,8 @@ async function resolveUserId(req: FastifyRequest): Promise<string | null> {
   if (!auth?.startsWith('Bearer ')) return null
 
   try {
-    const payload = (await (req as any).jwtVerify()) as { sub?: string }
-    if (payload?.sub && typeof payload.sub === 'string') {
+    const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+    if (payload?.sub && typeof payload.sub === 'string' && payload.actor !== 'family_member') {
       const user = await loadActiveAuthUserById(payload.sub)
       return user?.id ?? null
     }
@@ -7464,6 +8211,10 @@ const RegisterInputApi = z.object({
 })
 
 function isExperienceTableMissing(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2021' || error.code === 'P2022')
+}
+
+function isFamilyMemberTableMissing(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2021' || error.code === 'P2022')
 }
 
@@ -9290,6 +10041,11 @@ app.get('/ai/servers', async (_req: FastifyRequest, reply: FastifyReply) => {
 })
 
 app.get('/ai/history', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (authContext?.actor === 'family_member') {
+    return reply.code(403).send({ error: 'family_mode_not_available' })
+  }
+
   const userId = await resolveUserId(req)
   if (!userId) return reply.send({ items: [] })
 
@@ -9299,6 +10055,7 @@ app.get('/ai/history', async (req: FastifyRequest, reply: FastifyReply) => {
 
 app.get('/ai/context', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access?.userId) return reply.code(401).send({ error: 'unauthorized' })
 
   const viewerContext = await loadCivilAiViewerContext(access.userId)
@@ -9312,6 +10069,7 @@ app.get('/ai/context', async (req: FastifyRequest, reply: FastifyReply) => {
 
 app.get('/ai/communities/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
 
   const params = CivilAiCommunityIdParams.safeParse(req.params)
@@ -9327,6 +10085,7 @@ app.get('/ai/communities/:communityId', async (req: FastifyRequest, reply: Fasti
 
 app.get('/ai/events/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
 
   const params = CivilAiCommunityIdParams.safeParse(req.params)
@@ -9347,6 +10106,7 @@ app.get('/ai/events/:communityId', async (req: FastifyRequest, reply: FastifyRep
 
 app.get('/ai/jobs/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
 
   const params = CivilAiCommunityIdParams.safeParse(req.params)
@@ -9366,6 +10126,7 @@ app.get('/ai/jobs/:communityId', async (req: FastifyRequest, reply: FastifyReply
 
 app.get('/ai/market', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
 
   const query = CivilAiSearchableDataQuery.safeParse(req.query ?? {})
@@ -9384,6 +10145,7 @@ app.get('/ai/market', async (req: FastifyRequest, reply: FastifyReply) => {
 
 app.get('/ai/organizations/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
 
   const params = CivilAiCommunityIdParams.safeParse(req.params)
@@ -9410,6 +10172,7 @@ app.get('/ai/organizations/:communityId', async (req: FastifyRequest, reply: Fas
 
 app.get('/ai/posts/:communityId', async (req: FastifyRequest, reply: FastifyReply) => {
   const access = await authorizeCivilAiDataRequest(req)
+  if (access && 'error' in access) return reply.code(403).send({ error: access.error })
   if (!access) return reply.code(401).send({ error: 'unauthorized' })
 
   const params = CivilAiCommunityIdParams.safeParse(req.params)
@@ -9542,6 +10305,11 @@ app.get('/ai/models/download/status/:jobId', async (req: FastifyRequest, reply: 
 })
 
 app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (authContext?.actor === 'family_member') {
+    return reply.code(403).send({ error: 'family_mode_not_available' })
+  }
+
   const body = CivilAiChatInput.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
   const userId = await resolveUserId(req)
@@ -10480,7 +11248,20 @@ app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {
   const auth = req.headers.authorization
   if (auth?.startsWith('Bearer ')) {
     try {
-      const payload = (await (req as any).jwtVerify()) as { sub: string }
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' })
+      }
+
+      if (payload.actor === 'family_member') {
+        const member = await loadFamilyMemberAuthViewerById(payload.sub, payload.parentId ?? null)
+        if (!member) {
+          return reply.code(401).send({ error: 'unauthorized' })
+        }
+        ;(req as any).familyMemberAuth = { memberId: member.id, parentId: member.parentId }
+        return
+      }
+
       const user = await loadActiveAuthUserById(payload.sub)
       if (!user) {
         return reply.code(403).send({ error: 'account_suspended' })
@@ -10831,6 +11612,1065 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
   }
 })
 
+app.get('/family', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  let user: {
+    id: string
+    name: string | null
+    communityMeta: Prisma.JsonValue | null
+    familyMembers: Array<{
+      id: string
+      firstName: string
+      lastName: string
+      dateOfBirth: Date
+      relationship: FamilyRelationship
+      friendCode: string
+      avatarUrl?: string | null
+      coverUrl?: string | null
+      allowChildOwnMediaEdits?: boolean
+      notifyParentOnMediaChanges?: boolean
+      suspendedAt: Date | null
+      suspendedById: string | null
+      suspensionNote: string | null
+      createdAt: Date
+      updatedAt: Date
+    }>
+  } | null = null
+  let familyMemberDrafts: Array<{ id: string; createdAt: Date; updatedAt: Date }> = []
+  let usedLegacyFamilyMemberSchema = false
+
+  try {
+    user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        communityMeta: true,
+        familyMembers: {
+          orderBy: [{ createdAt: 'asc' }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            relationship: true,
+            friendCode: true,
+            avatarUrl: true,
+            coverUrl: true,
+            allowChildOwnMediaEdits: true,
+            notifyParentOnMediaChanges: true,
+            suspendedAt: true,
+            suspendedById: true,
+            suspensionNote: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+    })
+  } catch (error) {
+    if (!isFamilyMemberTableMissing(error)) throw error
+    usedLegacyFamilyMemberSchema = true
+    const fallbackUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        communityMeta: true,
+        familyMembers: {
+          orderBy: [{ createdAt: 'asc' }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            relationship: true,
+            friendCode: true,
+            suspendedAt: true,
+            suspendedById: true,
+            suspensionNote: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+    })
+    user = fallbackUser
+  }
+
+  if (!user) return reply.code(404).send({ error: 'not_found' })
+
+  try {
+    familyMemberDrafts = await prisma.familyMemberDraft.findMany({
+      where: { parentId: userId },
+      orderBy: [{ updatedAt: 'desc' }],
+      take: 1,
+      select: {
+        id: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+  } catch (error) {
+    if (!isFamilyMemberTableMissing(error)) throw error
+    familyMemberDrafts = []
+  }
+
+  const eligibility = isParentProfileEligibleForFamilyMode(user)
+  const familyMode = parseCommunityMeta(user.communityMeta ?? null)?.familyMode ?? null
+
+  return reply.send({
+    profileEligibility: {
+      ...eligibility,
+      complete: Object.values(eligibility).every(Boolean),
+    },
+    familyMode: {
+      enabled: Boolean(familyMode?.enabledAt),
+      enabledAt: familyMode?.enabledAt ?? null,
+      affirmedProfileTruthAt: familyMode?.affirmedProfileTruthAt ?? null,
+      acceptedChildSafetyInfoAt: familyMode?.acceptedChildSafetyInfoAt ?? null,
+    },
+    limits: {
+      maxMembers: 8,
+    },
+    childSafetyInfoUrl: '/privacy',
+    pendingDraft: familyMemberDrafts[0] ? normalizeFamilyMemberDraftSummary(familyMemberDrafts[0]) : null,
+    members: user.familyMembers.map((member) =>
+      normalizeFamilyMemberSummary(
+        usedLegacyFamilyMemberSchema
+          ? {
+              ...member,
+              avatarUrl: null,
+              coverUrl: null,
+              ...getLegacyFamilyMemberPermissionSettings(user?.communityMeta, member.id),
+            }
+          : member,
+      ),
+    ),
+  })
+})
+
+app.put('/family', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = EnableFamilyModeInput.safeParse(req.body ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      name: true,
+      communityMeta: true,
+    },
+  })
+
+  if (!user) return reply.code(404).send({ error: 'not_found' })
+  if (isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+  const eligibility = isParentProfileEligibleForFamilyMode(user)
+  if (!Object.values(eligibility).every(Boolean)) {
+    return reply.code(400).send({
+      error: 'family_profile_incomplete',
+      eligibility: {
+        ...eligibility,
+        complete: false,
+      },
+    })
+  }
+
+  const baseMeta = readBaseCommunityMeta(user.communityMeta ?? null)
+  const nowIso = new Date().toISOString()
+  baseMeta.familyMode = {
+    enabledAt: nowIso,
+    affirmedProfileTruthAt: nowIso,
+    acceptedChildSafetyInfoAt: nowIso,
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      communityMeta: baseMeta as Prisma.InputJsonValue,
+    },
+  })
+
+  return reply.send({
+    ok: true,
+    familyMode: {
+      enabled: true,
+      enabledAt: nowIso,
+      affirmedProfileTruthAt: nowIso,
+      acceptedChildSafetyInfoAt: nowIso,
+    },
+  })
+})
+
+app.post('/family/members/draft', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  let parent: {
+    name: string | null
+    communityMeta: Prisma.JsonValue | null
+    _count: { familyMembers: number }
+    familyMemberDrafts: Array<{ id: string; createdAt: Date; updatedAt: Date }>
+  } | null = null
+
+  try {
+    parent = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        communityMeta: true,
+        _count: {
+          select: {
+            familyMembers: true,
+          },
+        },
+        familyMemberDrafts: {
+          orderBy: [{ updatedAt: 'desc' }],
+          take: 1,
+          select: {
+            id: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+    })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  if (!parent) return reply.code(404).send({ error: 'not_found' })
+  if (isAccountSuspended(parent.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+  const eligibility = isParentProfileEligibleForFamilyMode(parent)
+  if (!Object.values(eligibility).every(Boolean)) return reply.code(400).send({ error: 'family_profile_incomplete' })
+
+  const familyMode = parseCommunityMeta(parent.communityMeta ?? null)?.familyMode
+  if (!familyMode?.enabledAt) return reply.code(400).send({ error: 'family_mode_not_enabled' })
+
+  if (parent._count.familyMembers >= 8) return reply.code(400).send({ error: 'family_member_limit_reached' })
+
+  let draft
+  try {
+    const [, createdDraft] = await prisma.$transaction([
+      prisma.familyMemberDraft.deleteMany({
+        where: { parentId: userId },
+      }),
+      prisma.familyMemberDraft.create({
+        data: {
+          parentId: userId,
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+    ])
+    draft = createdDraft
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  return reply.code(201).send({ ok: true, draft: normalizeFamilyMemberDraftSummary(draft) })
+})
+
+app.get('/family/members/editor/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  try {
+    const existingMember = await loadFamilyMemberSummaryForParent(params.data.id, userId)
+
+    if (existingMember) {
+      return reply.send({ ok: true, item: { kind: 'member', ...normalizeFamilyMemberSummary(existingMember) } })
+    }
+
+    let existingDraft: {
+      id: string
+      firstName: string | null
+      lastName: string | null
+      dateOfBirth: Date | null
+      relationship: FamilyRelationship | null
+      createdAt: Date
+      updatedAt: Date
+    } | null = null
+
+    try {
+      existingDraft = await prisma.familyMemberDraft.findFirst({
+        where: { id: params.data.id, parentId: userId },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          dateOfBirth: true,
+          relationship: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+    } catch (error) {
+      if (!isFamilyMemberTableMissing(error)) throw error
+      existingDraft = null
+    }
+
+    if (!existingDraft) return reply.code(404).send({ error: 'family_member_not_found' })
+
+    return reply.send({ ok: true, item: normalizeFamilyMemberDraftEditorRecord(existingDraft) })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+})
+
+app.put('/family/members/editor/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const parse = FamilyMemberInput.safeParse(req.body ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const parsedDate = parseFamilyMemberDateOfBirth(parse.data.dateOfBirth)
+  if ('error' in parsedDate) return reply.code(400).send({ error: parsedDate.error })
+
+  try {
+    const existingMember = await prisma.familyMember.findFirst({
+      where: { id: params.data.id, parentId: userId },
+      select: {
+        id: true,
+      },
+    })
+
+    if (existingMember) {
+      const member = await updateFamilyMemberSummaryForParent({
+        memberId: params.data.id,
+        parentId: userId,
+        firstName: parse.data.firstName.trim(),
+        lastName: parse.data.lastName.trim(),
+        dateOfBirth: parsedDate.dateOfBirth,
+        relationship: parse.data.relationship,
+        allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
+        notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
+      })
+
+      if (!member) return reply.code(404).send({ error: 'family_member_not_found' })
+
+      return reply.send({ ok: true, kind: 'member', member: normalizeFamilyMemberSummary(member) })
+    }
+
+    let existingDraft: { id: string } | null = null
+
+    try {
+      existingDraft = await prisma.familyMemberDraft.findFirst({
+        where: { id: params.data.id, parentId: userId },
+        select: {
+          id: true,
+        },
+      })
+    } catch (error) {
+      if (!isFamilyMemberTableMissing(error)) throw error
+      existingDraft = null
+    }
+
+    if (!existingDraft) return reply.code(404).send({ error: 'family_member_not_found' })
+
+    const parent = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        communityMeta: true,
+        _count: {
+          select: {
+            familyMembers: true,
+          },
+        },
+      },
+    })
+
+    if (!parent) return reply.code(404).send({ error: 'not_found' })
+    if (isAccountSuspended(parent.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+    const eligibility = isParentProfileEligibleForFamilyMode(parent)
+    if (!Object.values(eligibility).every(Boolean)) return reply.code(400).send({ error: 'family_profile_incomplete' })
+
+    const familyMode = parseCommunityMeta(parent.communityMeta ?? null)?.familyMode
+    if (!familyMode?.enabledAt) return reply.code(400).send({ error: 'family_mode_not_enabled' })
+    if (parent._count.familyMembers >= 8) return reply.code(400).send({ error: 'family_member_limit_reached' })
+
+    const member = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const friendCode = await generateUniqueFamilyFriendCode()
+      const created = await tx.familyMember.create({
+        data: {
+          parentId: userId,
+          firstName: parse.data.firstName.trim(),
+          lastName: parse.data.lastName.trim(),
+          dateOfBirth: parsedDate.dateOfBirth,
+          relationship: parse.data.relationship,
+          allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
+          notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
+          friendCode,
+        } as any,
+      })
+
+      await tx.familyMemberDraft.delete({ where: { id: params.data.id } })
+      return created
+    })
+
+    return reply.send({ ok: true, kind: 'member', member: normalizeFamilyMemberSummary(member) })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+})
+
+app.post('/family/members', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const parse = FamilyMemberInput.safeParse(req.body ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  let parent: {
+    name: string | null
+    communityMeta: Prisma.JsonValue | null
+    _count: { familyMembers: number }
+  } | null = null
+
+  try {
+    parent = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        name: true,
+        communityMeta: true,
+        _count: {
+          select: {
+            familyMembers: true,
+          },
+        },
+      },
+    })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  if (!parent) return reply.code(404).send({ error: 'not_found' })
+  if (isAccountSuspended(parent.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+  const eligibility = isParentProfileEligibleForFamilyMode(parent)
+  if (!Object.values(eligibility).every(Boolean)) return reply.code(400).send({ error: 'family_profile_incomplete' })
+
+  const familyMode = parseCommunityMeta(parent.communityMeta ?? null)?.familyMode
+  if (!familyMode?.enabledAt) return reply.code(400).send({ error: 'family_mode_not_enabled' })
+  if (parent._count.familyMembers >= 8) return reply.code(400).send({ error: 'family_member_limit_reached' })
+
+  const parsedDate = parseFamilyMemberDateOfBirth(parse.data.dateOfBirth)
+  if ('error' in parsedDate) return reply.code(400).send({ error: parsedDate.error })
+
+  let member
+  try {
+    const friendCode = await generateUniqueFamilyFriendCode()
+    member = await prisma.familyMember.create({
+      data: {
+        parentId: userId,
+        firstName: parse.data.firstName.trim(),
+        lastName: parse.data.lastName.trim(),
+        dateOfBirth: parsedDate.dateOfBirth,
+        relationship: parse.data.relationship,
+        allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
+        notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
+        friendCode,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        avatarUrl: true,
+        coverUrl: true,
+        allowChildOwnMediaEdits: true,
+        notifyParentOnMediaChanges: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+  } catch (error) {
+    if (!isFamilyMemberTableMissing(error)) throw error
+
+    const friendCode = await generateUniqueFamilyFriendCode()
+    const createdLegacyMember = await prisma.familyMember.create({
+        data: {
+          parentId: userId,
+          firstName: parse.data.firstName.trim(),
+          lastName: parse.data.lastName.trim(),
+          dateOfBirth: parsedDate.dateOfBirth,
+          relationship: parse.data.relationship,
+          friendCode,
+        },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          dateOfBirth: true,
+          relationship: true,
+          friendCode: true,
+          suspendedAt: true,
+          suspendedById: true,
+          suspensionNote: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+
+    const baseMeta = readBaseCommunityMeta(parent.communityMeta ?? null)
+    writeLegacyFamilyMemberPermissionSettings(baseMeta, createdLegacyMember.id, {
+      allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
+      notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
+    })
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        communityMeta: baseMeta as Prisma.InputJsonValue,
+      },
+    })
+
+    member = {
+      ...createdLegacyMember,
+      avatarUrl: null,
+      coverUrl: null,
+      allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
+      notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
+    }
+  }
+
+  return reply.code(201).send({ ok: true, member: normalizeFamilyMemberSummary(member) })
+})
+
+app.put('/family/members/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const parse = FamilyMemberInput.safeParse(req.body ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  let existing
+  try {
+    existing = await prisma.familyMember.findFirst({
+      where: { id: params.data.id, parentId: userId },
+      select: {
+        id: true,
+      },
+    })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
+
+  const parsedDate = parseFamilyMemberDateOfBirth(parse.data.dateOfBirth)
+  if ('error' in parsedDate) return reply.code(400).send({ error: parsedDate.error })
+
+  let member
+  try {
+    member = await updateFamilyMemberSummaryForParent({
+      memberId: params.data.id,
+      parentId: userId,
+      firstName: parse.data.firstName.trim(),
+      lastName: parse.data.lastName.trim(),
+      dateOfBirth: parsedDate.dateOfBirth,
+      relationship: parse.data.relationship,
+      allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
+      notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
+    })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  if (!member) return reply.code(404).send({ error: 'family_member_not_found' })
+
+  return reply.send({ ok: true, member: normalizeFamilyMemberSummary(member) })
+})
+
+app.post('/family/members/:id/suspend', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  try {
+    const existing = await prisma.familyMember.findFirst({
+      where: { id: params.data.id, parentId: userId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        suspendedAt: true,
+      },
+    })
+
+    if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
+    if (existing.suspendedAt) return reply.code(400).send({ error: 'family_member_already_suspended' })
+
+    const displayName = `${existing.firstName} ${existing.lastName}`.trim()
+    const member = await prisma.familyMember.update({
+      where: { id: existing.id },
+      data: {
+        suspendedAt: new Date(),
+        suspendedById: userId,
+        suspensionNote: buildFamilySuspensionMessage(displayName),
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    return reply.send({ ok: true, member: normalizeFamilyMemberSummary(member) })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+})
+
+app.post('/family/members/:id/restore', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  try {
+    const existing = await prisma.familyMember.findFirst({
+      where: { id: params.data.id, parentId: userId },
+      select: {
+        id: true,
+        suspendedAt: true,
+      },
+    })
+
+    if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
+    if (!existing.suspendedAt) return reply.code(400).send({ error: 'family_member_not_suspended' })
+
+    const member = await prisma.familyMember.update({
+      where: { id: existing.id },
+      data: {
+        suspendedAt: null,
+        suspendedById: null,
+        suspensionNote: null,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    return reply.send({ ok: true, member: normalizeFamilyMemberSummary(member) })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+})
+
+app.post('/family/members/:id/lock-device-session', async (req: FastifyRequest, reply: FastifyReply) => {
+  const params = z.object({ id: z.string().trim().min(1) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const parent = await loadAuthenticatedUser(req)
+  if (!parent) return reply.code(401).send({ error: 'unauthorized' })
+
+  let member: Awaited<ReturnType<typeof loadFamilyMemberAuthViewerById>>
+  try {
+    member = await loadFamilyMemberAuthViewerById(params.data.id, parent.id)
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  if (!member) return reply.code(404).send({ error: 'family_member_not_found' })
+
+  const token = await (app as any).jwt.sign({
+    sub: member.id,
+    actor: 'family_member',
+    parentId: parent.id,
+  } satisfies AuthJwtPayload)
+
+  const homeCommunity = await buildHomeCommunitySummaryForUserId(parent.id)
+  return reply.send({
+    ok: true,
+    token,
+    viewer: buildFamilyMemberAuthMeResponse(member, homeCommunity),
+  })
+})
+
+app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (!authContext) {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  const query = z.object({ memberId: z.string().trim().min(1).optional() }).safeParse(req.query ?? {})
+  if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+  const targetMember = await resolveFamilyFeedTargetMember(authContext, query.data.memberId)
+  if (!targetMember) {
+    return reply.code(authContext.actor === 'user' ? 400 : 404).send({
+      error: authContext.actor === 'user' ? 'family_member_required' : 'family_member_not_found',
+    })
+  }
+
+  const rows: Array<{
+    id: string
+    body: string
+    images: Prisma.JsonValue
+    createdAt: Date
+    updatedAt: Date
+  }> = await prisma.post.findMany({
+    where: {
+      authorId: targetMember.parentId,
+      type: FAMILY_FEED_POST_TYPE,
+      title: buildFamilyFeedPostTitle(targetMember.id),
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: 40,
+    select: {
+      id: true,
+      body: true,
+      images: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  })
+
+  const normalizedMember = normalizeFamilyMemberSummary(targetMember)
+  return reply.send({
+    items: rows.map((row) =>
+      formatFamilyFeedPost(
+        {
+          id: row.id,
+          familyMemberId: targetMember.id,
+          body: row.body,
+          images: row.images,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        },
+        normalizedMember,
+      ),
+    ),
+  })
+})
+
+app.post('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (!authContext) {
+    return reply.code(401).send({ error: 'unauthorized' })
+  }
+
+  const parse = z.object({
+    memberId: z.string().trim().min(1).optional(),
+    body: z.string().trim().max(2000).optional().default(''),
+    images: z.array(z.string().trim().url()).max(6).optional().default([]),
+  }).safeParse(req.body ?? {})
+  if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+  const targetMember = await resolveFamilyFeedTargetMember(authContext, parse.data.memberId)
+  if (!targetMember) {
+    return reply.code(authContext.actor === 'user' ? 400 : 404).send({
+      error: authContext.actor === 'user' ? 'family_member_required' : 'family_member_not_found',
+    })
+  }
+
+  const body = sanitizePlainText(parse.data.body)
+  const images = parse.data.images.filter(Boolean)
+  if (!body && images.length === 0) {
+    return reply.code(400).send({ error: 'family_feed_post_empty' })
+  }
+
+  const created = await prisma.post.create({
+    data: {
+      authorId: targetMember.parentId,
+      type: FAMILY_FEED_POST_TYPE,
+      title: buildFamilyFeedPostTitle(targetMember.id),
+      body,
+      images: images.length ? (images as any) : undefined,
+      audience: 'family',
+      visibility: 'public',
+      jurisdiction: 'self',
+    },
+    select: {
+      id: true,
+      body: true,
+      images: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  })
+
+  const normalizedMember = normalizeFamilyMemberSummary(targetMember)
+  return reply.code(201).send({
+    post: formatFamilyFeedPost(
+      {
+        id: created.id,
+        familyMemberId: targetMember.id,
+        body: created.body,
+        images: created.images,
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+      },
+      normalizedMember,
+    ),
+  })
+})
+
+app.delete('/family/members/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+  const userId = (req as any).user?.id
+  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const bodyParse = z
+    .object({
+      confirmationName: z.string().trim().min(1).max(120),
+    })
+    .safeParse(req.body ?? {})
+  if (!bodyParse.success) return reply.code(400).send({ error: bodyParse.error.flatten() })
+
+  let existing
+  try {
+    existing = await prisma.familyMember.findFirst({
+      where: { id: params.data.id, parentId: userId },
+      select: { id: true, firstName: true, lastName: true },
+    })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+
+  if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
+
+  const expectedName = `${existing.firstName} ${existing.lastName}`.trim().toLowerCase()
+  const providedName = bodyParse.data.confirmationName.trim().toLowerCase()
+  if (expectedName !== providedName) {
+    return reply.code(400).send({ error: 'family_member_confirmation_mismatch' })
+  }
+
+  try {
+    await prisma.familyMember.delete({ where: { id: params.data.id } })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+  return reply.send({ ok: true })
+})
+
+app.post('/family/members/:id/media', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+  const params = z.object({ id: z.string().cuid() }).safeParse(req.params ?? {})
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const body = z.object({
+    category: z.enum(['avatar', 'cover']),
+    displayAssetId: MediaAssetIdSchema,
+  }).safeParse(req.body ?? {})
+  if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+  try {
+    const member =
+      authContext.actor === 'family_member'
+        ? await loadFamilyMemberAuthViewerById(params.data.id, authContext.member.parentId)
+        : await loadFamilyMemberSummaryForParent(params.data.id, authContext.userId)
+
+    if (!member) return reply.code(404).send({ error: 'family_member_not_found' })
+    if (authContext.actor === 'family_member') {
+      if (member.id !== authContext.member.id) {
+        return reply.code(403).send({ error: 'family_member_media_edit_not_allowed' })
+      }
+      if (!member.allowChildOwnMediaEdits) {
+        return reply.code(403).send({ error: 'family_member_media_edit_not_allowed' })
+      }
+    }
+
+    const asset = await prisma.mediaAsset.findFirst({
+      where: {
+        id: body.data.displayAssetId,
+        ownerId: member.parentId,
+        category: body.data.category,
+      },
+    })
+    if (!asset) return reply.code(404).send({ error: 'display_asset_not_found' })
+    if (asset.status === 'failed') return reply.code(400).send({ error: 'display_asset_failed' })
+    if (asset.status !== 'ready') return reply.code(409).send({ error: 'display_asset_not_ready' })
+    if (authContext.actor === 'family_member' && !familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
+      return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+    }
+
+    const displayUrl = extractVariantUrl(
+      asset.variants,
+      body.data.category === 'avatar' ? ['avatar@2x', 'avatar@1x', 'avatar-thumb'] : ['cover-xl', 'cover-lg', 'cover-md'],
+    )
+    if (!displayUrl) return reply.code(400).send({ error: 'display_variant_missing' })
+
+    let updatedMember
+    try {
+      updatedMember = await prisma.familyMember.update({
+        where: { id: member.id },
+        data: body.data.category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
+        select: {
+          id: true,
+          parentId: true,
+          firstName: true,
+          lastName: true,
+          dateOfBirth: true,
+          relationship: true,
+          friendCode: true,
+          avatarUrl: true,
+          coverUrl: true,
+          allowChildOwnMediaEdits: true,
+          notifyParentOnMediaChanges: true,
+          suspendedAt: true,
+          suspendedById: true,
+          suspensionNote: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+    } catch (error) {
+      if (!isFamilyMemberTableMissing(error)) throw error
+
+      const legacyUpdatedMember = await prisma.familyMember.update({
+        where: { id: member.id },
+        data: body.data.category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
+        select: {
+          id: true,
+          parentId: true,
+          firstName: true,
+          lastName: true,
+          dateOfBirth: true,
+          relationship: true,
+          friendCode: true,
+          avatarUrl: true,
+          coverUrl: true,
+          suspendedAt: true,
+          suspendedById: true,
+          suspensionNote: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })
+
+      updatedMember = {
+        ...legacyUpdatedMember,
+        allowChildOwnMediaEdits: member.allowChildOwnMediaEdits,
+        notifyParentOnMediaChanges: member.notifyParentOnMediaChanges,
+      }
+    }
+
+    if (authContext.actor === 'family_member' && updatedMember.notifyParentOnMediaChanges) {
+      await createNotificationRecord({
+        userId: updatedMember.parentId,
+        actorId: updatedMember.id,
+        type: FAMILY_NOTIFICATION_TYPES.MEDIA_CHANGED,
+        payload: {
+          memberId: updatedMember.id,
+          childDisplayName: `${updatedMember.firstName} ${updatedMember.lastName}`.trim(),
+          category: body.data.category,
+          url: `/settings/family/edit?id=${encodeURIComponent(updatedMember.id)}`,
+          sourceUrl: `/settings/family/edit?id=${encodeURIComponent(updatedMember.id)}`,
+        },
+      })
+    }
+
+    if (authContext.actor === 'family_member') {
+      const refreshedMember = await loadFamilyMemberAuthViewerById(updatedMember.id, updatedMember.parentId)
+      if (!refreshedMember) return reply.code(401).send({ error: 'unauthorized' })
+      const homeCommunity = await buildHomeCommunitySummaryForUserId(updatedMember.parentId)
+      return reply.send({
+        ok: true,
+        member: normalizeFamilyMemberSummary(updatedMember),
+        viewer: buildFamilyMemberAuthMeResponse(refreshedMember, homeCommunity),
+      })
+    }
+
+    return reply.send({
+      ok: true,
+      member: normalizeFamilyMemberSummary(updatedMember),
+    })
+  } catch (error) {
+    if (isFamilyMemberTableMissing(error)) {
+      return reply.code(503).send({ error: 'family_mode_not_available' })
+    }
+    throw error
+  }
+})
+
 // Profile photo update + post
 app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
@@ -10951,8 +12791,9 @@ app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
 
 app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+    const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
 
     const parse = RequestMediaUploadInput.safeParse(req.body)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
@@ -10969,12 +12810,16 @@ app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const assetId = randomUUID()
     const extension = extensionForMime(mime)
-    const originalKey = buildOriginalObjectKey(mediaCategory, userId, assetId, extension)
+    const originalKey = buildOriginalObjectKey(mediaCategory, ownerUserId, assetId, extension)
+    const metadata = {
+      ...(filename ? { filename } : {}),
+      ...(authContext.actor === 'family_member' ? { familyMemberId: authContext.member.id } : {}),
+    }
 
     const asset = await prisma.mediaAsset.create({
       data: {
         id: assetId,
-        ownerId: userId,
+        ownerId: ownerUserId,
         category: mediaCategory,
         assetType: 'image',
         storageType: 'minio',
@@ -10982,7 +12827,7 @@ app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
         mime,
         byteSize,
         status: 'pending',
-        metadata: filename ? { filename } : undefined,
+        metadata,
       },
     })
 
@@ -11016,15 +12861,19 @@ app.post('/media/uploads', async (req: FastifyRequest, reply: FastifyReply) =>
 
 app.post('/media/uploads/complete', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+    const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
 
     const parse = CompleteMediaUploadInput.safeParse(req.body)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
     const { assetId, width, height, checksum } = parse.data
-    const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, ownerId: userId } })
+    const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, ownerId: ownerUserId } })
     if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+    if (authContext.actor === 'family_member' && !familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
+      return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+    }
 
     if (asset.status === 'ready') {
       return reply.send({ ok: true, assetId })
@@ -11041,10 +12890,12 @@ app.post('/media/uploads/complete', async (req: FastifyRequest, reply: FastifyRe
       },
     })
 
-    if (asset.category === 'avatar') {
-      await prisma.user.update({ where: { id: userId }, data: { avatarMediaId: updatedAsset.id } })
-    } else if (asset.category === 'cover') {
-      await prisma.user.update({ where: { id: userId }, data: { coverMediaId: updatedAsset.id } })
+    if (authContext.actor !== 'family_member') {
+      if (asset.category === 'avatar') {
+        await prisma.user.update({ where: { id: ownerUserId }, data: { avatarMediaId: updatedAsset.id } })
+      } else if (asset.category === 'cover') {
+        await prisma.user.update({ where: { id: ownerUserId }, data: { coverMediaId: updatedAsset.id } })
+      }
     }
 
     await mediaQueue.add(
@@ -11066,14 +12917,18 @@ app.put(
   { bodyLimit: MEDIA_PROXY_UPLOAD_LIMIT },
   async (req: FastifyRequest, reply: FastifyReply) =>
     withSchemaGuard(req, reply, async () => {
-      const userId = (req as any).user?.id
-      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+      const authContext = await loadViewerAuthContext(req)
+      if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+      const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
 
       const params = MediaAssetParam.safeParse(req.params)
       if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
-      const asset = await prisma.mediaAsset.findFirst({ where: { id: params.data.id, ownerId: userId } })
+      const asset = await prisma.mediaAsset.findFirst({ where: { id: params.data.id, ownerId: ownerUserId } })
       if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+      if (authContext.actor === 'family_member' && !familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
+        return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+      }
       if (asset.status !== 'pending') {
         return reply.code(409).send({ error: 'asset_not_pending' })
       }
@@ -11104,17 +12959,21 @@ app.put(
 
 app.get('/media/assets/:id', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+    const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
 
     const params = MediaAssetParam.safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
     const asset = await prisma.mediaAsset.findFirst({
-      where: { id: params.data.id, ownerId: userId },
+      where: { id: params.data.id, ownerId: ownerUserId },
     })
 
     if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+    if (authContext.actor === 'family_member' && !familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
+      return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+    }
 
     return reply.send({
       asset: {
@@ -12215,7 +14074,19 @@ app.post('/auth/login', async (req: FastifyRequest, reply: FastifyReply) =>
 // Auth: me
 app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
   try {
-    const payload = await (req as any).jwtVerify()
+    const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+    if (!payload?.sub || typeof payload.sub !== 'string') {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+
+    if (payload.actor === 'family_member') {
+      const member = await loadFamilyMemberAuthViewerById(payload.sub, payload.parentId ?? null)
+      if (!member) return reply.code(401).send({ error: 'unauthorized' })
+
+      const homeCommunity = await buildHomeCommunitySummaryForUserId(member.parentId)
+      return reply.send(buildFamilyMemberAuthMeResponse(member, homeCommunity))
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       select: {
@@ -12234,29 +14105,16 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     if (!user) return reply.code(401).send({ error: 'unauthorized' })
     if (isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
 
-    const homeFollow = await prisma.communityFollow.findFirst({ where: { userId: payload.sub, home: true } })
-    let homeCommunity: null | {
-      provinceCode: string
-      provinceName: string
-      communitySlug: string
-      communityName: string
-    } = null
-
-    if (homeFollow) {
-      const community = findCommunity(homeFollow.provinceCode, homeFollow.communitySlug)
-      const normalizedProvince = normalizeProvinceCode(homeFollow.provinceCode)
-      homeCommunity = {
-        provinceCode: normalizedProvince ?? homeFollow.provinceCode,
-        provinceName: normalizedProvince
-          ? getProvinceDisplayName(normalizedProvince)
-          : homeFollow.provinceCode.toUpperCase(),
-        communitySlug: homeFollow.communitySlug,
-        communityName: community?.name ?? homeFollow.communitySlug,
-      }
-    }
+    const homeCommunity = await buildHomeCommunitySummaryForUserId(payload.sub)
 
     const normalizedUser = normalizeUserMedia(user)
     const communityMeta = parseCommunityMeta(user.communityMeta ?? null)
+    let familyMemberCount = 0
+    try {
+      familyMemberCount = await prisma.familyMember.count({ where: { parentId: payload.sub } })
+    } catch (error) {
+      if (!isFamilyMemberTableMissing(error)) throw error
+    }
     return reply.send({
       ...normalizedUser,
       homeCommunity,
@@ -12269,6 +14127,15 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
       verificationMethod: communityMeta?.verificationMethod ?? null,
       statusDeclaredAt: communityMeta?.statusDeclaredAt ?? null,
       statusUpdatedAt: communityMeta?.statusUpdatedAt ?? null,
+      familyMode: {
+        enabled: Boolean(communityMeta?.familyMode?.enabledAt),
+        enabledAt: communityMeta?.familyMode?.enabledAt ?? null,
+        affirmedProfileTruthAt: communityMeta?.familyMode?.affirmedProfileTruthAt ?? null,
+        acceptedChildSafetyInfoAt: communityMeta?.familyMode?.acceptedChildSafetyInfoAt ?? null,
+        memberCount: familyMemberCount,
+      },
+      accountType: 'user',
+      familyMemberSession: null,
     })
   } catch {
     return reply.code(401).send({ error: 'unauthorized' })
@@ -12541,8 +14408,14 @@ app.delete('/mobile/push/register', async (req: FastifyRequest, reply: FastifyRe
 
 app.get('/friends', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+    if (authContext.actor === 'family_member') {
+      return reply.send({ items: [formatFamilySponsorFriendship(authContext.member)] })
+    }
+
+    const userId = authContext.userId
 
     const rows: FriendshipWithUsers[] = await prisma.friendship.findMany({
       where: {
@@ -12559,8 +14432,14 @@ app.get('/friends', async (req: FastifyRequest, reply: FastifyReply) =>
 
 app.get('/friends/requests', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+    if (authContext.actor === 'family_member') {
+      return reply.send({ incoming: [], outgoing: [] })
+    }
+
+    const userId = authContext.userId
 
     const rows: FriendshipWithUsers[] = await prisma.friendship.findMany({
       where: {
@@ -12787,11 +14666,20 @@ app.post('/friends/requests/:id/reject', async (req: FastifyRequest, reply: Fast
 
 app.delete('/friends/:id', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
 
-    const params = FriendshipIdParam.safeParse(req.params)
+    const params = z.object({ id: z.string().trim().min(1) }).safeParse(req.params)
     if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    if (authContext.actor === 'family_member') {
+      if (params.data.id === buildFamilySponsorFriendshipId(authContext.member.id)) {
+        return reply.code(403).send({ error: 'family_sponsor_friendship_locked' })
+      }
+      return reply.code(403).send({ error: 'family_member_friendships_locked' })
+    }
+
+    const userId = authContext.userId
 
     const friendship = await prisma.friendship.findUnique({
       where: { id: params.data.id },
@@ -27225,7 +29113,9 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       .safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
     const { cursor, limit, jurisdiction, sort, scope = 'all', province, community } = parse.data
-    const where: Prisma.PostWhereInput = {}
+    const where: Prisma.PostWhereInput = {
+      type: { not: FAMILY_FEED_POST_TYPE },
+    }
     if (jurisdiction) {
       where.jurisdiction = jurisdiction
     }
@@ -27806,6 +29696,7 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
 
     const where: Prisma.PostWhereInput = {
       authorId: user.id,
+      type: { not: FAMILY_FEED_POST_TYPE },
       ...(jurisdiction ? { jurisdiction } : {}),
     }
     applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
@@ -31771,8 +33662,22 @@ app.get('/notifications/stream', async (req: FastifyRequest, reply: FastifyReply
 })
 
 app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => {
-  const userId = (req as any).user?.id
-  if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+  const authContext = await loadViewerAuthContext(req)
+  if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+
+  if (authContext.actor === 'family_member') {
+    return {
+      userHandle: undefined,
+      totalFriends: 1,
+      friends: [{
+        ...formatFriendUser(authContext.member.parent),
+        newPosts: 0,
+      }],
+      communities: [],
+    }
+  }
+
+  const userId = authContext.userId
 
   const user = await prisma.user.findUnique({
     where: { id: userId },

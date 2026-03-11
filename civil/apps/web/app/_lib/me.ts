@@ -8,6 +8,29 @@ export type HomeCommunitySummary = {
 export type CivicStatusValue = 'citizen' | 'permanent_resident' | 'work_permit' | 'study_permit' | 'unspecified'
 export type WorkAuthorizationValue = 'authorized' | 'not_authorized' | 'unspecified'
 
+export type FamilyModeSummary = {
+  enabled: boolean
+  enabledAt?: string | null
+  affirmedProfileTruthAt?: string | null
+  acceptedChildSafetyInfoAt?: string | null
+  memberCount?: number
+}
+
+export type FamilyMemberSessionSummary = {
+  parentId: string
+  parentHandle: string
+  parentName?: string | null
+  relationshipLabel: string
+  modeBand: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+  modeLabel: string
+  age: number
+  allowChildOwnMediaEdits?: boolean
+  notifyParentOnMediaChanges?: boolean
+  suspended: boolean
+  suspendedAt?: string | null
+  suspensionNote?: string | null
+}
+
 // Legacy alias for backwards compatibility
 export type HomeChamberSummary = HomeCommunitySummary
 
@@ -29,6 +52,9 @@ export type MeResponse = {
   verificationMethod?: 'self_declaration' | null
   statusDeclaredAt?: string | null
   statusUpdatedAt?: string | null
+  familyMode?: FamilyModeSummary | null
+  accountType?: 'user' | 'family_member'
+  familyMemberSession?: FamilyMemberSessionSummary | null
 }
 
 export function hasHomeCommunity(me: MeResponse | null | undefined): boolean {
@@ -41,6 +67,7 @@ export function hasDeclaredCivilStatus(me: MeResponse | null | undefined): boole
 }
 
 export function getAuthedEntryPath(me: MeResponse | null | undefined): '/welcome' | '/verify' | '/home' {
+  if (me?.accountType === 'family_member') return '/home'
   if (!hasHomeCommunity(me)) return '/welcome'
   if (!hasDeclaredCivilStatus(me)) return '/verify'
   return '/home'
@@ -50,4 +77,8 @@ export { hasHomeCommunity as hasHomeChamber }
 
 export function isPremiumMember(me: MeResponse | null | undefined): boolean {
   return Boolean(me?.isPremium)
+}
+
+export function hasFamilyModeEnabled(me: MeResponse | null | undefined): boolean {
+  return Boolean(me?.familyMode?.enabled)
 }

@@ -29,6 +29,7 @@ export type FeedPageClientProps = {
   sidebarActive: string
   title: string
   description?: string
+  headerContent?: ReactNode
   emptyState?: string
   emptyStateCta?: { label: string; href: string }
   rightRail?: ReactNode
@@ -259,6 +260,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     scope,
     title,
     description,
+    headerContent,
     emptyState,
     emptyStateCta,
     rightRail,
@@ -271,6 +273,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   } = props
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
+  const familyView = useViewerStore((s) => s.familyView)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [communityOptions, setCommunityOptions] = useState<CommunityTarget[]>([])
   const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
@@ -585,19 +588,55 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
 
     if (cachedMe) {
-      if (!hasHomeCommunity(cachedMe)) {
-        router.replace('/welcome')
-        return
+      if (cachedMe.accountType === 'family_member') {
+        setMe(cachedMe)
+      } else {
+        if (!hasHomeCommunity(cachedMe)) {
+          router.replace('/welcome')
+          return
+        }
+        if (scope === 'all' && !province && !community && !hasDeclaredCivilStatus(cachedMe)) {
+          router.replace('/verify')
+          return
+        }
+        setMe(cachedMe)
       }
-      if (scope === 'all' && !province && !community && !hasDeclaredCivilStatus(cachedMe)) {
-        router.replace('/verify')
-        return
-      }
-      setMe(cachedMe)
     }
 
     const bootstrap = async () => {
       try {
+        const resolvedMe = cachedMe ?? (await ensureViewerMe({ token }))
+        if (!resolvedMe) {
+          if (!window.localStorage.getItem('token')) {
+            redirectToAuthModal('login')
+            return
+          }
+          if (familyView) return
+          pushToast('Unable to load your account right now.', 'error')
+          return
+        }
+
+        const isFamilyLockedSession = resolvedMe.accountType === 'family_member' || Boolean(familyView)
+
+        if (!isFamilyLockedSession && !hasHomeCommunity(resolvedMe)) {
+          router.replace('/welcome')
+          return
+        }
+
+        if (!isFamilyLockedSession && scope === 'all' && !province && !community && !hasDeclaredCivilStatus(resolvedMe)) {
+          router.replace('/verify')
+          return
+        }
+
+        setMe(resolvedMe)
+
+        if (isFamilyLockedSession) {
+          setCommunityOptions([])
+          setOwnedOrganizations([])
+          setMemberOrganizations([])
+          return
+        }
+
         const shouldLoadPostableOrganizations = scope === 'organizations' || scope === 'all'
 
         const followsPromise = fetch(buildApiUrl('/communities/follows'), {
@@ -617,28 +656,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
                 headers: { authorization: `Bearer ${token}` },
               })
             : null
-
-        const resolvedMe = cachedMe ?? (await ensureViewerMe({ token }))
-        if (!resolvedMe) {
-          if (!window.localStorage.getItem('token')) {
-            redirectToAuthModal('login')
-            return
-          }
-          pushToast('Unable to load your account right now.', 'error')
-          return
-        }
-
-        if (!hasHomeCommunity(resolvedMe)) {
-          router.replace('/welcome')
-          return
-        }
-
-        if (scope === 'all' && !province && !community && !hasDeclaredCivilStatus(resolvedMe)) {
-          router.replace('/verify')
-          return
-        }
-
-        setMe(resolvedMe)
 
         const [followsRes, ownedRes, membershipsRes] = await Promise.all([
           followsPromise,
@@ -713,7 +730,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
 
     void bootstrap()
-  }, [cachedMe, router, scope])
+  }, [cachedMe, familyView, router, scope, province, community])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
@@ -1085,6 +1102,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
   return (
     <DashboardShell rightRail={resolvedRightRail} mainClassName="min-w-0 space-y-6">
+      {headerContent ? <div>{headerContent}</div> : null}
+
       <section className={composerSectionClassName}>
         {composerCoverUrl ? (
           <img

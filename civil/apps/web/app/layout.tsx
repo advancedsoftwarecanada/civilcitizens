@@ -6,6 +6,7 @@ import Toasts from './_components/Toasts'
 import MobileDockVisibility from './_components/MobileDockVisibility'
 import TopNavVisibility from './_components/TopNavVisibility'
 import ViewerBootstrap from './_components/ViewerBootstrap'
+import FamilyViewBootstrap from './_components/FamilyViewBootstrap'
 import ScrollManager from './_components/ScrollManager'
 import AnalyticsTracker from './_components/AnalyticsTracker'
 import GoogleAnalytics from './_components/GoogleAnalytics'
@@ -114,6 +115,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <PlaceholderSanitizer />
           <TopNavVisibility />
           <ViewerBootstrap />
+          <FamilyViewBootstrap />
           <LaunchOverlayCleanup />
           <NativeViewportInsets />
           <NativeKeyboardUi />

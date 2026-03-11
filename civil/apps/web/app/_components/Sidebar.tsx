@@ -8,17 +8,19 @@ import {
   HiOutlineChatBubbleOvalLeft,
   HiOutlineHome,
   HiOutlineBuildingOffice2,
-  HiOutlineUserCircle,
   HiOutlineBuildingLibrary,
   HiOutlineCalendarDays,
   HiOutlineShoppingBag,
   HiOutlineBriefcase,
+  HiOutlineUserCircle,
   HiOutlineUsers,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import CivilCard from './CivilCard'
+import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
+import type { FamilyViewState } from '../_lib/familyView'
 
 type SidebarProps = {
   me?: {
@@ -47,24 +49,26 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
   { key: 'network', label: 'Network', href: '/network', icon: HiOutlineBriefcase },
-  {
-    key: 'communities',
-    label: 'Communities',
-    href: '/communities',
-    icon: HiOutlineBuildingOffice2,
-  },
-  {
-    key: 'organizations',
-    label: 'Organizations',
-    href: '/organizations',
-    icon: HiOutlineBuildingLibrary,
-  },
+  { key: 'communities', label: 'Communities', href: '/communities', icon: HiOutlineBuildingOffice2 },
+  { key: 'organizations', label: 'Organizations', href: '/organizations', icon: HiOutlineBuildingLibrary },
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineBriefcase },
   // TODO(app-store): restore News, Podcasts, Music, and Video nav items once those product areas are ready.
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
 ]
+
+const FAMILY_CHILD_NAV: SidebarNavItem[] = [
+  { key: 'home', label: 'Family & Friends', href: '/home', icon: HiOutlineHome },
+  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
+  { key: 'friends', label: 'My Friends', href: '/friends', icon: HiOutlineUsers },
+  { key: 'account', label: 'Settings', href: '/settings/family/settings', icon: HiOutlineUserCircle },
+]
+
+export function getSidebarNavItems(familyView: FamilyViewState | null | undefined): SidebarNavItem[] {
+  if (!familyView) return PRIMARY_NAV
+  return FAMILY_CHILD_NAV
+}
 
 function navItemClasses(active: boolean) {
   return clsx(
@@ -77,20 +81,18 @@ function navItemClasses(active: boolean) {
 
 export default function Sidebar({ me, active }: SidebarProps) {
   const cachedMe = useViewerStore((s) => s.me)
+  const familyView = useViewerStore((s) => s.familyView)
   const effectiveMe = me ?? cachedMe ?? undefined
+  const familyCardIdentity = getFamilyLockedCardIdentity(effectiveMe, familyView)
   const pathname = usePathname()
-  const normalizedActive =
-    active === 'profile' || active === 'settings'
-      ? 'account'
-      : active === 'community' || active === 'chambers'
-        ? 'communities'
-        : active
-  const displayName = formatDisplayName(effectiveMe?.name ?? null) || 'Civil Citizen'
-  const avatarInitials = displayName || effectiveMe?.handle || 'C'
-  const profileHref = effectiveMe?.handle ? `/u/${effectiveMe.handle}` : '/profile/edit'
-  const verified = Boolean(effectiveMe?.isVerified)
-  const business = Boolean(effectiveMe?.isPremium)
-  const navCount = PRIMARY_NAV.length
+  const normalizedActive = active === 'profile' || active === 'settings' ? 'account' : active
+  const displayName = (familyCardIdentity?.name ?? formatDisplayName(effectiveMe?.name ?? null)) || 'Civil Citizen'
+  const avatarInitials = (familyCardIdentity?.avatarInitials ?? displayName) || effectiveMe?.handle || 'C'
+  const profileHref = familyCardIdentity?.href ?? (effectiveMe?.handle ? `/u/${effectiveMe.handle}` : '/profile/edit')
+  const verified = familyCardIdentity?.isVerified ?? Boolean(effectiveMe?.isVerified)
+  const business = familyCardIdentity?.isBusiness ?? Boolean(effectiveMe?.isPremium)
+  const navItems = getSidebarNavItems(familyView)
+  const navCount = navItems.length
   const sidebarTopOffsetExpr = 'var(--cc-top-nav-offset)'
   const sidebarBottomPadPx = 10
   const profileHeightPx = 56
@@ -115,11 +117,9 @@ export default function Sidebar({ me, active }: SidebarProps) {
     marginLeft: 0,
   }
   const derivedActiveKey = useMemo(() => {
-    if (pathname && /(^|\/)(orgs|organizations)(\/|$)/.test(pathname)) return 'organizations'
-    if (pathname && /^(\/c\/|\/com\/)/.test(pathname)) return 'communities'
     if (normalizedActive) return normalizedActive
-    return PRIMARY_NAV.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
-  }, [normalizedActive, pathname])
+    return navItems.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
+  }, [navItems, normalizedActive, pathname])
 
   const navContent = (items: SidebarNavItem[]) =>
     items.map((item) => {
@@ -151,25 +151,28 @@ export default function Sidebar({ me, active }: SidebarProps) {
 
   return (
     <aside
-      className="hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pt-[var(--cc-top-nav-offset)] lg:pb-[10px] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]"
+      className={clsx(
+        'hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pb-[10px] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]',
+        familyView ? 'lg:pt-0' : 'lg:pt-[var(--cc-top-nav-offset)]',
+      )}
       style={{ ...spacingVars, ...sidebarBleedStyle }}
     >
       <CivilCard
         href={profileHref}
         size="rail"
         name={displayName}
-        subtitle="View profile"
-        avatarAlt={displayName}
+        subtitle={familyView ? undefined : familyCardIdentity?.subtitle ?? 'View profile'}
+        avatarAlt={familyCardIdentity?.avatarAlt ?? displayName}
         avatarInitials={avatarInitials}
-        avatarSrc={effectiveMe?.avatarUrl ?? null}
-        coverUrl={effectiveMe?.coverUrl ?? null}
+        avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveMe?.avatarUrl ?? null}
+        coverUrl={familyCardIdentity?.coverUrl ?? effectiveMe?.coverUrl ?? null}
         isVerified={verified}
         isBusiness={business}
         className="mt-[var(--profile-card-gap)]"
       />
 
       <nav className="mt-[var(--sidebar-top-gap)] flex flex-1 flex-col gap-[var(--sidebar-gap)]">
-        {navContent(PRIMARY_NAV)}
+        {navContent(navItems)}
       </nav>
     </aside>
   )

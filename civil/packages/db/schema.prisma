@@ -78,6 +78,9 @@ model User {
   messagesSent              Message[]
   initiatedMessageCalls     MessageCall[]        @relation("MessageCallInitiator")
   endedMessageCalls         MessageCall[]        @relation("MessageCallEndedBy")
+  familyMembers             FamilyMember[]       @relation("FamilyMembersParent")
+  familyMemberDrafts        FamilyMemberDraft[]  @relation("FamilyMemberDraftsParent")
+  familyFeedPosts           FamilyFeedPost[]     @relation("FamilyFeedPostsParent")
   jobPostingsCreated        JobPosting[]          @relation("JobPostingCreator")
   jobApplications           JobApplication[]
   jobPromotionsCreated      JobPromotion[]        @relation("JobPromotionCreator")
@@ -87,6 +90,61 @@ model User {
   lastViewedHomeAt          DateTime?
   lastViewedFriendsAt       DateTime?
   lastViewedCommunitiesAt   DateTime?
+}
+
+model FamilyMember {
+  id             String    @id @default(cuid())
+  parentId       String
+  firstName      String
+  lastName       String
+  dateOfBirth    DateTime
+  relationship   String
+  friendCode     String    @unique
+  avatarUrl      String?
+  coverUrl       String?
+  allowChildOwnMediaEdits      Boolean   @default(false)
+  notifyParentOnMediaChanges   Boolean   @default(false)
+  suspendedAt    DateTime?
+  suspendedById  String?
+  suspensionNote String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  parent        User             @relation("FamilyMembersParent", fields: [parentId], references: [id], onDelete: Cascade)
+  familyFeedPosts FamilyFeedPost[]
+
+  @@index([parentId, createdAt])
+}
+
+model FamilyMemberDraft {
+  id           String    @id @default(cuid())
+  parentId     String
+  firstName    String?
+  lastName     String?
+  dateOfBirth  DateTime?
+  relationship String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  parent User @relation("FamilyMemberDraftsParent", fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@index([parentId, updatedAt])
+}
+
+model FamilyFeedPost {
+  id             String       @id @default(cuid())
+  parentId       String
+  familyMemberId String
+  body           String
+  images         Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  parent       User         @relation("FamilyFeedPostsParent", fields: [parentId], references: [id], onDelete: Cascade)
+  familyMember FamilyMember @relation(fields: [familyMemberId], references: [id], onDelete: Cascade)
+
+  @@index([familyMemberId, createdAt])
+  @@index([parentId, createdAt])
 }
 
 model Post {

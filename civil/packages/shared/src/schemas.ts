@@ -449,6 +449,36 @@ export const UpdateProfilePhotoInput = z.object({
 })
 export type UpdateProfilePhotoInput = z.infer<typeof UpdateProfilePhotoInput>
 
+export const EnableFamilyModeInput = z.object({
+  affirmedProfileTruth: z.literal(true),
+  acceptedChildSafetyInfo: z.literal(true),
+})
+export type EnableFamilyModeInput = z.infer<typeof EnableFamilyModeInput>
+
+const FamilyMemberNameSchema = z.string().trim().min(1).max(40)
+
+export const FamilyRelationshipEnum = z.enum([
+  'son',
+  'daughter',
+  'child',
+  'stepson',
+  'stepdaughter',
+  'foster_child',
+  'ward',
+  'other',
+])
+export type FamilyRelationship = z.infer<typeof FamilyRelationshipEnum>
+
+export const FamilyMemberInput = z.object({
+  firstName: FamilyMemberNameSchema,
+  lastName: FamilyMemberNameSchema,
+  dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  relationship: FamilyRelationshipEnum,
+  allowChildOwnMediaEdits: z.boolean().optional().default(false),
+  notifyParentOnMediaChanges: z.boolean().optional().default(false),
+})
+export type FamilyMemberInput = z.infer<typeof FamilyMemberInput>
+
 export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'business_logo', 'business_cover', 'post_image', 'attachment'])
 export type MediaCategory = z.infer<typeof MediaCategoryEnum>
 

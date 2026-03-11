@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { formatUserDisplayName } from '../_lib/text'
+import { useViewerStore } from '../_lib/viewerStore'
 import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
@@ -215,6 +216,9 @@ export function RightRail({
   showPendingFriendRequests?: boolean
   showPendingConnectionRequests?: boolean
 }) {
+  const viewer = useViewerStore((s) => s.me)
+  const familyView = useViewerStore((s) => s.familyView)
+  const isFamilyLockedSession = Boolean(familyView) || viewer?.accountType === 'family_member'
   const [status, setStatus] = useState<Status>('loading')
   const [data, setData] = useState<RightRailData | null>(null)
   const [organizations, setOrganizations] = useState<FollowedOrganization[]>([])
@@ -237,13 +241,13 @@ export function RightRail({
   )
 
   const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community' || mode === 'work'
-  const shouldLoadOrganizations = mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'community' || showOrganizations
+  const shouldLoadOrganizations = !isFamilyLockedSession && (mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'community' || showOrganizations)
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
   const shouldLoadConnections = mode === 'network'
   const shouldLoadPendingFriendRequests = showPendingFriendRequests
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
-  const shouldLoadEventsSidebar = mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps
+  const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps)
   const shouldLoadWorkApplications = mode === 'work'
   const shouldLoadHomeRail = !hideSocialBlocks
 
@@ -1022,7 +1026,7 @@ export function RightRail({
       </Block>
       ) : null}
 
-      {mode === 'default' && showOrganizations ? (
+      {mode === 'default' && showOrganizations && !isFamilyLockedSession ? (
         <Block title="Your Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
           {combinedOrganizations.length ? (
             <ul className="space-y-3">
@@ -1048,7 +1052,7 @@ export function RightRail({
       ) : null}
 
       {/* Communities Section */}
-      {!hideSocialBlocks && !hideCommunities ? (
+      {!hideSocialBlocks && !hideCommunities && !isFamilyLockedSession ? (
         <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
           {data?.communities.length ? (
             <ul className="space-y-3">
