@@ -297,6 +297,7 @@ export default function CivilAiLauncher() {
   const pathname = usePathname()
   const resolvedPathname = pathname || ''
   const me = useViewerStore((state) => state.me)
+  const familyView = useViewerStore((state) => state.familyView)
   const [open, setOpen] = useState(false)
   const [conversationId, setConversationId] = useState('')
   const [messages, setMessages] = useState<AiMessage[]>([STARTER_MESSAGE])
@@ -316,7 +317,8 @@ export default function CivilAiLauncher() {
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify')
   const hasCompleteAccount = Boolean(me && hasHomeCommunity(me) && hasDeclaredCivilStatus(me))
-  const shouldHideLauncher = launcherHiddenForRoute || !hasCompleteAccount
+  const isFamilyLockedSession = Boolean(familyView) || me?.accountType === 'family_member'
+  const shouldHideLauncher = launcherHiddenForRoute || !hasCompleteAccount || isFamilyLockedSession
 
   const resetCivilAiSession = useCallback(() => {
     const nextConversationId = createCivilAiConversationId()
@@ -352,10 +354,13 @@ export default function CivilAiLauncher() {
   }, [])
 
   useEffect(() => {
-    const handleOpen = () => setOpen(true)
+    const handleOpen = () => {
+      if (isFamilyLockedSession) return
+      setOpen(true)
+    }
     window.addEventListener('civil-ai:open', handleOpen)
     return () => window.removeEventListener('civil-ai:open', handleOpen)
-  }, [])
+  }, [isFamilyLockedSession])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {

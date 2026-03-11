@@ -15,6 +15,7 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { useViewerStore } from '../_lib/viewerStore'
 import { readMarketCart } from '../market/_lib/cart'
 import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
@@ -54,6 +55,9 @@ function shouldShowNotificationToast(notificationId: string): boolean {
 
 export default function TopNav() {
   const pathname = usePathname()
+  const viewer = useViewerStore((s) => s.me)
+  const familyView = useViewerStore((s) => s.familyView)
+  const isFamilyLockedSession = Boolean(familyView) || viewer?.accountType === 'family_member'
   const showSearch = !pathname?.startsWith('/welcome')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
@@ -83,6 +87,11 @@ export default function TopNav() {
   }, [])
 
   const fetchNotifications = useCallback(async () => {
+    if (isFamilyLockedSession) {
+      setNotifications([])
+      setUnreadCount(0)
+      return false
+    }
     const token = getStoredToken()
     if (!token) {
       return false
@@ -122,9 +131,13 @@ export default function TopNav() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isFamilyLockedSession])
 
   const fetchMessageUnreadCount = useCallback(async () => {
+    if (isFamilyLockedSession) {
+      setMessageUnreadCount(0)
+      return
+    }
     const token = getStoredToken()
     if (!token) return
     try {
@@ -138,9 +151,13 @@ export default function TopNav() {
     } catch (err) {
       console.error('Failed to load message unread count', err)
     }
-  }, [])
+  }, [isFamilyLockedSession])
 
   const fetchMarketChatUnreadCount = useCallback(async () => {
+    if (isFamilyLockedSession) {
+      setMarketChatUnreadCount(0)
+      return
+    }
     const token = getStoredToken()
     if (!token) return
     try {
@@ -154,9 +171,13 @@ export default function TopNav() {
     } catch (err) {
       console.error('Failed to load marketplace chat unread count', err)
     }
-  }, [])
+  }, [isFamilyLockedSession])
 
   const fetchOrgChannelUnreadCount = useCallback(async () => {
+    if (isFamilyLockedSession) {
+      setOrgChannelUnreadCount(0)
+      return
+    }
     const token = getStoredToken()
     if (!token) return
     try {
@@ -170,9 +191,13 @@ export default function TopNav() {
     } catch (err) {
       console.error('Failed to load organization channel unread count', err)
     }
-  }, [])
+  }, [isFamilyLockedSession])
 
   const acknowledgeNotifications = useCallback(async () => {
+    if (isFamilyLockedSession) {
+      setUnreadCount(0)
+      return false
+    }
     const token = getStoredToken()
     if (!token) {
       return false
@@ -205,10 +230,11 @@ export default function TopNav() {
       console.error('Unable to acknowledge notifications', err)
       return false
     }
-  }, [applyLocalReadState])
+  }, [applyLocalReadState, isFamilyLockedSession])
 
   const handleRealtimeNotification = useCallback(
     (payload: RealtimePayload) => {
+      if (isFamilyLockedSession) return
       if (payload.type === 'message.created') {
         if (pathname?.startsWith('/messages')) {
           // If we are on the messages page, we let the page handle the read status
@@ -266,10 +292,18 @@ export default function TopNav() {
         setUnreadCount((prev) => prev + unreadDelta)
       }
     },
-    [fetchMarketChatUnreadCount, fetchMessageUnreadCount, fetchOrgChannelUnreadCount, pathname],
+    [fetchMarketChatUnreadCount, fetchMessageUnreadCount, fetchOrgChannelUnreadCount, isFamilyLockedSession, pathname],
   )
 
   useEffect(() => {
+    if (isFamilyLockedSession) {
+      setNotifications([])
+      setUnreadCount(0)
+      setMessageUnreadCount(0)
+      setMarketChatUnreadCount(0)
+      setOrgChannelUnreadCount(0)
+      return
+    }
     const token = getStoredToken()
     if (!token) return
     void fetchNotifications()
@@ -286,7 +320,7 @@ export default function TopNav() {
     return () => {
       window.removeEventListener('message.read', handleMessageRead)
     }
-  }, [fetchNotifications, fetchMessageUnreadCount, fetchMarketChatUnreadCount, fetchOrgChannelUnreadCount])
+  }, [fetchNotifications, fetchMessageUnreadCount, fetchMarketChatUnreadCount, fetchOrgChannelUnreadCount, isFamilyLockedSession])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -338,6 +372,10 @@ export default function TopNav() {
   }, [dropdownOpen])
 
   const handleToggleDropdown = useCallback(() => {
+    if (isFamilyLockedSession) {
+      pushToast('Notifications are unavailable while this device is locked to a family account.', 'info')
+      return
+    }
     if (dropdownOpen) {
       setDropdownOpen(false)
       return
@@ -352,7 +390,7 @@ export default function TopNav() {
       await fetchNotifications()
       await acknowledgeNotifications()
     })()
-  }, [dropdownOpen, fetchNotifications, acknowledgeNotifications])
+  }, [dropdownOpen, fetchNotifications, acknowledgeNotifications, isFamilyLockedSession])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -396,9 +434,10 @@ export default function TopNav() {
   }, [])
 
   useEffect(() => {
+    if (isFamilyLockedSession) return undefined
     const unsubscribe = subscribeToNotificationsStream(handleRealtimeNotification)
     return unsubscribe
-  }, [handleRealtimeNotification])
+  }, [handleRealtimeNotification, isFamilyLockedSession])
 
   const handleSearchFocus = useCallback(() => {
     if (searchBlurTimeout.current) {

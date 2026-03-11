@@ -143,6 +143,10 @@ export function isActionableNotification(notification: NotificationItem): boolea
 }
 
 export function getActorDisplayName(notification: NotificationItem) {
+  if (notification.type === 'family_child_media_change') {
+    const childDisplayName = typeof notification.payload?.childDisplayName === 'string' ? notification.payload.childDisplayName.trim() : ''
+    if (childDisplayName) return childDisplayName
+  }
   if (notification.actor?.name?.trim()) return formatDisplayName(notification.actor.name)
   if (notification.actor?.handle) return notification.actor.handle
   return 'Civil citizen'
@@ -196,6 +200,10 @@ export function getNotificationMessage(notification: NotificationItem) {
     case 'poll_results_available': {
       const questionPreview = typeof notification.payload?.questionPreview === 'string' ? notification.payload.questionPreview.trim() : ''
       return questionPreview ? `poll results are ready: "${questionPreview}"` : 'poll results are now available'
+    }
+    case 'family_child_media_change': {
+      const categoryLabel = notification.payload?.category === 'cover' ? 'cover photo' : 'profile photo'
+      return `changed their ${categoryLabel}`
     }
     default:
       return 'shared an update'

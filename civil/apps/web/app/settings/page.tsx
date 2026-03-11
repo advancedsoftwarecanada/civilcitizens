@@ -13,6 +13,7 @@ import {
   HiOutlineCog8Tooth,
   HiOutlineShoppingBag,
   HiOutlineTrash,
+  HiOutlineUserGroup,
   HiOutlineUserCircle,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
@@ -475,6 +476,13 @@ export default function SettingsPage() {
         description: 'Set your home riding and manage the communities you follow.',
         href: '/communities/settings',
         icon: HiOutlineBuildingOffice2,
+      },
+      {
+        key: 'family',
+        label: 'Family Mode',
+        description: 'Create supervised family profiles and prepare devices for parent-managed accounts.',
+        href: '/settings/family',
+        icon: HiOutlineUserGroup,
       },
       {
         key: 'commerce',
