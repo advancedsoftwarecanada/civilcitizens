@@ -8,10 +8,12 @@ import { buildApiUrl } from '../../../_lib/api'
 import DashboardShell from '../../../_components/DashboardShell'
 import { formatDisplayName } from '../../../_lib/text'
 import MessagesNavBlock from '../../../_components/MessagesNavBlock'
+import { hasFamilyModeEnabled } from '../../../_lib/me'
 import { getStoredToken } from '../../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import { pushToast } from '../../../_components/useToasts'
 import CivilCard from '../../../_components/CivilCard'
+import { useViewerStore } from '../../../_lib/viewerStore'
 
 type UserListItem = {
   id: string
@@ -56,6 +58,7 @@ function itemCountText(count: number, title: string) {
 
 export default function UserRelationshipListPage({ handle, kind, title }: Props) {
   const router = useRouter()
+  const viewer = useViewerStore((state) => state.me)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [items, setItems] = useState<Array<UserListItem | CommunityListItem | OrganizationListItem>>([])
@@ -97,7 +100,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
 
   const rightRail = (
     <div className="space-y-4">
-      {kind === 'friends' || kind === 'connections' ? <MessagesNavBlock /> : null}
+      {kind === 'friends' || kind === 'connections' ? <MessagesNavBlock visibleItems={hasFamilyModeEnabled(viewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined} /> : null}
       <RightRail hideContacts hideCommunities={kind === 'friends'} />
     </div>
   )

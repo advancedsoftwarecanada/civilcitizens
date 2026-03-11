@@ -12,6 +12,7 @@ import {
 
 const NAV_ITEMS: Array<{ key: MessagesNavSection; label: string; href: string }> = [
   { key: 'friends', label: 'Friends', href: '/messages?inbox=friends' },
+  { key: 'family', label: 'Family', href: '/messages?inbox=family' },
   { key: 'network', label: 'Network', href: '/messages?inbox=network' },
   { key: 'groups', label: 'Groups', href: '/messages?inbox=groups' },
   { key: 'market', label: 'Market', href: '/market/chats' },
@@ -22,11 +23,17 @@ type MessagesNavBlockProps = {
   className?: string
   onActiveChange?: (next: MessagesNavSection) => void
   unreadCounts?: Partial<Record<MessagesNavSection, number>>
+  visibleItems?: MessagesNavSection[]
+  hrefOverrides?: Partial<Record<MessagesNavSection, string>>
 }
 
-export default function MessagesNavBlock({ active, className, onActiveChange, unreadCounts }: MessagesNavBlockProps) {
+export default function MessagesNavBlock({ active, className, onActiveChange, unreadCounts, visibleItems, hrefOverrides }: MessagesNavBlockProps) {
   const [internalActive, setInternalActive] = useState<MessagesNavSection>(active ?? DEFAULT_MESSAGES_NAV_SECTION)
   const isControlled = typeof active === 'string'
+  const allowedItems = useMemo(
+    () => (Array.isArray(visibleItems) && visibleItems.length > 0 ? NAV_ITEMS.filter((item) => visibleItems.includes(item.key)) : NAV_ITEMS),
+    [visibleItems],
+  )
 
   useEffect(() => {
     if (isControlled) return
@@ -52,14 +59,14 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
   return (
     <section className={clsx('surface-card p-4', className)}>
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Messages</h2>
-      <div className="grid grid-cols-4 gap-2">
-        {NAV_ITEMS.map((item) => {
+      <div className={clsx('grid gap-2', allowedItems.length >= 5 ? 'grid-cols-5' : allowedItems.length === 4 ? 'grid-cols-4' : allowedItems.length === 3 ? 'grid-cols-3' : 'grid-cols-2')}>
+        {allowedItems.map((item) => {
           const isActive = item.key === resolvedActive
           const unreadCount = Math.max(0, Number(unreadCounts?.[item.key] ?? 0) || 0)
           return (
             <Link
               key={item.key}
-              href={item.href}
+              href={hrefOverrides?.[item.key] ?? item.href}
               onClick={() => handleSelect(item.key)}
               className={clsx(
                 'relative inline-flex min-h-10 items-center justify-center rounded-xl border px-2 py-2 text-center text-[11px] font-semibold leading-tight transition',

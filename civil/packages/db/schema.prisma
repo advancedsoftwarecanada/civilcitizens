@@ -100,9 +100,13 @@ model FamilyMember {
   dateOfBirth    DateTime
   relationship   String
   friendCode     String    @unique
+  username       String?   @unique
   avatarUrl      String?
   coverUrl       String?
   allowChildOwnMediaEdits      Boolean   @default(false)
+  allowChildOwnUsernameEdits   Boolean   @default(true)
+  allowChildAudioCalls         Boolean   @default(true)
+  allowChildVideoCalls         Boolean   @default(true)
   notifyParentOnMediaChanges   Boolean   @default(false)
   suspendedAt    DateTime?
   suspendedById  String?

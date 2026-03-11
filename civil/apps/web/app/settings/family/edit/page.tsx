@@ -26,9 +26,13 @@ type FamilyEditorItem = {
   relationship: string
   dateOfBirth: string
   friendCode: string | null
+  username?: string | null
   avatarUrl?: string | null
   coverUrl?: string | null
   allowChildOwnMediaEdits?: boolean
+  allowChildOwnUsernameEdits?: boolean
+  allowChildAudioCalls?: boolean
+  allowChildVideoCalls?: boolean
   notifyParentOnMediaChanges?: boolean
   suspended?: boolean
   suspendedAt?: string | null
@@ -45,6 +49,9 @@ type FamilyEditorFormState = {
   relationship: string
   dateOfBirth: string
   allowChildOwnMediaEdits: boolean
+  allowChildOwnUsernameEdits: boolean
+  allowChildAudioCalls: boolean
+  allowChildVideoCalls: boolean
   notifyParentOnMediaChanges: boolean
 }
 
@@ -105,9 +112,13 @@ function createNewFamilyEditorItem(): FamilyEditorItem {
     relationship: 'son',
     dateOfBirth: '',
     friendCode: null,
+    username: null,
     avatarUrl: null,
     coverUrl: null,
     allowChildOwnMediaEdits: false,
+    allowChildOwnUsernameEdits: true,
+    allowChildAudioCalls: true,
+    allowChildVideoCalls: true,
     notifyParentOnMediaChanges: false,
     suspended: false,
     suspendedAt: null,
@@ -131,6 +142,9 @@ export default function FamilyEditPage() {
     relationship: 'son',
     dateOfBirth: '',
     allowChildOwnMediaEdits: false,
+    allowChildOwnUsernameEdits: true,
+    allowChildAudioCalls: true,
+    allowChildVideoCalls: true,
     notifyParentOnMediaChanges: false,
   })
   const [mediaUploading, setMediaUploading] = useState<FamilyMediaCategory | null>(null)
@@ -146,6 +160,9 @@ export default function FamilyEditPage() {
         relationship: 'son',
         dateOfBirth: '',
         allowChildOwnMediaEdits: false,
+        allowChildOwnUsernameEdits: true,
+        allowChildAudioCalls: true,
+        allowChildVideoCalls: true,
         notifyParentOnMediaChanges: false,
       })
       setLoading(false)
@@ -188,6 +205,9 @@ export default function FamilyEditPage() {
         relationship: payload.item.relationship,
         dateOfBirth: payload.item.dateOfBirth,
         allowChildOwnMediaEdits: Boolean(payload.item.allowChildOwnMediaEdits),
+        allowChildOwnUsernameEdits: payload.item.allowChildOwnUsernameEdits == null ? true : Boolean(payload.item.allowChildOwnUsernameEdits),
+        allowChildAudioCalls: payload.item.allowChildAudioCalls == null ? true : Boolean(payload.item.allowChildAudioCalls),
+        allowChildVideoCalls: payload.item.allowChildVideoCalls == null ? true : Boolean(payload.item.allowChildVideoCalls),
         notifyParentOnMediaChanges: Boolean(payload.item.notifyParentOnMediaChanges),
       })
     } catch (error) {
@@ -419,16 +439,42 @@ export default function FamilyEditPage() {
                 <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                   <input
                     type="checkbox"
+                    checked={form.allowChildOwnUsernameEdits}
+                    onChange={(event) => setForm((prev) => ({ ...prev, allowChildOwnUsernameEdits: event.target.checked }))}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
+                  />
+                  <span>Child can manage their username</span>
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={form.allowChildAudioCalls}
+                    onChange={(event) => setForm((prev) => ({ ...prev, allowChildAudioCalls: event.target.checked }))}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
+                  />
+                  <span>Is allowed to audio call</span>
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={form.allowChildVideoCalls}
+                    onChange={(event) => setForm((prev) => ({ ...prev, allowChildVideoCalls: event.target.checked }))}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
+                  />
+                  <span>Is allowed to video call</span>
+                </label>
+
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
                     checked={form.notifyParentOnMediaChanges}
                     onChange={(event) => setForm((prev) => ({ ...prev, notifyParentOnMediaChanges: event.target.checked }))}
                     className="mt-1 h-4 w-4 rounded border-slate-300 text-[var(--cc-primary)] focus:ring-[var(--cc-primary)]"
                   />
                   <span>Notify Me when my child changes their photo and cover</span>
                 </label>
-
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-                  Phone locking, remote device expiry, parental approvals, and the Family Mode shell are still the next implementation slice.
-                </div>
 
                 <div className="flex flex-wrap gap-3">
                   <button
@@ -546,6 +592,12 @@ export default function FamilyEditPage() {
                     <div>
                       <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">Friend Code</dt>
                       <dd className="mt-1 font-mono text-slate-700">{item.friendCode}</dd>
+                    </div>
+                  ) : null}
+                  {item.username ? (
+                    <div>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">Username</dt>
+                      <dd className="mt-1 font-mono text-slate-700">{item.username}</dd>
                     </div>
                   ) : null}
                 </dl>
