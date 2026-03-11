@@ -2473,6 +2473,8 @@ type CommunityMetaPayload = {
     {
       allowChildOwnMediaEdits?: boolean
       notifyParentOnMediaChanges?: boolean
+      avatarUrl?: string | null
+      coverUrl?: string | null
     }
   > | null
 }
@@ -2551,6 +2553,10 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
                   typeof value.allowChildOwnMediaEdits === 'boolean' ? value.allowChildOwnMediaEdits : undefined,
                 notifyParentOnMediaChanges:
                   typeof value.notifyParentOnMediaChanges === 'boolean' ? value.notifyParentOnMediaChanges : undefined,
+                avatarUrl:
+                  typeof value.avatarUrl === 'string' && value.avatarUrl.trim() ? value.avatarUrl.trim() : null,
+                coverUrl:
+                  typeof value.coverUrl === 'string' && value.coverUrl.trim() ? value.coverUrl.trim() : null,
               },
             ],
           ]
@@ -2586,6 +2592,17 @@ function getLegacyFamilyMemberPermissionSettings(
   }
 }
 
+function getLegacyFamilyMemberStoredProfileMedia(
+  value: Prisma.JsonValue | null | undefined,
+  memberId: string,
+) {
+  const settings = parseCommunityMeta(value)?.familyMemberSettings?.[memberId]
+  return {
+    avatarUrl: typeof settings?.avatarUrl === 'string' ? settings.avatarUrl : null,
+    coverUrl: typeof settings?.coverUrl === 'string' ? settings.coverUrl : null,
+  }
+}
+
 function writeLegacyFamilyMemberPermissionSettings(
   baseMeta: Record<string, unknown>,
   memberId: string,
@@ -2599,9 +2616,42 @@ function writeLegacyFamilyMemberPermissionSettings(
       ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
       : {}
 
+  const existingSettings =
+    existingValue[memberId] && typeof existingValue[memberId] === 'object' && !Array.isArray(existingValue[memberId])
+      ? { ...(existingValue[memberId] as Record<string, unknown>) }
+      : {}
+
   existingValue[memberId] = {
+    ...existingSettings,
     allowChildOwnMediaEdits: settings.allowChildOwnMediaEdits,
     notifyParentOnMediaChanges: settings.notifyParentOnMediaChanges,
+  }
+
+  baseMeta.familyMemberSettings = existingValue
+}
+
+function writeLegacyFamilyMemberProfileMedia(
+  baseMeta: Record<string, unknown>,
+  memberId: string,
+  media: {
+    avatarUrl?: string | null
+    coverUrl?: string | null
+  },
+) {
+  const existingValue =
+    baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
+      ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
+      : {}
+
+  const existingSettings =
+    existingValue[memberId] && typeof existingValue[memberId] === 'object' && !Array.isArray(existingValue[memberId])
+      ? { ...(existingValue[memberId] as Record<string, unknown>) }
+      : {}
+
+  existingValue[memberId] = {
+    ...existingSettings,
+    ...(media.avatarUrl !== undefined ? { avatarUrl: media.avatarUrl } : {}),
+    ...(media.coverUrl !== undefined ? { coverUrl: media.coverUrl } : {}),
   }
 
   baseMeta.familyMemberSettings = existingValue
@@ -2738,6 +2788,7 @@ async function loadFamilyMemberSummaryForParent(memberId: string, parentId: stri
       select: { communityMeta: true },
     })
     const legacySettings = getLegacyFamilyMemberPermissionSettings(parent?.communityMeta, memberId)
+    const legacyMedia = getLegacyFamilyMemberStoredProfileMedia(parent?.communityMeta, memberId)
 
     const legacyMember = await prisma.familyMember.findFirst({
       where: { id: memberId, parentId },
@@ -2760,8 +2811,8 @@ async function loadFamilyMemberSummaryForParent(memberId: string, parentId: stri
     return legacyMember
       ? {
           ...legacyMember,
-          avatarUrl: null,
-          coverUrl: null,
+          avatarUrl: legacyMedia.avatarUrl,
+          coverUrl: legacyMedia.coverUrl,
           allowChildOwnMediaEdits: legacySettings.allowChildOwnMediaEdits,
           notifyParentOnMediaChanges: legacySettings.notifyParentOnMediaChanges,
         }
@@ -2858,8 +2909,7 @@ async function updateFamilyMemberSummaryForParent(args: {
 
     return {
       ...legacyMember,
-      avatarUrl: null,
-      coverUrl: null,
+      ...getLegacyFamilyMemberStoredProfileMedia(parent?.communityMeta, args.memberId),
       allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
       notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
     }
@@ -3133,8 +3183,7 @@ async function loadFamilyMemberAuthViewerById(memberId: string, parentId?: strin
     member = legacyMember
       ? {
           ...legacyMember,
-          avatarUrl: null,
-          coverUrl: null,
+          ...getLegacyFamilyMemberStoredProfileMedia(legacyMember.parent.communityMeta, legacyMember.id),
           ...getLegacyFamilyMemberPermissionSettings(legacyMember.parent.communityMeta, legacyMember.id),
         }
       : null
@@ -11742,8 +11791,7 @@ app.get('/family', async (req: FastifyRequest, reply: FastifyReply) => {
         usedLegacyFamilyMemberSchema
           ? {
               ...member,
-              avatarUrl: null,
-              coverUrl: null,
+              ...getLegacyFamilyMemberStoredProfileMedia(user?.communityMeta, member.id),
               ...getLegacyFamilyMemberPermissionSettings(user?.communityMeta, member.id),
             }
           : member,
@@ -12634,7 +12682,7 @@ app.post('/family/members/:id/media', async (req: FastifyRequest, reply: Fastify
     }
 
     if (authContext.actor === 'family_member' && updatedMember.notifyParentOnMediaChanges) {
-      await createNotificationRecord({
+      void createNotificationRecord({
         userId: updatedMember.parentId,
         actorId: updatedMember.id,
         type: FAMILY_NOTIFICATION_TYPES.MEDIA_CHANGED,
@@ -12645,6 +12693,8 @@ app.post('/family/members/:id/media', async (req: FastifyRequest, reply: Fastify
           url: `/settings/family/edit?id=${encodeURIComponent(updatedMember.id)}`,
           sourceUrl: `/settings/family/edit?id=${encodeURIComponent(updatedMember.id)}`,
         },
+      }).catch((error) => {
+        req.log.error({ err: error, memberId: updatedMember?.id }, 'family_media_change_notification_failed')
       })
     }
 
@@ -12674,23 +12724,30 @@ app.post('/family/members/:id/media', async (req: FastifyRequest, reply: Fastify
 // Profile photo update + post
 app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
-    const userId = (req as any).user?.id
-    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+    const authContext = await loadViewerAuthContext(req)
+    if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+    const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
 
     const parsed = UpdateProfilePhotoInput.safeParse(req.body)
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() })
 
     const { category, displayAssetId, fullAssetId, caption } = parsed.data
 
-    const displayAsset = await prisma.mediaAsset.findFirst({ where: { id: displayAssetId, ownerId: userId, category } })
+    const displayAsset = await prisma.mediaAsset.findFirst({ where: { id: displayAssetId, ownerId: ownerUserId, category } })
     if (!displayAsset) return reply.code(404).send({ error: 'display_asset_not_found' })
     if (displayAsset.status === 'failed') return reply.code(400).send({ error: 'display_asset_failed' })
     if (displayAsset.status !== 'ready') return reply.code(409).send({ error: 'display_asset_not_ready' })
+    if (authContext.actor === 'family_member' && !familyMemberOwnsAssetForSession(displayAsset, authContext.member.id)) {
+      return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+    }
 
-    const fullAsset = await prisma.mediaAsset.findFirst({ where: { id: fullAssetId, ownerId: userId } })
+    const fullAsset = await prisma.mediaAsset.findFirst({ where: { id: fullAssetId, ownerId: ownerUserId } })
     if (!fullAsset) return reply.code(404).send({ error: 'full_asset_not_found' })
     if (fullAsset.status === 'failed') return reply.code(400).send({ error: 'full_asset_failed' })
     if (fullAsset.status !== 'ready') return reply.code(409).send({ error: 'full_asset_not_ready' })
+    if (authContext.actor === 'family_member' && !familyMemberOwnsAssetForSession(fullAsset, authContext.member.id)) {
+      return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+    }
 
     const displayVariantPreference = category === 'avatar' ? ['avatar@2x', 'avatar@1x', 'avatar-thumb'] : ['cover-xl', 'cover-lg', 'cover-md']
     const displayUrl = extractVariantUrl(displayAsset.variants, displayVariantPreference)
@@ -12711,13 +12768,147 @@ app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
     const baseBody = category === 'avatar' ? 'Updated profile photo.' : 'Updated cover photo.'
     const body = caption?.trim() ? caption.trim() : baseBody
 
-    const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, name: true, avatarUrl: true, premiumStatus: true } })
+    if (authContext.actor === 'family_member') {
+      if (!authContext.member.allowChildOwnMediaEdits) {
+        return reply.code(403).send({ error: 'family_member_media_edit_not_allowed' })
+      }
+
+      let updatedMember: Awaited<ReturnType<typeof loadFamilyMemberSummaryForParent>> = null
+      let createdFamilyPost: {
+        id: string
+        body: string
+        images: Prisma.JsonValue
+        createdAt: Date
+        updatedAt: Date
+      } | null = null
+
+      try {
+        createdFamilyPost = await prisma.post.create({
+          data: {
+            authorId: authContext.member.parentId,
+            body,
+            images: [postMediaUrl] as any,
+            type: FAMILY_FEED_POST_TYPE,
+            title: buildFamilyFeedPostTitle(authContext.member.id),
+            audience: 'family',
+            visibility: 'public',
+            jurisdiction: 'self',
+          },
+          select: {
+            id: true,
+            body: true,
+            images: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+      } catch (error) {
+        if (!isSchemaOutOfDateError(error)) throw error
+      }
+
+      try {
+        const memberWithMediaColumns = await prisma.familyMember.update({
+          where: { id: authContext.member.id },
+          data: category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
+          select: {
+            id: true,
+            parentId: true,
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            relationship: true,
+            friendCode: true,
+            avatarUrl: true,
+            coverUrl: true,
+            suspendedAt: true,
+            suspendedById: true,
+            suspensionNote: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+        updatedMember = {
+          ...memberWithMediaColumns,
+          allowChildOwnMediaEdits: authContext.member.allowChildOwnMediaEdits,
+          notifyParentOnMediaChanges: authContext.member.notifyParentOnMediaChanges,
+        }
+      } catch (error) {
+        if (!isFamilyMemberTableMissing(error)) throw error
+
+        const parent = await prisma.user.findUnique({
+          where: { id: authContext.member.parentId },
+          select: { communityMeta: true },
+        })
+        const baseMeta = readBaseCommunityMeta(parent?.communityMeta ?? null)
+        writeLegacyFamilyMemberProfileMedia(baseMeta, authContext.member.id, {
+          ...(category === 'avatar' ? { avatarUrl: displayUrl } : {}),
+          ...(category === 'cover' ? { coverUrl: displayUrl } : {}),
+        })
+        await prisma.user.update({
+          where: { id: authContext.member.parentId },
+          data: {
+            communityMeta: baseMeta as Prisma.InputJsonValue,
+          },
+        })
+
+        updatedMember = {
+          ...authContext.member,
+          ...(category === 'avatar' ? { avatarUrl: displayUrl } : {}),
+          ...(category === 'cover' ? { coverUrl: displayUrl } : {}),
+        }
+      }
+
+      if (!updatedMember) return reply.code(500).send({ error: 'family_member_update_failed' })
+
+      if (updatedMember.notifyParentOnMediaChanges) {
+        void createNotificationRecord({
+          userId: updatedMember.parentId,
+          actorId: updatedMember.id,
+          type: FAMILY_NOTIFICATION_TYPES.MEDIA_CHANGED,
+          payload: {
+            memberId: updatedMember.id,
+            childDisplayName: `${updatedMember.firstName} ${updatedMember.lastName}`.trim(),
+            category,
+            url: `/settings/family/settings`,
+            sourceUrl: `/settings/family/settings`,
+          },
+        }).catch((error) => {
+          req.log.error({ err: error, memberId: updatedMember?.id }, 'family_profile_photo_notification_failed')
+        })
+      }
+
+      const homeCommunity = await buildHomeCommunitySummaryForUserId(updatedMember.parentId)
+      const refreshedMember = {
+        ...updatedMember,
+        parent: authContext.member.parent,
+      }
+
+      return reply.send({
+        ok: true,
+        post: createdFamilyPost
+          ? formatFamilyFeedPost(
+              {
+                id: createdFamilyPost.id,
+                familyMemberId: updatedMember.id,
+                body: createdFamilyPost.body,
+                images: createdFamilyPost.images,
+                createdAt: createdFamilyPost.createdAt,
+                updatedAt: createdFamilyPost.updatedAt,
+              },
+              normalizeFamilyMemberSummary(updatedMember),
+            )
+          : null,
+        viewer: buildFamilyMemberAuthMeResponse(refreshedMember, homeCommunity),
+      })
+    }
+
+    const author = await prisma.user.findUnique({ where: { id: ownerUserId }, select: { id: true, handle: true, name: true, avatarUrl: true, premiumStatus: true } })
     if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const post = await tx.post.create({
         data: {
-          authorId: userId,
+          authorId: ownerUserId,
           body,
           mediaUrl: postMediaUrl,
           type: 'post',
@@ -12742,7 +12933,7 @@ app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
           : { coverMediaId: displayAsset.id, coverUrl: displayUrl, coverPostId: post.id }
 
       const updatedUser = await tx.user.update({
-        where: { id: userId },
+        where: { id: ownerUserId },
         data: userUpdate,
         select: {
           id: true,
