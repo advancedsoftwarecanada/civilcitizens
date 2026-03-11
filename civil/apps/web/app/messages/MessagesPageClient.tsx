@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import MessagesNavBlock from '../_components/MessagesNavBlock'
+import Modal from '../_components/Modal'
 import CivilCard from '../_components/CivilCard'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { pushToast } from '../_components/useToasts'
@@ -928,9 +929,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const router = useRouter()
   const isFamilySession = viewer?.accountType === 'family_member'
   const showFamilyInbox = !isFamilySession && hasFamilyModeEnabled(viewer)
+  const familySession = viewer?.familyMemberSession ?? null
   const familyParentThreadId = isFamilySession ? `family-parent-${viewer?.familyMemberSession?.parentId ?? 'parent'}` : null
   const familyParentHandle = viewer?.familyMemberSession?.parentHandle?.trim() ?? ''
   const familyParentName = viewer?.familyMemberSession?.parentName?.trim() || familyParentHandle || 'Parent account'
+  const familyCallPermissions = {
+    audio: familySession?.allowChildAudioCalls == null ? true : Boolean(familySession.allowChildAudioCalls),
+    video: familySession?.allowChildVideoCalls == null ? true : Boolean(familySession.allowChildVideoCalls),
+  }
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const mobileComposerLastTouchAtRef = useRef(0)
@@ -1058,6 +1064,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [memberActionLoadingId, setMemberActionLoadingId] = useState<string | null>(null)
   const [leavingGroup, setLeavingGroup] = useState(false)
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
+  const [callPermissionModalOpen, setCallPermissionModalOpen] = useState(false)
   const [activeInboxSection, setActiveInboxSection] = useState<MessagesNavSection>(
     initialInboxSection && initialInboxSection !== 'market' && (initialInboxSection !== 'family' || showFamilyInbox)
       ? initialInboxSection
@@ -2242,8 +2249,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     activeThread &&
       !activeThread.contextType &&
       (activeThread.type === 'direct' || activeThread.type === 'group') &&
-      activeThread.id !== familyParentThreadId &&
-      activeThread.inboxSection !== 'family',
+      activeThread.id !== familyParentThreadId,
   )
   const activeThreadCall = activeThread?.activeCall ?? null
 
@@ -2371,11 +2377,55 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     }
   }, [activeThread, authedFetch, isActiveGroupThread])
 
+  const startFamilyParentCall = useCallback(
+    async (mode: 'audio' | 'video') => {
+      if (!isFamilySession || !viewer?.id) return
+      if ((mode === 'audio' && !familyCallPermissions.audio) || (mode === 'video' && !familyCallPermissions.video)) {
+        setCallPermissionModalOpen(true)
+        return
+      }
+
+      setCallActionMode(mode)
+      try {
+        const response = await authedFetch('/family/calls/start', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ memberId: viewer.id, mode }),
+        })
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { call?: { id?: string | null } | null; error?: string } | null
+        if (!response.ok || !payload?.call?.id) {
+          pushToast(payload?.error ?? 'Unable to start this Family call right now.', 'error')
+          return
+        }
+        router.push(`/family/call/${encodeURIComponent(viewer.id)}?call=${encodeURIComponent(payload.call.id)}`)
+      } catch (error) {
+        console.error('Failed to start parent Family call', error)
+        pushToast('Unable to start this Family call right now.', 'error')
+      } finally {
+        setCallActionMode(null)
+      }
+    },
+    [authedFetch, familyCallPermissions.audio, familyCallPermissions.video, isFamilySession, router, viewer?.id],
+  )
+
+  const isFamilyCallBlocked = useCallback(
+    (mode: 'audio' | 'video') => isFamilySession && !familyCallPermissions[mode],
+    [familyCallPermissions, isFamilySession],
+  )
+
   const startThreadCall = useCallback(
     async (mode: 'audio' | 'video') => {
       if (!activeThread) return
       if (activeThread.contextType) return
       if (activeThread.type !== 'direct' && activeThread.type !== 'group') return
+      if (isFamilyCallBlocked(mode)) {
+        setCallPermissionModalOpen(true)
+        return
+      }
 
       setCallActionMode(mode)
       try {
@@ -2401,7 +2451,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         setCallActionMode(null)
       }
     },
-    [activeThread, authedFetch, router],
+    [activeThread, authedFetch, isFamilyCallBlocked, router],
   )
 
   const renderThreadList = () => {
@@ -2551,6 +2601,42 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                void startFamilyParentCall('audio')
+              }}
+              disabled={callActionMode !== null}
+              className={clsx(
+                'inline-flex h-10 w-10 items-center justify-center rounded-full border transition',
+                familyCallPermissions.audio
+                  ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  : 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100',
+                callActionMode !== null ? 'cursor-not-allowed opacity-50' : '',
+              )}
+              title={familyCallPermissions.audio ? 'Start audio call' : 'Audio calling disabled'}
+              aria-label={familyCallPermissions.audio ? 'Start audio call with parent' : 'Audio calling disabled'}
+            >
+              <HiOutlinePhone className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void startFamilyParentCall('video')
+              }}
+              disabled={callActionMode !== null}
+              className={clsx(
+                'inline-flex h-10 w-10 items-center justify-center rounded-full border transition',
+                familyCallPermissions.video
+                  ? 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  : 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100',
+                callActionMode !== null ? 'cursor-not-allowed opacity-50' : '',
+              )}
+              title={familyCallPermissions.video ? 'Start video call' : 'Video calling disabled'}
+              aria-label={familyCallPermissions.video ? 'Start video call with parent' : 'Video calling disabled'}
+            >
+              <HiOutlineVideoCamera className="h-5 w-5" />
+            </button>
             <Link
               href={familyParentHandle ? `/u/${encodeURIComponent(familyParentHandle)}` : '/settings/family'}
               className="inline-flex items-center justify-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
@@ -2777,7 +2863,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 px-4 pb-4 pt-5 shadow-[0_25px_70px_rgba(15,23,42,0.08)] sm:p-4"
         style={isMobileViewport && mobileThreadPanelHeight ? { height: mobileThreadPanelHeight } : undefined}
       >
-        <header ref={threadHeaderRef} className="flex items-center gap-3 border-b border-slate-100 pb-3">
+        <header ref={threadHeaderRef} className="flex items-center gap-2 border-b border-slate-100 pb-3 sm:gap-3">
           <button
             type="button"
             className="-ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] lg:hidden"
@@ -2828,7 +2914,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             </p>
           </div>
           {activeThreadSupportsCalling ? (
-            <div className="flex items-center gap-2">
+            <div className="hidden shrink-0 items-center gap-2 sm:flex">
               {activeThreadCall ? (
                 <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 sm:inline-flex">
                   Active call
@@ -2840,10 +2926,15 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                   void startThreadCall('audio')
                 }}
                 disabled={callActionMode !== null}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                className={clsx(
+                  'inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-9',
+                  isFamilyCallBlocked('audio')
+                    ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                )}
                 title={activeThreadCall ? 'Join audio call' : 'Start audio call'}
               >
-                <HiOutlinePhone className="h-5 w-5" />
+                <HiOutlinePhone className="h-4 w-4 sm:h-5 sm:w-5" />
               </button>
               <button
                 type="button"
@@ -2851,10 +2942,15 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                   void startThreadCall('video')
                 }}
                 disabled={callActionMode !== null}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                className={clsx(
+                  'inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-9',
+                  isFamilyCallBlocked('video')
+                    ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                )}
                 title={activeThreadCall ? 'Join video call' : 'Start video call'}
               >
-                <HiOutlineVideoCamera className="h-5 w-5" />
+                <HiOutlineVideoCamera className="h-4 w-4 sm:h-5 sm:w-5" />
               </button>
             </div>
           ) : null}
@@ -2886,6 +2982,42 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             </details>
           ) : null}
         </header>
+        {activeThreadSupportsCalling ? (
+          <div className="flex items-center justify-end gap-2 border-b border-slate-100 pb-3 pt-2 sm:hidden">
+            <button
+              type="button"
+              onClick={() => {
+                void startThreadCall('audio')
+              }}
+              disabled={callActionMode !== null}
+              className={clsx(
+                'inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:opacity-50',
+                isFamilyCallBlocked('audio')
+                  ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+              )}
+              title={activeThreadCall ? 'Join audio call' : 'Start audio call'}
+            >
+              <HiOutlinePhone className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void startThreadCall('video')
+              }}
+              disabled={callActionMode !== null}
+              className={clsx(
+                'inline-flex h-9 w-9 items-center justify-center rounded-full border transition disabled:opacity-50',
+                isFamilyCallBlocked('video')
+                  ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+              )}
+              title={activeThreadCall ? 'Join video call' : 'Start video call'}
+            >
+              <HiOutlineVideoCamera className="h-5 w-5" />
+            </button>
+          </div>
+        ) : null}
         <div className="mt-4 min-h-0 flex-1 overflow-hidden">
           <div className="flex h-full min-h-0 flex-col">
             {activeThreadHasMore ? (
@@ -2924,7 +3056,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                                 void startThreadCall(message.systemMeta?.mode === 'audio' ? 'audio' : 'video')
                               }}
                               disabled={callActionMode !== null}
-                              className="inline-flex items-center gap-2 rounded-full border border-[var(--cc-primary)] bg-white px-4 py-2 text-xs font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/5 disabled:opacity-50"
+                              className={clsx(
+                                'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold transition disabled:opacity-50',
+                                isFamilyCallBlocked(message.systemMeta?.mode === 'audio' ? 'audio' : 'video')
+                                  ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                                  : 'border-[var(--cc-primary)] bg-white text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/5',
+                              )}
                             >
                               {message.systemMeta.mode === 'audio' ? <HiOutlinePhone className="h-4 w-4" /> : <HiOutlineVideoCamera className="h-4 w-4" />}
                               {callbackLabel}
@@ -3214,6 +3351,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             document.body,
           )
         : null}
+      <Modal open={callPermissionModalOpen} onClose={() => setCallPermissionModalOpen(false)} title="Call permissions" maxWidthClassName="max-w-md">
+        <p className="text-sm leading-6 text-slate-600">You don't have permission from your parent or guardian for this feature</p>
+      </Modal>
       {manageMembersOpen && activeThread && isActiveGroupOwner
         ? createPortal(
             <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4" onClick={() => setManageMembersOpen(false)}>

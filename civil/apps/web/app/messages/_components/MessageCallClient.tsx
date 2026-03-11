@@ -296,6 +296,14 @@ export default function MessageCallClient({
     [attachStreamToMediaElement, cameraEnabled],
   )
 
+  const handleLocalVideoRef = useCallback(
+    (node: HTMLVideoElement | null) => {
+      localVideoRef.current = node
+      attachStreamToMediaElement(node, cameraEnabled ? localStreamRef.current : null, { muted: true })
+    },
+    [attachStreamToMediaElement, cameraEnabled],
+  )
+
   const clearRemoteStreamForPeer = useCallback((peerId: string) => {
     setRemoteStreams((prev) => {
       if (!(peerId in prev)) return prev
@@ -1050,7 +1058,7 @@ export default function MessageCallClient({
                 <div className="px-3 pb-2 pt-2.5 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/55">You</div>
                 <div className="relative aspect-[3/4] overflow-hidden bg-[linear-gradient(180deg,#1e293b_0%,#0f172a_100%)]">
                   {localPreviewVisible ? (
-                    <video ref={localVideoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+                    <video ref={handleLocalVideoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
                   ) : (
                     <div className="flex h-full flex-col items-center justify-center gap-2 px-3 text-center">
                       <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-white/12 bg-white/10 text-xl font-semibold text-white/90">
