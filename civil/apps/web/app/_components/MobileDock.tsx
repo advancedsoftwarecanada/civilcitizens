@@ -458,6 +458,7 @@ export default function MobileDock() {
   const orgRoute = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
   const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
   const userRelationshipRoute = useMemo(() => getUserRelationshipRouteFromPathname(pathname), [pathname])
+  const profileHref = familyCardIdentity?.href ?? (effectiveViewer?.handle ? `/u/${effectiveViewer.handle}` : undefined)
 
   const morePanelContent = useMemo(() => {
     if (pathname === '/home') {
@@ -628,9 +629,9 @@ export default function MobileDock() {
             style={drawerSpacingVars}
           >
             <div className="relative">
-              <div onClick={viewer?.handle ? handleCloseMenu : undefined}>
+              <div onClick={profileHref ? handleCloseMenu : undefined}>
                 <CivilCard
-                  href={familyCardIdentity?.href ?? (effectiveViewer?.handle ? `/u/${effectiveViewer.handle}` : undefined)}
+                  href={profileHref}
                   size="rail"
                   name={familyCardIdentity?.name ?? effectiveViewer?.name ?? 'Civil Citizen'}
                   subtitle={familyCardIdentity?.subtitle ?? 'View profile'}

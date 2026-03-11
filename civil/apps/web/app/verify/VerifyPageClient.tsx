@@ -4,8 +4,9 @@ import Image from 'next/image'
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { pushToast } from '../_components/useToasts'
-import { buildApiUrl } from '../_lib/api'
+import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
+import { clearAuthSession } from '../_lib/authSession'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import {
   getAuthedEntryPath,
@@ -35,6 +36,12 @@ function civicStatusLabel(value: CivicStatusValue) {
   if (value === 'work_permit') return 'Valid Work Permit'
   if (value === 'study_permit') return 'Valid Study Permit'
   return 'Other / Prefer not to say'
+}
+
+function handleSuspendedSession() {
+  clearAuthSession()
+  pushToast('Your account is suspended. Please sign in again for details.', 'error')
+  redirectToAuthModal('login')
 }
 
 export default function VerifyPageClient() {
@@ -78,6 +85,9 @@ export default function VerifyPageClient() {
       .then((viewer) => {
         if (cancelled) return
         if (!viewer) {
+          if (!window.localStorage.getItem('token')) {
+            redirectToAuthModal('login')
+          }
           setLoading(false)
           return
         }
@@ -141,8 +151,12 @@ export default function VerifyPageClient() {
         }),
       })
 
-      const payload = (await res.json().catch(() => null)) as { error?: unknown } | null
+      const { json: payload } = await parseApiResponse<{ error?: unknown }>(res)
       if (!res.ok) {
+        if (payload?.error === 'account_suspended') {
+          handleSuspendedSession()
+          return
+        }
         pushToast(typeof payload?.error === 'string' ? payload.error : 'Unable to save your status.', 'error')
         return
       }
@@ -151,6 +165,11 @@ export default function VerifyPageClient() {
       if (nextMe) {
         setViewerMe(nextMe)
         router.replace(isEditMode ? '/profile/edit' : getAuthedEntryPath(nextMe))
+        return
+      }
+
+      if (!window.localStorage.getItem('token')) {
+        redirectToAuthModal('login')
         return
       }
 
