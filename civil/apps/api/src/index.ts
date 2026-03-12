@@ -3921,7 +3921,13 @@ async function findFamilyMemberByUsername(username: string) {
 async function generateUniqueFamilyFriendCode() {
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const candidate = buildFamilyFriendCode()
-    const existing = await prisma.familyMember.findUnique({ where: { friendCode: candidate }, select: { id: true } })
+    let existing: { id: string } | null = null
+    try {
+      existing = await prisma.familyMember.findUnique({ where: { friendCode: candidate }, select: { id: true } })
+    } catch (error) {
+      if (!isFamilyMemberTableMissing(error)) throw error
+      return candidate
+    }
     if (!existing) return candidate
   }
   throw new Error('family_friend_code_generation_failed')
@@ -9726,7 +9732,23 @@ function isExperienceTableMissing(error: unknown) {
 }
 
 function isFamilyMemberTableMissing(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2021' || error.code === 'P2022')
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === 'P2021' || error.code === 'P2022'
+  }
+
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  if (!message) return false
+
+  return (
+    message.includes('familymember') &&
+    (
+      message.includes('unknown arg') ||
+      message.includes('unknown field') ||
+      message.includes('column') ||
+      message.includes('does not exist') ||
+      message.includes('no such table')
+    )
+  )
 }
 
 const MAX_HANDLE_LENGTH = 32
