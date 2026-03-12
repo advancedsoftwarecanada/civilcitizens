@@ -46,6 +46,18 @@ type AiChatResponse = {
   } | null
 }
 
+type AiChatJobCreateResponse = {
+  jobId?: string
+  conversationId?: string
+  status?: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
+}
+
+type AiChatJobPollResponse = AiChatResponse & {
+  jobId?: string
+  status?: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
+  error?: string | null
+}
+
 const STARTER_MESSAGE = {
   id: 'civil-ai-intro',
   role: 'assistant' as const,
@@ -56,6 +68,7 @@ const STARTER_MESSAGE = {
 const CIVIL_AI_OPEN_STORAGE_KEY = 'civil-ai-open'
 const CIVIL_AI_CONVERSATION_STORAGE_KEY = 'civil-ai-conversation-id'
 const CIVIL_AI_MAX_VISIBLE_MESSAGES = 8
+const CIVIL_AI_POLL_TIMEOUT_MS = 15 * 60 * 1000
 const CIVIL_AI_HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
 
 function nextMessageId(prefix: string) {
@@ -154,6 +167,22 @@ function buildCivilAiLoadingSteps(question: string) {
     'Considering a few relevant local angles.',
     'Looking up the best matching Civil data.',
   ]
+}
+
+function waitForCivilAiPollDelay(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 function renderInlineCivilAiMarkdown(text: string): ReactNode[] {
@@ -303,11 +332,14 @@ export default function CivilAiLauncher() {
   const [messages, setMessages] = useState<AiMessage[]>([STARTER_MESSAGE])
   const [draft, setDraft] = useState('')
   const [sendLoading, setSendLoading] = useState(false)
+  const [stopLoading, setStopLoading] = useState(false)
   const [loadingSteps, setLoadingSteps] = useState<string[]>([])
   const [loadingStepIndex, setLoadingStepIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const sendLoadingRef = useRef(false)
+  const activeRequestControllerRef = useRef<AbortController | null>(null)
+  const activeJobIdRef = useRef<string | null>(null)
   const launcherHiddenForRoute =
     CIVIL_AI_HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname === '/privacy' ||
@@ -321,16 +353,28 @@ export default function CivilAiLauncher() {
   const shouldHideLauncher = launcherHiddenForRoute || !hasCompleteAccount || isFamilyLockedSession
 
   const resetCivilAiSession = useCallback(() => {
+    activeRequestControllerRef.current?.abort()
+    activeRequestControllerRef.current = null
+    activeJobIdRef.current = null
     const nextConversationId = createCivilAiConversationId()
     setConversationId(nextConversationId)
     setMessages([STARTER_MESSAGE])
     setDraft('')
     setSendLoading(false)
+    setStopLoading(false)
     setLoadingSteps([])
     setLoadingStepIndex(0)
     setError(null)
     if (typeof window !== 'undefined') {
       window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, nextConversationId)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      activeRequestControllerRef.current?.abort()
+      activeRequestControllerRef.current = null
+      activeJobIdRef.current = null
     }
   }, [])
 
@@ -397,6 +441,60 @@ export default function CivilAiLauncher() {
     return () => window.clearInterval(interval)
   }, [sendLoading, loadingSteps])
 
+  const pollCivilAiJob = useCallback(async (args: { jobId: string; token: string | null; signal: AbortSignal }) => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < CIVIL_AI_POLL_TIMEOUT_MS) {
+      const response = await fetch(buildApiUrl(`/ai/chat/jobs/${encodeURIComponent(args.jobId)}`), {
+        headers: {
+          ...(args.token ? { authorization: `Bearer ${args.token}` } : {}),
+        },
+        cache: 'no-store',
+        signal: args.signal,
+      })
+      const { json, text } = await parseApiResponse<AiChatJobPollResponse>(response)
+      if (!response.ok) {
+        throw new Error(json?.error || text || 'Civil AI job status could not be loaded.')
+      }
+      if (json?.status === 'completed' && json.message?.content) {
+        return json
+      }
+      if (json?.status === 'failed') {
+        throw new Error(json.error || 'Civil AI could not answer right now.')
+      }
+      if (json?.status === 'cancelled') {
+        throw new Error('Civil AI request stopped.')
+      }
+      await waitForCivilAiPollDelay(1200, args.signal)
+    }
+
+    throw new Error('Civil AI is still working. Please try again in a moment.')
+  }, [])
+
+  const handleStop = useCallback(async () => {
+    const jobId = activeJobIdRef.current
+    if (!jobId || stopLoading) return
+
+    setStopLoading(true)
+    try {
+      const token = getStoredToken()
+      await fetch(buildApiUrl(`/ai/chat/jobs/${encodeURIComponent(jobId)}`), {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+      })
+    } catch {
+    } finally {
+      activeRequestControllerRef.current?.abort()
+      activeRequestControllerRef.current = null
+      activeJobIdRef.current = null
+      setStopLoading(false)
+      setSendLoading(false)
+      setLoadingSteps([])
+      setLoadingStepIndex(0)
+    }
+  }, [stopLoading])
+
   async function handleSend() {
     const content = draft.trim()
     if (!content || sendLoading) return
@@ -419,6 +517,9 @@ export default function CivilAiLauncher() {
 
     try {
       const token = getStoredToken()
+      activeRequestControllerRef.current?.abort()
+      const requestController = new AbortController()
+      activeRequestControllerRef.current = requestController
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, nextConversationId)
       }
@@ -432,28 +533,41 @@ export default function CivilAiLauncher() {
           conversationId: nextConversationId,
           messages: nextMessages.map((message) => ({ role: message.role, content: message.content })),
         }),
+        signal: requestController.signal,
       })
-      const { json, text } = await parseApiResponse<AiChatResponse>(response)
-      if (!response.ok || !json?.message?.content) {
-        throw new Error(text || 'Civil AI did not return a usable response.')
+      const { json, text } = await parseApiResponse<AiChatJobCreateResponse>(response)
+      if (!response.ok || !json?.jobId) {
+        throw new Error(text || 'Civil AI could not start right now.')
       }
-      if (typeof window !== 'undefined' && json.conversationId) {
-        window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, json.conversationId)
-        setConversationId(json.conversationId)
+      activeJobIdRef.current = json.jobId
+      const jobResult = await pollCivilAiJob({
+        jobId: json.jobId,
+        token,
+        signal: requestController.signal,
+      })
+      if (typeof window !== 'undefined' && jobResult.conversationId) {
+        window.sessionStorage.setItem(CIVIL_AI_CONVERSATION_STORAGE_KEY, jobResult.conversationId)
+        setConversationId(jobResult.conversationId)
       }
       setMessages((current) => pruneCivilAiMessages([
         ...current,
         {
           id: nextMessageId('assistant'),
           role: 'assistant',
-          content: json.message?.content || 'No response returned.',
-          references: Array.isArray(json.message?.references) ? json.message?.references : [],
+          content: jobResult.message?.content || 'No response returned.',
+          references: Array.isArray(jobResult.message?.references) ? jobResult.message?.references : [],
         },
       ]))
     } catch (sendError) {
+      if (sendError instanceof DOMException && sendError.name === 'AbortError') {
+        return
+      }
       setError(sendError instanceof Error ? sendError.message : 'Civil AI could not answer right now.')
     } finally {
+      activeRequestControllerRef.current = null
+      activeJobIdRef.current = null
       setSendLoading(false)
+      setStopLoading(false)
       setLoadingSteps([])
       setLoadingStepIndex(0)
     }
@@ -571,9 +685,20 @@ export default function CivilAiLauncher() {
                   onKeyDown={handleDraftKeyDown}
                   placeholder="Ask Civil AI something useful"
                   rows={2}
+                  disabled={sendLoading}
                   className="min-h-[68px] w-full resize-none bg-transparent px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400"
                 />
                 <div className="flex items-center justify-end gap-3 px-2 pb-1">
+                  {sendLoading ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleStop()}
+                      disabled={stopLoading}
+                      className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)]/30 hover:text-[var(--cc-primary)] disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400"
+                    >
+                      {stopLoading ? 'Stopping...' : 'Stop'}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => void handleSend()}
