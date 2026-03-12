@@ -10,10 +10,12 @@ export default function FamilyViewBootstrap() {
   const pathname = usePathname()
   const familyView = useViewerStore((s) => s.familyView)
   const setFamilyView = useViewerStore((s) => s.setFamilyView)
+  const setFamilyViewHydrated = useViewerStore((s) => s.setFamilyViewHydrated)
 
   useEffect(() => {
     const syncFromStorage = () => {
       setFamilyView(readStoredFamilyView())
+      setFamilyViewHydrated(true)
     }
 
     syncFromStorage()
@@ -23,7 +25,7 @@ export default function FamilyViewBootstrap() {
       window.removeEventListener(FAMILY_VIEW_CHANGED_EVENT, syncFromStorage)
       window.removeEventListener('storage', syncFromStorage)
     }
-  }, [setFamilyView])
+  }, [setFamilyView, setFamilyViewHydrated])
 
   useEffect(() => {
     if (!familyView) return

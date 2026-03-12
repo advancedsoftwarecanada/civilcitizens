@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { ensureViewerMe } from '../_lib/viewerMe'
-import { AUTH_SESSION_CHANGED_EVENT, FAMILY_PARENT_TOKEN_KEY } from '../_lib/authSession'
+import { AUTH_SESSION_CHANGED_EVENT, FAMILY_PARENT_TOKEN_KEY, clearFamilySessionBootstrapPending, markFamilySessionBootstrapPending } from '../_lib/authSession'
 import { clearFamilyView, readStoredFamilyView } from '../_lib/familyView'
 import { useViewerStore } from '../_lib/viewerStore'
 
@@ -15,12 +15,17 @@ export default function ViewerBootstrap() {
 
     const load = async () => {
       const token = window.localStorage.getItem('token')
+      const storedFamilyView = readStoredFamilyView()
       if (!token) {
         if (!cancelled) {
           setMe(null)
           setHydrated(true)
         }
         return
+      }
+
+      if (storedFamilyView) {
+        markFamilySessionBootstrapPending()
       }
 
       if (!cancelled) {
@@ -34,11 +39,14 @@ export default function ViewerBootstrap() {
           return
         }
 
-        if (!cancelled && me?.accountType !== 'family_member' && readStoredFamilyView()) {
+        if (!cancelled && me?.accountType !== 'family_member' && storedFamilyView) {
           clearFamilyView()
           if (typeof window !== 'undefined') {
             window.localStorage.removeItem(FAMILY_PARENT_TOKEN_KEY)
           }
+        }
+        if (me?.accountType !== 'family_member') {
+          clearFamilySessionBootstrapPending()
         }
       } catch {
         if (!cancelled) {

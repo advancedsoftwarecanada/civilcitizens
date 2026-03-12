@@ -8,7 +8,7 @@ import { getProvinceDisplayName, normalizeProvinceCode, type ReactionType } from
 import PostComposer, { ApiPost, CommunityTarget, type PostType } from './PostComposer'
 import { RightRail } from './RightRail'
 import { redirectToAuthModal } from '../_lib/authModal'
-import { clearAuthSession } from '../_lib/authSession'
+import { clearAuthSession, hasPendingFamilySessionBootstrap } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
 import { hasDeclaredCivilStatus, hasHomeCommunity, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
@@ -534,6 +534,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           setActivityEvents([])
           setActivityJobs([])
           setActivityItems([])
+          if (hasPendingFamilySessionBootstrap()) {
+            return
+          }
           clearAuthSession()
           redirectToAuthModal('login')
           return
@@ -554,6 +557,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         setActivityEvents([])
         setActivityJobs([])
         setActivityItems([])
+        if (hasPendingFamilySessionBootstrap()) {
+          return
+        }
       }
     }
 
@@ -752,12 +758,18 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         ])
 
         if (ownedRes?.status === 401 || membershipsRes?.status === 401) {
+          if (hasPendingFamilySessionBootstrap()) {
+            return
+          }
           clearAuthSession()
           redirectToAuthModal('login')
           return
         }
 
         if (followsRes.status === 401) {
+          if (hasPendingFamilySessionBootstrap()) {
+            return
+          }
           clearAuthSession()
           redirectToAuthModal('login')
           return
@@ -812,6 +824,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           setMemberOrganizations([])
         }
       } catch {
+        if (hasPendingFamilySessionBootstrap()) {
+          return
+        }
         clearAuthSession()
         redirectToAuthModal('login')
       }
