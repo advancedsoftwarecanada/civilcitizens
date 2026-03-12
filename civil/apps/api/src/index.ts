@@ -2557,6 +2557,7 @@ function ensurePushDeviceRegistryTable(): Promise<void> {
 }
 
 let postImpressionTableReady: Promise<void> | null = null
+let postBusinessAuthorColumnReady: Promise<void> | null = null
 
 type UserPostImpressionRow = {
   post_id: string
@@ -2591,6 +2592,22 @@ function ensureUserPostImpressionsTable(): Promise<void> {
   })
 
   return postImpressionTableReady
+}
+
+function ensurePostBusinessAuthorColumn(): Promise<void> {
+  if (postBusinessAuthorColumnReady) return postBusinessAuthorColumnReady
+
+  postBusinessAuthorColumnReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Post"
+      ADD COLUMN IF NOT EXISTS "showBusinessAuthor" BOOLEAN NOT NULL DEFAULT false;
+    `)
+  })().catch((err) => {
+    postBusinessAuthorColumnReady = null
+    throw err
+  })
+
+  return postBusinessAuthorColumnReady
 }
 
 async function loadUserPostImpressionMap(userId: string, postIds: string[]) {
@@ -8770,6 +8787,12 @@ function isAuthorOrBusinessBlocked(
   return false
 }
 
+function isMissingPostBusinessAuthorColumnError(err: unknown): boolean {
+  const detail = schemaOutOfDateDetail(err)
+  const haystack = [detail.prismaMetaMessage, detail.message].filter(Boolean).join(' ')
+  return /showBusinessAuthor/i.test(haystack) && /Post/i.test(haystack)
+}
+
 function isVisibleModerationStatus(value: string | null | undefined) {
   return String(value ?? '').toUpperCase() === 'VISIBLE'
 }
@@ -9454,6 +9477,16 @@ async function withSchemaGuard<T>(
   try {
     return await action()
   } catch (err) {
+    if (isMissingPostBusinessAuthorColumnError(err)) {
+      try {
+        await ensurePostBusinessAuthorColumn()
+        return await action()
+      } catch (repairErr) {
+        if (!isSchemaOutOfDateError(repairErr)) throw repairErr
+        err = repairErr
+      }
+    }
+
     if (isSchemaOutOfDateError(err)) {
       req.log.error({ err }, 'database schema out of date for social features')
       const payload: Record<string, unknown> = { error: 'schema_out_of_date', message: SCHEMA_MISMATCH_MESSAGE }
@@ -39489,6 +39522,7 @@ app.get('/work/industries', async (_req: FastifyRequest, reply: FastifyReply) =>
 const start = async () => {
   try {
     validatePushEnvironment(app.log)
+    await ensurePostBusinessAuthorColumn()
     await app.listen({ port: PORT, host: '0.0.0.0' })
     const pollResultsInterval = setInterval(() => {
       void dispatchDuePollResultNotifications()
