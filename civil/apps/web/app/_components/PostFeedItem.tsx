@@ -15,6 +15,7 @@ import { buildApiUrl } from '../_lib/api'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { pushToast } from './useToasts'
 import Modal from './Modal'
+import RichTextEditor from './RichTextEditor'
 import SharePostModal from './SharePostModal'
 import ShareSendModal from './ShareSendModal'
 import { redirectToAuthModal } from '../_lib/authModal'
@@ -227,6 +228,11 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   useEffect(() => {
     setRecentComments(post.recentComments ?? [])
   }, [post.id, post.recentComments])
+
+  useEffect(() => {
+    setEditTitle(post.title ?? '')
+    setEditBody(post.body)
+  }, [post.id, post.title, post.body, isEditing])
 
   useEffect(() => {
     setHideInlineCommentComposer(false)
@@ -750,16 +756,32 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               ) : null}
               <div className="grid gap-2">
                 <label htmlFor="body" className="text-sm font-medium text-slate-700">
-                  Body
+                  {post.type === 'article' ? 'Story' : 'Body'}
                 </label>
-                <textarea
-                  id="body"
-                  value={editBody}
-                  onChange={(e) => setEditBody(e.target.value)}
-                  className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                  rows={6}
-                  placeholder="Enter post content"
-                />
+                {post.type === 'article' ? (
+                  <>
+                    <RichTextEditor
+                      value={editBody}
+                      onChange={setEditBody}
+                      placeholder="Share something"
+                      minHeight={260}
+                      disabled={pending}
+                    />
+                    <div className="flex justify-between text-xs text-slate-500">
+                      <span>Articles support rich formatting powered by Summernote.</span>
+                      <span>{editBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length}/10000</span>
+                    </div>
+                  </>
+                ) : (
+                  <textarea
+                    id="body"
+                    value={editBody}
+                    onChange={(e) => setEditBody(e.target.value)}
+                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                    rows={6}
+                    placeholder="Enter post content"
+                  />
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-3">

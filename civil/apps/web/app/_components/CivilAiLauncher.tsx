@@ -185,9 +185,29 @@ function waitForCivilAiPollDelay(ms: number, signal: AbortSignal) {
   })
 }
 
+function splitCivilAiUrlSuffix(value: string) {
+  let href = value
+  let suffix = ''
+
+  while (/[.,!?;:]$/.test(href)) {
+    suffix = href.slice(-1) + suffix
+    href = href.slice(0, -1)
+  }
+
+  while (href.endsWith(')')) {
+    const openCount = (href.match(/\(/g) ?? []).length
+    const closeCount = (href.match(/\)/g) ?? []).length
+    if (closeCount <= openCount) break
+    suffix = `)${suffix}`
+    href = href.slice(0, -1)
+  }
+
+  return { href, suffix }
+}
+
 function renderInlineCivilAiMarkdown(text: string): ReactNode[] {
   const nodes: ReactNode[] = []
-  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)]+)\))/g
+  const pattern = /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|(https?:\/\/[^\s<]+))/g
   let lastIndex = 0
   let match: RegExpExecArray | null
 
@@ -227,6 +247,34 @@ function renderInlineCivilAiMarkdown(text: string): ReactNode[] {
           </a>
         ),
       )
+    } else if (match[6]) {
+      const { href, suffix } = splitCivilAiUrlSuffix(match[6])
+      if (href) {
+        nodes.push(
+          isCivilInternalHref(href) ? (
+            <Link
+              key={`plain-link-${match.index}`}
+              href={toCivilAppHref(href)}
+              className="font-semibold text-[var(--cc-primary)] underline underline-offset-2 break-all"
+            >
+              {href}
+            </Link>
+          ) : (
+            <a
+              key={`plain-link-${match.index}`}
+              href={href}
+              className="font-semibold text-[var(--cc-primary)] underline underline-offset-2 break-all"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {href}
+            </a>
+          ),
+        )
+      }
+      if (suffix) {
+        nodes.push(suffix)
+      }
     }
 
     lastIndex = pattern.lastIndex
