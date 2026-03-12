@@ -497,8 +497,8 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         ) : null}
         {post.type === 'article' ? (
           articleBodyWithoutCivilLinks ? (
-            <Link href={postUrl} className="block text-slate-700 hover:text-slate-900">
-              <span dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }} />
+            <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
+              <div dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }} />
             </Link>
           ) : null
         ) : post.type === 'photo' ? (
@@ -767,8 +767,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                       minHeight={260}
                       disabled={pending}
                     />
-                    <div className="flex justify-between text-xs text-slate-500">
-                      <span>Articles support rich formatting powered by Summernote.</span>
+                    <div className="flex justify-end text-xs text-slate-500">
                       <span>{editBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length}/10000</span>
                     </div>
                   </>
