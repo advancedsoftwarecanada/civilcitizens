@@ -989,8 +989,7 @@ export default function PostComposer({
                 minHeight={260}
                 disabled={submitting}
               />
-              <div className="mt-1 flex justify-between text-xs text-slate-500">
-                <span>Articles support rich formatting powered by Summernote.</span>
+              <div className="mt-1 flex justify-end text-xs text-slate-500">
                 <span>{articleBodyPlain.length}/10000</span>
               </div>
             </div>

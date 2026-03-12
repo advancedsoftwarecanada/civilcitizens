@@ -666,7 +666,7 @@ export default function ChamberPostPage({ params }: PageProps) {
               ) : null}
               {post.type === 'article' ? (
                 postArticleBodyWithoutCivilLinks ? (
-                  <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
+                  <div className="cc-article-rich-content" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
                 ) : null
               ) : postBodyWithoutCivilLinks ? (
                 <div className="whitespace-pre-wrap">{postBodyWithoutCivilLinks}</div>
