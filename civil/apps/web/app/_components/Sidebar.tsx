@@ -101,9 +101,27 @@ function navItemClasses(active: boolean) {
   )
 }
 
+function SidebarProfileCardSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      className="relative mt-[var(--profile-card-gap)] h-[82px] overflow-hidden rounded-[1.7rem] border border-slate-200 bg-slate-800 shadow-sm animate-pulse"
+    >
+      <div className="absolute inset-y-0 left-0 w-1/4 bg-slate-200" />
+      <div className="absolute inset-y-0 right-0 left-1/4 bg-[linear-gradient(120deg,#0f172a_0%,#020617_58%,#0b1228_100%)]" />
+      <div className="absolute inset-y-0 right-0 left-1/4 bg-[linear-gradient(90deg,rgba(2,6,23,0.88)_0%,rgba(2,6,23,0.72)_18%,rgba(2,6,23,0.52)_42%,rgba(2,6,23,0.28)_100%)]" />
+      <div className="absolute inset-y-0 left-1/4 right-0 flex items-center justify-center px-5">
+        <div className="h-[42px] w-[68%] max-w-[190px] rounded-[1.2rem] border border-white/12 bg-slate-900/20 shadow-[0_16px_36px_rgba(15,23,42,0.16)]" />
+      </div>
+    </div>
+  )
+}
+
 export default function Sidebar({ me, active }: SidebarProps) {
   const cachedMe = useViewerStore((s) => s.me)
+  const hydrated = useViewerStore((s) => s.hydrated)
   const familyView = useViewerStore((s) => s.familyView)
+  const hasStoredSession = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : false
   const effectiveMe = me ?? cachedMe ?? undefined
   const familyCardIdentity = getFamilyLockedCardIdentity(effectiveMe, familyView)
   const pathname = usePathname()
@@ -114,10 +132,13 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const verified = familyCardIdentity?.isVerified ?? Boolean(effectiveMe?.isVerified)
   const business = familyCardIdentity?.isBusiness ?? Boolean(effectiveMe?.isPremium)
   const navItems = getSidebarNavItems(familyView, effectiveMe)
+  const isOnOwnProfile = Boolean(
+    profileHref && pathname && (pathname === profileHref || pathname.startsWith(`${profileHref}/`)),
+  )
   const navCount = navItems.length
   const sidebarTopOffsetExpr = 'var(--cc-top-nav-offset)'
   const sidebarBottomPadPx = 10
-  const profileHeightPx = 56
+  const profileHeightPx = 82
   const profileGapPx = 8
   const navTopGapPx = 8
   const navGapPx = 6
@@ -142,6 +163,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
     if (normalizedActive) return normalizedActive
     return navItems.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
   }, [navItems, normalizedActive, pathname])
+  const showProfileCardSkeleton = !familyView && !effectiveMe && (!hydrated || hasStoredSession)
 
   const navContent = (items: SidebarNavItem[]) =>
     items.map((item) => {
@@ -179,19 +201,23 @@ export default function Sidebar({ me, active }: SidebarProps) {
       )}
       style={{ ...spacingVars, ...sidebarBleedStyle }}
     >
-      <CivilCard
-        href={profileHref}
-        size="rail"
-        name={displayName}
-        subtitle={familyView ? undefined : familyCardIdentity?.subtitle ?? 'View profile'}
-        avatarAlt={familyCardIdentity?.avatarAlt ?? displayName}
-        avatarInitials={avatarInitials}
-        avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveMe?.avatarUrl ?? null}
-        coverUrl={familyCardIdentity?.coverUrl ?? effectiveMe?.coverUrl ?? null}
-        isVerified={verified}
-        isBusiness={business}
-        className="mt-[var(--profile-card-gap)]"
-      />
+      {showProfileCardSkeleton ? (
+        <SidebarProfileCardSkeleton />
+      ) : (
+        <CivilCard
+          href={profileHref}
+          size="md"
+          name={displayName}
+          subtitle={familyView || isOnOwnProfile ? undefined : familyCardIdentity?.subtitle ?? 'View profile'}
+          avatarAlt={familyCardIdentity?.avatarAlt ?? displayName}
+          avatarInitials={avatarInitials}
+          avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveMe?.avatarUrl ?? null}
+          coverUrl={familyCardIdentity?.coverUrl ?? effectiveMe?.coverUrl ?? null}
+          isVerified={verified}
+          isBusiness={business}
+          className="mt-[var(--profile-card-gap)]"
+        />
+      )}
 
       <nav className="mt-[var(--sidebar-top-gap)] flex flex-1 flex-col gap-[var(--sidebar-gap)]">
         {navContent(navItems)}
