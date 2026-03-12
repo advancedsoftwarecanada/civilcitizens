@@ -81,7 +81,38 @@ export default function Home() {
             <div className="text-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
                 <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
-                <div className="text-center text-sm text-white/80 mt-2">Release 1.7.0 - Feb 26, 2026</div>
+                <div className="mx-auto mt-4 grid max-w-[320px] grid-cols-2 gap-2 sm:max-w-none sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-3">
+                  <a
+                    href="https://apps.apple.com/ca/app/civil-citizens/id6740553511"
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Download Civil Citizens on the App Store"
+                    className="flex justify-center transition hover:opacity-90"
+                  >
+                    <Image
+                      src="/apple.webp"
+                      width={180}
+                      height={54}
+                      alt="Download on the App Store"
+                      className="h-auto w-full max-w-[152px] sm:w-[180px] sm:max-w-none"
+                      priority
+                    />
+                  </a>
+                  <a
+                    href="/install/android/pwa"
+                    aria-label="Get the Civil Citizens Android app"
+                    className="flex justify-center transition hover:opacity-90"
+                  >
+                    <Image
+                      src="/google.webp"
+                      width={180}
+                      height={54}
+                      alt="Get it on Google Play"
+                      className="h-auto w-full max-w-[152px] sm:w-[180px] sm:max-w-none"
+                      priority
+                    />
+                  </a>
+                </div>
               </div>
             </div>
 
