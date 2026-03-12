@@ -10768,7 +10768,13 @@ function scoreFeedCandidate(args: {
 }): number {
   const ageMs = Math.max(0, args.nowMs - args.post.createdAt.getTime())
   const ageHours = ageMs / (1000 * 60 * 60)
-  const freshnessScore = Math.exp(-ageHours / 40) * 180
+  const activityAtMs = Math.max(args.post.createdAt.getTime(), args.post.lastActivityAt.getTime())
+  const activityAgeMs = Math.max(0, args.nowMs - activityAtMs)
+  const activityAgeHours = activityAgeMs / (1000 * 60 * 60)
+  const freshnessWindowHours = args.scope === 'all' ? 18 : 24
+  const activityWindowHours = args.scope === 'all' ? 10 : 14
+  const freshnessScore = Math.exp(-ageHours / freshnessWindowHours) * 220
+  const activityScore = Math.exp(-activityAgeHours / activityWindowHours) * 140
 
   const engagementRaw =
     Math.max(0, args.post.reactionTotal || 0) +
@@ -10779,8 +10785,11 @@ function scoreFeedCandidate(args: {
 
   const seen = Boolean(args.impression)
   const impressionCount = Math.max(0, args.impression?.impressionCount ?? 0)
-  const unseenBoost = seen ? 0 : 900
-  const seenPenalty = impressionCount * 24
+  const unseenBoost = seen ? 0 : args.scope === 'all' ? 220 : 320
+  const seenPenalty = impressionCount * (args.scope === 'all' ? 42 : 30)
+  const maturityPenalty = args.scope === 'all'
+    ? Math.max(0, ageHours - 72) * 0.28 + Math.max(0, activityAgeHours - 36) * 0.35
+    : Math.max(0, ageHours - 120) * 0.14
 
   const geoLevel = resolveGeoLevel(args.post, args.context)
   const geoBoostByScope = args.scope === 'communities' || args.scope === 'all'
@@ -10805,7 +10814,7 @@ function scoreFeedCandidate(args: {
         ? Math.exp(-ageHours / 24) * 180
         : 0
 
-  return unseenBoost + freshnessScore + engagementScore + geoBoost + interactionBoost + viewerAuthorBoost - seenPenalty
+  return unseenBoost + freshnessScore + activityScore + engagementScore + geoBoost + interactionBoost + viewerAuthorBoost - seenPenalty - maturityPenalty
 }
 
 function pickWeightedFeedCategory(

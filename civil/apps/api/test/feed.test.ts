@@ -129,6 +129,74 @@ describe('home feed and profile visibility', () => {
     expect(items[0]?.body).toBe('THIS IS A FRIENDS POST!')
   })
 
+  test('smart home feed rotates fresher community posts ahead of stale unseen hits', async () => {
+    const viewer = await registerUser(app, 'Fresh', 'Viewer')
+    const staleAuthor = await registerUser(app, 'Stale', 'Author')
+    const freshAuthor = await registerUser(app, 'Fresh', 'Author')
+
+    await prisma.communityFollow.create({
+      data: {
+        userId: viewer.id,
+        provinceCode: 'ON',
+        communitySlug: 'fresh-town',
+        home: true,
+      },
+    })
+
+    const staleCreatedAt = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000)
+    await prisma.post.create({
+      data: {
+        authorId: staleAuthor.id,
+        audience: 'community',
+        visibility: 'public',
+        body: 'Stale unseen community post',
+        type: 'post',
+        provinceCode: 'ON',
+        communitySlug: 'fresh-town',
+        jurisdiction: 'municipal',
+        createdAt: staleCreatedAt,
+        lastActivityAt: staleCreatedAt,
+        reactionTotal: 7000,
+        commentCount: 2800,
+        recentPositive: 1600,
+        hotScore: 8200,
+      },
+    })
+
+    const freshCreatedAt = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    const freshPost = await prisma.post.create({
+      data: {
+        authorId: freshAuthor.id,
+        audience: 'community',
+        visibility: 'public',
+        body: 'Fresh community post',
+        type: 'post',
+        provinceCode: 'ON',
+        communitySlug: 'fresh-town',
+        jurisdiction: 'municipal',
+        createdAt: freshCreatedAt,
+        lastActivityAt: freshCreatedAt,
+        reactionTotal: 2,
+        commentCount: 1,
+        recentPositive: 1,
+        hotScore: 1,
+      },
+    })
+
+    const homeFeedRes = await app.inject({
+      method: 'GET',
+      url: '/posts?scope=all&sort=hot&limit=2&cursor=rank:303:0',
+      headers: authHeader(viewer.token),
+    })
+
+    expect(homeFeedRes.statusCode).toBe(200)
+    const homeFeedPayload = homeFeedRes.json() as { items?: Array<{ id: string; body: string }> }
+    const items = Array.isArray(homeFeedPayload.items) ? homeFeedPayload.items : []
+    expect(items).toHaveLength(2)
+    expect(items[0]?.id).toBe(freshPost.id)
+    expect(items[0]?.body).toBe('Fresh community post')
+  })
+
   test('friends can see public organization poll posts on home and profile feeds', async () => {
     const author = await registerUser(app, 'Poll', 'Author')
     const viewer = await registerUser(app, 'Poll', 'Viewer')
