@@ -1285,6 +1285,14 @@ export default function FeedPageClient(props: FeedPageClientProps) {
                     onDelete={handlePostDelete}
                     onUpdate={handlePostUpdate}
                     viewerId={me?.id ?? null}
+                    viewer={me ? {
+                      id: me.id,
+                      handle: me.handle,
+                      name: me.name,
+                      avatarUrl: me.avatarUrl,
+                      isPremium: me.isPremium,
+                      isVerified: me.isVerified,
+                    } : null}
                     communityOptions={communityOptions}
                   />
                 </div>

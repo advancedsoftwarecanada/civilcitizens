@@ -1812,6 +1812,14 @@ export default function UserPostsPage({ params }: PageProps) {
                 post={post}
                 onReact={handleReact}
                 viewerId={viewer?.id ?? null}
+                viewer={viewer ? {
+                  id: viewer.id,
+                  handle: viewer.handle,
+                  name: viewer.name,
+                  avatarUrl: viewer.avatarUrl,
+                  isPremium: viewer.isPremium,
+                  isVerified: viewer.isVerified,
+                } : null}
               />
             ))
           )}
