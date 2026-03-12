@@ -18,6 +18,7 @@ import DashboardShell from './DashboardShell'
 import Modal from './Modal'
 import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
+import CivilComposerLauncher from './CivilComposerLauncher'
 import { formatDisplayName } from '../_lib/text'
 
 
@@ -1033,8 +1034,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     () => (scope === 'organizations' ? selectedOrganization?.coverUrl ?? me?.coverUrl ?? null : me?.coverUrl ?? null),
     [me?.coverUrl, scope, selectedOrganization?.coverUrl],
   )
-  const hasComposerCover = Boolean(composerCoverUrl)
-
   const composerModalTitle = useMemo(() => {
     switch (scope) {
       case 'friends':
@@ -1070,31 +1069,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     scope === 'communities' ? 'community' : scope === 'network' ? 'network' : 'friends'
 
   const resolvedRightRail = rightRail ?? <RightRail />
-  const composerSectionClassName = clsx(
-    'relative min-w-0 space-y-4 overflow-hidden px-6 py-5 shadow-subtle',
-    hasComposerCover
-      ? 'rounded-[var(--cc-radius)] border border-white/[0.18] bg-transparent shadow-[0_24px_56px_rgba(15,23,42,0.14)]'
-      : 'surface-card',
-  )
-  const composerOverlayClassName = 'bg-transparent'
-  const composerHeaderPanelClassName = hasComposerCover
-    ? 'inline-flex max-w-xl flex-col rounded-[1.35rem] border border-white/16 bg-slate-950/18 px-4 py-3 backdrop-blur-md shadow-[0_18px_40px_rgba(15,23,42,0.16)]'
-    : ''
-  const composerTitleClassName = hasComposerCover
-    ? 'text-white/80 [text-shadow:0_1px_2px_rgba(15,23,42,0.55)]'
-    : 'text-slate-400'
-  const composerDescriptionClassName = hasComposerCover
-    ? 'mt-1 text-sm text-white/78 [text-shadow:0_1px_2px_rgba(15,23,42,0.45)]'
-    : 'mt-1 text-sm text-slate-500'
-  const composerPromptClassName = hasComposerCover
-    ? 'border border-white/20 bg-slate-950/[0.22] text-white/90 backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-slate-950/[0.30] hover:text-white'
-    : 'border border-slate-200 bg-slate-50 text-slate-500 hover:bg-white hover:text-slate-700'
-  const composerActionClassName = hasComposerCover
-    ? 'border border-white/[0.22] bg-slate-950/[0.18] text-white backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-slate-950/[0.26] hover:text-white'
-    : 'border border-slate-200 bg-white/90 hover:border-slate-300 hover:bg-white hover:text-slate-700'
-  const composerActionIconClassName = hasComposerCover
-    ? 'bg-white/[0.16] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]'
-    : 'bg-slate-100 text-slate-600'
   const composerActions: Array<{ type: PostType; label: string; icon: string }> = [
     { type: 'post', label: 'Post', icon: '📝' },
     { type: 'article', label: 'Article', icon: '📄' },
@@ -1196,74 +1170,21 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     <DashboardShell rightRail={resolvedRightRail} mainClassName="min-w-0 space-y-6">
       {headerContent ? <div>{headerContent}</div> : null}
 
-      <section className={composerSectionClassName}>
-        {composerCoverUrl ? (
-          <img
-            src={composerCoverUrl}
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-            loading="lazy"
-          />
-        ) : null}
-        <span className={clsx('absolute inset-0', composerOverlayClassName)} aria-hidden="true" />
-        <div className="relative z-[1] flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          {scope !== 'organizations' && (title || description) ? (
-            <div className={composerHeaderPanelClassName || undefined}>
-              {title ? <p className={clsx('text-xs font-semibold uppercase tracking-[0.35em]', composerTitleClassName)}>{title}</p> : null}
-              {description ? <p className={composerDescriptionClassName}>{description}</p> : null}
-            </div>
-          ) : null}
-        </div>
-        <div className="relative z-[1] flex items-center gap-3">
-          <VerifiedAvatar
-            src={me?.avatarUrl ?? null}
-            alt={viewerDisplayName}
-            initials={viewerDisplayName}
-            size={56}
-            isVerified={isVerifiedUser}
-            isBusiness={isBusinessUser}
-            className="shrink-0"
-            href={me?.handle ? `/u/${me.handle}` : undefined}
-          />
-          <button
-            type="button"
-            className={clsx(
-              'flex-1 rounded-full px-4 py-3 text-left text-sm transition',
-              composerPromptClassName,
-            )}
-            onClick={() => openComposer('post')}
-          >
-            {"What's on your mind, "}
-            <span>{friendlyFirstName}</span>
-            {'?'}
-          </button>
-        </div>
-        <div className={clsx('relative z-[1] flex flex-wrap items-center gap-3 text-xs font-semibold', hasComposerCover ? 'text-white' : 'text-slate-500')}>
-          {composerActions.map((action) => (
-            <button
-              key={action.type}
-              type="button"
-              className={clsx(
-                'inline-flex min-w-[108px] items-center justify-center gap-2.5 rounded-full px-4 py-2 text-sm transition',
-                composerActionClassName,
-              )}
-              onClick={() => openComposer(action.type)}
-            >
-              <span
-                className={clsx(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-[0.95rem] leading-none',
-                  composerActionIconClassName,
-                )}
-                role="img"
-                aria-label={action.label}
-              >
-                {action.icon}
-              </span>
-              {action.label}
-            </button>
-          ))}
-        </div>
-      </section>
+      <CivilComposerLauncher
+        title={scope !== 'organizations' ? title : undefined}
+        description={scope !== 'organizations' ? description : undefined}
+        coverUrl={composerCoverUrl}
+        avatarSrc={me?.avatarUrl ?? null}
+        avatarAlt={viewerDisplayName}
+        avatarInitials={viewerDisplayName}
+        avatarHref={me?.handle ? `/u/${me.handle}` : undefined}
+        isVerified={isVerifiedUser}
+        isBusiness={isBusinessUser}
+        prompt={`What's on your mind, ${friendlyFirstName}?`}
+        actions={composerActions}
+        onPrimaryClick={() => openComposer('post')}
+        onActionClick={(type) => openComposer(type as PostType)}
+      />
 
       {showFeedSummary ? (
         <section className="overflow-hidden rounded-[var(--cc-radius)] border border-slate-200 bg-white shadow-subtle">

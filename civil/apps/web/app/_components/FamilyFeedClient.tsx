@@ -3,6 +3,7 @@
 import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import CivilPost from './CivilPost'
+import CivilComposerShell from './CivilComposerShell'
 import DashboardShell from './DashboardShell'
 import { RightRail } from './RightRail'
 import VerifiedAvatar from './VerifiedAvatar'
@@ -379,15 +380,7 @@ export default function FamilyFeedClient({
 
   return (
     <DashboardShell rightRail={<RightRail sticky={false} />} mainClassName="min-w-0 space-y-6">
-      <section className="surface-card space-y-4 px-6 py-5">
-        {headerContent ? <div>{headerContent}</div> : null}
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[var(--cc-primary)]">{title}</p>
-            <p className="mt-2 text-sm text-slate-600">{description}</p>
-          </div>
-        </div>
-
+      <CivilComposerShell title={title} description={description} headerContent={headerContent}>
         {!readOnly ? (
           <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
             <div className="flex items-start gap-3">
@@ -446,7 +439,7 @@ export default function FamilyFeedClient({
             <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGE_TYPES} multiple className="hidden" onChange={handlePhotoSelect} />
           </div>
         ) : null}
-      </section>
+      </CivilComposerShell>
 
       <div className="space-y-4">
         {loading ? (
