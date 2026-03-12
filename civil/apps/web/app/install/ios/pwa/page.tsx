@@ -3,7 +3,6 @@
 import Image from 'next/image'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { HiOutlineArrowTopRightOnSquare } from 'react-icons/hi2'
 import { IOS_APP_STORE_URL, normalizeRelativePath, shouldBlockForAppleInstall } from '../../../_lib/appleInstallGate'
 import { trackInstallFlowEvent } from '../../../_lib/installFlowAnalytics'
 import BackgroundVideo from '../../../_components/BackgroundVideo'
@@ -55,8 +54,8 @@ export default function InstallIosPwaPage() {
         <div className="rounded-3xl border border-white/20 bg-slate-900/80 p-6 shadow-[0_30px_90px_rgba(2,6,23,0.65)] backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <Image
-              src="/apple.webp"
-              alt="Download on the App Store"
+              src="/PWA-ICON.png"
+              alt="Civil app icon"
               width={52}
               height={52}
               className="h-12 w-12 rounded-xl border border-white/20 object-cover shadow-sm"
@@ -66,33 +65,22 @@ export default function InstallIosPwaPage() {
           </div>
           <p className="mt-3 text-sm font-medium text-slate-200">Download the official iPhone and iPad app from Apple.</p>
 
-          <div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
-            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-emerald-300">Now Available</p>
-            <p className="mt-3 text-sm leading-6 text-slate-100">Civil Citizens is officially live on the Canadian App Store.</p>
+          <div className="mt-5 p-1">
             <a
               href={IOS_APP_STORE_URL}
               onClick={handleAppStoreClick}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_16px_40px_rgba(52,211,153,0.35)] transition hover:bg-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-300/70"
+              className="inline-flex w-full items-center justify-center transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-emerald-300/70"
+              aria-label="Download Civil Citizens on the App Store"
             >
-              <HiOutlineArrowTopRightOnSquare className="h-5 w-5" />
-              Download on the App Store
+              <Image
+                src="/apple.webp"
+                alt="Download on the App Store"
+                width={240}
+                height={72}
+                className="h-auto w-full max-w-[220px]"
+                priority
+              />
             </a>
-          </div>
-
-          <div className="mt-5 rounded-2xl border border-white/15 bg-white/5 p-4">
-            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-yellow-300">Install Steps</p>
-            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-100">
-              <li>Tap the App Store button above.</li>
-              <li>Download Civil Citizens from Apple.</li>
-              <li>Open the app and sign in with your Civil account.</li>
-            </ol>
-            <button
-              type="button"
-              onClick={() => router.replace(nextPath)}
-              className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
-            >
-              Continue in browser instead
-            </button>
           </div>
         </div>
       </div>
