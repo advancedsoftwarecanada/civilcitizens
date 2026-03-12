@@ -23,8 +23,8 @@ import { useViewerStore } from '../../_lib/viewerStore'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 
 const SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
-  { value: 'hot', label: 'Hot' },
-  { value: 'new', label: 'New' },
+  { value: 'hot', label: 'Smart' },
+  { value: 'new', label: 'Latest' },
 ]
 
 type Viewer = {
@@ -56,6 +56,7 @@ type UserProfile = {
   coverPostId?: string | null
   createdAt?: string
   dateOfBirth?: string | null
+  birthYear?: number | null
   countryOfBirth?: string | null
   experiences?: UserExperience[]
   isPremium?: boolean
@@ -151,6 +152,11 @@ function formatBirthDate(iso?: string | null) {
   const date = new Date(`${iso}T00:00:00`)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+function formatBirthYear(year?: number | null) {
+  if (typeof year !== 'number' || Number.isNaN(year)) return ''
+  return year.toLocaleString()
 }
 
 function formatDateRange(iso?: string | null) {
@@ -466,14 +472,56 @@ export default function UserPostsPage({ params }: PageProps) {
   const communityCount = profile?.communityCount ?? 0
   const organizationCount = profile?.organizationCount ?? 0
   const connectionCount = profile?.connectionCount ?? 0
+  const postCount = profile?.postCount ?? posts.length
   const publicBirthDate = formatBirthDate(profile?.dateOfBirth)
+  const publicBirthYear = formatBirthYear(profile?.birthYear)
   const publicBirthCountry = profile?.countryOfBirth?.trim() ?? ''
+  const identityPills = [
+    profile?.createdAt ? `Joined ${formatDate(profile.createdAt) || '—'}` : null,
+    publicBirthDate ? `Born ${publicBirthDate}` : publicBirthYear ? `Born ${publicBirthYear}` : null,
+    publicBirthCountry ? `Born in ${publicBirthCountry}` : null,
+    profile?.isVerified ? 'Verified Canadian' : null,
+  ].filter((value): value is string => Boolean(value))
   const isSendingFriendRequest = friendshipAction === 'send'
   const isAcceptingFriendRequest = friendshipAction === 'accept'
   const isRejectingFriendRequest = friendshipAction === 'reject'
   const isSendingConnectionRequest = connectionAction === 'send'
   const isAcceptingConnectionRequest = connectionAction === 'accept'
   const isRejectingConnectionRequest = connectionAction === 'reject'
+  const profileStatCards = profile
+    ? [
+        {
+          label: 'Posts',
+          value: formatCount(postCount),
+          href: null,
+        },
+        {
+          label: 'Experience entries',
+          value: formatCount(experienceCount),
+          href: null,
+        },
+        {
+          label: 'Friends',
+          value: formatCount(friendCount),
+          href: `/u/${encodeURIComponent(profile.handle)}/friends`,
+        },
+        {
+          label: 'Communities',
+          value: formatCount(communityCount),
+          href: `/u/${encodeURIComponent(profile.handle)}/communities`,
+        },
+        {
+          label: 'Organizations',
+          value: formatCount(organizationCount),
+          href: `/u/${encodeURIComponent(profile.handle)}/organizations`,
+        },
+        {
+          label: 'Business connections',
+          value: formatCount(connectionCount),
+          href: `/u/${encodeURIComponent(profile.handle)}/connections`,
+        },
+      ]
+    : []
   const canDirectlyReachProfile =
     !isOwner && (resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected')
   const renderFriendshipPrimaryCta = () => {
@@ -1435,60 +1483,78 @@ export default function UserPostsPage({ params }: PageProps) {
       >
         <div className={profile ? 'space-y-6' : undefined}>
           {profile ? (
-            <CivilCard
-              size="hero"
-              name={profileDisplayName}
-              avatarAlt={profileDisplayName}
-              avatarInitials={profileDisplayName}
-              avatarSrc={profile.avatarUrl}
-              avatarHref={avatarThreadUrl ?? undefined}
-              coverUrl={coverDisplayUrl}
-              isVerified={Boolean(profile.isVerified)}
-              isBusiness={Boolean(profile.isPremium)}
-              interactive={false}
-              className="w-full"
-            />
+            <section className="overflow-hidden rounded-[26px] shadow-[0_28px_90px_rgba(15,23,42,0.16)]">
+              <div className="relative h-[180px] w-full bg-slate-100 sm:h-[220px] lg:h-[320px]">
+                {coverDisplayUrl ? (
+                  <img
+                    src={coverDisplayUrl}
+                    alt=""
+                    className="h-full w-full object-cover object-center"
+                  />
+                ) : (
+                  <div className="h-full w-full bg-[linear-gradient(135deg,#e2e8f0_0%,#f8fafc_48%,#dbeafe_100%)]" aria-hidden="true" />
+                )}
+              </div>
+            </section>
+          ) : null}
+
+          {profile && isOwner ? (
+            <div className="flex flex-wrap items-center justify-center gap-3 px-2">
+              <Link
+                href={editAvatarHref}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+              >
+                Profile photo
+              </Link>
+              <Link
+                href={editCoverHref}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+              >
+                Cover photo
+              </Link>
+              <a
+                href="/profile/edit"
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+              >
+                Edit profile
+              </a>
+            </div>
           ) : null}
 
           <section
-            className="rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-[0_35px_120px_rgba(15,23,42,0.12)] backdrop-blur sm:p-8"
+            className="rounded-[32px] border border-slate-200 bg-white/92 p-6 text-slate-700 shadow-[0_28px_90px_rgba(15,23,42,0.10)] backdrop-blur sm:p-8"
           >
             {profile ? (
               <>
-                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                  <div className="space-y-1 text-slate-600">
-                    <p className="text-lg font-semibold text-slate-900">@{profile.handle}</p>
-                    <p className="text-sm">Joined {formatDate(profile.createdAt) || '—'}</p>
-                    {publicBirthDate || publicBirthCountry ? (
-                      <div className="flex flex-wrap gap-2 pt-1 text-xs font-medium text-slate-600">
-                        {publicBirthDate ? <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Born {publicBirthDate}</span> : null}
-                        {publicBirthCountry ? <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">Born in {publicBirthCountry}</span> : null}
+                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex flex-col gap-5 lg:min-w-0 lg:flex-1">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                      <VerifiedAvatar
+                        src={profile.avatarUrl}
+                        alt={profileDisplayName}
+                        initials={profileDisplayName}
+                        size={108}
+                        isVerified={Boolean(profile.isVerified)}
+                        isBusiness={Boolean(profile.isPremium)}
+                        href={avatarThreadUrl ?? undefined}
+                        roundedClassName="rounded-[28px]"
+                        className="shrink-0"
+                      />
+                      <div className="space-y-2">
+                        <div className="space-y-1">
+                          <h1 className="text-3xl font-bold leading-tight tracking-tight text-slate-950 sm:text-4xl">{profileDisplayName}</h1>
+                          <p className="text-lg font-semibold text-slate-600">@{profile.handle}</p>
+                        </div>
+                        {profile.bio ? (
+                          <p className="max-w-3xl text-sm leading-6 text-slate-600 lg:text-base">{profile.bio.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()}</p>
+                        ) : null}
                       </div>
-                    ) : null}
+                    </div>
                   </div>
                   {isOwner ? (
-                    <div className="flex flex-wrap gap-3">
-                      <Link
-                        href={editAvatarHref}
-                        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-                      >
-                        Profile photo
-                      </Link>
-                      <Link
-                        href={editCoverHref}
-                        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-                      >
-                        Cover photo
-                      </Link>
-                      <a
-                        href="/profile/edit"
-                        className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-                      >
-                        Edit profile
-                      </a>
-                    </div>
+                    null
                   ) : (
-                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center">
+                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center lg:max-w-[420px] lg:justify-end">
                       {isFamilyMemberSession ? (
                         renderFamilyProfileActions()
                       ) : (
@@ -1535,49 +1601,42 @@ export default function UserPostsPage({ params }: PageProps) {
                   )}
                 </div>
 
-                <div className="mt-6 grid grid-cols-1 gap-4 text-center text-slate-600 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Posts</p>
-                    <p className="mt-1 text-2xl font-semibold text-slate-900">{posts.length}</p>
+                {identityPills.length ? (
+                  <div className="mt-5 flex flex-wrap gap-2 text-sm font-medium text-slate-600">
+                    {identityPills.map((pill) => (
+                      <span key={pill} className="rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-sm font-medium text-slate-600 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+                        {pill}
+                      </span>
+                    ))}
                   </div>
-                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Experience entries</p>
-                    <p className="mt-1 text-2xl font-semibold text-slate-900">{experienceCount}</p>
-                  </div>
-                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 shadow-inner">
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Member since</p>
-                    <p className="mt-1 text-lg font-semibold text-slate-900">{formatDate(profile.createdAt) || '—'}</p>
-                  </div>
-                </div>
-                <div className="mt-5 grid grid-cols-2 gap-3 text-sm font-semibold text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
-                  <Link
-                    href={`/u/${encodeURIComponent(profile.handle)}/friends`}
-                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
-                  >
-                    <span className="text-lg font-bold text-slate-900">{formatCount(friendCount)}</span>
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Friends</span>
-                  </Link>
-                  <Link
-                    href={`/u/${encodeURIComponent(profile.handle)}/communities`}
-                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
-                  >
-                    <span className="text-lg font-bold text-slate-900">{formatCount(communityCount)}</span>
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Communities</span>
-                  </Link>
-                  <Link
-                    href={`/u/${encodeURIComponent(profile.handle)}/organizations`}
-                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
-                  >
-                    <span className="text-lg font-bold text-slate-900">{formatCount(organizationCount)}</span>
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Organizations</span>
-                  </Link>
-                  <Link
-                    href={`/u/${encodeURIComponent(profile.handle)}/connections`}
-                    className="group flex min-h-[72px] flex-col items-center justify-center rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
-                  >
-                    <span className="text-lg font-bold text-slate-900">{formatCount(connectionCount)}</span>
-                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 transition group-hover:text-slate-700">Business Connections</span>
-                  </Link>
+                ) : null}
+
+                <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                  {profileStatCards.map((card) => {
+                    const cardClassName = clsx(
+                      'flex min-h-[100px] flex-col rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition',
+                      card.href ? 'group hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md' : '',
+                    )
+
+                    const content = (
+                      <>
+                        <span className={clsx('min-h-[2.75rem] text-[13px] font-medium leading-5 tracking-normal', card.href ? 'text-slate-500 transition group-hover:text-slate-700' : 'text-slate-500')}>
+                          {card.label}
+                        </span>
+                        <span className="mt-auto pt-4 text-[2.25rem] font-bold leading-none tracking-tight text-slate-950">{card.value}</span>
+                      </>
+                    )
+
+                    return card.href ? (
+                      <Link key={card.label} href={card.href} className={cardClassName}>
+                        {content}
+                      </Link>
+                    ) : (
+                      <div key={card.label} className={cardClassName}>
+                        {content}
+                      </div>
+                    )
+                  })}
                 </div>
               </>
             ) : loading ? (
@@ -1720,27 +1779,26 @@ export default function UserPostsPage({ params }: PageProps) {
           </>
         ) : null}
 
-        <section className="surface-card px-6 py-4 shadow-subtle">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Posts</p>
-              <h2 className="text-lg font-semibold text-slate-900">Updates from @{profile?.handle ?? handleParam}</h2>
-            </div>
-            <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
-              {SORT_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`rounded-full px-4 py-1 transition ${sortMode === option.value ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500'}`}
-                  onClick={() => setSortMode(option.value)}
-                  disabled={loading && sortMode === option.value}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+        <div className="flex justify-center">
+          <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+            {SORT_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={clsx(
+                  'rounded-full px-4 py-1.5 transition',
+                  sortMode === option.value
+                    ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
+                    : 'text-slate-500 hover:text-slate-700',
+                )}
+                onClick={() => setSortMode(option.value)}
+                disabled={loading && sortMode === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
-        </section>
+        </div>
 
         <div className="space-y-4">
           {error ? (
