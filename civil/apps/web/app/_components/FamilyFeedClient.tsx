@@ -2,12 +2,13 @@
 
 import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
+import CivilPost from './CivilPost'
 import DashboardShell from './DashboardShell'
 import { RightRail } from './RightRail'
 import VerifiedAvatar from './VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
-import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
+import { buildFamilyAvatarDataUrl, buildFamilyCoverDataUrl } from '../_lib/familyIdentity'
 import { useViewerStore } from '../_lib/viewerStore'
 import { pushToast } from './useToasts'
 
@@ -385,7 +386,6 @@ export default function FamilyFeedClient({
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[var(--cc-primary)]">{title}</p>
             <p className="mt-2 text-sm text-slate-600">{description}</p>
           </div>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Latest only</span>
         </div>
 
         {!readOnly ? (
@@ -457,28 +457,27 @@ export default function FamilyFeedClient({
           </section>
         ) : (
           posts.map((post) => (
-            <article key={post.id} className="surface-card overflow-hidden px-6 py-5">
-              <div className="flex items-start gap-3">
-                <VerifiedAvatar src={avatarSrc} alt={post.author.name} initials={post.author.name} size={48} className="shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-base font-semibold text-slate-900">{post.author.name}</h2>
-                    <span className="text-xs text-slate-400">•</span>
-                    <span className="text-xs text-slate-500">{formatFamilyFeedDate(post.createdAt)}</span>
-                  </div>
-                  {post.body ? <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">{post.body}</p> : null}
-                  {post.images.length ? (
-                    <div className={clsx('mt-4 grid gap-3', post.images.length === 1 ? 'grid-cols-1' : 'sm:grid-cols-2')}>
-                      {post.images.map((imageUrl, index) => (
-                        <div key={`${post.id}:${index}`} className="overflow-hidden rounded-2xl bg-slate-100">
-                          <img src={imageUrl} alt="Family feed post" className="h-full w-full object-cover" loading="lazy" />
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
+            <CivilPost
+              key={post.id}
+              name={post.author.name}
+              subtitle={formatFamilyFeedDate(post.createdAt)}
+              details={
+                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
+                  <span className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85">
+                    {post.author.relationshipLabel}
+                  </span>
+                  <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
+                    {post.images.length ? 'Photo' : 'Update'}
+                  </span>
                 </div>
-              </div>
-            </article>
+              }
+              avatarAlt={post.author.name}
+              avatarInitials={post.author.name}
+              avatarSrc={buildFamilyAvatarDataUrl(post.author.name, post.author.modeBand)}
+              coverUrl={buildFamilyCoverDataUrl(post.author.name, post.author.modeBand)}
+              body={post.body || undefined}
+              images={post.images}
+            />
           ))
         )}
       </div>

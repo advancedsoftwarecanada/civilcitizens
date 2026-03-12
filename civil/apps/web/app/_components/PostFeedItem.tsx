@@ -9,6 +9,7 @@ import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost, CommunityTarget } from './PostComposer'
 import CivilCard from './CivilCard'
+import CivilPostMedia from './CivilPostMedia'
 import PostAuthorMiniCard from './PostAuthorMiniCard'
 import ContentModerationMenu from './ContentModerationMenu'
 import { formatDisplayName } from '../_lib/text'
@@ -71,82 +72,6 @@ type PostFeedItemProps = {
   onUpdate?: (post: ApiPost) => void
   viewerId?: string | null
   communityOptions?: CommunityTarget[]
-}
-
-function PostImageGrid({ images, mediaUrl, postUrl }: { images?: string[] | null; mediaUrl?: string | null; postUrl: string }) {
-  const allImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
-  if (allImages.length === 0) return null
-
-  if (allImages.length === 1) {
-    const imageSrc = allImages[0]
-    if (!imageSrc) return null
-    const tiledBackdropStyle = {
-      backgroundImage: `url("${imageSrc.replace(/"/g, '\\"')}")`,
-      backgroundPosition: 'center',
-      backgroundRepeat: 'repeat',
-      backgroundSize: 'auto 100%',
-    } as const
-    return (
-      <Link href={postUrl} className="group relative block overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
-        <div className="absolute inset-[-8%] overflow-hidden" aria-hidden="true">
-          <div
-            className="h-full w-full scale-110 opacity-50 blur-3xl saturate-150 transition-transform duration-500 group-hover:scale-[1.16]"
-            style={tiledBackdropStyle}
-          />
-          <span className="absolute inset-0 bg-[linear-gradient(180deg,rgba(15,23,42,0.18)_0%,rgba(15,23,42,0.08)_45%,rgba(15,23,42,0.18)_100%)]" />
-        </div>
-        <div className="relative flex min-h-[16rem] items-center justify-center bg-slate-950/8 px-2 py-2 sm:min-h-[20rem]">
-          <img
-            src={imageSrc}
-            alt="Post image"
-            className="relative z-[1] h-auto w-full max-h-[70vh] object-contain"
-            loading="lazy"
-          />
-        </div>
-      </Link>
-    )
-  }
-
-  const displayImages = allImages.slice(0, 5)
-  const remainingCount = allImages.length - 5
-
-  return (
-    <div className="grid grid-cols-2 gap-1 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 sm:grid-cols-6">
-      {displayImages.map((src, index) => {
-        // Layout logic for up to 5 images
-        // 2 images: 50/50 (col-span-3)
-        // 3 images: 1st (col-span-4), 2nd/3rd (col-span-2) - wait, 6 cols.
-        // Let's try a simpler approach with CSS grid classes based on count.
-
-        let className = 'relative aspect-square w-full overflow-hidden bg-slate-100'
-        const isLast = index === displayImages.length - 1
-
-        if (displayImages.length === 2) {
-          className += ' col-span-1 sm:col-span-3'
-        } else if (displayImages.length === 3) {
-          if (index === 0) className += ' col-span-2 sm:col-span-4 row-span-2'
-          else className += ' col-span-1 sm:col-span-2'
-        } else if (displayImages.length === 4) {
-          className += ' col-span-1 sm:col-span-3'
-        } else if (displayImages.length >= 5) {
-          if (index < 2) className += ' col-span-1 sm:col-span-3'
-          else if (index === 4) className += ' col-span-2 sm:col-span-2'
-          else className += ' col-span-1 sm:col-span-2'
-        }
-
-        return (
-          <Link key={src} href={postUrl} className={className}>
-            <img src={src} alt={`Post image ${index + 1}`} className="h-full w-full object-cover" loading="lazy" />
-            {isLast && remainingCount > 0 ? (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-lg font-bold text-white backdrop-blur-sm">
-                +{remainingCount} more
-              </div>
-            ) : null}
-          </Link>
-        )
-      })}
-    </div>
-  )
 }
 
 export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerId, communityOptions }: PostFeedItemProps) {
@@ -498,7 +423,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       </header>
 
       <div className="space-y-3 text-[15px] leading-6 text-slate-800">
-        <PostImageGrid images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
+        <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
 
         {post.type === 'article' && post.title ? (
           <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
@@ -565,7 +490,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               {sharedPostBodyWithoutCivilLinks ? <div className="whitespace-pre-wrap">{sharedPostBodyWithoutCivilLinks}</div> : null}
               {post.sharedPost.images && post.sharedPost.images.length > 0 ? (
                 <div className="mt-2">
-                  <PostImageGrid images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />
+                  <CivilPostMedia images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />
                 </div>
               ) : null}
             </div>
