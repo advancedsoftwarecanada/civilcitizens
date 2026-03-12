@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { clearLastNativeNotificationTapUrl, getLastNativeNotificationTapUrl, isAppleNativeApp } from '../_lib/nativePush'
+import { clearLastNativeNotificationTapUrl, ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl, isNativeApp } from '../_lib/nativePush'
 
 function normalizeDeepLinkUrl(raw: string): string | null {
   const trimmed = raw.trim()
@@ -39,7 +39,7 @@ export default function NotificationTapRouter() {
   const isHandlingRef = useRef(false)
 
   useEffect(() => {
-    if (!isAppleNativeApp()) return
+    if (!isNativeApp()) return
 
     const handle = async () => {
       if (isHandlingRef.current) return
@@ -67,6 +67,7 @@ export default function NotificationTapRouter() {
       }
     }
 
+    void ensureNativeNotificationTapListener()
     void handle()
 
     const onVisible = () => {
