@@ -420,7 +420,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         return
       }
       const data = await response.json().catch(() => ({ items: [], nextCursor: undefined, lastViewedAt: null }))
-      const newItems = Array.isArray(data.items) ? data.items : []
+      const newItems: ApiPost[] = Array.isArray(data.items) ? (data.items as ApiPost[]) : []
 
       setPosts((prev) => {
         if (!shouldShuffleSmartHome) {
