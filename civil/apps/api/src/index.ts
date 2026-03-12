@@ -5814,8 +5814,6 @@ const NOTIFICATION_FEED_EXCLUDED_TYPES = [
   'message_created',
   'message',
   'message.created',
-  COMMENT_NOTIFICATION_TYPES.REPLY,
-  COMMENT_NOTIFICATION_TYPES.POST_COMMENT,
 ] as const
 
 const EVENT_NOTIFICATION_TYPES = {
