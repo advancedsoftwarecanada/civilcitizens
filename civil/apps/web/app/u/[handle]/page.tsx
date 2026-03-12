@@ -694,11 +694,7 @@ export default function UserPostsPage({ params }: PageProps) {
     }
   }
 
-  const rightRailContent = (
-    <div className="sticky top-8 space-y-4">
-      <RightRail />
-    </div>
-  )
+  const rightRailContent = <RightRail sticky={false} />
 
   const openComposer = (type: PostType = 'post') => {
     setComposerDefaultType(type)
