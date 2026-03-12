@@ -131,6 +131,22 @@ function getUserRelationshipRouteFromPathname(pathname: string | null | undefine
   return null
 }
 
+function MobileDrawerProfileCardSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      className="relative h-[58px] w-[calc(100%-48px)] overflow-hidden rounded-[var(--drawer-item-radius)] border border-slate-200 bg-slate-800 shadow-sm animate-pulse"
+    >
+      <div className="absolute inset-y-0 left-0 w-1/4 bg-slate-200" />
+      <div className="absolute inset-y-0 right-0 left-1/4 bg-[linear-gradient(120deg,#0f172a_0%,#020617_58%,#0b1228_100%)]" />
+      <div className="absolute inset-y-0 right-0 left-1/4 bg-[linear-gradient(90deg,rgba(2,6,23,0.88)_0%,rgba(2,6,23,0.72)_18%,rgba(2,6,23,0.52)_42%,rgba(2,6,23,0.28)_100%)]" />
+      <div className="absolute inset-y-0 left-1/4 right-0 flex items-center justify-center px-4">
+        <div className="h-[34px] w-[66%] max-w-[180px] rounded-[1rem] border border-white/12 bg-slate-900/20 shadow-[0_16px_36px_rgba(15,23,42,0.16)]" />
+      </div>
+    </div>
+  )
+}
+
 export default function MobileDock() {
   const pathname = usePathname()
   const router = useRouter()
@@ -459,6 +475,7 @@ export default function MobileDock() {
   const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
   const userRelationshipRoute = useMemo(() => getUserRelationshipRouteFromPathname(pathname), [pathname])
   const profileHref = familyCardIdentity?.href ?? (effectiveViewer?.handle ? `/u/${effectiveViewer.handle}` : undefined)
+  const showProfileCardSkeleton = hasSession && !effectiveViewer && !familyView
 
   const morePanelContent = useMemo(() => {
     if (pathname === '/home') {
@@ -629,21 +646,25 @@ export default function MobileDock() {
             style={drawerSpacingVars}
           >
             <div className="relative">
-              <div onClick={profileHref ? handleCloseMenu : undefined}>
-                <CivilCard
-                  href={profileHref}
-                  size="rail"
-                  name={familyCardIdentity?.name ?? effectiveViewer?.name ?? 'Civil Citizen'}
-                  subtitle={familyCardIdentity?.subtitle ?? 'View profile'}
-                  avatarAlt={familyCardIdentity?.avatarAlt ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'Civil citizen'}
-                  avatarInitials={familyCardIdentity?.avatarInitials ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'C'}
-                  avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveViewer?.avatarUrl ?? null}
-                  coverUrl={familyCardIdentity?.coverUrl ?? effectiveViewer?.coverUrl ?? null}
-                  isVerified={familyCardIdentity?.isVerified ?? Boolean(effectiveViewer?.isVerified)}
-                  isBusiness={familyCardIdentity?.isBusiness ?? Boolean(effectiveViewer?.isPremium)}
-                  className="w-[calc(100%-48px)] rounded-[var(--drawer-item-radius)]"
-                />
-              </div>
+              {showProfileCardSkeleton ? (
+                <MobileDrawerProfileCardSkeleton />
+              ) : (
+                <div onClick={profileHref ? handleCloseMenu : undefined}>
+                  <CivilCard
+                    href={profileHref}
+                    size="rail"
+                    name={familyCardIdentity?.name ?? effectiveViewer?.name ?? 'Civil Citizen'}
+                    subtitle={familyCardIdentity?.subtitle ?? 'View profile'}
+                    avatarAlt={familyCardIdentity?.avatarAlt ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'Civil citizen'}
+                    avatarInitials={familyCardIdentity?.avatarInitials ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'C'}
+                    avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveViewer?.avatarUrl ?? null}
+                    coverUrl={familyCardIdentity?.coverUrl ?? effectiveViewer?.coverUrl ?? null}
+                    isVerified={familyCardIdentity?.isVerified ?? Boolean(effectiveViewer?.isVerified)}
+                    isBusiness={familyCardIdentity?.isBusiness ?? Boolean(effectiveViewer?.isPremium)}
+                    className="w-[calc(100%-48px)] rounded-[var(--drawer-item-radius)]"
+                  />
+                </div>
+              )}
               <button
                 type="button"
                 className="absolute right-0 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white p-2 text-slate-500"

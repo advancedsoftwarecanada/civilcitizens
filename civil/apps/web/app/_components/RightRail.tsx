@@ -656,7 +656,7 @@ export function RightRail({
       {showPendingFriendRequests && pendingFriendRequests.length ? (
         <Block title="Pending Friend Requests" action={{ label: 'View all', href: '/friends' }}>
           <ul className="space-y-3">
-            {pendingFriendRequests.slice(0, 5).map((request) => {
+            {pendingFriendRequests.slice(0, 4).map((request) => {
               const displayName = formatUserDisplayName(request.user.name, request.user.handle) || request.user.handle
               return (
                 <li key={request.id}>
@@ -687,7 +687,7 @@ export function RightRail({
           >
             {subscribedOrganizations.length ? (
               <ul className="space-y-3">
-                {subscribedOrganizations.slice(0, 10).map((org) => (
+                {subscribedOrganizations.slice(0, 5).map((org) => (
                   <li key={org.id}>
                     <CivilCard
                       href={getOrganizationHref(org)}
@@ -710,7 +710,7 @@ export function RightRail({
           <Block title="Organizations You're a part of" action={{ label: 'Manage', href: '/organizations/manager' }} actionVariant="pill">
             {partOfOrganizations.length ? (
               <ul className="space-y-3">
-                {partOfOrganizations.slice(0, 10).map((org) => (
+                {partOfOrganizations.slice(0, 5).map((org) => (
                   <li key={org.id}>
                     <CivilCard
                       href={getOrganizationHref(org)}
@@ -740,7 +740,7 @@ export function RightRail({
         >
           {combinedOrganizations.length ? (
             <ul className="space-y-3">
-              {combinedOrganizations.slice(0, 10).map((org) => (
+              {combinedOrganizations.slice(0, 5).map((org) => (
                 <li key={org.id}>
                   <CivilCard
                     href={getOrganizationHref(org)}
@@ -766,7 +766,7 @@ export function RightRail({
           {pendingConnectionRequests.length ? (
             <Block title="Pending Connect Requests" action={{ label: 'View all', href: '/network/professionals/requests' }}>
               <ul className="space-y-3">
-                {pendingConnectionRequests.slice(0, 5).map((request) => {
+                {pendingConnectionRequests.slice(0, 4).map((request) => {
                   const displayName = formatUserDisplayName(request.user.name, request.user.handle) || request.user.handle
                   const isAccepting = pendingConnectionAction?.id === request.id && pendingConnectionAction.action === 'accept'
                   const isRejecting = pendingConnectionAction?.id === request.id && pendingConnectionAction.action === 'reject'
@@ -816,7 +816,7 @@ export function RightRail({
           <Block title="Professionals" action={{ label: 'See all', href: '/network/professionals' }}>
             {connections.length ? (
               <ul className="space-y-3">
-                {connections.slice(0, 8).map((connection) => {
+                {connections.slice(0, 5).map((connection) => {
                   const displayName = formatUserDisplayName(connection.user.name, connection.user.handle) || connection.user.handle
                   return (
                     <li key={connection.id}>
@@ -847,7 +847,7 @@ export function RightRail({
           <Block title="Organizations" action={{ label: 'See all', href: '/organizations/directory' }}>
             {combinedOrganizations.length ? (
               <ul className="space-y-3">
-                {combinedOrganizations.slice(0, 8).map((org) => (
+                {combinedOrganizations.slice(0, 5).map((org) => (
                   <li key={org.id}>
                     <CivilCard
                       href={getOrganizationHref(org)}
@@ -1030,7 +1030,7 @@ export function RightRail({
         <Block title="Your Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
           {combinedOrganizations.length ? (
             <ul className="space-y-3">
-              {combinedOrganizations.slice(0, 8).map((org) => (
+              {combinedOrganizations.slice(0, 5).map((org) => (
                 <li key={org.id}>
                   <CivilCard
                     href={getOrganizationHref(org)}

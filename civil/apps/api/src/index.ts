@@ -37184,11 +37184,11 @@ app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => 
   const activeIdSet = new Set(activeIds)
   const otherIds = friendIds.filter((id) => !activeIdSet.has(id))
 
-  // Combine and limit to 10
+  // Combine and limit to a concise rail set
   // We want active ones first, then random others? Or just others.
   // Let's shuffle others to keep it fresh if they have many friends
   const shuffledOthers = otherIds.sort(() => 0.5 - Math.random())
-  const selectedIds = [...activeIds, ...shuffledOthers].slice(0, 10)
+  const selectedIds = [...activeIds, ...shuffledOthers].slice(0, 5)
 
   const friends = selectedIds.length
     ? await prisma.user.findMany({

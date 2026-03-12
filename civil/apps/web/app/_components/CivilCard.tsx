@@ -77,7 +77,7 @@ const CIVIL_CARD_SIZES: Record<
     title: 'text-sm',
     subtitle: 'text-xs',
     details: 'text-xs',
-    titleLines: 1,
+    titleLines: 2,
     subtitleLines: 1,
   },
   md: {
@@ -91,7 +91,7 @@ const CIVIL_CARD_SIZES: Record<
     title: 'text-base',
     subtitle: 'text-sm',
     details: 'text-sm',
-    titleLines: 1,
+    titleLines: 2,
     subtitleLines: 1,
   },
   banner: {
@@ -197,7 +197,10 @@ export default function CivilCard({
 }: CivilCardProps) {
   const sizeStyles = CIVIL_CARD_SIZES[size]
   const usesAvatarOverlay = Boolean(sizeStyles.avatarOverlay)
-  const resolvedTitleLines = titleLines ?? sizeStyles.titleLines
+  const hasSecondaryContent = Boolean(subtitle || details)
+  const shouldUseGlassPanel = usesAvatarOverlay
+  const shouldCenterOverlayIdentity = shouldUseGlassPanel && size === 'md' && !details
+  const resolvedTitleLines = shouldCenterOverlayIdentity ? 0 : titleLines ?? sizeStyles.titleLines
   const resolvedSubtitleLines = subtitleLines ?? sizeStyles.subtitleLines
   const resolvedAlign = align ?? (details ? 'start' : 'center')
   const isInteractive = interactive ?? Boolean(href || titleHref || avatarHref)
@@ -205,7 +208,8 @@ export default function CivilCard({
   const overlayAvatarInitials = deriveCardInitials(avatarInitials ?? avatarAlt)
   const overlayAvatarFallbackSize = Math.max(16, Math.round((avatarSize ?? sizeStyles.avatar) / 1.3))
   const overlayMediaWidth = typeof overlayAvatarWidth === 'number' ? `${overlayAvatarWidth}px` : overlayAvatarWidth
-  const shouldUseGlassPanel = usesAvatarOverlay && Boolean(coverUrl)
+  const centeredTitlePillClassName =
+    'inline-flex max-w-full min-w-0 flex-col items-center justify-center rounded-[1.2rem] border border-white/18 bg-slate-950/20 px-5 py-3 text-center backdrop-blur-md shadow-[0_16px_36px_rgba(15,23,42,0.16)]'
 
   const rootClassName = clsx(
     'group relative block overflow-hidden border border-slate-200 bg-slate-800 text-white shadow-sm',
@@ -218,7 +222,9 @@ export default function CivilCard({
     <Link
       href={titleHref}
       className={clsx(
-        'min-w-0 flex-1 font-semibold leading-tight text-white hover:underline',
+        shouldCenterOverlayIdentity
+          ? 'block max-w-full text-center font-semibold leading-tight text-white hover:underline'
+          : 'min-w-0 flex-1 font-semibold leading-tight text-white hover:underline',
         sizeStyles.title,
         titleClassName,
       )}
@@ -229,7 +235,9 @@ export default function CivilCard({
   ) : (
     <p
       className={clsx(
-        'min-w-0 flex-1 font-semibold leading-tight text-white',
+        shouldCenterOverlayIdentity
+          ? 'block max-w-full text-center font-semibold leading-tight text-white'
+          : 'min-w-0 flex-1 font-semibold leading-tight text-white',
         href && 'group-hover:underline',
         sizeStyles.title,
         titleClassName,
@@ -239,6 +247,41 @@ export default function CivilCard({
       {name}
     </p>
   )
+
+  const centeredTitleNode = titleHref ? (
+    <Link
+      href={titleHref}
+      className={clsx(
+        'block w-fit max-w-full text-center font-semibold leading-tight text-white hover:underline',
+        sizeStyles.title,
+        titleClassName,
+      )}
+      style={clampStyle(resolvedTitleLines)}
+    >
+      {name}
+    </Link>
+  ) : (
+    <p
+      className={clsx(
+        'block w-fit max-w-full text-center font-semibold leading-tight text-white',
+        href && 'group-hover:underline',
+        sizeStyles.title,
+        titleClassName,
+      )}
+      style={clampStyle(resolvedTitleLines)}
+    >
+      {name}
+    </p>
+  )
+
+  const centeredSubtitleNode = subtitle ? (
+    <div
+      className={clsx('max-w-full text-center text-white/82', sizeStyles.subtitle, subtitleClassName)}
+      style={clampStyle(resolvedSubtitleLines)}
+    >
+      {subtitle}
+    </div>
+  ) : null
 
   const content = (
     <>
@@ -341,39 +384,80 @@ export default function CivilCard({
 
           <div
             className={clsx(
-              'min-w-0 flex-1',
-              shouldUseGlassPanel && 'rounded-[1.2rem] border border-white/12 bg-slate-950/18 px-3 py-2 backdrop-blur-md shadow-[0_16px_36px_rgba(15,23,42,0.16)]',
+              'flex min-h-full min-w-0 flex-1 flex-col justify-center',
+              hasSecondaryContent && shouldUseGlassPanel && !shouldCenterOverlayIdentity && 'rounded-[1.2rem] border border-white/18 bg-slate-950/20 px-3 py-2 backdrop-blur-md shadow-[0_16px_36px_rgba(15,23,42,0.16)]',
             )}
           >
-            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-              {titleNode}
-              {titleSuffix ? (
-                <span
-                  className={clsx(
-                    'shrink-0 text-white/80',
-                    size === 'lg' || size === 'banner' ? 'text-sm' : 'text-[11px]',
-                    titleSuffixClassName,
-                  )}
-                >
-                  {titleSuffix}
-                </span>
-              ) : null}
-            </div>
-
-            {subtitle ? (
-              <div
-                className={clsx('mt-0.5 text-white/82', sizeStyles.subtitle, subtitleClassName)}
-                style={clampStyle(resolvedSubtitleLines)}
-              >
-                {subtitle}
+            {shouldCenterOverlayIdentity ? (
+              <div className="flex min-h-full w-full items-center justify-center">
+                <div className={clsx(centeredTitlePillClassName, 'w-fit gap-y-1')}>
+                  <div className="flex max-w-full min-w-0 items-center justify-center gap-x-2 text-center">
+                    {centeredTitleNode}
+                    {titleSuffix ? (
+                      <span
+                        className={clsx(
+                          'shrink-0 text-white/80',
+                          'text-[11px]',
+                          titleSuffixClassName,
+                        )}
+                      >
+                        {titleSuffix}
+                      </span>
+                    ) : null}
+                  </div>
+                  {centeredSubtitleNode}
+                </div>
               </div>
-            ) : null}
+            ) : hasSecondaryContent ? (
+              <>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  {titleNode}
+                  {titleSuffix ? (
+                    <span
+                      className={clsx(
+                        'shrink-0 text-white/80',
+                        'text-[11px]',
+                        titleSuffixClassName,
+                      )}
+                    >
+                      {titleSuffix}
+                    </span>
+                  ) : null}
+                </div>
 
-            {details ? (
-              <div className={clsx('mt-2 min-w-0 text-white/88', sizeStyles.details, detailsClassName)}>
-                {details}
+                {subtitle ? (
+                  <div
+                    className={clsx('mt-0.5 text-white/82', sizeStyles.subtitle, subtitleClassName)}
+                    style={clampStyle(resolvedSubtitleLines)}
+                  >
+                    {subtitle}
+                  </div>
+                ) : null}
+
+                {details ? (
+                  <div className={clsx('mt-2 min-w-0 text-white/88', sizeStyles.details, detailsClassName)}>
+                    {details}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="flex min-h-full w-full items-center justify-center">
+                <div className={clsx(centeredTitlePillClassName, 'w-fit gap-y-1')}>
+                  {centeredTitleNode}
+                  {titleSuffix ? (
+                    <span
+                      className={clsx(
+                        'shrink-0 text-white/80',
+                        'text-[11px]',
+                        titleSuffixClassName,
+                      )}
+                    >
+                      {titleSuffix}
+                    </span>
+                  ) : null}
+                </div>
               </div>
-            ) : null}
+            )}
           </div>
         </div>
 
