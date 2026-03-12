@@ -86,3 +86,8 @@ export function isPremiumMember(me: MeResponse | null | undefined): boolean {
 export function hasFamilyModeEnabled(me: Pick<MeResponse, 'familyMode'> | null | undefined): boolean {
   return Boolean(me?.familyMode?.enabled)
 }
+
+export function hasFamilyProfilesAvailable(me: Pick<MeResponse, 'familyMode'> | null | undefined): boolean {
+  if (!me?.familyMode?.enabled) return false
+  return me.familyMode.memberCount !== 0
+}

@@ -7,6 +7,7 @@ import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import { HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import CivilCard from '../../../../../_components/CivilCard'
+import PostAuthorMiniCard from '../../../../../_components/PostAuthorMiniCard'
 import ContentModerationMenu from '../../../../../_components/ContentModerationMenu'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
 import CommentComposer from '../../../../../_components/CommentComposer'
@@ -509,6 +510,7 @@ export default function ChamberPostPage({ params }: PageProps) {
   )
 
   const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
+  const showOrganizationAuthorBox = Boolean(post?.organization && post.showBusinessAuthor)
   const postOrganization = post?.organization ?? null
   const authorProfileHref = postOrganization?.provinceCode && postOrganization.communitySlug
     ? `/com/${postOrganization.provinceCode.toLowerCase()}/${postOrganization.communitySlug.toLowerCase()}/orgs/${postOrganization.slug}`
@@ -630,7 +632,15 @@ export default function ChamberPostPage({ params }: PageProps) {
               isVerified={postOrganization ? Boolean(postOrganization.isVerified) : Boolean(post.author.isVerified)}
               isBusiness={postOrganization ? true : Boolean(post.author.isPremium)}
               contentClassName="pr-14"
+              trailing={
+                showOrganizationAuthorBox ? <PostAuthorMiniCard author={post.author} className="hidden w-[210px] md:block" /> : null
+              }
             />
+            {showOrganizationAuthorBox ? (
+              <div className="flex justify-end md:hidden">
+                <PostAuthorMiniCard author={post.author} className="w-full max-w-[220px]" />
+              </div>
+            ) : null}
             <div className="absolute right-3 top-3 z-20">
               <ContentModerationMenu
                 actions={postSettingsActions}

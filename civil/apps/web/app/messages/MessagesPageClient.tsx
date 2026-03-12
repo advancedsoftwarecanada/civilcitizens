@@ -20,7 +20,7 @@ import {
   writeStoredMessagesNavSection,
   type MessagesNavSection,
 } from '../_lib/messagesNav'
-import { hasFamilyModeEnabled, type MeResponse } from '../_lib/me'
+import { hasFamilyModeEnabled, hasFamilyProfilesAvailable, type MeResponse } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
@@ -933,7 +933,7 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
 function StandardMessagesPageClient({ initialThreadId, initialInboxSection, viewer }: MessagesPageClientProps & { viewer?: MeResponse | null }) {
   const router = useRouter()
   const isFamilySession = viewer?.accountType === 'family_member'
-  const showFamilyInbox = !isFamilySession && hasFamilyModeEnabled(viewer)
+  const showFamilyInbox = !isFamilySession && hasFamilyProfilesAvailable(viewer)
   const familySession = viewer?.familyMemberSession ?? null
   const familyParentThreadId = isFamilySession ? `family-parent-${viewer?.familyMemberSession?.parentId ?? 'parent'}` : null
   const familyParentHandle = viewer?.familyMemberSession?.parentHandle?.trim() ?? ''
@@ -3186,7 +3186,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       return {
         messagesHref: '/messages?inbox=family',
         messagesLabel: 'Family Messages',
-        directoryHref: '/friends?tab=family',
+        directoryHref: '/family',
         directoryLabel: 'Family',
         contextLabel: 'Family Inbox',
       }

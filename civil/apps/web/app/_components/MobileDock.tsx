@@ -31,7 +31,7 @@ import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { SearchResults } from './search/SearchResults'
 import MessagesNavBlock from './MessagesNavBlock'
-import { hasFamilyModeEnabled } from '../_lib/me'
+import { hasFamilyProfilesAvailable } from '../_lib/me'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
 import { clearFamilyView } from '../_lib/familyView'
 
@@ -472,7 +472,7 @@ export default function MobileDock() {
         <div className="space-y-4">
           <MessagesNavBlock
             active="friends"
-            visibleItems={hasFamilyModeEnabled(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+            visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
           />
           <RightRail hideCommunities showPendingFriendRequests sticky={false} />
         </div>
@@ -511,7 +511,7 @@ export default function MobileDock() {
           <div className="space-y-4">
             <MessagesNavBlock
               active={userRelationshipRoute.kind === 'friends' ? 'friends' : 'network'}
-              visibleItems={hasFamilyModeEnabled(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+              visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
             />
             <RightRail
               hideContacts

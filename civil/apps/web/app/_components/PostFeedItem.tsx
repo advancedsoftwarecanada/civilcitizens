@@ -9,6 +9,7 @@ import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost, CommunityTarget } from './PostComposer'
 import CivilCard from './CivilCard'
+import PostAuthorMiniCard from './PostAuthorMiniCard'
 import ContentModerationMenu from './ContentModerationMenu'
 import { formatDisplayName } from '../_lib/text'
 import { buildApiUrl } from '../_lib/api'
@@ -188,6 +189,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       : post.author.handle
   const avatarInitials = authorDisplayName || organization?.name || post.author.handle
   const authorCoverUrl = organization?.coverUrl ?? post.author.coverUrl ?? null
+  const showOrganizationAuthorBox = Boolean(organization && post.showBusinessAuthor)
   const isAuthor = viewerId === post.author.id
   const postTypeLabel =
     post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : 'Post'
@@ -460,7 +462,15 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           isVerified={isVerifiedAuthor}
           isBusiness={isBusinessAuthor}
           contentClassName="pr-14"
+          trailing={
+            showOrganizationAuthorBox ? <PostAuthorMiniCard author={post.author} className="hidden w-[210px] md:block" /> : null
+          }
         />
+        {showOrganizationAuthorBox ? (
+          <div className="mt-3 flex justify-end md:hidden">
+            <PostAuthorMiniCard author={post.author} className="w-full max-w-[220px]" />
+          </div>
+        ) : null}
         <div className="absolute right-3 top-3 z-30">
           <ContentModerationMenu
             actions={authorActions}

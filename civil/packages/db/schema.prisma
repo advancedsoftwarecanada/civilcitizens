@@ -155,6 +155,7 @@ model Post {
   id             String        @id @default(cuid())
   authorId       String
   businessId     String?
+  showBusinessAuthor Boolean   @default(false)
   moderationStatus ModerationStatus @default(VISIBLE)
   audience       String        @default("friends")
   visibility     String        @default("public")
