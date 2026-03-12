@@ -8,7 +8,7 @@ import { buildApiUrl } from '../../../_lib/api'
 import DashboardShell from '../../../_components/DashboardShell'
 import { formatDisplayName } from '../../../_lib/text'
 import MessagesNavBlock from '../../../_components/MessagesNavBlock'
-import { hasFamilyModeEnabled } from '../../../_lib/me'
+import { hasFamilyProfilesAvailable } from '../../../_lib/me'
 import { getStoredToken } from '../../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import { pushToast } from '../../../_components/useToasts'
@@ -100,7 +100,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
 
   const rightRail = (
     <div className="space-y-4">
-      {kind === 'friends' || kind === 'connections' ? <MessagesNavBlock visibleItems={hasFamilyModeEnabled(viewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined} /> : null}
+      {kind === 'friends' || kind === 'connections' ? <MessagesNavBlock visibleItems={hasFamilyProfilesAvailable(viewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined} /> : null}
       <RightRail hideContacts hideCommunities={kind === 'friends'} />
     </div>
   )

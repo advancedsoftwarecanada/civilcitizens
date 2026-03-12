@@ -10207,6 +10207,7 @@ type FormattedPost = {
     provinceCode: string | null
     communitySlug: string | null
   } | null
+  showBusinessAuthor: boolean
   poll: {
     id: string
     resultsVisibility: PollResultsVisibilityValue
@@ -10604,6 +10605,7 @@ function formatPost(
           communitySlug: post.business.communitySlug ?? null,
         }
       : null,
+    showBusinessAuthor: Boolean(post.businessId && post.showBusinessAuthor),
     poll: formatPollForViewer(post, options.viewerId, options.viewerPollOptionId, now),
     sharedPost,
     author: {
@@ -15476,6 +15478,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     }
 
     const { body: rawBody, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
+    const showBusinessAuthor = Boolean(business && parse.data.showBusinessAuthor)
 
     const isArticle = type === 'article'
     const normalizedBody = sharedPostId
@@ -15501,6 +15504,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
         data: {
           authorId: userId,
           ...(business ? { businessId: business.id } : {}),
+          showBusinessAuthor,
           ...(visibility ? { visibility } : {}),
           ...(normalizedAudience ? ({ audience: normalizedAudience } as any) : {}),
           body: normalizedBody,
@@ -16365,6 +16369,7 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       where: { id: params.data.id },
       select: {
         authorId: true,
+        businessId: true,
         type: true,
         moderationStatus: true,
         poll: {
@@ -16388,7 +16393,7 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       return reply.code(403).send({ error: 'forbidden' })
     }
 
-    const { title, body: rawBody, mediaUrl, hashtags } = parse.data
+    const { title, body: rawBody, mediaUrl, hashtags, showBusinessAuthor } = parse.data
     if (post.type === 'poll') {
       if (post.poll?.endedAt) {
         return reply.code(409).send({ error: 'poll_closed' })
@@ -16411,6 +16416,9 @@ app.patch('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
       }
       if (mediaUrl !== undefined) {
         postData.mediaUrl = mediaUrl
+      }
+      if (showBusinessAuthor !== undefined) {
+        postData.showBusinessAuthor = Boolean(post.businessId && showBusinessAuthor)
       }
 
       const updatedPost = await tx.post.update({

@@ -7,6 +7,7 @@ import type { Jurisdiction, PollResultsVisibility, ReactionType } from '@civil/s
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { pushToast } from './useToasts'
+import { formatDisplayName } from '../_lib/text'
 
 export type PostType = 'post' | 'article' | 'photo' | 'poll'
 export type PostVisibility = 'public' | 'members'
@@ -43,6 +44,7 @@ export type ApiPost = {
     provinceCode: string | null
     communitySlug: string | null
   } | null
+  showBusinessAuthor?: boolean
   poll?: {
     id: string
     resultsVisibility: PollResultsVisibility
@@ -273,6 +275,7 @@ type PhotoItem = {
 }
 
 export default function PostComposer({
+  me = null,
   className,
   defaultPostType = 'post',
   communityTarget = null,
@@ -296,6 +299,7 @@ export default function PostComposer({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [visibility, setVisibility] = useState<PostVisibility>('public')
+  const [showBusinessAuthor, setShowBusinessAuthor] = useState(false)
   const normalizedCommunityOptions = useMemo(() => {
     return communityOptions.map((option) => ({
       ...option,
@@ -560,6 +564,7 @@ export default function PostComposer({
     setPostType(defaultPostType)
     setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions, businessTarget))
     setVisibility('public')
+    setShowBusinessAuthor(false)
     setError(null)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
@@ -621,6 +626,7 @@ export default function PostComposer({
       if (activeBusinessTarget?.businessId) {
         payload.businessId = activeBusinessTarget.businessId
         payload.visibility = visibility
+        payload.showBusinessAuthor = showBusinessAuthor
       }
 
       const res = await fetch(buildApiUrl('/posts'), {
@@ -661,7 +667,12 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, normalizedPollOptions, onPostCreated, photos, pollResultsVisibility, postType, resetComposer, submitting, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, normalizedPollOptions, onPostCreated, photos, pollResultsVisibility, postType, resetComposer, showBusinessAuthor, submitting, visibility])
+
+  const composerAuthorName = useMemo(() => {
+    if (!me) return 'You'
+    return formatDisplayName(me.name) || me.handle || 'You'
+  }, [me])
 
   const handlePhotoFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -864,40 +875,79 @@ export default function PostComposer({
         ) : null}
 
         {activeBusinessTarget?.businessId ? (
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Visibility</span>
-            <div
-              className={clsx(
-                'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500',
-                variant === 'plain'
-                  ? 'flex-wrap'
-                  : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
-              )}
-            >
-              <button
-                type="button"
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Visibility</span>
+              <div
                 className={clsx(
-                  'whitespace-nowrap rounded-full px-4 py-1 transition',
-                  variant !== 'plain' && 'shrink-0',
-                  visibility === 'public' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500',
+                  variant === 'plain'
+                    ? 'flex-wrap'
+                    : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
                 )}
-                onClick={() => setVisibility('public')}
-                disabled={submitting}
               >
-                Public
-              </button>
-              <button
-                type="button"
+                <button
+                  type="button"
+                  className={clsx(
+                    'whitespace-nowrap rounded-full px-4 py-1 transition',
+                    variant !== 'plain' && 'shrink-0',
+                    visibility === 'public' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  )}
+                  onClick={() => setVisibility('public')}
+                  disabled={submitting}
+                >
+                  Public
+                </button>
+                <button
+                  type="button"
+                  className={clsx(
+                    'whitespace-nowrap rounded-full px-4 py-1 transition',
+                    variant !== 'plain' && 'shrink-0',
+                    visibility === 'members' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  )}
+                  onClick={() => setVisibility('members')}
+                  disabled={submitting}
+                >
+                  Members only
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Author box</span>
+              <div
                 className={clsx(
-                  'whitespace-nowrap rounded-full px-4 py-1 transition',
-                  variant !== 'plain' && 'shrink-0',
-                  visibility === 'members' ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500',
+                  variant === 'plain'
+                    ? 'flex-wrap'
+                    : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
                 )}
-                onClick={() => setVisibility('members')}
-                disabled={submitting}
               >
-                Members only
-              </button>
+                <button
+                  type="button"
+                  className={clsx(
+                    'whitespace-nowrap rounded-full px-4 py-1 transition',
+                    variant !== 'plain' && 'shrink-0',
+                    !showBusinessAuthor ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  )}
+                  onClick={() => setShowBusinessAuthor(false)}
+                  disabled={submitting}
+                >
+                  As Organization
+                </button>
+                <button
+                  type="button"
+                  className={clsx(
+                    'whitespace-nowrap rounded-full px-4 py-1 transition',
+                    variant !== 'plain' && 'shrink-0',
+                    showBusinessAuthor ? 'bg-white text-[var(--cc-primary)] shadow-subtle' : 'text-slate-500',
+                  )}
+                  onClick={() => setShowBusinessAuthor(true)}
+                  disabled={submitting}
+                >
+                  {`As Me (${composerAuthorName})`}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

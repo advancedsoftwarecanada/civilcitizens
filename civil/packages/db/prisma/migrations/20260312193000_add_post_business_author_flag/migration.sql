@@ -1,0 +1,2 @@
+ALTER TABLE "Post"
+ADD COLUMN "showBusinessAuthor" BOOLEAN NOT NULL DEFAULT false;

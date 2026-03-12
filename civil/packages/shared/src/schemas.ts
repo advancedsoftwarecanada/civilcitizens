@@ -48,6 +48,7 @@ export const CreatePostInput = z
   .object({
     type: PostTypeEnum.default('post'),
     businessId: z.string().cuid().optional(),
+    showBusinessAuthor: z.boolean().optional(),
     audience: PostAudienceEnum.optional(),
     visibility: PostVisibilityEnum.optional(),
     title: z
@@ -591,4 +592,5 @@ export const UpdatePostInput = z.object({
   body: z.string().max(20000).optional(),
   mediaUrl: z.string().url().optional().nullable(),
   hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
+  showBusinessAuthor: z.boolean().optional(),
 })
