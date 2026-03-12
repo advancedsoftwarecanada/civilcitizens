@@ -475,6 +475,99 @@ html.cc-launch-pending #cc-app-root {
   border-top: 1px solid var(--cc-border);
 }
 
+.cc-article-rich-content,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable {
+  font-size: 15px;
+  line-height: 1.5rem;
+  color: rgb(51 65 85);
+  font-family: inherit;
+}
+
+.cc-article-rich-content > div,
+.cc-article-rich-content p,
+.cc-article-rich-content li,
+.cc-article-rich-content blockquote,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable p,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable li,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable blockquote {
+  color: rgb(51 65 85);
+}
+
+.cc-article-rich-content p,
+.cc-article-rich-content ul,
+.cc-article-rich-content ol,
+.cc-article-rich-content blockquote,
+.cc-article-rich-content h1,
+.cc-article-rich-content h2,
+.cc-article-rich-content h3,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable p,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable ul,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable ol,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable blockquote,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable h1,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable h2,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable h3 {
+  margin: 0 0 1em;
+}
+
+.cc-article-rich-content p:last-child,
+.cc-article-rich-content ul:last-child,
+.cc-article-rich-content ol:last-child,
+.cc-article-rich-content blockquote:last-child,
+.cc-article-rich-content h1:last-child,
+.cc-article-rich-content h2:last-child,
+.cc-article-rich-content h3:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable p:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable ul:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable ol:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable blockquote:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable h1:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable h2:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable h3:last-child {
+  margin-bottom: 0;
+}
+
+.cc-article-rich-content ul,
+.cc-article-rich-content ol,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable ul,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable ol {
+  padding-left: 1.35rem;
+}
+
+.cc-article-rich-content li + li,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable li + li {
+  margin-top: 0.35rem;
+}
+
+.cc-article-rich-content a,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cc-article-rich-content strong,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable strong {
+  font-weight: 600;
+  color: rgb(15 23 42);
+}
+
+.cc-rich-text-editor + .note-editor {
+  border-color: rgb(203 213 225);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 1px 2px 0 rgb(15 23 42 / 0.08);
+}
+
+.cc-rich-text-editor + .note-editor .note-toolbar {
+  background: rgb(248 250 252);
+  border-bottom-color: rgb(226 232 240);
+}
+
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable {
+  padding: 1rem 1.1rem;
+}
+
 @media (max-width: 767px) {
   .benefit-grid {
     grid-template-columns: 1fr !important;

@@ -253,5 +253,9 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
     return <div className="rounded border border-dashed p-4 text-sm text-gray-500">Loading editor…</div>
   }
 
-  return <div ref={containerRef} />
+  return (
+    <>
+      <div ref={containerRef} className="cc-rich-text-editor" />
+    </>
+  )
 }

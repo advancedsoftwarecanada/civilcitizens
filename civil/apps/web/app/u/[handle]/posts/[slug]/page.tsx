@@ -606,7 +606,7 @@ export default function UserPostPage({ params }: PageProps) {
                     <div className="mt-4 space-y-4">
                       {post.type === 'article' ? (
                         postArticleBodyWithoutCivilLinks ? (
-                          <div className="prose prose-base max-w-none" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
+                          <div className="cc-article-rich-content" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
                         ) : null
                       ) : postBodyWithoutCivilLinks ? (
                         <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{postBodyWithoutCivilLinks}</div>
