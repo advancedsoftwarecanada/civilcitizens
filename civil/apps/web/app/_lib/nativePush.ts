@@ -10,6 +10,22 @@ type CapacitorListenerHandle = { remove: () => void | Promise<void> }
 
 type CapacitorPushRegistrationEvent = { value?: string }
 
+type CapacitorPushActionNotification = {
+	data?: Record<string, unknown>
+	url?: string
+	urlPath?: string
+	path?: string
+	threadId?: string
+	threadID?: string
+	channelId?: string
+	conversationId?: string
+}
+
+type CapacitorPushActionPerformedEvent = {
+	notification?: CapacitorPushActionNotification | null
+	data?: Record<string, unknown>
+}
+
 type CivilPushDeviceTokenResult = { value?: string }
 
 type CivilPushPermissionsResult = { receive?: string }
@@ -59,7 +75,9 @@ type CapacitorBridge = {
 
 const PUSH_DEVICE_TOKEN_STORAGE_KEY_PREFIX = 'cc:pushDeviceToken'
 const PUSH_OPTOUT_STORAGE_KEY_PREFIX = 'cc:pushOptOut'
+const PUSH_TAP_URL_STORAGE_KEY = 'cc:lastNativeNotificationTapUrl'
 const pushTokenSyncInitializedPlatforms = new Set<NativePlatform>()
+let pushTapListenerInitialized = false
 
 function getCapacitorBridge(): CapacitorBridge | null {
 	if (typeof window === 'undefined') return null
@@ -95,36 +113,109 @@ export function isNativeApp(): boolean {
 	return getNativePlatform() !== null
 }
 
+function storeLastNativeNotificationTapUrl(url: string): void {
+	if (typeof window === 'undefined') return
+	try {
+		window.localStorage.setItem(PUSH_TAP_URL_STORAGE_KEY, url)
+	} catch {
+		// ignore
+	}
+}
+
+function readStoredLastNativeNotificationTapUrl(): string | null {
+	if (typeof window === 'undefined') return null
+	try {
+		const raw = window.localStorage.getItem(PUSH_TAP_URL_STORAGE_KEY)
+		return raw && raw.trim() ? raw.trim() : null
+	} catch {
+		return null
+	}
+}
+
+function clearStoredLastNativeNotificationTapUrl(): void {
+	if (typeof window === 'undefined') return
+	try {
+		window.localStorage.removeItem(PUSH_TAP_URL_STORAGE_KEY)
+	} catch {
+		// ignore
+	}
+}
+
+function resolveNativeNotificationTapUrl(payload: Record<string, unknown> | null | undefined): string | null {
+	if (!payload) return null
+
+	const urlCandidates = [payload.url, payload.urlPath, payload.path]
+	for (const candidate of urlCandidates) {
+		const normalized = typeof candidate === 'string' ? candidate.trim() : ''
+		if (normalized) return normalized
+	}
+
+	const threadCandidate = [payload.threadId, payload.threadID, payload.channelId, payload.conversationId].find(
+		(value) => typeof value === 'string' && value.trim().length > 0,
+	)
+	if (typeof threadCandidate === 'string') {
+		return `/messages?thread=${encodeURIComponent(threadCandidate.trim())}`
+	}
+
+	return null
+}
+
+export async function ensureNativeNotificationTapListener(): Promise<void> {
+	const bridge = getCapacitorBridge()
+	if (!bridge || pushTapListenerInitialized) return
+
+	const plugin = bridge.Plugins?.PushNotifications
+	if (!plugin || typeof plugin.addListener !== 'function') return
+
+	pushTapListenerInitialized = true
+
+	try {
+		await plugin.addListener('pushNotificationActionPerformed', (event: CapacitorPushActionPerformedEvent) => {
+			const notificationPayload = event?.notification && typeof event.notification === 'object'
+				? (event.notification as Record<string, unknown>)
+				: null
+			const dataPayload = event?.data && typeof event.data === 'object'
+				? event.data
+				: notificationPayload?.data && typeof notificationPayload.data === 'object'
+					? (notificationPayload.data as Record<string, unknown>)
+					: null
+
+			const nextUrl =
+				resolveNativeNotificationTapUrl(dataPayload) ??
+				resolveNativeNotificationTapUrl(notificationPayload)
+
+			if (nextUrl) storeLastNativeNotificationTapUrl(nextUrl)
+		})
+	} catch {
+		pushTapListenerInitialized = false
+	}
+}
+
 export async function getLastNativeNotificationTapUrl(): Promise<string | null> {
 	const bridge = getCapacitorBridge()
-	if (!bridge || bridge.getPlatform?.() !== 'ios') return null
+	if (!bridge) return null
+
+	const storedUrl = readStoredLastNativeNotificationTapUrl()
+	if (storedUrl) return storedUrl
+
+	if (bridge.getPlatform?.() !== 'ios') return null
 
 	const plugin = bridge.Plugins?.CivilPush
 	if (!plugin || typeof plugin.getLastNotificationTap !== 'function') return null
 
 	try {
 		const result = await plugin.getLastNotificationTap()
-		const urlCandidates = [result?.url, result?.urlPath, result?.path]
-		for (const candidate of urlCandidates) {
-			const normalized = typeof candidate === 'string' ? candidate.trim() : ''
-			if (normalized) return normalized
-		}
-
-		const threadCandidate = [result?.threadId, result?.threadID, result?.channelId, result?.conversationId].find(
-			(value) => typeof value === 'string' && value.trim().length > 0,
-		)
-
-		if (typeof threadCandidate === 'string') {
-			return `/messages?thread=${encodeURIComponent(threadCandidate.trim())}`
-		}
-
-		return null
+		const resolved = resolveNativeNotificationTapUrl(result as Record<string, unknown>)
+		if (resolved) storeLastNativeNotificationTapUrl(resolved)
+		return resolved
 	} catch {
 		return null
 	}
 }
 
 export async function clearLastNativeNotificationTapUrl(): Promise<void> {
+	clearStoredLastNativeNotificationTapUrl()
+
 	const bridge = getCapacitorBridge()
 	if (!bridge || bridge.getPlatform?.() !== 'ios') return
 
@@ -354,6 +445,7 @@ export async function ensureNativePushRegistration(options?: {
 	if (!pushPlugin && !civilPushPlugin) return 'unknown'
 
 	await ensurePushTokenSyncInitialized()
+	await ensureNativeNotificationTapListener()
 
 	const requestIfPrompt = options?.requestIfPrompt ?? false
 	const ignoreOptOut = options?.ignoreOptOut ?? false
