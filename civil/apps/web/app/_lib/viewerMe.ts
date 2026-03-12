@@ -1,7 +1,7 @@
 'use client'
 
 import { buildApiUrl } from './api'
-import { clearAuthSession } from './authSession'
+import { clearAuthSession, clearFamilySessionBootstrapPending, hasPendingFamilySessionBootstrap, markFamilySessionBootstrapPending } from './authSession'
 import type { MeResponse } from './me'
 import { useViewerStore } from './viewerStore'
 
@@ -12,18 +12,26 @@ type ViewerCachePayload = {
   me: MeResponse
 }
 
-function decodeJwtSub(token: string): string | null {
+type DecodedAuthToken = {
+  sub: string | null
+  actor: 'user' | 'family_member' | null
+}
+
+function decodeJwtPayload(token: string): DecodedAuthToken {
   try {
     const parts = token.split('.')
-    if (parts.length < 2) return null
+    if (parts.length < 2) return { sub: null, actor: null }
     const payloadPart = parts[1]
-    if (!payloadPart) return null
+    if (!payloadPart) return { sub: null, actor: null }
     const payload = payloadPart.replace(/-/g, '+').replace(/_/g, '/')
     const padded = payload.padEnd(payload.length + ((4 - (payload.length % 4)) % 4), '=')
-    const parsed = JSON.parse(window.atob(padded)) as { sub?: unknown }
-    return typeof parsed.sub === 'string' && parsed.sub ? parsed.sub : null
+    const parsed = JSON.parse(window.atob(padded)) as { sub?: unknown; actor?: unknown }
+    return {
+      sub: typeof parsed.sub === 'string' && parsed.sub ? parsed.sub : null,
+      actor: parsed.actor === 'family_member' || parsed.actor === 'user' ? parsed.actor : null,
+    }
   } catch {
-    return null
+    return { sub: null, actor: null }
   }
 }
 
@@ -110,11 +118,14 @@ export async function ensureViewerMe(options?: {
   const authToken = token ?? window.localStorage.getItem('token')
   if (!authToken) {
     clearCachedViewer()
+    clearFamilySessionBootstrapPending()
     store.setMe(null)
     return null
   }
 
-  const tokenSub = decodeJwtSub(authToken)
+  const decodedToken = decodeJwtPayload(authToken)
+  const tokenSub = decodedToken.sub
+  const shouldUseFamilySessionRecovery = decodedToken.actor === 'family_member' || hasPendingFamilySessionBootstrap()
 
   if (store.me && !isMeForToken(store.me, tokenSub)) {
     store.setMe(null)
@@ -139,7 +150,7 @@ export async function ensureViewerMe(options?: {
   inFlightToken = authToken
   inFlight = (async () => {
     try {
-      const maxAttempts = shouldUseDevSessionRecovery() ? DEV_SESSION_RECOVERY_ATTEMPTS : 1
+      const maxAttempts = shouldUseDevSessionRecovery() || shouldUseFamilySessionRecovery ? DEV_SESSION_RECOVERY_ATTEMPTS : 1
       let res: Response | null = null
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -161,6 +172,14 @@ export async function ensureViewerMe(options?: {
       }
 
       if (res.status === 401) {
+        if (shouldUseFamilySessionRecovery) {
+          const cached = readCachedViewer(tokenSub)
+          if (cached) {
+            store.setMe(cached)
+            return cached
+          }
+          return null
+        }
         clearAuthSession()
         return null
       }
@@ -182,6 +201,11 @@ export async function ensureViewerMe(options?: {
       if (tokenSub && data.id !== tokenSub) {
         clearAuthSession()
         return null
+      }
+      if (data.accountType === 'family_member') {
+        markFamilySessionBootstrapPending()
+      } else {
+        clearFamilySessionBootstrapPending()
       }
       store.setMe(data)
       writeCachedViewer(tokenSub ?? data.id, data)

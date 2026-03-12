@@ -11,13 +11,19 @@ const PUBLIC_HIDDEN_PATHS = new Set(['/reset', '/terms', '/privacy', '/safety', 
 
 export default function TopNavVisibility() {
   const pathname = usePathname()
+  const hydrated = useViewerStore((state) => state.hydrated)
+  const familyViewHydrated = useViewerStore((state) => state.familyViewHydrated)
+  const viewer = useViewerStore((state) => state.me)
   const familyView = useViewerStore((state) => state.familyView)
   const resolvedPathname = pathname || ''
   const hasResolvedPathname = resolvedPathname.length > 0
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
   const isInviteRoute = hasResolvedPathname ? resolvedPathname.includes('/invite/') : false
+  const isFamilyMemberSession = Boolean(familyView) || viewer?.accountType === 'family_member'
   const hideNav =
-    Boolean(familyView) ||
+    !hydrated ||
+    !familyViewHydrated ||
+    isFamilyMemberSession ||
     !hasResolvedPathname ||
     HIDDEN_PATHS.has(resolvedPathname) ||
     PUBLIC_HIDDEN_PATHS.has(resolvedPathname) ||

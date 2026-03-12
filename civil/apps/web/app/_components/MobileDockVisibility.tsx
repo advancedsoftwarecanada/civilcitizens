@@ -6,6 +6,7 @@ import MobileDock from './MobileDock'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
 import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 import { AUTH_SESSION_CHANGED_EVENT } from '../_lib/authSession'
+import { useViewerStore } from '../_lib/viewerStore'
 
 function hasStoredSessionToken() {
   if (typeof window === 'undefined') return false
@@ -14,6 +15,8 @@ function hasStoredSessionToken() {
 
 export default function MobileDockVisibility() {
   const pathname = usePathname()
+  const hydrated = useViewerStore((state) => state.hydrated)
+  const familyViewHydrated = useViewerStore((state) => state.familyViewHydrated)
   const resolvedPathname = pathname || ''
   const hasResolvedPathname = resolvedPathname.length > 0
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
@@ -42,6 +45,8 @@ export default function MobileDockVisibility() {
   }, [])
 
   if (
+    !hydrated ||
+    !familyViewHydrated ||
     !hasSession ||
     !hasResolvedPathname ||
     resolvedPathname === '/reset' ||
