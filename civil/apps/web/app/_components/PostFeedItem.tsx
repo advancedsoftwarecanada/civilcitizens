@@ -9,7 +9,11 @@ import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import type { ApiPost, CommunityTarget } from './PostComposer'
 import CivilCard from './CivilCard'
+import CivilPostActions from './CivilPostActions'
+import CivilPost from './CivilPost'
+import CivilPostComments from './CivilPostComments'
 import CivilPostMedia from './CivilPostMedia'
+import CivilPostSharedReference from './CivilPostSharedReference'
 import PostAuthorMiniCard from './PostAuthorMiniCard'
 import ContentModerationMenu from './ContentModerationMenu'
 import { formatDisplayName } from '../_lib/text'
@@ -43,26 +47,6 @@ function buildCommunityUrl(post: ApiPost) {
     return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}`
   }
   return null
-}
-
-function formatRelativeTime(iso: string) {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  const diffMs = Date.now() - date.getTime()
-  const seconds = Math.max(1, Math.round(diffMs / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  const days = Math.round(hours / 24)
-  if (days < 7) return `${days}d`
-  const weeks = Math.round(days / 7)
-  if (weeks < 5) return `${weeks}w`
-  const months = Math.round(days / 30)
-  if (months < 12) return `${months}mo`
-  const years = Math.round(days / 365)
-  return `${years}y`
 }
 
 type PostFeedItemProps = {
@@ -151,6 +135,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         },
       ]
     : []
+  const sharedPostHref = post.sharedPost ? buildPostUrl(post.sharedPost) : null
 
   useEffect(() => {
     setRecentComments(post.recentComments ?? [])
@@ -352,322 +337,194 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   }
 
   return (
-    <article
-      className="surface-card min-w-0 space-y-4 px-6 py-5 shadow-subtle cursor-pointer"
-      onClick={handleCardClick}
-    >
-      <header className="relative z-[2]">
-        <CivilCard
-          size="banner"
-          name={authorDisplayName ?? post.author.handle}
-          titleSuffix={organization ? 'Organization' : undefined}
-          subtitle={formattedDate}
-          details={
-            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
-              {communityUrl ? (
-                <Link
-                  href={communityUrl}
-                  className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85 hover:border-white/60"
-                  aria-label="Open community feed"
-                >
-                  {post.communityName ?? post.communitySlug}
-                </Link>
-              ) : null}
-              <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
-                {postTypeLabel}
-              </span>
-            </div>
-          }
-          avatarAlt={authorDisplayName ?? post.author.handle}
-          avatarInitials={avatarInitials}
-          avatarSrc={organization ? (organization.logoUrl ?? null) : post.author.avatarUrl}
-          avatarHref={profileHref}
-          titleHref={profileHref}
-          coverUrl={authorCoverUrl}
-          isVerified={isVerifiedAuthor}
-          isBusiness={isBusinessAuthor}
-          contentClassName="pr-14"
-          trailing={
-            showOrganizationAuthorBox ? <PostAuthorMiniCard author={post.author} className="hidden w-[210px] md:block" /> : null
-          }
-        />
-        {showOrganizationAuthorBox ? (
-          <div className="mt-3 flex justify-end md:hidden">
-            <PostAuthorMiniCard author={post.author} className="w-full max-w-[220px]" />
+    <>
+      <CivilPost
+        className="cursor-pointer"
+        onClick={handleCardClick}
+        name={authorDisplayName ?? post.author.handle}
+        titleSuffix={organization ? 'Organization' : undefined}
+        subtitle={formattedDate}
+        details={
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
+            {communityUrl ? (
+              <Link
+                href={communityUrl}
+                className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85 hover:border-white/60"
+                aria-label="Open community feed"
+              >
+                {post.communityName ?? post.communitySlug}
+              </Link>
+            ) : null}
+            <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">{postTypeLabel}</span>
           </div>
-        ) : null}
-        <div className="absolute right-3 top-3 z-30">
-          <ContentModerationMenu
-            actions={authorActions}
-            reportTarget={
-              isAuthor
-                ? null
-                : {
-                    targetType: 'POST',
-                    targetId: post.id,
-                    targetLabel: reportTargetLabel,
-                  }
-            }
-            blockTarget={isAuthor ? null : blockTarget}
-            buttonLabel={isAuthor ? 'Post actions' : 'Post settings'}
-            onReported={() => {
-              onDelete?.(post.id)
-              router.refresh()
-            }}
-            onBlocked={() => {
-              onDelete?.(post.id)
-              router.refresh()
-            }}
-          />
-        </div>
-      </header>
-
-      <div className="space-y-3 text-[15px] leading-6 text-slate-800">
-        <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
-
-        {post.type === 'article' && post.title ? (
-          <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
-            {post.title}
-          </Link>
-        ) : null}
-        {post.type === 'article' ? (
-          articleBodyWithoutCivilLinks ? (
-            <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
-              <div dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }} />
-            </Link>
-          ) : null
-        ) : post.type === 'photo' ? (
-          bodyWithoutCivilLinks ? (
-            <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
-              {bodyWithoutCivilLinks}
-            </Link>
-          ) : null
-        ) : (
-          bodyWithoutCivilLinks ? (
-            <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
-              {bodyWithoutCivilLinks}
-            </Link>
-          ) : null
-        )}
-
-        <CivilLinkPreviewList body={post.body} />
-
-        {post.type === 'poll' && post.poll ? (
-          <PollCard
-            post={post}
-            viewerId={viewerId}
-            onPostUpdate={onUpdate}
-          />
-        ) : null}
-
-        {post.sharedPost ? (
-          <Link
-            href={buildPostUrl(post.sharedPost)}
-            className="mt-3 block w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-4 transition-colors hover:bg-slate-100"
-          >
-            {(() => {
-              const sharedCover = post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ?? null
-              const sharedDisplayName = post.sharedPost.organization?.name
-                ? formatDisplayName(post.sharedPost.organization.name)
-                : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle
-
-              return (
-                <CivilCard
-                  size="rail"
-                  name={sharedDisplayName}
-                  subtitle={new Date(post.sharedPost.createdAt).toLocaleDateString()}
-                  avatarAlt={sharedDisplayName}
-                  avatarInitials={sharedDisplayName}
-                  avatarSrc={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
-                  coverUrl={sharedCover}
-                  isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
-                  isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
-                  className="mb-2 w-fit max-w-full"
-                />
-              )
-            })()}
-            <div className="text-sm text-slate-800 [overflow-wrap:anywhere] break-words">
-              {sharedPostBodyWithoutCivilLinks ? <div className="whitespace-pre-wrap">{sharedPostBodyWithoutCivilLinks}</div> : null}
-              {post.sharedPost.images && post.sharedPost.images.length > 0 ? (
-                <div className="mt-2">
-                  <CivilPostMedia images={post.sharedPost.images} mediaUrl={post.sharedPost.mediaUrl} postUrl={buildPostUrl(post.sharedPost)} />
-                </div>
-              ) : null}
-            </div>
-          </Link>
-        ) : null}
-      </div>
-
-      <footer className="space-y-3 border-t border-slate-100 pt-4 text-sm text-slate-500">
-        <div className="flex w-full justify-center sm:justify-start">
-          <PostReactionBar
-            className="w-full justify-center sm:w-auto sm:justify-start"
-            reactions={post.reactions}
-            viewerReaction={viewerReaction}
-            disabled={pending}
-            onReact={(reaction) => handleReact(reaction)}
-          />
-        </div>
-        <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
-          <Link
-            href={postUrl}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            aria-label="Open comments"
-          >
-            <LuMessageCircle className="h-4 w-4" />
-            <span>{commentCount}</span>
-          </Link>
-          <button
-            onClick={handleRepost}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          >
-            <LuRepeat2 className="h-4 w-4" />
-            <span>Repost</span>
-          </button>
-          <button
-            onClick={handleShare}
-            className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          >
-            <LuShare className="h-4 w-4" />
-            <span>Share</span>
-          </button>
-        </div>
-      </footer>
-
-      <section className="space-y-3 border-t border-slate-100 pt-3" data-prevent-card-nav="true">
-        {previewComments.map((comment) => {
-          const commentAuthorName = comment.author.name ? formatDisplayName(comment.author.name) : comment.author.handle
-          const commentCoverUrl = comment.author.coverUrl ?? null
-          const isReplyTarget = activeReplyParentId === comment.id
-          const isNestedReply = Boolean(comment.parentId)
-          const createdLabel = formatRelativeTime(comment.createdAt)
-          return (
-            <div
-              key={comment.id}
-              className={clsx(
-                'rounded-xl border bg-white/70 px-2.5 py-2',
-                isReplyTarget ? 'border-[var(--cc-primary)]/40' : 'border-slate-100',
-                isNestedReply && 'border-l-2 border-l-[var(--cc-primary)]/40',
-              )}
-            >
-              <div className="min-w-0">
-                <CivilCard
-                  href={`/u/${comment.author.handle}`}
-                  size="sm"
-                  name={commentAuthorName}
-                  avatarAlt={commentAuthorName}
-                  avatarInitials={commentAuthorName}
-                  avatarSrc={comment.author.avatarUrl ?? null}
-                  coverUrl={commentCoverUrl}
-                  isVerified={Boolean(comment.author.isVerified)}
-                  isBusiness={Boolean(comment.author.isPremium)}
-                  titleSuffix={createdLabel ? `• ${createdLabel}` : undefined}
-                  className="w-fit max-w-full border-slate-200"
-                />
-                {isNestedReply ? <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]/80">Reply in thread</p> : null}
-                <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-800">{comment.body}</p>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!viewerId) {
-                        redirectToAuthModal('login')
-                        return
-                      }
-                      setActiveReplyParentId((prev) => (prev === comment.id ? null : comment.id))
-                      setReplyDraft('')
-                    }}
-                    className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10"
-                  >
-                    {isReplyTarget ? 'Cancel' : 'Reply'}
-                  </button>
-                </div>
-
-                {isReplyTarget ? (
-                  <form
-                    className="mt-2 flex items-center gap-2 pl-3 border-l border-slate-200"
-                    onSubmit={async (event) => {
-                      event.preventDefault()
-                      const ok = await submitComment({ body: replyDraft, parentId: comment.id })
-                      if (ok) {
-                        setReplyDraft('')
-                      }
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={replyDraft}
-                      onChange={(event) => setReplyDraft(event.target.value)}
-                      placeholder={`Reply to @${comment.author.handle}…`}
-                      autoFocus
-                      className="h-8 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
-                      maxLength={5000}
-                      disabled={inlineSubmitting || !viewerId}
-                    />
-                    <button
-                      type="submit"
-                      className={clsx(
-                        'h-8 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
-                        !replyDraft.trim() || inlineSubmitting || !viewerId
-                          ? 'cursor-not-allowed opacity-60'
-                          : 'hover:bg-[var(--cc-primary-700)]',
-                      )}
-                      disabled={!replyDraft.trim() || inlineSubmitting || !viewerId}
-                    >
-                      {inlineSubmitting ? '...' : 'Reply'}
-                    </button>
-                  </form>
-                ) : null}
-              </div>
-            </div>
-          )
-        })}
-
-        {!hideInlineCommentComposer ? (
-          <form className="flex items-center gap-2" onSubmit={handleInlineCommentSubmit}>
-            <input
-              type="text"
-              value={inlineComment}
-              onChange={(event) => setInlineComment(event.target.value)}
-              onFocus={() => {
-                if (!viewerId) {
-                  redirectToAuthModal('login')
-                }
+        }
+        avatarAlt={authorDisplayName ?? post.author.handle}
+        avatarInitials={avatarInitials}
+        avatarSrc={organization ? (organization.logoUrl ?? null) : post.author.avatarUrl}
+        profileHref={profileHref}
+        coverUrl={authorCoverUrl}
+        isVerified={isVerifiedAuthor}
+        isBusiness={isBusinessAuthor}
+        cardContentClassName="pr-14"
+        trailing={showOrganizationAuthorBox ? <PostAuthorMiniCard author={post.author} className="hidden w-[210px] md:block" /> : null}
+        afterHeader={showOrganizationAuthorBox ? <div className="flex justify-end md:hidden"><PostAuthorMiniCard author={post.author} className="w-full max-w-[220px]" /></div> : null}
+        headerOverlay={
+          <div className="absolute right-3 top-3 z-30">
+            <ContentModerationMenu
+              actions={authorActions}
+              reportTarget={
+                isAuthor
+                  ? null
+                  : {
+                      targetType: 'POST',
+                      targetId: post.id,
+                      targetLabel: reportTargetLabel,
+                    }
+              }
+              blockTarget={isAuthor ? null : blockTarget}
+              buttonLabel={isAuthor ? 'Post actions' : 'Post settings'}
+              onReported={() => {
+                onDelete?.(post.id)
+                router.refresh()
               }}
-              placeholder={viewerId ? 'Write a comment…' : 'Sign in to comment…'}
-              className="h-9 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
-              maxLength={5000}
-              disabled={inlineSubmitting || !viewerId}
+              onBlocked={() => {
+                onDelete?.(post.id)
+                router.refresh()
+              }}
             />
-            <button
-              type="submit"
-              className={clsx(
-                'h-9 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
-                !inlineComment.trim() || inlineSubmitting || !viewerId
-                  ? 'cursor-not-allowed opacity-60'
-                  : 'hover:bg-[var(--cc-primary-700)]',
-              )}
-              disabled={!inlineComment.trim() || inlineSubmitting || !viewerId}
-            >
-              {inlineSubmitting ? '...' : 'Post'}
-            </button>
-          </form>
-        ) : null}
-      </section>
+          </div>
+        }
+        content={
+          <>
+            <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
+
+            {post.type === 'article' && post.title ? (
+              <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
+                {post.title}
+              </Link>
+            ) : null}
+            {post.type === 'article' ? (
+              articleBodyWithoutCivilLinks ? (
+                <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
+                  <div dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }} />
+                </Link>
+              ) : null
+            ) : post.type === 'photo' ? (
+              bodyWithoutCivilLinks ? (
+                <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
+                  {bodyWithoutCivilLinks}
+                </Link>
+              ) : null
+            ) : (
+              bodyWithoutCivilLinks ? (
+                <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
+                  {bodyWithoutCivilLinks}
+                </Link>
+              ) : null
+            )}
+
+            <CivilLinkPreviewList body={post.body} />
+
+            {post.type === 'poll' && post.poll ? (
+              <PollCard post={post} viewerId={viewerId} onPostUpdate={onUpdate} />
+            ) : null}
+
+            {post.sharedPost ? (
+              <CivilPostSharedReference
+                href={sharedPostHref ?? postUrl}
+                name={
+                  post.sharedPost.organization?.name
+                    ? formatDisplayName(post.sharedPost.organization.name)
+                    : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle
+                }
+                subtitle={new Date(post.sharedPost.createdAt).toLocaleDateString()}
+                avatarAlt={
+                  post.sharedPost.organization?.name
+                    ? formatDisplayName(post.sharedPost.organization.name)
+                    : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle
+                }
+                avatarInitials={
+                  post.sharedPost.organization?.name
+                    ? formatDisplayName(post.sharedPost.organization.name)
+                    : formatDisplayName(post.sharedPost.author.name) || post.sharedPost.author.handle
+                }
+                avatarSrc={post.sharedPost.organization ? (post.sharedPost.organization.logoUrl ?? null) : post.sharedPost.author.avatarUrl}
+                coverUrl={post.sharedPost.organization?.coverUrl ?? post.sharedPost.author.coverUrl ?? null}
+                isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
+                isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
+                body={sharedPostBodyWithoutCivilLinks}
+                images={post.sharedPost.images}
+                mediaUrl={post.sharedPost.mediaUrl}
+              />
+            ) : null}
+          </>
+        }
+      >
+        <CivilPostActions
+          leading={
+            <PostReactionBar
+              className="w-full justify-center sm:w-auto sm:justify-start"
+              reactions={post.reactions}
+              viewerReaction={viewerReaction}
+              disabled={pending}
+              onReact={(reaction) => handleReact(reaction)}
+            />
+          }
+          actions={[
+            {
+              key: 'comments',
+              label: String(commentCount),
+              icon: LuMessageCircle,
+              href: postUrl,
+              ariaLabel: 'Open comments',
+            },
+            {
+              key: 'repost',
+              label: 'Repost',
+              icon: LuRepeat2,
+              onClick: handleRepost,
+            },
+            {
+              key: 'share',
+              label: 'Share',
+              icon: LuShare,
+              onClick: handleShare,
+            },
+          ]}
+        />
+
+        <CivilPostComments
+          comments={previewComments}
+          viewerId={viewerId}
+          activeReplyParentId={activeReplyParentId}
+          replyDraft={replyDraft}
+          inlineComment={inlineComment}
+          inlineSubmitting={inlineSubmitting}
+          hideInlineCommentComposer={hideInlineCommentComposer}
+          onRequireAuth={() => redirectToAuthModal('login')}
+          onToggleReply={(commentId) => {
+            setActiveReplyParentId((prev) => (prev === commentId ? null : commentId))
+            setReplyDraft('')
+          }}
+          onReplyDraftChange={setReplyDraft}
+          onReplySubmit={async (commentId) => {
+            const ok = await submitComment({ body: replyDraft, parentId: commentId })
+            if (ok) {
+              setReplyDraft('')
+            }
+            return ok
+          }}
+          onInlineCommentChange={setInlineComment}
+          onInlineCommentSubmit={handleInlineCommentSubmit}
+        />
+      </CivilPost>
 
       {repostModalOpen ? (
-        <SharePostModal
-          target={shareTarget}
-          onClose={() => setRepostModalOpen(false)}
-          communityOptions={communityOptions}
-        />
+        <SharePostModal target={shareTarget} onClose={() => setRepostModalOpen(false)} communityOptions={communityOptions} />
       ) : null}
 
       {shareModalOpen ? (
-        <ShareSendModal
-          target={shareTarget}
-          onClose={() => setShareModalOpen(false)}
-        />
+        <ShareSendModal target={shareTarget} onClose={() => setShareModalOpen(false)} />
       ) : null}
 
       {isEditing ? (
@@ -695,13 +552,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 </label>
                 {post.type === 'article' ? (
                   <>
-                    <RichTextEditor
-                      value={editBody}
-                      onChange={setEditBody}
-                      placeholder="Share something"
-                      minHeight={260}
-                      disabled={pending}
-                    />
+                    <RichTextEditor value={editBody} onChange={setEditBody} placeholder="Share something" minHeight={260} disabled={pending} />
                     <div className="flex justify-end text-xs text-slate-500">
                       <span>{editBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length}/10000</span>
                     </div>
@@ -736,6 +587,6 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           </div>
         </Modal>
       ) : null}
-    </article>
+    </>
   )
 }

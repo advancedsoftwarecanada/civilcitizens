@@ -8,6 +8,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { pushToast } from './useToasts'
 import { formatDisplayName } from '../_lib/text'
+import CivilComposerShell from './CivilComposerShell'
 
 export type PostType = 'post' | 'article' | 'photo' | 'poll'
 export type PostVisibility = 'public' | 'members'
@@ -773,16 +774,12 @@ export default function PostComposer({
     }
   }, [canSubmit, submitPost, submitting])
 
-  const containerClasses = clsx(
-    'flex flex-col gap-4',
-    variant === 'card' ? 'surface-card px-6 py-5 shadow-panel' : '',
-    className,
-  )
+  const contentClasses = clsx('flex flex-col gap-4', className)
 
   const showCommunityWarning = !communityTarget && !normalizedCommunityOptions.length
 
-  return (
-    <section ref={containerRef} className={containerClasses}>
+  const composerContent = (
+    <>
       <header
         className={clsx(
           'flex flex-col gap-4',
@@ -1248,6 +1245,20 @@ export default function PostComposer({
           </button>
         </div>
       </div>
+    </>
+  )
+
+  if (variant === 'card') {
+    return (
+      <CivilComposerShell ref={containerRef} className={clsx('shadow-panel', className)} bodyClassName="flex flex-col gap-4">
+        {composerContent}
+      </CivilComposerShell>
+    )
+  }
+
+  return (
+    <section ref={containerRef} className={contentClasses}>
+      {composerContent}
     </section>
   )
 }
