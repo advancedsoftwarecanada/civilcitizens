@@ -403,7 +403,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       }
       const query = new URLSearchParams(filterQuery)
       if (cursor) query.set('cursor', cursor)
-      
+
       const response = await fetch(buildApiUrl(`/posts?${query.toString()}`), {
         headers: {
           authorization: `Bearer ${token}`,
