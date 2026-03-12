@@ -1,9 +1,11 @@
 'use client'
 
 import type { FormEvent } from 'react'
+import Link from 'next/link'
 import clsx from 'clsx'
 import type { ApiPost } from './PostComposer'
-import CivilCard from './CivilCard'
+import CivilCommentIdentity from './CivilCommentIdentity'
+import VerifiedAvatar from './VerifiedAvatar'
 import { formatDisplayName } from '../_lib/text'
 
 type CommentItem = NonNullable<ApiPost['recentComments']>[number]
@@ -30,6 +32,7 @@ function formatRelativeTime(iso: string) {
 
 type CivilPostCommentsProps = {
   comments: CommentItem[]
+  postHref: string
   viewerId?: string | null
   activeReplyParentId: string | null
   replyDraft: string
@@ -46,6 +49,7 @@ type CivilPostCommentsProps = {
 
 export default function CivilPostComments({
   comments,
+  postHref,
   viewerId,
   activeReplyParentId,
   replyDraft,
@@ -63,113 +67,134 @@ export default function CivilPostComments({
     <section className="space-y-3 border-t border-slate-100 pt-3" data-prevent-card-nav="true">
       {comments.map((comment) => {
         const commentAuthorName = comment.author.name ? formatDisplayName(comment.author.name) : comment.author.handle
-        const commentCoverUrl = comment.author.coverUrl ?? null
         const isReplyTarget = activeReplyParentId === comment.id
-        const isNestedReply = Boolean(comment.parentId)
-        const createdLabel = formatRelativeTime(comment.createdAt)
+        const createdLabel = comment.optimistic ? 'Sending...' : formatRelativeTime(comment.createdAt)
+        const identityBadge = viewerId && viewerId === comment.author.id ? 'You' : undefined
+        const commentHref = `${postHref}?comment=${encodeURIComponent(comment.id)}#comment-${encodeURIComponent(comment.id)}`
 
         return (
           <div
             key={comment.id}
             className={clsx(
-              'rounded-xl border bg-white/70 px-2.5 py-2',
-              isReplyTarget ? 'border-[var(--cc-primary)]/40' : 'border-slate-100',
-              isNestedReply && 'border-l-2 border-l-[var(--cc-primary)]/40',
+              'relative border-b border-slate-100 py-3 last:border-b-0 transition-colors',
+              comment.optimistic && 'opacity-80',
+              comment.localPreview && 'rounded-2xl border border-rose-200/80 bg-rose-50/65 px-3 shadow-[inset_0_0_0_1px_rgba(251,113,133,0.08)]',
             )}
           >
-            <div className="min-w-0">
-              <CivilCard
-                href={`/u/${comment.author.handle}`}
-                size="sm"
-                name={commentAuthorName}
-                avatarAlt={commentAuthorName}
-                avatarInitials={commentAuthorName}
-                avatarSrc={comment.author.avatarUrl ?? null}
-                coverUrl={commentCoverUrl}
-                isVerified={Boolean(comment.author.isVerified)}
-                isBusiness={Boolean(comment.author.isPremium)}
-                titleSuffix={createdLabel ? `• ${createdLabel}` : undefined}
-                className="w-fit max-w-full border-slate-200"
-              />
-              {isNestedReply ? <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]/80">Reply in thread</p> : null}
-              <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-800">{comment.body}</p>
-              <div className="mt-1.5 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!viewerId) {
-                      onRequireAuth()
-                      return
-                    }
-                    onToggleReply(comment.id)
-                  }}
-                  className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10"
-                >
-                  {isReplyTarget ? 'Cancel' : 'Reply'}
-                </button>
+            <div className="flex items-start gap-3">
+              <div className="shrink-0 pt-0.5">
+                <VerifiedAvatar
+                  src={comment.author.avatarUrl ?? null}
+                  alt={commentAuthorName}
+                  initials={commentAuthorName}
+                  size={32}
+                  isVerified={Boolean(comment.author.isVerified)}
+                  isBusiness={Boolean(comment.author.isPremium)}
+                  href={`/u/${comment.author.handle}`}
+                  className="shrink-0"
+                />
               </div>
-
-              {isReplyTarget ? (
-                <form
-                  className="mt-2 flex items-center gap-2 border-l border-slate-200 pl-3"
-                  onSubmit={async (event) => {
-                    event.preventDefault()
-                    await onReplySubmit(comment.id)
-                  }}
-                >
-                  <input
-                    type="text"
-                    value={replyDraft}
-                    onChange={(event) => onReplyDraftChange(event.target.value)}
-                    placeholder={`Reply to @${comment.author.handle}…`}
-                    autoFocus
-                    className="h-8 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
-                    maxLength={5000}
-                    disabled={inlineSubmitting || !viewerId}
+              <div className="min-w-0 flex-1">
+                <Link href={commentHref} className="block rounded-xl focus:outline-none focus:ring-2 focus:ring-[var(--cc-primary)]/30">
+                  <CivilCommentIdentity
+                    handle={comment.author.handle}
+                    name={commentAuthorName}
+                    isVerified={Boolean(comment.author.isVerified)}
+                    isBusiness={Boolean(comment.author.isPremium)}
+                    meta={createdLabel}
+                    badgeLabel={identityBadge}
+                    showAvatar={false}
+                    className="max-w-full"
                   />
+
+                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-slate-900 hover:text-slate-950">{comment.body}</p>
+                </Link>
+
+                <div className="mt-2 flex items-center gap-3">
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={() => {
+                      if (comment.optimistic) return
+                      if (!viewerId) {
+                        onRequireAuth()
+                        return
+                      }
+                      onToggleReply(comment.id)
+                    }}
                     className={clsx(
-                      'h-8 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
-                      !replyDraft.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
+                      'inline-flex items-center rounded-full px-1 py-0.5 text-xs font-semibold text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10',
+                      comment.optimistic && 'cursor-default opacity-60 hover:bg-transparent',
+                        comment.localPreview && !comment.optimistic && 'text-rose-700 hover:bg-rose-100/70',
                     )}
-                    disabled={!replyDraft.trim() || inlineSubmitting || !viewerId}
                   >
-                    {inlineSubmitting ? '...' : 'Reply'}
+                    {comment.optimistic ? 'Posting...' : isReplyTarget ? 'Cancel reply' : 'Reply'}
                   </button>
-                </form>
-              ) : null}
+                </div>
+
+                {isReplyTarget ? (
+                  <form
+                    className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50/90 p-2"
+                    onSubmit={async (event) => {
+                      event.preventDefault()
+                      await onReplySubmit(comment.id)
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={replyDraft}
+                      onChange={(event) => onReplyDraftChange(event.target.value)}
+                      placeholder={`Reply to @${comment.author.handle}…`}
+                      autoFocus
+                      className="h-8 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
+                      maxLength={5000}
+                      disabled={inlineSubmitting || !viewerId}
+                    />
+                    <button
+                      type="submit"
+                      className={clsx(
+                        'h-8 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
+                        !replyDraft.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
+                      )}
+                      disabled={!replyDraft.trim() || inlineSubmitting || !viewerId}
+                    >
+                      {inlineSubmitting ? '...' : 'Reply'}
+                    </button>
+                  </form>
+                ) : null}
+              </div>
             </div>
           </div>
         )
       })}
 
       {!hideInlineCommentComposer ? (
-        <form className="flex items-center gap-2" onSubmit={onInlineCommentSubmit}>
-          <input
-            type="text"
-            value={inlineComment}
-            onChange={(event) => onInlineCommentChange(event.target.value)}
-            onFocus={() => {
-              if (!viewerId) {
-                onRequireAuth()
-              }
-            }}
-            placeholder={viewerId ? 'Write a comment…' : 'Sign in to comment…'}
-            className="h-9 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
-            maxLength={5000}
-            disabled={inlineSubmitting || !viewerId}
-          />
-          <button
-            type="submit"
-            className={clsx(
-              'h-9 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
-              !inlineComment.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
-            )}
-            disabled={!inlineComment.trim() || inlineSubmitting || !viewerId}
-          >
-            {inlineSubmitting ? '...' : 'Post'}
-          </button>
+        <form className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2" onSubmit={onInlineCommentSubmit}>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={inlineComment}
+              onChange={(event) => onInlineCommentChange(event.target.value)}
+              onFocus={() => {
+                if (!viewerId) {
+                  onRequireAuth()
+                }
+              }}
+              placeholder={viewerId ? 'Add a comment' : 'Sign in to comment'}
+              className="h-9 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
+              maxLength={5000}
+              disabled={inlineSubmitting || !viewerId}
+            />
+            <button
+              type="submit"
+              className={clsx(
+                'h-9 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
+                !inlineComment.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
+              )}
+              disabled={!inlineComment.trim() || inlineSubmitting || !viewerId}
+            >
+              {inlineSubmitting ? '...' : 'Comment'}
+            </button>
+          </div>
         </form>
       ) : null}
     </section>

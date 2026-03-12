@@ -10348,7 +10348,6 @@ async function getRecentCommentsByPostIds(postIds: string[], limitPerPost = 5) {
   const rows: RecentCommentWithUser[] = await prisma.comment.findMany({
     where: {
       postId: { in: uniquePostIds },
-      parentId: null,
       moderationStatus: ModerationStatus.VISIBLE,
     },
     orderBy: { createdAt: 'desc' },

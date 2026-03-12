@@ -56,7 +56,7 @@ export default function CommentComposer({
   )
 
   return (
-    <form className={clsx('space-y-3 rounded-2xl border border-dashed border-slate-200 bg-white/80 p-4', className)} onSubmit={handleSubmit}>
+    <form className={clsx('space-y-3 rounded-2xl border border-slate-200 bg-slate-50/85 p-3.5', className)} onSubmit={handleSubmit}>
       <div>
         <textarea
           value={value}
@@ -74,10 +74,13 @@ export default function CommentComposer({
           rows={4}
           maxLength={MAX_COMMENT_LENGTH}
           autoFocus={autoFocus}
-          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
+          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
         />
-        <div className="mt-1 text-right text-xs text-slate-400">
-          {value.trim().length}/{MAX_COMMENT_LENGTH}
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-400">
+          <span>Ctrl/Cmd + Enter to post</span>
+          <span>
+            {value.trim().length}/{MAX_COMMENT_LENGTH}
+          </span>
         </div>
       </div>
 
@@ -88,7 +91,7 @@ export default function CommentComposer({
           type="submit"
           disabled={!canSubmit || submitting}
           className={clsx(
-            'inline-flex items-center rounded-md bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition',
+            'inline-flex items-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition',
             !canSubmit || submitting ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
           )}
         >

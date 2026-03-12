@@ -87,6 +87,8 @@ export type ApiPost = {
     createdAt: string
     updatedAt: string
     score?: number
+    optimistic?: boolean
+    localPreview?: boolean
     author: {
       id: string
       handle: string
