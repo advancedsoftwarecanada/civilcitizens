@@ -32928,7 +32928,8 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       ...restProfile,
       isPremium: isPremium(premiumStatus),
       isVerified: isSelfVerifiedCanadianCitizen(profileMeta),
-      dateOfBirth: profileMeta?.dateOfBirth && profileMeta.shareDateOfBirth !== false ? profileMeta.dateOfBirth : null,
+      dateOfBirth: null as string | null,
+      birthYear: null as number | null,
       countryOfBirth: profileMeta?.countryOfBirth && profileMeta.shareCountryOfBirth !== false ? profileMeta.countryOfBirth : null,
       friendCount: friendsCount,
       followerCount: followersCount,
@@ -33040,6 +33041,18 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
         }
       }
     }
+
+    if (profileMeta?.dateOfBirth && profileMeta.shareDateOfBirth !== false) {
+      if (relationship.friendshipStatus === 'self' || relationship.friendshipStatus === 'friends') {
+        user.dateOfBirth = profileMeta.dateOfBirth
+      } else {
+        const birthYear = Number.parseInt(profileMeta.dateOfBirth.slice(0, 4), 10)
+        if (Number.isFinite(birthYear)) {
+          user.birthYear = birthYear
+        }
+      }
+    }
+
     const sortMode = sort ?? 'new'
 
     const where: Prisma.PostWhereInput = {
