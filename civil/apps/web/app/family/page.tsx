@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation'
+import { FamilyHubClient } from '../friends/FriendsHubClient'
 
 export default function FamilyPage() {
-  redirect('/friends?tab=family')
+  return <FamilyHubClient />
 }

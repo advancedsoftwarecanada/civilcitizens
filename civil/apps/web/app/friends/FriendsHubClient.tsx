@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useMemo } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
 import FeedPageClient from '../_components/FeedPageClient'
 import FamilyFeedClient from '../_components/FamilyFeedClient'
@@ -10,7 +10,7 @@ import FriendsRightRail from '../_components/FriendsRightRail'
 import MessagesNavBlock from '../_components/MessagesNavBlock'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
-import { hasFamilyModeEnabled } from '../_lib/me'
+import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { buildFamilyAvatarDataUrl, buildFamilyCoverDataUrl } from '../_lib/familyIdentity'
 import { buildApiUrl } from '../_lib/api'
@@ -18,8 +18,6 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { pushToast } from '../_components/useToasts'
 import { useCallback, useEffect, useState } from 'react'
 import { formatDisplayName } from '../_lib/text'
-
-type FriendsTabKey = 'feed' | 'family'
 
 type FamilyMemberSummary = {
   id: string
@@ -59,32 +57,7 @@ type FriendsResponse = {
   items?: FriendListEntry[]
 }
 
-function FriendsTabNav({ active, showFamily }: { active: FriendsTabKey; showFamily: boolean }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Link
-        href="/friends"
-        className={active === 'feed'
-          ? 'inline-flex rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white'
-          : 'inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900'}
-      >
-        Friends
-      </Link>
-      {showFamily ? (
-        <Link
-          href="/friends?tab=family"
-          className={active === 'family'
-            ? 'inline-flex rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white'
-            : 'inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900'}
-        >
-          Family
-        </Link>
-      ) : null}
-    </div>
-  )
-}
-
-function ParentFamilyFeedView({ tabs }: { tabs: JSX.Element }) {
+function ParentFamilyFeedView() {
   const [members, setMembers] = useState<FamilyMemberSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedMemberId, setSelectedMemberId] = useState<string>('')
@@ -137,7 +110,6 @@ function ParentFamilyFeedView({ tabs }: { tabs: JSX.Element }) {
 
   const headerContent = (
     <div className="space-y-4">
-      {tabs}
       <section className="rounded-[28px] border border-slate-200 bg-white/90 px-5 py-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -669,7 +641,6 @@ function FamilyMemberFriendsView() {
 }
 
 export default function FriendsHubClient() {
-  const searchParams = useSearchParams()
   const viewer = useViewerStore((state) => state.me)
   const isFamilyMemberSession = viewer?.accountType === 'family_member'
 
@@ -677,20 +648,13 @@ export default function FriendsHubClient() {
     return <FamilyMemberFriendsView />
   }
 
-  const showFamilyTab = viewer?.accountType === 'user' && hasFamilyModeEnabled(viewer)
-  const requestedTab = searchParams?.get('tab') === 'family' ? 'family' : 'feed'
-  const activeTab: FriendsTabKey = showFamilyTab ? requestedTab : 'feed'
-  const tabs = <FriendsTabNav active={activeTab} showFamily={showFamilyTab} />
+  const showFamilyNav = viewer?.accountType === 'user' && hasFamilyProfilesAvailable(viewer)
   const rightRail = (
     <div className="space-y-4">
-      <MessagesNavBlock visibleItems={showFamilyTab ? ['friends', 'family', 'network', 'groups', 'market'] : undefined} />
+      <MessagesNavBlock visibleItems={showFamilyNav ? ['friends', 'family', 'network', 'groups', 'market'] : undefined} />
       <FriendsRightRail />
     </div>
   )
-
-  if (activeTab === 'family') {
-    return <ParentFamilyFeedView tabs={tabs} />
-  }
 
   return (
     <FeedPageClient
@@ -701,7 +665,6 @@ export default function FriendsHubClient() {
       emptyState="No friend activity yet. Once your friends start posting, their updates will land here."
       emptyStateCta={{ label: 'Find Friends', href: '/search' }}
       rightRail={rightRail}
-      headerContent={tabs}
       showFeedSummary={false}
       sortOptions={[
         { value: 'new', label: 'Latest' },
@@ -710,4 +673,14 @@ export default function FriendsHubClient() {
       defaultSort="new"
     />
   )
+}
+
+export function FamilyHubClient() {
+  const viewer = useViewerStore((state) => state.me)
+
+  if (viewer?.accountType === 'family_member') {
+    return <FamilyMemberFriendsView />
+  }
+
+  return <ParentFamilyFeedView />
 }

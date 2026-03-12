@@ -20,7 +20,7 @@ import CivilCard from './CivilCard'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
-import { hasFamilyModeEnabled, type FamilyModeSummary, type MeResponse } from '../_lib/me'
+import { hasFamilyProfilesAvailable, type FamilyModeSummary, type MeResponse } from '../_lib/me'
 import type { FamilyViewState } from '../_lib/familyView'
 
 type SidebarViewer = {
@@ -75,7 +75,7 @@ export function getSidebarNavItems(
   me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
 ): SidebarNavItem[] {
   if (!familyView) {
-    if (me?.accountType === 'user' && hasFamilyModeEnabled(me)) {
+    if (me?.accountType === 'user' && hasFamilyProfilesAvailable(me)) {
       const [homeItem, messagesItem, friendsItem] = PRIMARY_NAV
       if (!homeItem || !messagesItem || !friendsItem) return PRIMARY_NAV
 
