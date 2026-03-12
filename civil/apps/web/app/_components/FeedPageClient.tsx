@@ -255,6 +255,71 @@ function formatSnapshotValue(value: number) {
   return value.toLocaleString()
 }
 
+const SMART_HOME_SEEN_STORAGE_KEY = 'cc:smart-home-seen:v1'
+const SMART_HOME_SEEN_STORAGE_LIMIT = 400
+
+function dedupePostsById(items: ApiPost[]) {
+  const deduped = new Map<string, ApiPost>()
+  for (const item of items) {
+    deduped.set(item.id, item)
+  }
+  return Array.from(deduped.values())
+}
+
+function hashSmartFeedValue(value: string) {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) / 4294967295
+}
+
+function loadSmartHomeSeenIds() {
+  if (typeof window === 'undefined') return new Set<string>()
+  try {
+    const raw = window.sessionStorage.getItem(SMART_HOME_SEEN_STORAGE_KEY)
+    if (!raw) return new Set<string>()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set<string>()
+    return new Set(parsed.filter((value): value is string => typeof value === 'string' && value.trim().length > 0))
+  } catch {
+    return new Set<string>()
+  }
+}
+
+function markSmartHomePostSeen(postId: string) {
+  if (typeof window === 'undefined' || !postId) return
+  try {
+    const existing = Array.from(loadSmartHomeSeenIds()).filter((value) => value !== postId)
+    existing.push(postId)
+    window.sessionStorage.setItem(
+      SMART_HOME_SEEN_STORAGE_KEY,
+      JSON.stringify(existing.slice(-SMART_HOME_SEEN_STORAGE_LIMIT)),
+    )
+  } catch {
+    // Ignore storage failures and fall back to server ordering.
+  }
+}
+
+function orderSmartHomePosts(items: ApiPost[], seenIds: Set<string>, seed: string) {
+  const nowMs = Date.now()
+  const scorePost = (post: ApiPost) => {
+    const createdAtMs = Date.parse(post.createdAt)
+    const ageHours = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) / (1000 * 60 * 60) : 9999
+    const recencyBoost = Math.max(0, 72 - ageHours) * 1.2
+    const jitter = hashSmartFeedValue(`${seed}:${post.id}`) * 100
+    return recencyBoost + jitter
+  }
+
+  const deduped = dedupePostsById(items)
+  const unseen = deduped.filter((post) => !seenIds.has(post.id))
+  const seen = deduped.filter((post) => seenIds.has(post.id))
+  unseen.sort((left, right) => scorePost(right) - scorePost(left))
+  seen.sort((left, right) => scorePost(right) - scorePost(left))
+  return [...unseen, ...seen]
+}
+
 export default function FeedPageClient(props: FeedPageClientProps) {
   const {
     scope,
@@ -302,6 +367,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const pendingImpressionIdsRef = useRef<Set<string>>(new Set())
   const impressionTimersRef = useRef<Map<string, number>>(new Map())
   const flushImpressionsTimerRef = useRef<number | null>(null)
+  const smartHomeShuffleSeedRef = useRef('')
 
   const filterQuery = useMemo(() => {
     const params = new URLSearchParams()
@@ -318,6 +384,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   }, [defaultSort])
 
   const loadPosts = useCallback(async (cursor?: string) => {
+    const shouldShuffleSmartHome = scope === 'all' && sortMode === 'hot'
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
@@ -331,6 +398,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
     setLoading(true)
     try {
+      if (!cursor && shouldShuffleSmartHome) {
+        smartHomeShuffleSeedRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      }
       const query = new URLSearchParams(filterQuery)
       if (cursor) query.set('cursor', cursor)
       
@@ -351,8 +421,22 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       }
       const data = await response.json().catch(() => ({ items: [], nextCursor: undefined, lastViewedAt: null }))
       const newItems = Array.isArray(data.items) ? data.items : []
-      
-      setPosts((prev) => cursor ? [...prev, ...newItems] : newItems)
+
+      setPosts((prev) => {
+        if (!shouldShuffleSmartHome) {
+          return cursor ? dedupePostsById([...prev, ...newItems]) : dedupePostsById(newItems)
+        }
+
+        const seenIds = loadSmartHomeSeenIds()
+        const seed = smartHomeShuffleSeedRef.current || 'smart-home'
+        if (!cursor) {
+          return orderSmartHomePosts(newItems, seenIds, seed)
+        }
+
+        const existingIds = new Set(prev.map((post) => post.id))
+        const incomingUnique = newItems.filter((post) => !existingIds.has(post.id))
+        return [...prev, ...orderSmartHomePosts(incomingUnique, seenIds, seed)]
+      })
       setNextCursor(data.nextCursor)
       setHasMore(!!data.nextCursor)
       if (!cursor && data.lastViewedAt) {
@@ -368,7 +452,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     } finally {
       setLoading(false)
     }
-  }, [filterQuery])
+  }, [filterQuery, scope, sortMode])
 
   const flushPostImpressions = useCallback(async () => {
     if (flushImpressionsTimerRef.current) {
@@ -496,6 +580,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   }, [nextCursor, loading, loadPosts])
 
   const observerTarget = useRef<HTMLDivElement>(null)
+  const smartHomeShuffleEnabled = scope === 'all' && sortMode === 'hot'
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -535,6 +620,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
               impressionTimersRef.current.delete(postId)
               if (seenPostIdsRef.current.has(postId)) return
               seenPostIdsRef.current.add(postId)
+              if (smartHomeShuffleEnabled) {
+                markSmartHomePostSeen(postId)
+              }
               pendingImpressionIdsRef.current.add(postId)
               schedulePostImpressionFlush()
             }, 1000)
@@ -561,7 +649,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       }
       impressionTimersRef.current.clear()
     }
-  }, [schedulePostImpressionFlush, posts, scope, me?.handle])
+  }, [schedulePostImpressionFlush, posts, scope, me?.handle, smartHomeShuffleEnabled])
 
   useEffect(() => {
     return () => {
@@ -967,10 +1055,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     scope === 'communities' ? 'community' : scope === 'network' ? 'network' : 'friends'
 
   const resolvedRightRail = rightRail ?? <RightRail />
-  const activeSortOption = useMemo(
-    () => sortOptions.find((option) => option.value === sortMode) ?? null,
-    [sortMode, sortOptions],
-  )
   const composerSectionClassName = clsx(
     'relative min-w-0 space-y-4 overflow-hidden px-6 py-5 shadow-subtle',
     hasComposerCover
@@ -987,12 +1071,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const composerDescriptionClassName = hasComposerCover
     ? 'mt-1 text-sm text-white/78 [text-shadow:0_1px_2px_rgba(15,23,42,0.45)]'
     : 'mt-1 text-sm text-slate-500'
-  const composerSortShellClassName = hasComposerCover
-    ? 'border border-white/[0.18] bg-slate-950/[0.20] backdrop-blur-md'
-    : 'bg-slate-100'
-  const composerSortInactiveClassName = hasComposerCover
-    ? 'text-white/80 hover:text-white'
-    : 'text-slate-500 hover:text-slate-700'
   const composerPromptClassName = hasComposerCover
     ? 'border border-white/20 bg-slate-950/[0.22] text-white/90 backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-slate-950/[0.30] hover:text-white'
     : 'border border-slate-200 bg-slate-50 text-slate-500 hover:bg-white hover:text-slate-700'
@@ -1002,7 +1080,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const composerActionIconClassName = hasComposerCover
     ? 'bg-white/[0.16] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]'
     : 'bg-slate-100 text-slate-600'
-  const composerSortDescriptionClassName = hasComposerCover ? 'text-right text-xs text-white/70' : 'text-right text-xs text-slate-500'
   const composerActions: Array<{ type: PostType; label: string; icon: string }> = [
     { type: 'post', label: 'Post', icon: '📝' },
     { type: 'article', label: 'Article', icon: '📄' },
@@ -1115,38 +1192,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         ) : null}
         <span className={clsx('absolute inset-0', composerOverlayClassName)} aria-hidden="true" />
         <div className="relative z-[1] flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          {scope !== 'organizations' ? (
+          {scope !== 'organizations' && (title || description) ? (
             <div className={composerHeaderPanelClassName || undefined}>
-              <p className={clsx('text-xs font-semibold uppercase tracking-[0.35em]', composerTitleClassName)}>{title}</p>
+              {title ? <p className={clsx('text-xs font-semibold uppercase tracking-[0.35em]', composerTitleClassName)}>{title}</p> : null}
               {description ? <p className={composerDescriptionClassName}>{description}</p> : null}
-            </div>
-          ) : null}
-          {sortOptions.length > 1 ? (
-            <div className="space-y-2">
-              <div
-                className={clsx(
-                  'inline-flex rounded-full p-1 text-xs font-semibold text-slate-500',
-                  composerSortShellClassName,
-                )}
-              >
-                {sortOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className={clsx(
-                      'rounded-full px-4 py-1.5 transition',
-                      sortMode === option.value
-                        ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
-                        : composerSortInactiveClassName,
-                    )}
-                    onClick={() => setSortMode(option.value)}
-                    disabled={loading && sortMode === option.value}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              {activeSortOption?.description ? <p className={composerSortDescriptionClassName}>{activeSortOption.description}</p> : null}
             </div>
           ) : null}
         </div>
@@ -1219,6 +1268,29 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       ) : null}
 
       <div ref={feedItemsContainerRef} className="min-w-0 space-y-4">
+        {sortOptions.length > 1 ? (
+          <div className="flex justify-center">
+            <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">
+                {sortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={clsx(
+                      'rounded-full px-4 py-1.5 transition',
+                      sortMode === option.value
+                        ? 'bg-white text-[var(--cc-primary)] shadow-subtle'
+                        : 'text-slate-500 hover:text-slate-700',
+                    )}
+                    onClick={() => setSortMode(option.value)}
+                    disabled={loading && sortMode === option.value}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+            </div>
+          </div>
+        ) : null}
+
         {showSupplementalActivity ? (
           <section className="overflow-hidden rounded-[calc(var(--cc-radius)+4px)] border border-[var(--cc-primary)]/12 bg-[linear-gradient(180deg,rgba(255,255,255,1)_0%,rgba(249,250,251,0.98)_100%)] shadow-[0_24px_56px_rgba(15,23,42,0.08)]">
             <div className="border-b border-slate-200/80 bg-[linear-gradient(135deg,rgba(185,28,28,0.06)_0%,rgba(255,255,255,0)_55%)] px-6 py-5">

@@ -21,8 +21,7 @@ export default function HomePageClient() {
       <FeedPageClient
         scope="all"
         sidebarActive="home"
-        title="Home Feed"
-        description="Posts, events, and jobs from across your Civil network."
+        title=""
         emptyState="Your home feed is quiet right now. Follow more communities, people, and organizations to fill it out."
         emptyStateCta={{ label: 'Explore Communities', href: '/communities' }}
         defaultSort="hot"
