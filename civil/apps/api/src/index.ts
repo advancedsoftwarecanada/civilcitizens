@@ -256,6 +256,8 @@ const CivilAiChatInput = z.object({
   stream: z.boolean().optional(),
 })
 
+type CivilAiChatInputPayload = z.infer<typeof CivilAiChatInput>
+
 const CivilAiModelsQuery = z.object({
   serverId: z.string().trim().min(1).optional(),
 })
@@ -319,8 +321,13 @@ const CIVIL_AI_HISTORY_LIMIT = CIVIL_AI_MEMORY_USER_TURN_LIMIT * 2
 const CIVIL_AI_DATA_KEY = (process.env.CIVIL_AI_DATA_KEY || '').trim()
 
 let civilAiDebugTablesReady: Promise<void> | null = null
+let civilAiJobTablesReady: Promise<void> | null = null
 let contentAiScanTablesReady: Promise<void> | null = null
 const CIVIL_AI_SERVER_TIMEOUT_MS = 45000
+const CIVIL_AI_JOB_TIMEOUT_MS = Math.max(
+  CIVIL_AI_SERVER_TIMEOUT_MS,
+  Number(process.env.CIVIL_AI_JOB_TIMEOUT_MS || 10 * 60 * 1000) || 10 * 60 * 1000,
+)
 const CIVIL_AI_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 const CIVIL_AI_MAX_PROMPT_CHARS = 12000
 const CIVIL_AI_MAX_SYSTEM_PROMPT_CHARS = 8500
@@ -328,6 +335,41 @@ const CIVIL_AI_MAX_TRANSCRIPT_CHARS = 2800
 const CIVIL_AI_MAX_MESSAGE_CHARS = 700
 const CIVIL_AI_MAX_REFERENCE_CARDS = 3
 const civilAiResolvedModelCache = new Map<string, { model: string | null; expiresAt: number }>()
+const civilAiProcessingJobIds = new Set<string>()
+const civilAiJobAbortControllers = new Map<string, AbortController>()
+
+type CivilAiJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
+
+type CivilAiChatResponsePayload = {
+  conversationId: string
+  message: {
+    role: 'assistant'
+    content: string
+    references: CivilAiCardReference[]
+  }
+  model: string | null
+  server: CivilAiServerConfig | null
+  viewerContext: CivilAiViewerContext | null
+  history: CivilAiHistoryEntry[] | null
+  raw: unknown
+}
+
+type CivilAiJobRow = {
+  id: string
+  conversation_id: string
+  user_id: string | null
+  status: string
+  request_body_text: string
+  latest_user_message: string | null
+  response_text: string | null
+  error_text: string | null
+  server_name: string | null
+  model: string | null
+  created_at: Date
+  started_at: Date | null
+  completed_at: Date | null
+  updated_at: Date
+}
 
 const DEFAULT_CIVIL_AI_PROMPT = `Civil AI is a practical Canadian civic assistant inside Civil Citizens.
 Help users understand communities, public life, and constructive next steps.
@@ -748,6 +790,39 @@ async function ensureCivilAiDebugTables() {
   await civilAiDebugTablesReady
 }
 
+async function ensureCivilAiJobTables() {
+  if (!civilAiJobTablesReady) {
+    civilAiJobTablesReady = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS civil_ai_job (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL,
+          user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'queued',
+          request_body_text TEXT NOT NULL,
+          latest_user_message TEXT,
+          response_text TEXT,
+          error_text TEXT,
+          server_name TEXT,
+          model TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          started_at TIMESTAMPTZ,
+          completed_at TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_job_status_created_idx ON civil_ai_job (status, created_at DESC)`)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_job_user_id_idx ON civil_ai_job (user_id, created_at DESC)`)
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_job_conversation_idx ON civil_ai_job (conversation_id, created_at DESC)`)
+    })().catch((error) => {
+      civilAiJobTablesReady = null
+      throw error
+    })
+  }
+
+  await civilAiJobTablesReady
+}
+
 async function ensureContentAiScanTables() {
   if (!contentAiScanTablesReady) {
     contentAiScanTablesReady = (async () => {
@@ -880,6 +955,11 @@ function detectCivilAiProfileIntent(question: string) {
     asksBio,
     wantsProfile: asksName || asksExperience || asksOrganizations || asksBio,
   }
+}
+
+function detectCivilAiAssistantIdentityIntent(question: string) {
+  const normalized = question.trim().toLowerCase()
+  return /(what is your name|what'?s your name|who are you|who are u|tell me your name|what should i call you|what do i call you)/.test(normalized)
 }
 
 export function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGroundingBundle) {
@@ -1074,6 +1154,13 @@ function serializeCivilAiViewerContext(viewerContext: CivilAiViewerContext | nul
 }
 
 export function buildCivilAiDirectAnswer(question: string, viewerContext: CivilAiViewerContext | null) {
+  if (detectCivilAiAssistantIdentityIntent(question)) {
+    return {
+      content: 'I am Civil AI, your civic assistant inside Civil Citizens.',
+      references: [] as CivilAiCardReference[],
+    }
+  }
+
   if (!viewerContext) return null
   const normalized = question.trim().toLowerCase()
   const { asksName, asksExperience, asksOrganizations, asksBio } = detectCivilAiProfileIntent(question)
@@ -1212,10 +1299,23 @@ async function callCivilAiServer(args: {
   path: string
   method?: 'GET' | 'POST'
   body?: Record<string, unknown>
-  timeoutMs?: number
+  timeoutMs?: number | null
+  signal?: AbortSignal
 }) {
+  const timeoutMs = args.timeoutMs === undefined ? CIVIL_AI_SERVER_TIMEOUT_MS : args.timeoutMs
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? CIVIL_AI_SERVER_TIMEOUT_MS)
+  const onAbort = () => controller.abort(args.signal?.reason)
+  const timeout =
+    timeoutMs && timeoutMs > 0
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : null
+  if (args.signal) {
+    if (args.signal.aborted) {
+      controller.abort(args.signal.reason)
+    } else {
+      args.signal.addEventListener('abort', onAbort, { once: true })
+    }
+  }
 
   let response: Response
   try {
@@ -1226,8 +1326,18 @@ async function callCivilAiServer(args: {
       signal: controller.signal,
     })
   } catch (error) {
-    clearTimeout(timeout)
-    const message = error instanceof Error && error.name === 'AbortError' ? 'ai_upstream_timeout' : error instanceof Error ? error.message : 'ai_upstream_request_failed'
+    if (timeout) clearTimeout(timeout)
+    if (args.signal) {
+      args.signal.removeEventListener('abort', onAbort)
+    }
+    const message =
+      error instanceof Error && error.name === 'AbortError'
+        ? args.signal?.aborted
+          ? 'ai_upstream_cancelled'
+          : 'ai_upstream_timeout'
+        : error instanceof Error
+          ? error.message
+          : 'ai_upstream_request_failed'
     return {
       ok: false,
       status: 504,
@@ -1235,7 +1345,10 @@ async function callCivilAiServer(args: {
       json: null,
     }
   }
-  clearTimeout(timeout)
+  if (timeout) clearTimeout(timeout)
+  if (args.signal) {
+    args.signal.removeEventListener('abort', onAbort)
+  }
 
   const rawText = await response.text()
   let json: unknown = null
@@ -1823,6 +1936,8 @@ function buildCivilAiContextPrompt(viewerContext: CivilAiViewerContext | null) {
     'Rules for signed-in user context:',
     '- If a current signed-in user context block is present, you do know that user\'s provided profile data for this conversation.',
     '- You may use the provided first name, last name, display name, experience history, home community, and organizations to answer personally relevant questions.',
+    '- The signed-in user context describes the user, not the assistant.',
+    '- If the user asks who you are or asks for your name, answer as Civil AI and do not answer with the signed-in user\'s profile.',
     '- Do not claim you lack access to the user\'s name or organizations if those fields are present in the context block.',
     '- Only say information is unavailable when the specific field is actually missing from the provided context.',
     '',
@@ -11571,6 +11686,462 @@ async function buildCivilAiRetrievalBundle(userId: string | null, latestQuestion
   }
 }
 
+async function executeCivilAiChatRequest(args: {
+  body: CivilAiChatInputPayload
+  conversationId: string
+  userId: string | null
+  upstreamTimeoutMs?: number | null
+  signal?: AbortSignal
+  logger?: { error: (payload: unknown, message?: string) => void }
+}): Promise<CivilAiChatResponsePayload> {
+  const activeMessages: Array<{ role: 'user' | 'assistant'; content: string }> = selectCivilAiActiveMessages(args.body.messages)
+  const latestUserMessage = buildCivilAiEffectiveQuestion(args.body.messages)
+
+  const requestStartedAt = Date.now()
+  let status = 'error'
+  let errorMessage: string | null = null
+  let resolvedModel: string | null = null
+  let resolvedServer: CivilAiServerConfig | null = null
+  let retrievalBundle: Awaited<ReturnType<typeof buildCivilAiRetrievalBundle>> | null = null
+  let upstreamInput: string | null = null
+  let assistantContent: string | null = null
+  let rawResponse: unknown = null
+  let persistedHistory: CivilAiHistoryEntry[] | null = null
+
+  try {
+    retrievalBundle = await buildCivilAiRetrievalBundle(args.userId ?? null, latestUserMessage)
+
+    const directAnswer = buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle.viewerContext)
+    if (directAnswer) {
+      assistantContent = directAnswer.content
+      status = 'direct_answer'
+      persistedHistory = args.userId
+        ? await persistCivilAiHistory(args.userId, [
+            {
+              role: 'user',
+              content: args.body.messages[args.body.messages.length - 1]?.content ?? '',
+              createdAt: new Date().toISOString(),
+            },
+            {
+              role: 'assistant',
+              content: directAnswer.content,
+              createdAt: new Date().toISOString(),
+              references: directAnswer.references,
+            },
+          ])
+        : null
+
+      return {
+        conversationId: args.conversationId,
+        message: {
+          role: 'assistant',
+          content: directAnswer.content,
+          references: directAnswer.references,
+        },
+        model: null,
+        server: null,
+        viewerContext: retrievalBundle.viewerContext,
+        history: persistedHistory,
+        raw: null,
+      }
+    }
+
+    if (shouldCivilAiRunSecondSearch(latestUserMessage, retrievalBundle)) {
+      retrievalBundle = await buildCivilAiRetrievalBundle(args.userId ?? null, latestUserMessage, { searchPass: 2 })
+    }
+
+    const groundedAnswer = buildCivilAiGroundedAnswer(latestUserMessage, retrievalBundle.grounding)
+    if (groundedAnswer) {
+      assistantContent = groundedAnswer.content
+      status = 'grounded_answer'
+      persistedHistory = args.userId
+        ? await persistCivilAiHistory(args.userId, [
+            {
+              role: 'user',
+              content: args.body.messages[args.body.messages.length - 1]?.content ?? '',
+              createdAt: new Date().toISOString(),
+            },
+            {
+              role: 'assistant',
+              content: groundedAnswer.content,
+              createdAt: new Date().toISOString(),
+              references: groundedAnswer.references,
+            },
+          ])
+        : null
+
+      return {
+        conversationId: args.conversationId,
+        message: {
+          role: 'assistant',
+          content: groundedAnswer.content,
+          references: groundedAnswer.references,
+        },
+        model: null,
+        server: null,
+        viewerContext: retrievalBundle.viewerContext,
+        history: persistedHistory,
+        raw: null,
+      }
+    }
+
+    const resolved = await resolveCivilAiServer(args.body.serverId)
+    resolvedServer = resolved.server
+    if (!resolved.server) {
+      status = 'no_ai_server_available'
+      errorMessage = 'no_ai_server_available'
+      throw new Error('no_ai_server_available')
+    }
+    resolvedModel = await resolveCivilAiModel(resolved.server, args.body.model)
+    if (!resolvedModel) {
+      status = 'no_ai_model_available'
+      errorMessage = 'no_ai_model_available'
+      throw new Error('no_ai_model_available')
+    }
+
+    const instructions = await readCivilAiInstructions()
+    const combinedInstructions = [instructions.content, retrievalBundle.prompt].filter(Boolean).join('\n\n')
+    const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: combinedInstructions },
+      ...activeMessages.map((message) => ({
+        role: message.role as 'system' | 'user' | 'assistant',
+        content: message.content,
+      })),
+    ]
+    upstreamInput = buildCivilAiPromptInput(combinedInstructions, upstreamMessages)
+
+    const upstream = await callCivilAiServer({
+      server: resolved.server,
+      path: '/api/v1/chat',
+      method: 'POST',
+      timeoutMs: args.upstreamTimeoutMs,
+      signal: args.signal,
+      body: {
+        model: resolvedModel,
+        input: upstreamInput,
+        temperature: args.body.temperature,
+        top_p: args.body.topP,
+        max_tokens: args.body.maxTokens,
+        stream: false,
+      },
+    })
+
+    rawResponse = upstream.json ?? upstream.text?.trim() ?? null
+    if (!upstream.ok) {
+      status = 'ai_chat_failed'
+      errorMessage = upstream.text || 'ai_chat_failed'
+      throw new Error(upstream.text || 'ai_chat_failed')
+    }
+
+    const rawContent = extractCivilAiMessageContent(upstream.json)
+    const content = sanitizeCivilAiResponseContent(rawContent, retrievalBundle.references)
+    if (!content) {
+      status = 'ai_empty_response'
+      errorMessage = 'ai_empty_response'
+      throw new Error('ai_empty_response')
+    }
+
+    assistantContent = content
+    status = 'completed'
+    persistedHistory = args.userId
+      ? await persistCivilAiHistory(args.userId, [
+          {
+            role: 'user',
+            content: args.body.messages[args.body.messages.length - 1]?.content ?? '',
+            createdAt: new Date().toISOString(),
+          },
+          {
+            role: 'assistant',
+            content,
+            createdAt: new Date().toISOString(),
+            references: retrievalBundle.references,
+          },
+        ])
+      : null
+
+    return {
+      conversationId: args.conversationId,
+      message: {
+        role: 'assistant',
+        content,
+        references: retrievalBundle.references,
+      },
+      model: resolvedModel,
+      server: resolved.server,
+      viewerContext: retrievalBundle.viewerContext,
+      history: persistedHistory,
+      raw: upstream.json,
+    }
+  } finally {
+    try {
+      await persistCivilAiDebugTurn({
+        conversationId: args.conversationId,
+        userId: args.userId,
+        latestUserMessage,
+        requestMessages: activeMessages.map((message) => ({ role: message.role, content: message.content })),
+        viewerContext: retrievalBundle?.viewerContext ?? null,
+        retrievalDebug: retrievalBundle
+          ? {
+              ...retrievalBundle.debug,
+              directAnswerUsed: status === 'direct_answer',
+              groundedAnswerUsed: status === 'grounded_answer',
+              upstreamInputChars: upstreamInput?.length ?? 0,
+            }
+          : null,
+        references:
+          status === 'direct_answer'
+            ? buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle?.viewerContext ?? null)?.references ?? []
+            : status === 'grounded_answer'
+              ? buildCivilAiGroundedAnswer(
+                  latestUserMessage,
+                  retrievalBundle?.grounding ?? {
+                    retrievalPlan: planCivilAiRetrieval(latestUserMessage),
+                    searchPass: 1,
+                    targetCommunities: [],
+                    events: [],
+                    jobs: [],
+                    market: [],
+                    organizations: [],
+                    posts: [],
+                  },
+                )?.references ?? []
+              : retrievalBundle?.references ?? [],
+        serverName: resolvedServer?.name ?? null,
+        model: resolvedModel,
+        upstreamInput,
+        assistantContent,
+        rawResponse,
+        status,
+        errorMessage,
+        durationMs: Date.now() - requestStartedAt,
+      })
+    } catch (error) {
+      args.logger?.error({ err: error }, 'civil_ai_debug_log_failed')
+    }
+  }
+}
+
+async function createCivilAiChatJob(args: {
+  conversationId: string
+  userId: string | null
+  body: CivilAiChatInputPayload
+  latestUserMessage: string
+}) {
+  await ensureCivilAiJobTables()
+  const jobId = randomUUID()
+  await prisma.$executeRaw`
+    INSERT INTO civil_ai_job (
+      id, conversation_id, user_id, status, request_body_text, latest_user_message, created_at, updated_at
+    )
+    VALUES (
+      ${jobId}, ${args.conversationId}, ${args.userId}, ${'queued'}, ${safeJsonStringify(args.body) ?? '{}'}, ${args.latestUserMessage}, NOW(), NOW()
+    )
+  `
+  return jobId
+}
+
+async function loadActiveCivilAiChatJobForUser(userId: string) {
+  await ensureCivilAiJobTables()
+  const rows = await prisma.$queryRaw<CivilAiJobRow[]>`
+    SELECT
+      id,
+      conversation_id,
+      user_id,
+      status,
+      request_body_text,
+      latest_user_message,
+      response_text,
+      error_text,
+      server_name,
+      model,
+      created_at,
+      started_at,
+      completed_at,
+      updated_at
+    FROM civil_ai_job
+    WHERE user_id = ${userId}
+      AND (status = ${'queued'} OR status = ${'processing'})
+    ORDER BY created_at DESC
+    LIMIT 1
+  `
+  return rows[0] ?? null
+}
+
+async function loadCivilAiChatJob(jobId: string) {
+  await ensureCivilAiJobTables()
+  const rows = await prisma.$queryRaw<CivilAiJobRow[]>`
+    SELECT
+      id,
+      conversation_id,
+      user_id,
+      status,
+      request_body_text,
+      latest_user_message,
+      response_text,
+      error_text,
+      server_name,
+      model,
+      created_at,
+      started_at,
+      completed_at,
+      updated_at
+    FROM civil_ai_job
+    WHERE id = ${jobId}
+    LIMIT 1
+  `
+  return rows[0] ?? null
+}
+
+async function processCivilAiChatJob(jobId: string) {
+  if (civilAiProcessingJobIds.has(jobId)) return
+  civilAiProcessingJobIds.add(jobId)
+
+  try {
+    await ensureCivilAiJobTables()
+    const claimedRows = await prisma.$queryRaw<CivilAiJobRow[]>`
+      UPDATE civil_ai_job
+      SET
+        status = ${'processing'},
+        started_at = COALESCE(started_at, NOW()),
+        updated_at = NOW(),
+        error_text = NULL
+      WHERE id = ${jobId}
+        AND status = ${'queued'}
+      RETURNING
+        id,
+        conversation_id,
+        user_id,
+        status,
+        request_body_text,
+        latest_user_message,
+        response_text,
+        error_text,
+        server_name,
+        model,
+        created_at,
+        started_at,
+        completed_at,
+        updated_at
+    `
+    const job = claimedRows[0]
+    if (!job) return
+
+    const parsedBody = parseLoggedJsonText<unknown>(job.request_body_text)
+    const body = CivilAiChatInput.safeParse(parsedBody ?? {})
+    if (!body.success) {
+      await prisma.$executeRaw`
+        UPDATE civil_ai_job
+        SET
+          status = ${'failed'},
+          error_text = ${JSON.stringify(body.error.flatten())},
+          completed_at = NOW(),
+          updated_at = NOW()
+        WHERE id = ${jobId}
+      `
+      return
+    }
+
+    try {
+      const upstreamController = new AbortController()
+      civilAiJobAbortControllers.set(jobId, upstreamController)
+      const result = await executeCivilAiChatRequest({
+        body: body.data,
+        conversationId: job.conversation_id,
+        userId: job.user_id,
+        upstreamTimeoutMs: CIVIL_AI_JOB_TIMEOUT_MS,
+        signal: upstreamController.signal,
+        logger: app.log,
+      })
+      civilAiJobAbortControllers.delete(jobId)
+      await prisma.$executeRaw`
+        UPDATE civil_ai_job
+        SET
+          status = ${'completed'},
+          response_text = ${safeJsonStringify(result)},
+          error_text = NULL,
+          server_name = ${result.server?.name ?? null},
+          model = ${result.model},
+          completed_at = NOW(),
+          updated_at = NOW()
+        WHERE id = ${jobId}
+      `
+    } catch (error) {
+      civilAiJobAbortControllers.delete(jobId)
+      const latestJob = await loadCivilAiChatJob(jobId)
+      if (latestJob?.status === 'cancelled') {
+        return
+      }
+      app.log.error({ err: error, jobId }, 'civil_ai_job_failed')
+      await prisma.$executeRaw`
+        UPDATE civil_ai_job
+        SET
+          status = ${'failed'},
+          error_text = ${serializeError(error)},
+          completed_at = NOW(),
+          updated_at = NOW()
+        WHERE id = ${jobId}
+      `
+    }
+  } finally {
+    civilAiProcessingJobIds.delete(jobId)
+  }
+}
+
+function scheduleCivilAiChatJob(jobId: string) {
+  queueMicrotask(() => {
+    void processCivilAiChatJob(jobId)
+  })
+}
+
+function formatCivilAiChatJobPayload(job: CivilAiJobRow) {
+  const parsedResponse = parseLoggedJsonText<CivilAiChatResponsePayload>(job.response_text)
+  return {
+    jobId: job.id,
+    conversationId: job.conversation_id,
+    status: job.status as CivilAiJobStatus,
+    message: parsedResponse?.message ?? null,
+    error: job.error_text ?? null,
+    completedAt: job.completed_at ? job.completed_at.toISOString() : null,
+    startedAt: job.started_at ? job.started_at.toISOString() : null,
+    createdAt: job.created_at.toISOString(),
+  }
+}
+
+async function cancelCivilAiChatJob(jobId: string) {
+  await ensureCivilAiJobTables()
+  const updatedRows = await prisma.$queryRaw<CivilAiJobRow[]>`
+    UPDATE civil_ai_job
+    SET
+      status = ${'cancelled'},
+      error_text = ${'ai_request_cancelled'},
+      completed_at = COALESCE(completed_at, NOW()),
+      updated_at = NOW()
+    WHERE id = ${jobId}
+      AND (status = ${'queued'} OR status = ${'processing'})
+    RETURNING
+      id,
+      conversation_id,
+      user_id,
+      status,
+      request_body_text,
+      latest_user_message,
+      response_text,
+      error_text,
+      server_name,
+      model,
+      created_at,
+      started_at,
+      completed_at,
+      updated_at
+  `
+  const job = updatedRows[0] ?? null
+  if (job) {
+    civilAiJobAbortControllers.get(jobId)?.abort('user_cancelled')
+    civilAiJobAbortControllers.delete(jobId)
+  }
+  return job
+}
+
 app.get('/ai/servers', async (_req: FastifyRequest, reply: FastifyReply) => {
   const config = await loadCivilAiServersConfig()
   const instructions = await readCivilAiInstructions()
@@ -11846,6 +12417,58 @@ app.get('/ai/models/download/status/:jobId', async (req: FastifyRequest, reply: 
   return reply.send(upstream.json ?? { ok: true })
 })
 
+app.get('/ai/chat', async (_req: FastifyRequest, reply: FastifyReply) => {
+  return reply.code(405).send({
+    error: 'method_not_allowed',
+    message: 'Use POST /ai/chat to create an AI job, then GET /ai/chat/jobs/:jobId to poll for completion.',
+  })
+})
+
+app.get('/ai/chat/jobs/:jobId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (authContext?.actor === 'family_member') {
+    return reply.code(403).send({ error: 'family_mode_not_available' })
+  }
+
+  const params = z.object({ jobId: z.string().trim().min(1).max(120) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const job = await loadCivilAiChatJob(params.data.jobId)
+  if (!job) return reply.code(404).send({ error: 'ai_job_not_found' })
+
+  const userId = await resolveUserId(req)
+  if (job.user_id && job.user_id !== userId) {
+    return reply.code(404).send({ error: 'ai_job_not_found' })
+  }
+
+  if (job.status === 'queued') {
+    scheduleCivilAiChatJob(job.id)
+  }
+
+  return reply.send(formatCivilAiChatJobPayload(job))
+})
+
+app.delete('/ai/chat/jobs/:jobId', async (req: FastifyRequest, reply: FastifyReply) => {
+  const authContext = await loadViewerAuthContext(req)
+  if (authContext?.actor === 'family_member') {
+    return reply.code(403).send({ error: 'family_mode_not_available' })
+  }
+
+  const params = z.object({ jobId: z.string().trim().min(1).max(120) }).safeParse(req.params)
+  if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const job = await loadCivilAiChatJob(params.data.jobId)
+  if (!job) return reply.code(404).send({ error: 'ai_job_not_found' })
+
+  const userId = await resolveUserId(req)
+  if (job.user_id && job.user_id !== userId) {
+    return reply.code(404).send({ error: 'ai_job_not_found' })
+  }
+
+  const cancelled = await cancelCivilAiChatJob(job.id)
+  return reply.send(formatCivilAiChatJobPayload(cancelled ?? job))
+})
+
 app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
   const authContext = await loadViewerAuthContext(req)
   if (authContext?.actor === 'family_member') {
@@ -11855,230 +12478,38 @@ app.post('/ai/chat', async (req: FastifyRequest, reply: FastifyReply) => {
   const body = CivilAiChatInput.safeParse(req.body ?? {})
   if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
   const userId = await resolveUserId(req)
-  const conversationId = body.data.conversationId?.trim() || randomUUID()
-  const activeMessages: Array<{ role: 'user' | 'assistant'; content: string }> = selectCivilAiActiveMessages(body.data.messages)
-  const latestUserMessage = buildCivilAiEffectiveQuestion(body.data.messages)
-
-  const requestStartedAt = Date.now()
-  let status = 'error'
-  let errorMessage: string | null = null
-  let resolvedModel: string | null = null
-  let resolvedServer: CivilAiServerConfig | null = null
-  let retrievalBundle: Awaited<ReturnType<typeof buildCivilAiRetrievalBundle>> | null = null
-  let upstreamInput: string | null = null
-  let assistantContent: string | null = null
-  let rawResponse: unknown = null
-  let persistedHistory: CivilAiHistoryEntry[] | null = null
-
-  try {
-    retrievalBundle = await buildCivilAiRetrievalBundle(userId ?? null, latestUserMessage)
-
-    const directAnswer = buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle.viewerContext)
-    if (directAnswer) {
-      assistantContent = directAnswer.content
-      status = 'direct_answer'
-      persistedHistory = userId
-        ? await persistCivilAiHistory(userId, [
-            {
-              role: 'user',
-              content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
-              createdAt: new Date().toISOString(),
-            },
-            {
-              role: 'assistant',
-              content: directAnswer.content,
-              createdAt: new Date().toISOString(),
-              references: directAnswer.references,
-            },
-          ])
-        : null
-
-      return reply.send({
-        conversationId,
-        message: {
-          role: 'assistant',
-          content: directAnswer.content,
-          references: directAnswer.references,
-        },
-        model: null,
-        server: null,
-        viewerContext: retrievalBundle.viewerContext,
-        history: persistedHistory,
-        raw: null,
+  if (userId) {
+    const activeJob = await loadActiveCivilAiChatJobForUser(userId)
+    if (activeJob) {
+      if (activeJob.status === 'queued') {
+        scheduleCivilAiChatJob(activeJob.id)
+      }
+      return reply.code(202).send({
+        jobId: activeJob.id,
+        conversationId: activeJob.conversation_id,
+        status: activeJob.status,
       })
-    }
-
-    if (shouldCivilAiRunSecondSearch(latestUserMessage, retrievalBundle)) {
-      retrievalBundle = await buildCivilAiRetrievalBundle(userId ?? null, latestUserMessage, { searchPass: 2 })
-    }
-
-    const groundedAnswer = buildCivilAiGroundedAnswer(latestUserMessage, retrievalBundle.grounding)
-    if (groundedAnswer) {
-      assistantContent = groundedAnswer.content
-      status = 'grounded_answer'
-      persistedHistory = userId
-        ? await persistCivilAiHistory(userId, [
-            {
-              role: 'user',
-              content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
-              createdAt: new Date().toISOString(),
-            },
-            {
-              role: 'assistant',
-              content: groundedAnswer.content,
-              createdAt: new Date().toISOString(),
-              references: groundedAnswer.references,
-            },
-          ])
-        : null
-
-      return reply.send({
-        conversationId,
-        message: {
-          role: 'assistant',
-          content: groundedAnswer.content,
-          references: groundedAnswer.references,
-        },
-        model: null,
-        server: null,
-        viewerContext: retrievalBundle.viewerContext,
-        history: persistedHistory,
-        raw: null,
-      })
-    }
-
-    const resolved = await resolveCivilAiServer(body.data.serverId)
-    resolvedServer = resolved.server
-    if (!resolved.server) {
-      status = 'no_ai_server_available'
-      errorMessage = 'no_ai_server_available'
-      return reply.code(503).send({ error: 'no_ai_server_available' })
-    }
-    resolvedModel = await resolveCivilAiModel(resolved.server, body.data.model)
-    if (!resolvedModel) {
-      status = 'no_ai_model_available'
-      errorMessage = 'no_ai_model_available'
-      return reply.code(503).send({ error: 'no_ai_model_available' })
-    }
-
-    const instructions = await readCivilAiInstructions()
-    const combinedInstructions = [instructions.content, retrievalBundle.prompt].filter(Boolean).join('\n\n')
-    const upstreamMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: combinedInstructions },
-      ...activeMessages.map((message) => ({
-        role: message.role as 'system' | 'user' | 'assistant',
-        content: message.content,
-      })),
-    ]
-    upstreamInput = buildCivilAiPromptInput(combinedInstructions, upstreamMessages)
-
-    const upstream = await callCivilAiServer({
-      server: resolved.server,
-      path: '/api/v1/chat',
-      method: 'POST',
-      body: {
-        model: resolvedModel,
-        input: upstreamInput,
-        temperature: body.data.temperature,
-        top_p: body.data.topP,
-        max_tokens: body.data.maxTokens,
-        stream: body.data.stream ?? false,
-      },
-    })
-
-    rawResponse = upstream.json ?? upstream.text?.trim() ?? null
-    if (!upstream.ok) {
-      status = 'ai_chat_failed'
-      errorMessage = upstream.text || 'ai_chat_failed'
-      return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_chat_failed' })
-    }
-
-    const rawContent = extractCivilAiMessageContent(upstream.json)
-    const content = sanitizeCivilAiResponseContent(rawContent, retrievalBundle.references)
-    if (!content) {
-      status = 'ai_empty_response'
-      errorMessage = 'ai_empty_response'
-      return reply.code(502).send({ error: 'ai_empty_response', raw: rawResponse })
-    }
-
-    assistantContent = content
-    status = 'completed'
-    persistedHistory = userId
-      ? await persistCivilAiHistory(userId, [
-          {
-            role: 'user',
-            content: body.data.messages[body.data.messages.length - 1]?.content ?? '',
-            createdAt: new Date().toISOString(),
-          },
-          {
-            role: 'assistant',
-            content,
-            createdAt: new Date().toISOString(),
-            references: retrievalBundle.references,
-          },
-        ])
-      : null
-
-    return reply.send({
-      conversationId,
-      message: {
-        role: 'assistant',
-        content,
-        references: retrievalBundle.references,
-      },
-      model: resolvedModel,
-      server: resolved.server,
-      viewerContext: retrievalBundle.viewerContext,
-      history: persistedHistory,
-      raw: upstream.json,
-    })
-  } finally {
-    try {
-      await persistCivilAiDebugTurn({
-        conversationId,
-        userId,
-        latestUserMessage,
-        requestMessages: activeMessages.map((message) => ({ role: message.role, content: message.content })),
-        viewerContext: retrievalBundle?.viewerContext ?? null,
-        retrievalDebug: retrievalBundle
-          ? {
-              ...retrievalBundle.debug,
-              directAnswerUsed: status === 'direct_answer',
-              groundedAnswerUsed: status === 'grounded_answer',
-              upstreamInputChars: upstreamInput?.length ?? 0,
-            }
-          : null,
-        references:
-          status === 'direct_answer'
-            ? buildCivilAiDirectAnswer(latestUserMessage, retrievalBundle?.viewerContext ?? null)?.references ?? []
-            : status === 'grounded_answer'
-              ? buildCivilAiGroundedAnswer(
-                  latestUserMessage,
-                  retrievalBundle?.grounding ?? {
-                    retrievalPlan: planCivilAiRetrieval(latestUserMessage),
-                    searchPass: 1,
-                    targetCommunities: [],
-                    events: [],
-                    jobs: [],
-                        market: [],
-                    organizations: [],
-                    posts: [],
-                  },
-                )?.references ?? []
-              : retrievalBundle?.references ?? [],
-        serverName: resolvedServer?.name ?? null,
-        model: resolvedModel,
-        upstreamInput,
-        assistantContent,
-        rawResponse,
-        status,
-        errorMessage,
-        durationMs: Date.now() - requestStartedAt,
-      })
-    } catch (error) {
-      req.log.error({ err: error }, 'civil_ai_debug_log_failed')
     }
   }
+  const conversationId = body.data.conversationId?.trim() || randomUUID()
+  const latestUserMessage = buildCivilAiEffectiveQuestion(body.data.messages)
+  const jobId = await createCivilAiChatJob({
+    conversationId,
+    userId,
+    body: {
+      ...body.data,
+      conversationId,
+      stream: false,
+    },
+    latestUserMessage,
+  })
+
+  scheduleCivilAiChatJob(jobId)
+  return reply.code(202).send({
+    jobId,
+    conversationId,
+    status: 'queued',
+  })
 })
 
 // Ensure all unexpected errors return clean JSON (prevents malformed bodies)

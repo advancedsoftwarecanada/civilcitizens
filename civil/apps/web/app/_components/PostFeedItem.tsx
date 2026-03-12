@@ -730,7 +730,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       ) : null}
 
       {isEditing ? (
-        <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl">
+        <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl" closeOnBackdrop={false} closeOnEscape={false}>
           <div className="space-y-4 p-6">
             <div className="grid gap-4">
               {post.type === 'article' ? (
