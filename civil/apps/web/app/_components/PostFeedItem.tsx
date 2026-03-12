@@ -34,6 +34,21 @@ import PollCard from './PollCard'
 const FEED_COMMENT_PREVIEW_LIMIT = 3
 const FEED_COMMENT_BUFFER_LIMIT = 20
 
+type FeedComment = NonNullable<ApiPost['recentComments']>[number]
+
+type FeedViewer = {
+  id: string
+  handle: string
+  name?: string | null
+  avatarUrl?: string | null
+  isPremium?: boolean
+  isVerified?: boolean
+}
+
+function mergeRecentCommentList(current: FeedComment[], comment: FeedComment, removeIds: string[] = []) {
+  return [comment, ...current.filter((item) => item.id !== comment.id && !removeIds.includes(item.id))].slice(0, FEED_COMMENT_BUFFER_LIMIT)
+}
+
 function buildPostUrl(post: ApiPost) {
   const slug = post.seoSlug ?? post.id
   if (post.provinceCode && post.communitySlug) {
@@ -55,10 +70,11 @@ type PostFeedItemProps = {
   onDelete?: (postId: string) => void
   onUpdate?: (post: ApiPost) => void
   viewerId?: string | null
+  viewer?: FeedViewer | null
   communityOptions?: CommunityTarget[]
 }
 
-export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerId, communityOptions }: PostFeedItemProps) {
+export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewerId, viewer, communityOptions }: PostFeedItemProps) {
   const router = useRouter()
   const [pending, setPending] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -71,9 +87,24 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const [inlineSubmitting, setInlineSubmitting] = useState(false)
   const [activeReplyParentId, setActiveReplyParentId] = useState<string | null>(null)
   const [replyDraft, setReplyDraft] = useState('')
-  const [recentComments, setRecentComments] = useState(post.recentComments ?? [])
+  const [clientRecentComments, setClientRecentComments] = useState<FeedComment[]>([])
   const [hideInlineCommentComposer, setHideInlineCommentComposer] = useState(false)
-  const commentCount = post.counts?.commentCount ?? 0
+  const [localCommentCount, setLocalCommentCount] = useState(post.counts?.commentCount ?? 0)
+  const commentCount = localCommentCount
+  const effectiveViewer = viewer ?? null
+  const serverRecentComments = useMemo(() => (post.recentComments ?? []) as FeedComment[], [post.recentComments])
+  const recentComments = useMemo(() => {
+    const merged = new Map<string, FeedComment>()
+    for (const comment of clientRecentComments) {
+      merged.set(comment.id, comment)
+    }
+    for (const comment of serverRecentComments) {
+      if (!merged.has(comment.id)) {
+        merged.set(comment.id, comment)
+      }
+    }
+    return Array.from(merged.values())
+  }, [clientRecentComments, serverRecentComments])
   const viewerReaction = post.viewer?.reaction ?? null
   const postUrl = buildPostUrl(post)
   const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
@@ -138,8 +169,12 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const sharedPostHref = post.sharedPost ? buildPostUrl(post.sharedPost) : null
 
   useEffect(() => {
-    setRecentComments(post.recentComments ?? [])
-  }, [post.id, post.recentComments])
+    setClientRecentComments([])
+  }, [post.id])
+
+  useEffect(() => {
+    setLocalCommentCount(post.counts?.commentCount ?? 0)
+  }, [post.id, post.counts?.commentCount])
 
   useEffect(() => {
     setEditTitle(post.title ?? '')
@@ -247,6 +282,40 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
     }
 
     setInlineSubmitting(true)
+    const optimisticCommentId = viewerId ? `optimistic-${post.id}-${Date.now()}` : null
+
+    if (parentId) {
+      setReplyDraft('')
+      setActiveReplyParentId(null)
+    } else {
+      setInlineComment('')
+      setHideInlineCommentComposer(true)
+    }
+
+    if (optimisticCommentId) {
+      const optimisticComment: FeedComment = {
+        id: optimisticCommentId,
+        postId: post.id,
+        parentId: parentId ?? null,
+        body: trimmedBody,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        score: 0,
+        optimistic: true,
+        localPreview: true,
+        author: {
+          id: viewerId ?? '',
+          handle: effectiveViewer?.handle ?? 'you',
+          name: effectiveViewer?.name ?? 'You',
+          avatarUrl: effectiveViewer?.avatarUrl ?? null,
+          isPremium: Boolean(effectiveViewer?.isPremium),
+          isVerified: Boolean(effectiveViewer?.isVerified),
+        },
+      }
+      setClientRecentComments((current) => mergeRecentCommentList(current, optimisticComment))
+      setLocalCommentCount((current) => current + 1)
+    }
+
     try {
       const res = await fetch(buildApiUrl('/comments'), {
         method: 'POST',
@@ -272,11 +341,18 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       let nextRecentComments = recentComments
 
       if (newComment) {
-        nextRecentComments = [newComment, ...recentComments.filter((item) => item.id !== newComment.id)].slice(0, FEED_COMMENT_BUFFER_LIMIT)
-        setRecentComments(nextRecentComments)
+        const localPreviewComment: FeedComment = {
+          ...newComment,
+          localPreview: true,
+        }
+        setClientRecentComments((current) => {
+          nextRecentComments = mergeRecentCommentList(current, localPreviewComment, optimisticCommentId ? [optimisticCommentId] : [])
+          return nextRecentComments
+        })
       }
       if (updatedPost) {
         const incomingRecentComments = (updatedPost as Partial<ApiPost>).recentComments
+        const incomingCommentCount = (updatedPost as Partial<ApiPost>).counts?.commentCount
         const mergedPost: ApiPost = {
           ...post,
           ...(updatedPost as Partial<ApiPost>),
@@ -292,11 +368,24 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             ? incomingRecentComments
             : nextRecentComments,
         }
+        if (typeof incomingCommentCount === 'number') {
+          setLocalCommentCount(incomingCommentCount)
+        }
         onUpdate?.(mergedPost)
       }
-      setHideInlineCommentComposer(true)
       return true
     } catch {
+      if (optimisticCommentId) {
+        setClientRecentComments((current) => current.filter((item) => item.id !== optimisticCommentId))
+        setLocalCommentCount((current) => Math.max(0, current - 1))
+      }
+      if (parentId) {
+        setReplyDraft(trimmedBody)
+        setActiveReplyParentId(parentId)
+      } else {
+        setInlineComment(trimmedBody)
+        setHideInlineCommentComposer(false)
+      }
       pushToast('Unable to add comment right now.', 'error')
       return false
     } finally {
@@ -495,6 +584,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
 
         <CivilPostComments
           comments={previewComments}
+          postHref={postUrl}
           viewerId={viewerId}
           activeReplyParentId={activeReplyParentId}
           replyDraft={replyDraft}
@@ -511,6 +601,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             const ok = await submitComment({ body: replyDraft, parentId: commentId })
             if (ok) {
               setReplyDraft('')
+              setActiveReplyParentId(null)
             }
             return ok
           }}

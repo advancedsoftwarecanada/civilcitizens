@@ -28,6 +28,14 @@ export default function CommunityPostsFeed() {
   const [error, setError] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('hot')
   const [viewerId, setViewerId] = useState<string | null>(null)
+  const [viewer, setViewer] = useState<{
+    id: string
+    handle: string
+    name?: string | null
+    avatarUrl?: string | null
+    isPremium?: boolean
+    isVerified?: boolean
+  } | null>(null)
 
   const loadPosts = useCallback(async () => {
     setLoading(true)
@@ -78,6 +86,14 @@ export default function CommunityPostsFeed() {
 
     if (cachedMe) {
       setViewerId(cachedMe.id ?? null)
+      setViewer({
+        id: cachedMe.id,
+        handle: cachedMe.handle,
+        name: cachedMe.name,
+        avatarUrl: cachedMe.avatarUrl,
+        isPremium: cachedMe.isPremium,
+        isVerified: cachedMe.isVerified,
+      })
       return
     }
 
@@ -86,6 +102,14 @@ export default function CommunityPostsFeed() {
       const data = await ensureViewerMe({ token })
       if (cancelled || !data) return
       setViewerId(data.id ?? null)
+      setViewer({
+        id: data.id,
+        handle: data.handle,
+        name: data.name,
+        avatarUrl: data.avatarUrl,
+        isPremium: data.isPremium,
+        isVerified: data.isVerified,
+      })
     })()
 
     return () => {
@@ -213,6 +237,7 @@ export default function CommunityPostsFeed() {
               post={post}
               onReact={handleReact}
               viewerId={viewerId}
+              viewer={viewer}
             />
           ))
         )}

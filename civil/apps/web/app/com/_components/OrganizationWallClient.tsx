@@ -29,6 +29,14 @@ export default function OrganizationWallClient({
 }) {
   const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [viewerId, setViewerId] = useState<string | null>(null)
+  const [viewer, setViewer] = useState<{
+    id: string
+    handle: string
+    name?: string | null
+    avatarUrl?: string | null
+    isPremium?: boolean
+    isVerified?: boolean
+  } | null>(null)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -146,7 +154,17 @@ export default function OrganizationWallClient({
     const loadMe = async () => {
       try {
         const me = await ensureViewerMe({ token })
-        if (!cancelled) setViewerId(me?.id ?? null)
+        if (!cancelled) {
+          setViewerId(me?.id ?? null)
+          setViewer(me ? {
+            id: me.id,
+            handle: me.handle,
+            name: me.name,
+            avatarUrl: me.avatarUrl,
+            isPremium: me.isPremium,
+            isVerified: me.isVerified,
+          } : null)
+        }
       } catch {
         // ignore
       }
@@ -305,6 +323,7 @@ export default function OrganizationWallClient({
               post={post}
               onReact={handleReact}
               viewerId={viewerId}
+              viewer={viewer}
             />
           ))
         )}
