@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { clearLastNativeNotificationTapUrl, ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl, isNativeApp } from '../_lib/nativePush'
+import { clearLastNativeNotificationTapUrl, ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl, getNativePlatformName } from '../_lib/nativePush'
 import { acknowledgePendingPushRedirect, markPendingPushRedirectAttempt, setPendingPushRedirect } from '../_lib/pendingPushRedirect'
 
 function normalizeDeepLinkUrl(raw: string): string | null {
@@ -38,9 +38,26 @@ export default function NotificationTapRouter() {
   const currentUrl = useMemo(() => `${pathname}${searchParams ? `?${searchParams.toString()}` : ''}`, [pathname, searchParams])
 
   const isHandlingRef = useRef(false)
+  const [nativePlatform, setNativePlatform] = useState<string | null>(() => getNativePlatformName())
 
   useEffect(() => {
-    if (!isNativeApp()) return
+    if (nativePlatform) return undefined
+
+    const intervalId = window.setInterval(() => {
+      const platform = getNativePlatformName()
+      if (platform) {
+        setNativePlatform(platform)
+        window.clearInterval(intervalId)
+      }
+    }, 300)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [nativePlatform])
+
+  useEffect(() => {
+    if (!nativePlatform) return
 
     const handle = async () => {
       if (isHandlingRef.current) return
@@ -88,7 +105,7 @@ export default function NotificationTapRouter() {
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', handle)
     }
-  }, [router, currentUrl])
+  }, [router, currentUrl, nativePlatform])
 
   return null
 }
