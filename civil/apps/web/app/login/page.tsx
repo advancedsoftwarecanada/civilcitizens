@@ -8,6 +8,7 @@ import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import { AuthScreen } from '../_components/AuthScreen'
 import { setAuthToken } from '../_lib/authSession'
 import AppleInstallRedirect from '../_components/AppleInstallRedirect'
+import { resolvePendingPushRedirectOrFallback } from '../_lib/pendingPushRedirect'
 
 type LoginSuccess = {
   token: string
@@ -98,7 +99,7 @@ function LoginPageInner() {
       if (typeof data.token === 'string') {
         setAuthToken(data.token)
       }
-      const destination = safeNext ?? '/home'
+      const destination = safeNext ? resolvePendingPushRedirectOrFallback(safeNext) : resolvePendingPushRedirectOrFallback('/home')
       router.replace(destination)
     } catch (error) {
       console.error('Login request failed', error)
