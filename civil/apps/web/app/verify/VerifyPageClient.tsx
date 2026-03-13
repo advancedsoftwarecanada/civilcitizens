@@ -16,6 +16,7 @@ import {
   type MeResponse,
   type WorkAuthorizationValue,
 } from '../_lib/me'
+import { resolvePendingPushRedirectOrFallback } from '../_lib/pendingPushRedirect'
 import { useViewerStore } from '../_lib/viewerStore'
 
 const wallpaperBackground: CSSProperties = {
@@ -71,7 +72,7 @@ export default function VerifyPageClient() {
         return
       }
       if (hasDeclaredCivilStatus(cachedMe) && !isEditMode) {
-        router.replace('/home')
+        router.replace(resolvePendingPushRedirectOrFallback('/home'))
         return
       }
       setMe(cachedMe)
@@ -96,7 +97,7 @@ export default function VerifyPageClient() {
           return
         }
         if (hasDeclaredCivilStatus(viewer) && !isEditMode) {
-          router.replace('/home')
+          router.replace(resolvePendingPushRedirectOrFallback('/home'))
           return
         }
         setMe(viewer)
@@ -164,7 +165,7 @@ export default function VerifyPageClient() {
       const nextMe = await ensureViewerMe({ token, force: true, refresh: true })
       if (nextMe) {
         setViewerMe(nextMe)
-        router.replace(isEditMode ? '/profile/edit' : getAuthedEntryPath(nextMe))
+        router.replace(isEditMode ? '/profile/edit' : resolvePendingPushRedirectOrFallback(getAuthedEntryPath(nextMe)))
         return
       }
 
@@ -173,7 +174,7 @@ export default function VerifyPageClient() {
         return
       }
 
-      router.replace(isEditMode ? '/profile/edit' : '/home')
+      router.replace(isEditMode ? '/profile/edit' : resolvePendingPushRedirectOrFallback('/home'))
     } catch {
       pushToast('Unable to save your status.', 'error')
     } finally {

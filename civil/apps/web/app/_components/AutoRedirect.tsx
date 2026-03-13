@@ -5,6 +5,7 @@ import { getAuthedEntryPath } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { FAMILY_PARENT_TOKEN_KEY } from '../_lib/authSession'
 import { readStoredFamilyView } from '../_lib/familyView'
+import { resolvePendingPushRedirectOrFallback } from '../_lib/pendingPushRedirect'
 import { useViewerStore } from '../_lib/viewerStore'
 
 export default function AutoRedirect() {
@@ -55,7 +56,7 @@ export default function AutoRedirect() {
           return
         }
         didNavigateRef.current = true
-        router.replace(getAuthedEntryPath(data))
+        router.replace(resolvePendingPushRedirectOrFallback(getAuthedEntryPath(data)))
       })
       .catch(() => {
         if (!cancelled) {

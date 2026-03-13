@@ -7,6 +7,7 @@ import { hasHomeCommunity } from '../_lib/me'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildPwaInstallEntryUrl } from '../_lib/appleInstallGate'
 import { readStoredPostalCode } from '../_lib/postalRequirement'
+import { resolvePendingPushRedirectOrFallback } from '../_lib/pendingPushRedirect'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 
@@ -29,7 +30,7 @@ export default function WelcomePage() {
 
     if (cachedMe) {
       if (hasHomeCommunity(cachedMe) && readStoredPostalCode(cachedMe.id)) {
-        router.replace('/home')
+        router.replace(resolvePendingPushRedirectOrFallback('/home'))
       }
       return
     }
@@ -39,7 +40,7 @@ export default function WelcomePage() {
       const data = await ensureViewerMe({ token })
       if (cancelled) return
       if (data && hasHomeCommunity(data) && readStoredPostalCode(data.id)) {
-        router.replace('/home')
+        router.replace(resolvePendingPushRedirectOrFallback('/home'))
         return
       }
       if (!localStorage.getItem('token')) {

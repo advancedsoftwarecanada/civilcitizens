@@ -1,5 +1,7 @@
 export type AuthModalType = 'login' | 'register' | 'forgot'
 
+import { buildPreferredLoginNextPath } from './pendingPushRedirect'
+
 const AUTH_ROUTE_MAP: Record<AuthModalType, string> = {
   login: '/login',
   register: '/register',
@@ -9,8 +11,10 @@ const AUTH_ROUTE_MAP: Record<AuthModalType, string> = {
 const buildNextParam = () => {
   if (typeof window === 'undefined') return null
   const path = window.location.pathname + window.location.search + window.location.hash
-  if (!path || path === '/' || path.startsWith('/login')) return null
-  return path
+  if (!path || path === '/' || path.startsWith('/login')) {
+    return buildPreferredLoginNextPath(null)
+  }
+  return buildPreferredLoginNextPath(path)
 }
 
 export const redirectToAuthModal = (type: AuthModalType) => {
