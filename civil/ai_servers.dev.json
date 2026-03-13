@@ -4,7 +4,7 @@
     {
       "id": "dev-lm-studio",
       "name": "Dev LM Studio",
-      "baseUrl": "http://192.168.2.53:1234",
+      "baseUrl": "http://192.168.2.10:1234",
       "provider": "lm-studio",
       "enabled": true,
       "default": true
