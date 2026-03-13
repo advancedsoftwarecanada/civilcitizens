@@ -1,1 +1,1 @@
-192.168.2.53
+Deprecated. Set CIVIL_PROD_HOST in .env.production.

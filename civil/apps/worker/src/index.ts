@@ -143,11 +143,30 @@ function resolveCivilAiServersPath() {
   return (process.env.CIVIL_AI_SERVERS_FILE || '').trim() || resolve(process.cwd(), 'ai_servers.json')
 }
 
+function resolveCivilAiEnvServerConfig(): CivilAiServerConfig | null {
+  const baseUrl = normalizeCivilAiBaseUrl((process.env.CIVIL_AI_BASE_URL || '').trim())
+  if (!baseUrl) return null
+
+  return {
+    id: (process.env.CIVIL_AI_SERVER_ID || '').trim() || 'civil-ai-env',
+    name: (process.env.CIVIL_AI_SERVER_NAME || '').trim() || 'Civil AI Env Server',
+    baseUrl,
+    provider: (process.env.CIVIL_AI_PROVIDER || '').trim() || 'lm-studio',
+    enabled: true,
+    default: true,
+  }
+}
+
 function normalizeCivilAiBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, '')
 }
 
 async function loadCivilAiServerConfig() {
+  const envServer = resolveCivilAiEnvServerConfig()
+  if (envServer) {
+    return envServer
+  }
+
   const configPath = resolveCivilAiServersPath()
   const fallback: CivilAiServerConfig = {
     id: 'local-lm-studio',
