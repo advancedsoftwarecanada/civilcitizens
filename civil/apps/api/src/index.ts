@@ -5539,6 +5539,44 @@ function isThreadMuted(mutedUntil: Date | null | undefined): boolean {
   return new Date(mutedUntil).getTime() > Date.now()
 }
 
+const CALL_NOTIFICATION_SOUND = 'civil-general.caf'
+
+async function sendNativePushForIncomingCall(args: {
+  recipientUserId: string
+  title: string
+  message: string
+  url: string
+  callId: string
+  mode: 'audio' | 'video'
+  threadId?: string
+  memberId?: string
+}) {
+  if (!PUSH_DELIVERY_URL) return
+
+  const deviceTargets = await loadActiveNativePushTargets(args.recipientUserId)
+  if (!deviceTargets.length) return
+
+  await Promise.allSettled(
+    deviceTargets.map(({ platform, token }) =>
+      deliverNativePushToToken({
+        platform,
+        deviceToken: token,
+        title: args.title,
+        message: args.message,
+        sound: CALL_NOTIFICATION_SOUND,
+        data: {
+          kind: 'call',
+          callId: args.callId,
+          mode: args.mode,
+          url: args.url,
+          ...(args.threadId ? { threadId: args.threadId } : {}),
+          ...(args.memberId ? { memberId: args.memberId } : {}),
+        },
+      }),
+    ),
+  )
+}
+
 async function sendMobilePushForMessageCreated(args: {
   threadId: string
   message: MessageRecord
@@ -17984,6 +18022,7 @@ app.post('/messages/threads/:id/call/start', async (req: FastifyRequest, reply: 
       'Someone'
     const modeLabel = createdCall.mode === MessageCallMode.video ? 'video' : 'audio'
     const callUrl = `/messages/call/${encodeURIComponent(thread.id)}?call=${encodeURIComponent(createdCall.id)}`
+    const callPushBody = `${initiatorLabel} started a ${modeLabel} call.`
 
     await Promise.all(
       updatedThread.participants
@@ -18002,13 +18041,24 @@ app.post('/messages/threads/:id/call/start', async (req: FastifyRequest, reply: 
           const pushPromise =
             muted || online
               ? Promise.resolve()
-              : sendPushToUser(participant.userId, {
-                  title: initiatorLabel,
-                  body: `${initiatorLabel} started a ${modeLabel} call.`,
-                  url: callUrl,
-                  type: 'call',
-                  entityId: createdCall.id,
-                }).then(() => undefined)
+              : Promise.allSettled([
+                  sendPushToUser(participant.userId, {
+                    title: initiatorLabel,
+                    body: callPushBody,
+                    url: callUrl,
+                    type: 'call',
+                    entityId: createdCall.id,
+                  }),
+                  sendNativePushForIncomingCall({
+                    recipientUserId: participant.userId,
+                    title: initiatorLabel,
+                    message: callPushBody,
+                    url: callUrl,
+                    callId: createdCall.id,
+                    mode: modeLabel,
+                    threadId: thread.id,
+                  }),
+                ]).then(() => undefined)
 
           await Promise.allSettled([realtimePromise, pushPromise])
         }),
@@ -18257,6 +18307,36 @@ app.post('/family/calls/start', async (req: FastifyRequest, reply: FastifyReply)
         ...summary,
       },
     })
+
+    const initiatorLabel =
+      formatDisplayNameForPush(summary.call.initiator.name || summary.call.initiator.handle || 'Someone') ||
+      summary.call.initiator.name ||
+      summary.call.initiator.handle ||
+      'Someone'
+    const modeLabel = call.mode === 'video' ? 'video' : 'audio'
+    const callUrl = `/family/call/${encodeURIComponent(context.member.id)}?call=${encodeURIComponent(call.id)}`
+    const online = await isUserRealtimeOnline(context.member.parentId).catch(() => false)
+
+    if (!online) {
+      await Promise.allSettled([
+        sendPushToUser(context.member.parentId, {
+          title: initiatorLabel,
+          body: `${initiatorLabel} started a ${modeLabel} call.`,
+          url: callUrl,
+          type: 'call',
+          entityId: call.id,
+        }),
+        sendNativePushForIncomingCall({
+          recipientUserId: context.member.parentId,
+          title: initiatorLabel,
+          message: `${initiatorLabel} started a ${modeLabel} call.`,
+          url: callUrl,
+          callId: call.id,
+          mode: modeLabel,
+          memberId: context.member.id,
+        }),
+      ])
+    }
 
     return reply.code(201).send(summary)
   }),
