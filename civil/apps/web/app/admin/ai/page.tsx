@@ -18,6 +18,7 @@ type AdminAiConversationSummary = {
   status: string | null
   lastModel: string | null
   lastServer: string | null
+  lastServerBaseUrl: string | null
   lastError: string | null
 }
 
@@ -30,6 +31,7 @@ type AdminAiTurn = {
   status: string
   durationMs: number | null
   serverName: string | null
+  serverBaseUrl: string | null
   model: string | null
   errorMessage: string | null
   assistantContent: string | null
@@ -46,6 +48,28 @@ type AdminAiConversationListResponse = {
 }
 
 type AdminAiConversationDetailResponse = {
+  aiConfig: {
+    publicHost: string
+    publicBaseUrl: string
+    defaultServerId: string
+    configPath: string
+    activeServer: {
+      id: string
+      name: string
+      baseUrl: string
+      provider: string | null
+      enabled: boolean
+      default: boolean
+    } | null
+    servers: Array<{
+      id: string
+      name: string
+      baseUrl: string
+      provider: string | null
+      enabled: boolean
+      default: boolean
+    }>
+  }
   conversation: AdminAiConversationSummary
   turns: AdminAiTurn[]
 }
@@ -335,6 +359,16 @@ export default function AdminAiPage() {
                       <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Answer source</p>
                       <p className="mt-2 text-sm text-slate-700">{getAiAnswerSource(detail.conversation.status).label}</p>
                     </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 md:col-span-2 xl:col-span-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Public host</p>
+                      <p className="mt-2 text-sm text-slate-700">{detail.aiConfig.publicBaseUrl}</p>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 px-4 py-3 md:col-span-2 xl:col-span-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Active LM Studio</p>
+                      <p className="mt-2 text-sm text-slate-700">
+                        {detail.aiConfig.activeServer ? `${detail.aiConfig.activeServer.name} (${detail.aiConfig.activeServer.baseUrl})` : 'No active server configured'}
+                      </p>
+                    </div>
                   </div>
                   {detail.conversation.lastError ? (
                     <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -372,6 +406,10 @@ export default function AdminAiPage() {
                         <div className="rounded-2xl bg-slate-50 px-4 py-3">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Server</p>
                           <p className="mt-2 text-sm text-slate-700">{turn.serverName ?? 'Local direct path'}</p>
+                        </div>
+                        <div className="rounded-2xl bg-slate-50 px-4 py-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Server target</p>
+                          <p className="mt-2 text-sm text-slate-700">{turn.serverBaseUrl ?? detail.conversation.lastServerBaseUrl ?? 'No LM Studio target recorded'}</p>
                         </div>
                         <div className="rounded-2xl bg-slate-50 px-4 py-3">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Error</p>

@@ -1,0 +1,13 @@
+{
+  "defaultServerId": "prod-lm-studio",
+  "servers": [
+    {
+      "id": "prod-lm-studio",
+      "name": "Prod LM Studio",
+      "baseUrl": "http://192.168.2.253:1234",
+      "provider": "lm-studio",
+      "enabled": true,
+      "default": true
+    }
+  ]
+}
