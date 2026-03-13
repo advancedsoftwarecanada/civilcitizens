@@ -105,6 +105,35 @@ def _load_prod_env_defaults() -> None:
             os.environ.setdefault(key, value.strip())
 
 
+def _read_prod_env_value(name: str) -> str:
+    current = (os.environ.get(name) or "").strip()
+    if current:
+        return current
+
+    for path in PROD_ENV_CANDIDATES:
+        if not path.is_file():
+            continue
+        try:
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != name:
+                continue
+            return value.strip()
+
+    return ""
+
+
 def _load_push_ignore_patterns() -> list[str]:
     raw = _read_text(PUSH_IGNORE_FILE)
     if not raw:
@@ -413,6 +442,15 @@ def remote_deploy(cfg: RemoteConfig) -> None:
     data_dir = os.environ.get("CIVIL_PROD_DATA_DIR", CIVIL_REMOTE_DATA_DIR)
     minio_dir = os.environ.get("CIVIL_PROD_MINIO_DIR", CIVIL_REMOTE_MINIO_DIR)
     public_host = os.environ.get("CIVIL_PROD_PUBLIC_HOST", "civilcitizens.ca").strip() or "civilcitizens.ca"
+    civil_ai_server_id = _read_prod_env_value("CIVIL_AI_SERVER_ID")
+    civil_ai_server_name = _read_prod_env_value("CIVIL_AI_SERVER_NAME")
+    civil_ai_base_url = _read_prod_env_value("CIVIL_AI_BASE_URL")
+    civil_ai_provider = _read_prod_env_value("CIVIL_AI_PROVIDER")
+    civil_ai_servers_file = _read_prod_env_value("CIVIL_AI_SERVERS_FILE")
+    civil_ai_instructions_file = _read_prod_env_value("CIVIL_AI_INSTRUCTIONS_FILE")
+    civil_ai_vision_model = _read_prod_env_value("CIVIL_AI_VISION_MODEL")
+    civil_ai_data_key = _read_prod_env_value("CIVIL_AI_DATA_KEY")
+    civil_ai_job_timeout_ms = _read_prod_env_value("CIVIL_AI_JOB_TIMEOUT_MS")
 
     print("→ Preparing remote directories")
     remote_prepare(cfg)
@@ -445,6 +483,15 @@ CIVIL_PUBLIC_HOST={shlex.quote(public_host)}
 MEDIA_PUBLIC_BASE_URL={shlex.quote(f'https://{public_host}/media')}
 NEXT_PUBLIC_BASE_URL={shlex.quote(f'https://{public_host}')}
 NEXT_PUBLIC_MEDIA_BASE_URL={shlex.quote(f'https://{public_host}/media')}
+CIVIL_AI_SERVER_ID={shlex.quote(civil_ai_server_id)}
+CIVIL_AI_SERVER_NAME={shlex.quote(civil_ai_server_name)}
+CIVIL_AI_BASE_URL={shlex.quote(civil_ai_base_url)}
+CIVIL_AI_PROVIDER={shlex.quote(civil_ai_provider)}
+CIVIL_AI_SERVERS_FILE={shlex.quote(civil_ai_servers_file)}
+CIVIL_AI_INSTRUCTIONS_FILE={shlex.quote(civil_ai_instructions_file)}
+CIVIL_AI_VISION_MODEL={shlex.quote(civil_ai_vision_model)}
+CIVIL_AI_DATA_KEY={shlex.quote(civil_ai_data_key)}
+CIVIL_AI_JOB_TIMEOUT_MS={shlex.quote(civil_ai_job_timeout_ms)}
 EOF
 
 docker compose --env-file .env.prod-runtime -f docker-compose.yml --profile infra up -d --no-recreate postgres redis minio minio-setup
