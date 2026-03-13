@@ -387,6 +387,14 @@ function normalizeCivilAiBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, '')
 }
 
+function getCivilAiPreferredServerId() {
+  return process.env.NODE_ENV === 'production' ? 'prod-lm-studio' : 'dev-lm-studio'
+}
+
+function getCivilAiPreferredBaseUrl() {
+  return process.env.NODE_ENV === 'production' ? 'http://192.168.2.253:1234' : 'http://192.168.2.53:1234'
+}
+
 function getCivilPublicBaseUrl() {
   return `https://${CIVIL_PUBLIC_HOST}`.replace(/\/+$/, '')
 }
@@ -549,10 +557,11 @@ async function persistCivilAiHistory(userId: string, appendedEntries: CivilAiHis
 
 async function loadCivilAiServersConfig() {
   const configPath = resolveCivilAiServersPath()
+  const preferredServerId = getCivilAiPreferredServerId()
   const fallbackServer: CivilAiServerConfig = {
-    id: 'local-lm-studio',
-    name: 'Local LM Studio',
-    baseUrl: 'http://192.168.2.10:1234',
+    id: preferredServerId,
+    name: process.env.NODE_ENV === 'production' ? 'Prod LM Studio' : 'Dev LM Studio',
+    baseUrl: getCivilAiPreferredBaseUrl(),
     provider: 'lm-studio',
     enabled: true,
     default: true,
@@ -587,7 +596,12 @@ async function loadCivilAiServersConfig() {
       return { configPath, defaultServerId: fallbackServer.id, servers: [fallbackServer] }
     }
 
-    const resolvedDefaultServerId = defaultServerId || servers.find((server) => server.default)?.id || servers[0]?.id || fallbackServer.id
+    const resolvedDefaultServerId =
+      servers.find((server) => server.id === preferredServerId)?.id ||
+      defaultServerId ||
+      servers.find((server) => server.default)?.id ||
+      servers[0]?.id ||
+      fallbackServer.id
 
     return { configPath, defaultServerId: resolvedDefaultServerId, servers }
   } catch {
