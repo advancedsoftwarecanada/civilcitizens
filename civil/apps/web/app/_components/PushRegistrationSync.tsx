@@ -5,6 +5,7 @@ import { isAndroidInstalledPwaContext, isIosInstalledPwaContext } from '../_lib/
 import { AUTH_SESSION_CHANGED_EVENT } from '../_lib/authSession'
 import { ensureNativePushRegistration, getNativePlatformName, isNativePushOptedOut } from '../_lib/nativePush'
 import { canEnablePush as canEnableWebPush, enablePush as enableWebPush, getPermissionState as getWebPushPermissionState } from '../_lib/pushClient'
+import { writeWebPushDebugState } from '../_lib/webPushDebug'
 
 function hasAuthToken(): boolean {
   if (typeof window === 'undefined') return false
@@ -13,7 +14,10 @@ function hasAuthToken(): boolean {
 }
 
 async function syncPushRegistration(): Promise<void> {
-  if (!hasAuthToken()) return
+  if (!hasAuthToken()) {
+    writeWebPushDebugState({ source: 'syncPushRegistration', result: 'skipped_no_auth_token', error: 'no_auth_token' })
+    return
+  }
 
   if (getNativePlatformName()) {
     if (isNativePushOptedOut()) return
@@ -22,10 +26,24 @@ async function syncPushRegistration(): Promise<void> {
   }
 
   const webPwaContext = isIosInstalledPwaContext() || isAndroidInstalledPwaContext()
-  if (!webPwaContext) return
-  if (!canEnableWebPush()) return
-  if (getWebPushPermissionState() !== 'granted') return
+  if (!webPwaContext) {
+    writeWebPushDebugState({ source: 'syncPushRegistration', result: 'skipped_not_pwa', error: 'not_installed_pwa' })
+    return
+  }
+  if (!canEnableWebPush()) {
+    writeWebPushDebugState({ source: 'syncPushRegistration', result: 'skipped_cannot_enable', error: 'cannot_enable_web_push' })
+    return
+  }
+  if (getWebPushPermissionState() !== 'granted') {
+    writeWebPushDebugState({
+      source: 'syncPushRegistration',
+      result: 'skipped_permission_not_granted',
+      error: String(getWebPushPermissionState()),
+    })
+    return
+  }
 
+  writeWebPushDebugState({ source: 'syncPushRegistration', result: 'sync_started', error: null })
   await enableWebPush()
 }
 
@@ -59,6 +77,11 @@ export default function PushRegistrationSync() {
 
       syncInFlightRef.current = syncPushRegistration()
         .catch((error) => {
+          writeWebPushDebugState({
+            source: 'syncPushRegistration',
+            result: 'sync_failed',
+            error: error instanceof Error ? error.message : String(error),
+          })
           console.warn('push_registration_sync_failed', error)
         })
         .finally(() => {
@@ -104,6 +127,11 @@ export default function PushRegistrationSync() {
 
     syncInFlightRef.current = syncPushRegistration()
       .catch((error) => {
+        writeWebPushDebugState({
+          source: 'syncPushRegistration:nativePlatformEffect',
+          result: 'sync_failed',
+          error: error instanceof Error ? error.message : String(error),
+        })
         console.warn('push_registration_sync_failed', error)
       })
       .finally(() => {

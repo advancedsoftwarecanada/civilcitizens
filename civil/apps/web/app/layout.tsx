@@ -22,6 +22,7 @@ import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay
 import PlaceholderSanitizer from './_components/PlaceholderSanitizer'
 import AppScrollbar from './_components/AppScrollbar'
 import PushRedirectDebugModal from './_components/PushRedirectDebugModal'
+import WebPushDebugModal from './_components/WebPushDebugModal'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -127,6 +128,9 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           </Suspense>
           <Suspense fallback={null}>
             <PushRedirectDebugModal />
+          </Suspense>
+          <Suspense fallback={null}>
+            <WebPushDebugModal />
           </Suspense>
           <Suspense fallback={null}>
             <AnalyticsTracker />
