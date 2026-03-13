@@ -10070,6 +10070,32 @@ function sanitizeRichTextHtml(input: string) {
   return trimmed || '<p></p>'
 }
 
+function escapeHtmlText(input: string) {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function convertPlainTextToRichTextHtml(input: string) {
+  const normalized = input.replace(/\r\n/g, '\n').trim()
+  if (!normalized) return ''
+
+  return normalized
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${escapeHtmlText(paragraph).replace(/\n/g, '<br>')}</p>`)
+    .join('')
+}
+
+function normalizeRichTextHtml(input: string | null | undefined) {
+  const raw = typeof input === 'string' ? input : ''
+  if (!raw.trim()) return ''
+  const normalizedInput = /<[^>]+>/.test(raw) ? raw : convertPlainTextToRichTextHtml(raw)
+  return sanitizeRichTextHtml(normalizedInput)
+}
+
 function sanitizePlainText(input: string) {
   return stripHtmlToPlainTextWithNewlines(typeof input === 'string' ? input : '')
 }
@@ -13502,7 +13528,7 @@ app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
       firstName,
       lastName,
       name: user.name,
-      bio: user.bio ? sanitizePlainText(user.bio) : '',
+      bio: normalizeRichTextHtml(user.bio),
       billingAddress1: user.billingAddress1 ?? null,
       billingAddress2: user.billingAddress2 ?? null,
       billingCity: user.billingCity ?? null,
@@ -13603,7 +13629,7 @@ app.put('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
 
       const userUpdateData: Prisma.UserUncheckedUpdateInput = {
         name: fullName,
-        bio: bio?.trim() ? sanitizePlainText(bio).trim() : null,
+        bio: normalizeRichTextHtml(bio) || null,
         handle,
         communityMeta: communityMeta as Prisma.InputJsonValue,
       }

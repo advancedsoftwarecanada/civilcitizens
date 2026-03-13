@@ -1542,7 +1542,10 @@ export default function UserPostsPage({ params }: PageProps) {
                           <p className="text-lg font-semibold text-slate-600">@{profile.handle}</p>
                         </div>
                         {profile.bio ? (
-                          <p className="max-w-3xl text-sm leading-6 text-slate-600 lg:text-base">{profile.bio.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()}</p>
+                          <div
+                            className="max-w-3xl text-sm leading-6 text-slate-600 lg:text-base [&_p]:m-0 [&_p+p]:mt-3 [&_br]:content-[''] [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_a]:font-medium [&_a]:text-[var(--cc-primary)] [&_a]:underline"
+                            dangerouslySetInnerHTML={{ __html: profile.bio }}
+                          />
                         ) : null}
                       </div>
                     </div>

@@ -430,7 +430,7 @@ export const UpdateProfileInput = z.object({
   shareCountryOfBirth: z.boolean().optional(),
   bio: z
     .string()
-    .max(10000, { message: 'Bio must be 10,000 characters or fewer' })
+    .max(20000, { message: 'Bio must be 20,000 characters or fewer' })
     .optional(),
   experiences: z.array(ExperienceInput).max(50, { message: 'experience_limit' }).optional(),
   avatarMediaId: MediaAssetIdSchema.optional(),
