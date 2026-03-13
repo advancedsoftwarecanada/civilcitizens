@@ -37,6 +37,7 @@ export default function NotificationTapRouter() {
   const currentUrl = useMemo(() => `${pathname}${searchParams ? `?${searchParams.toString()}` : ''}`, [pathname, searchParams])
 
   const isHandlingRef = useRef(false)
+  const lastAttemptRef = useRef<{ url: string; at: number } | null>(null)
 
   useEffect(() => {
     if (!isNativeApp()) return
@@ -57,11 +58,18 @@ export default function NotificationTapRouter() {
         // If we're already there, just clear and stop.
         if (nextUrl === currentUrl) {
           await clearLastNativeNotificationTapUrl()
+          lastAttemptRef.current = null
           return
         }
 
-        router.push(nextUrl)
-        await clearLastNativeNotificationTapUrl()
+        const lastAttempt = lastAttemptRef.current
+        const now = Date.now()
+        if (lastAttempt && lastAttempt.url === nextUrl && now - lastAttempt.at < 1200) {
+          return
+        }
+
+        lastAttemptRef.current = { url: nextUrl, at: now }
+        router.replace(nextUrl)
       } finally {
         isHandlingRef.current = false
       }
