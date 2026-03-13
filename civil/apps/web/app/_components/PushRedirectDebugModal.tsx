@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Modal from './Modal'
-import { clearLastNativeNotificationTapUrl, getLastNativeNotificationTapUrl, getNativePlatformName, getStoredNativeNotificationTapUrl, isNativeApp } from '../_lib/nativePush'
+import { clearLastNativeNotificationTapUrl, getLastNativeNotificationTapUrl, getNativePlatformName, getStoredNativeNotificationTapUrl } from '../_lib/nativePush'
 import { clearPendingPushRedirect, getPendingPushRedirectDebugRecord } from '../_lib/pendingPushRedirect'
 
 type DebugState = {
@@ -33,9 +33,26 @@ export default function PushRedirectDebugModal() {
   const currentUrl = useMemo(() => `${pathname}${searchParams ? `?${searchParams.toString()}` : ''}${typeof window !== 'undefined' ? window.location.hash || '' : ''}`, [pathname, searchParams])
   const [dismissed, setDismissed] = useState(false)
   const [debugState, setDebugState] = useState<DebugState>(() => readDebugState(currentUrl))
+  const [nativePlatform, setNativePlatform] = useState<string | null>(() => getNativePlatformName())
 
   useEffect(() => {
-    if (!isNativeApp()) return undefined
+    if (nativePlatform) return undefined
+
+    const intervalId = window.setInterval(() => {
+      const platform = getNativePlatformName()
+      if (platform) {
+        setNativePlatform(platform)
+        window.clearInterval(intervalId)
+      }
+    }, 300)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [nativePlatform])
+
+  useEffect(() => {
+    if (!nativePlatform) return undefined
 
     let cancelled = false
 
@@ -64,13 +81,13 @@ export default function PushRedirectDebugModal() {
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onFocus)
     }
-  }, [currentUrl])
+  }, [currentUrl, nativePlatform])
 
   useEffect(() => {
     setDismissed(false)
   }, [debugState.pendingRedirect?.url, debugState.storedTapUrl, debugState.resolvedTapUrl, debugState.currentUrl])
 
-  if (!isNativeApp()) return null
+  if (!nativePlatform) return null
 
   const shouldOpen = !dismissed && (
     debugState.currentUrl === '/' ||
