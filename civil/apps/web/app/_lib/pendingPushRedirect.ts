@@ -12,6 +12,8 @@ type PendingPushRedirectRecord = {
   attempts: number
 }
 
+export type PendingPushRedirectDebugRecord = PendingPushRedirectRecord
+
 function normalizePendingPushRedirectUrl(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null
   const trimmed = raw.trim()
@@ -45,6 +47,10 @@ function readStoredRecord(): PendingPushRedirectRecord | null {
     clearPendingPushRedirect()
     return null
   }
+}
+
+export function getPendingPushRedirectDebugRecord(): PendingPushRedirectDebugRecord | null {
+  return readStoredRecord()
 }
 
 function writeStoredRecord(record: PendingPushRedirectRecord): void {
