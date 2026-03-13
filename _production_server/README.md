@@ -10,11 +10,13 @@ This deploy flow intentionally avoids CI/CD runners.
 
 Store these in this folder:
 
-- `host.txt` → production host/IP (example: `192.168.2.53`)
 - `user.txt` → SSH user (example: `andrewnormore`)
 - `ssh.txt` → either:
   - full private key content, or
   - path to private key file
+
+Production host/IP no longer comes from `host.txt`.
+Set `CIVIL_PROD_HOST` in `.env.production` instead.
 
 ## Commands
 
@@ -37,7 +39,7 @@ From repo root:
 
 ## Env overrides (optional)
 
-- `CIVIL_PROD_HOST`
+- `CIVIL_PROD_HOST` (required; keep it in `.env.production`)
 - `CIVIL_PROD_USER`
 - `CIVIL_PROD_PORT` (default `22`)
 - `CIVIL_PROD_IDENTITY_FILE`
@@ -82,7 +84,7 @@ On production host:
 ## Notes
 
 - `push_ignore.txt` entries are respected during upload.
-- Sensitive local files (`_production_server/ssh.txt`, host/user files, keys) are never uploaded.
+- Sensitive local files (`_production_server/ssh.txt`, `user.txt`, legacy `host.txt`, keys) are never uploaded.
 - If `rsync` is unavailable locally, deploy falls back to tar-over-SSH.
 
 ## Data safety (important)

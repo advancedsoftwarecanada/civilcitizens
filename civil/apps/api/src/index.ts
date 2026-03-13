@@ -381,6 +381,20 @@ function resolveCivilAiServersPath() {
   return (process.env.CIVIL_AI_SERVERS_FILE || '').trim() || resolve(process.cwd(), 'ai_servers.json')
 }
 
+function resolveCivilAiEnvServerConfig(): CivilAiServerConfig | null {
+  const baseUrl = normalizeCivilAiBaseUrl((process.env.CIVIL_AI_BASE_URL || '').trim())
+  if (!baseUrl) return null
+
+  return {
+    id: (process.env.CIVIL_AI_SERVER_ID || '').trim() || 'civil-ai-env',
+    name: (process.env.CIVIL_AI_SERVER_NAME || '').trim() || 'Civil AI Env Server',
+    baseUrl,
+    provider: (process.env.CIVIL_AI_PROVIDER || '').trim() || 'lm-studio',
+    enabled: true,
+    default: true,
+  }
+}
+
 function resolveCivilAiInstructionsPath() {
   return (process.env.CIVIL_AI_INSTRUCTIONS_FILE || '').trim() || resolve(process.cwd(), 'CIVIL_AI.md')
 }
@@ -554,6 +568,15 @@ async function persistCivilAiHistory(userId: string, appendedEntries: CivilAiHis
 }
 
 async function loadCivilAiServersConfig() {
+  const envServer = resolveCivilAiEnvServerConfig()
+  if (envServer) {
+    return {
+      configPath: 'env:CIVIL_AI_BASE_URL',
+      defaultServerId: envServer.id,
+      servers: [envServer],
+    }
+  }
+
   const configPath = resolveCivilAiServersPath()
   const fallbackServer: CivilAiServerConfig = {
     id: 'local-lm-studio',
@@ -1418,6 +1441,11 @@ async function resolveCivilAiModel(server: CivilAiServerConfig, preferredModel?:
 
     if (typeof model.selected_variant === 'string' && model.selected_variant.trim()) {
       const selectedModel = model.selected_variant.trim()
+      civilAiResolvedModelCache.set(server.id, { model: selectedModel, expiresAt: Date.now() + CIVIL_AI_MODEL_CACHE_TTL_MS })
+      return selectedModel
+    }
+    if (typeof model.id === 'string' && model.id.trim()) {
+      const selectedModel = model.id.trim()
       civilAiResolvedModelCache.set(server.id, { model: selectedModel, expiresAt: Date.now() + CIVIL_AI_MODEL_CACHE_TTL_MS })
       return selectedModel
     }

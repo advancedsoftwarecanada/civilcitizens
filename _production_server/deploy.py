@@ -14,6 +14,10 @@ from typing import Iterable
 ROOT_DIR = Path(__file__).resolve().parents[1]
 LOCAL_CONFIG_DIR = ROOT_DIR / "_production_server"
 PUSH_IGNORE_FILE = LOCAL_CONFIG_DIR / "push_ignore.txt"
+PROD_ENV_CANDIDATES = (
+    ROOT_DIR / ".env.production",
+    ROOT_DIR / ".env.production.googlecloud",
+)
 CIVIL_REMOTE_DATA_DIR = "/Users/andrewnormore/CIVIL_DATA"
 CIVIL_REMOTE_APP_DIR = "/Users/andrewnormore/CIVIL"
 CIVIL_REMOTE_MINIO_DIR = "/Volumes/CivilData/minio"
@@ -78,6 +82,29 @@ def _find_local_config_file(name: str) -> str:
     return str(LOCAL_CONFIG_DIR / name)
 
 
+def _load_prod_env_defaults() -> None:
+    for path in PROD_ENV_CANDIDATES:
+        if not path.is_file():
+            continue
+        try:
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key.startswith("CIVIL_PROD_"):
+                continue
+            os.environ.setdefault(key, value.strip())
+
+
 def _load_push_ignore_patterns() -> list[str]:
     raw = _read_text(PUSH_IGNORE_FILE)
     if not raw:
@@ -92,11 +119,13 @@ def _load_push_ignore_patterns() -> list[str]:
 
 
 def resolve_remote_config() -> RemoteConfig:
-    host = (os.environ.get("CIVIL_PROD_HOST") or _read_local_config_value("host.txt") or "").strip()
+    _load_prod_env_defaults()
+
+    host = (os.environ.get("CIVIL_PROD_HOST") or "").strip()
     user = (os.environ.get("CIVIL_PROD_USER") or _read_local_config_value("user.txt") or "").strip()
 
     if not host:
-        raise RuntimeError("Missing production host. Set CIVIL_PROD_HOST or _production_server/host.txt")
+        raise RuntimeError("Missing production host. Set CIVIL_PROD_HOST in .env.production or your shell")
     if not user:
         raise RuntimeError("Missing production user. Set CIVIL_PROD_USER or _production_server/user.txt")
 
