@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
+import CallDialingHalo from '../../_components/CallDialingHalo'
 import CivilCard from '../../_components/CivilCard'
 import { subscribeToNotificationsStream, type RealtimePayload } from '../../_components/notifications/notificationStream'
 import { pushToast } from '../../_components/useToasts'
@@ -209,6 +210,7 @@ export default function MessageCallClient({
   const autoJoinStartedRef = useRef(false)
   const mediaPreferenceRef = useRef<{ micEnabled: boolean; cameraEnabled: boolean } | null>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
+  const dialingToneRef = useRef<HTMLAudioElement | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const rtcSocketRef = useRef<WebSocket | null>(null)
   const rtcLocalPeerIdRef = useRef<string | null>(null)
@@ -916,6 +918,38 @@ export default function MessageCallClient({
     router.replace(`/messages?thread=${encodeURIComponent(thread.id)}`)
   }, [activeCall, router, status, thread])
 
+  const firstRtcPeer = rtcPeers[0] ?? null
+  const firstRemoteStream = firstRtcPeer ? remoteStreams[firstRtcPeer.peerId] ?? null : null
+
+  useEffect(() => {
+    const shouldPlayDialTone = Boolean(activeCall?.isInitiator) && activeCall?.status === 'ringing' && !firstRemoteStream
+
+    if (!shouldPlayDialTone || typeof window === 'undefined' || document.visibilityState !== 'visible') {
+      if (dialingToneRef.current) {
+        dialingToneRef.current.pause()
+        dialingToneRef.current.currentTime = 0
+      }
+      return
+    }
+
+    const audio = dialingToneRef.current ?? new Audio()
+    if (!dialingToneRef.current) {
+      const preferredSource = audio.canPlayType('audio/x-caf') ? '/ringtone.caf' : '/ringtone.mp4'
+      audio.src = preferredSource
+      audio.loop = true
+      audio.preload = 'auto'
+      dialingToneRef.current = audio
+    }
+
+    audio.currentTime = 0
+    void audio.play().catch(() => undefined)
+
+    return () => {
+      audio.pause()
+      audio.currentTime = 0
+    }
+  }, [activeCall?.isInitiator, activeCall?.status, firstRemoteStream])
+
   if (status === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4">
@@ -967,6 +1001,7 @@ export default function MessageCallClient({
   const primaryRemoteStream = primaryPeer ? remoteStreams[primaryPeer.peerId] ?? null : null
   const primaryRemoteHasVideo = streamHasVideoTrack(primaryRemoteStream)
   const localPreviewVisible = activeCall.mode === 'video' && cameraEnabled && (mediaReady || isPreparingMedia)
+  const showDialingHalo = activeCall.status === 'ringing' && !primaryRemoteStream
   const headerTitle =
     otherParticipants.length > 1
       ? `${participantDisplayName(otherParticipants[0])} + ${otherParticipants.length - 1} other${otherParticipants.length === 2 ? '' : 's'}`
@@ -1008,17 +1043,20 @@ export default function MessageCallClient({
                   />
                 ) : null}
                 <div className="flex max-w-xl flex-col items-center text-center">
-                  <div className="flex h-36 w-36 items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white/10 shadow-[0_25px_80px_rgba(0,0,0,0.35)] sm:h-44 sm:w-44">
-                    {primaryPeer?.participant?.user.avatarUrl ? (
-                      <img
-                        src={primaryPeer.participant.user.avatarUrl}
-                        alt={primaryPeerDisplayName}
-                        className="h-full w-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <span className="text-4xl font-semibold text-white/90 sm:text-5xl">{initialsFrom(primaryPeer?.participant?.user)}</span>
-                    )}
+                  <div className="relative flex h-36 w-36 items-center justify-center sm:h-44 sm:w-44">
+                    {showDialingHalo ? <CallDialingHalo /> : null}
+                    <div className="relative z-10 flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-white/15 bg-white/10 shadow-[0_25px_80px_rgba(0,0,0,0.35)]">
+                      {primaryPeer?.participant?.user.avatarUrl ? (
+                        <img
+                          src={primaryPeer.participant.user.avatarUrl}
+                          alt={primaryPeerDisplayName}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="text-4xl font-semibold text-white/90 sm:text-5xl">{initialsFrom(primaryPeer?.participant?.user)}</span>
+                      )}
+                    </div>
                   </div>
                   <p className="mt-6 text-2xl font-semibold text-white sm:text-3xl">{primaryPeerDisplayName}</p>
                   <p className="mt-2 text-sm text-white/65 sm:text-base">
@@ -1027,7 +1065,9 @@ export default function MessageCallClient({
                         ? activeCall.mode === 'video'
                           ? `${primaryPeerDisplayName} is on audio only right now.`
                           : `${primaryPeerDisplayName} is connected by audio.`
-                        : `Waiting for ${primaryPeerDisplayName} to join.`
+                        : activeCall.isInitiator
+                          ? `Dialing ${primaryPeerDisplayName}…`
+                          : `Waiting for ${primaryPeerDisplayName} to join.`
                       : 'Waiting for someone else to join the call.'}
                   </p>
                 </div>

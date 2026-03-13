@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
+import CallDialingHalo from '../../_components/CallDialingHalo'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { subscribeToNotificationsStream, type RealtimePayload } from '../../_components/notifications/notificationStream'
 import { pushToast } from '../../_components/useToasts'
@@ -174,6 +175,7 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
   const autoJoinStartedRef = useRef(false)
   const mediaPreferenceRef = useRef<{ micEnabled: boolean; cameraEnabled: boolean } | null>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
+  const dialingToneRef = useRef<HTMLAudioElement | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const rtcSocketRef = useRef<WebSocket | null>(null)
   const rtcLocalPeerIdRef = useRef<string | null>(null)
@@ -816,6 +818,38 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
     router.replace(backHref)
   }, [activeCall, backHref, router, status])
 
+
+  const firstRtcPeer = rtcPeers[0] ?? null
+  const firstRemoteStream = firstRtcPeer ? remoteStreams[firstRtcPeer.peerId] ?? null : null
+
+  useEffect(() => {
+    const shouldPlayDialTone = Boolean(activeCall?.isInitiator) && activeCall?.status === 'ringing' && !firstRemoteStream
+
+    if (!shouldPlayDialTone || typeof window === 'undefined' || document.visibilityState !== 'visible') {
+      if (dialingToneRef.current) {
+        dialingToneRef.current.pause()
+        dialingToneRef.current.currentTime = 0
+      }
+      return
+    }
+
+    const audio = dialingToneRef.current ?? new Audio()
+    if (!dialingToneRef.current) {
+      const preferredSource = audio.canPlayType('audio/x-caf') ? '/ringtone.caf' : '/ringtone.mp4'
+      audio.src = preferredSource
+      audio.loop = true
+      audio.preload = 'auto'
+      dialingToneRef.current = audio
+    }
+
+    audio.currentTime = 0
+    void audio.play().catch(() => undefined)
+
+    return () => {
+      audio.pause()
+      audio.currentTime = 0
+    }
+  }, [activeCall?.isInitiator, activeCall?.status, firstRemoteStream])
   if (status === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4">
@@ -859,6 +893,7 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
   const primaryRemoteStream = primaryPeer ? remoteStreams[primaryPeer.peerId] ?? null : null
   const primaryRemoteHasVideo = streamHasVideoTrack(primaryRemoteStream)
   const localPreviewVisible = activeCall.mode === 'video' && cameraEnabled && (mediaReady || isPreparingMedia)
+  const showDialingHalo = activeCall.status === 'ringing' && !primaryRemoteStream
   const counterpartSubtitle =
     viewerRole === 'parent'
       ? `${member.relationshipLabel} • ${member.modeLabel}`
@@ -909,16 +944,29 @@ export default function FamilyCallClient({ memberId }: { memberId: string }) {
 
             {!primaryRemoteHasVideo ? (
               <div className="relative z-10 flex flex-col items-center justify-center px-6 text-center">
-                <VerifiedAvatar
-                  src={counterpart?.avatarUrl ?? null}
-                  alt={counterpartDisplayName}
-                  initials={initialsFromUser(counterpart)}
-                  size={132}
-                  isVerified={Boolean(counterpart?.isVerified)}
-                  isBusiness={Boolean(counterpart?.isPremium)}
-                />
+                <div className="relative flex items-center justify-center">
+                  {showDialingHalo ? <CallDialingHalo className="-inset-8" /> : null}
+                  <div className="relative z-10">
+                    <VerifiedAvatar
+                      src={counterpart?.avatarUrl ?? null}
+                      alt={counterpartDisplayName}
+                      initials={initialsFromUser(counterpart)}
+                      size={132}
+                      isVerified={Boolean(counterpart?.isVerified)}
+                      isBusiness={Boolean(counterpart?.isPremium)}
+                    />
+                  </div>
+                </div>
                 <h2 className="mt-5 text-3xl font-semibold text-white">{counterpartDisplayName}</h2>
-                <p className="mt-2 text-sm text-slate-300">{rtcStatus === 'connected' ? 'Connected' : activeCall.status === 'ringing' ? 'Ringing...' : 'Connecting...'}</p>
+                <p className="mt-2 text-sm text-slate-300">
+                  {rtcStatus === 'connected'
+                    ? 'Connected'
+                    : activeCall.status === 'ringing'
+                      ? activeCall.isInitiator
+                        ? `Dialing ${counterpartDisplayName}…`
+                        : 'Ringing...'
+                      : 'Connecting...'}
+                </p>
               </div>
             ) : null}
 
