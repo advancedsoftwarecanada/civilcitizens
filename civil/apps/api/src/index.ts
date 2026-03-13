@@ -1397,6 +1397,37 @@ async function callCivilAiServer(args: {
   }
 }
 
+async function callCivilAiServerWithPathFallback(args: {
+  server: CivilAiServerConfig
+  paths: string[]
+  method?: 'GET' | 'POST'
+  body?: Record<string, unknown>
+  timeoutMs?: number | null
+  signal?: AbortSignal
+}) {
+  let lastResponse: Awaited<ReturnType<typeof callCivilAiServer>> | null = null
+
+  for (const path of args.paths) {
+    const response = await callCivilAiServer({
+      server: args.server,
+      path,
+      method: args.method,
+      body: args.body,
+      timeoutMs: args.timeoutMs,
+      signal: args.signal,
+    })
+    if (response.ok || response.status !== 404) return response
+    lastResponse = response
+  }
+
+  return lastResponse ?? {
+    ok: false,
+    status: 404,
+    text: 'ai_upstream_not_found',
+    json: null,
+  }
+}
+
 async function resolveCivilAiServer(serverId?: string | null) {
   const config = await loadCivilAiServersConfig()
   const server = config.servers.find((entry) => entry.id === serverId) || config.servers.find((entry) => entry.id === config.defaultServerId) || config.servers[0] || null
@@ -1411,7 +1442,7 @@ async function resolveCivilAiModel(server: CivilAiServerConfig, preferredModel?:
     return cached.model
   }
 
-  const upstream = await callCivilAiServer({ server, path: '/api/v1/models', method: 'GET' })
+  const upstream = await callCivilAiServerWithPathFallback({ server, paths: ['/v1/models', '/api/v1/models'], method: 'GET' })
   if (!upstream.ok) {
     civilAiResolvedModelCache.set(server.id, { model: null, expiresAt: Date.now() + 10_000 })
     return null
@@ -11945,9 +11976,9 @@ async function executeCivilAiChatRequest(args: {
     ]
     upstreamInput = buildCivilAiPromptInput(combinedInstructions, upstreamMessages)
 
-    const upstream = await callCivilAiServer({
+    const upstream = await callCivilAiServerWithPathFallback({
       server: resolved.server,
-      path: '/api/v1/chat',
+      paths: ['/v1/responses', '/api/v1/chat'],
       method: 'POST',
       timeoutMs: args.upstreamTimeoutMs,
       signal: args.signal,
@@ -12456,7 +12487,7 @@ app.get('/ai/models', async (req: FastifyRequest, reply: FastifyReply) => {
   const resolved = await resolveCivilAiServer(query.data.serverId)
   if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
 
-  const upstream = await callCivilAiServer({ server: resolved.server, path: '/api/v1/models', method: 'GET' })
+  const upstream = await callCivilAiServerWithPathFallback({ server: resolved.server, paths: ['/v1/models', '/api/v1/models'], method: 'GET' })
   if (!upstream.ok) {
     return reply.code(upstream.status || 502).send({ error: upstream.text || 'ai_models_failed' })
   }
