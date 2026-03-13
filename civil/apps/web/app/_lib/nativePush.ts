@@ -113,6 +113,14 @@ export function isNativeApp(): boolean {
 	return getNativePlatform() !== null
 }
 
+export function getStoredNativeNotificationTapUrl(): string | null {
+	return readStoredLastNativeNotificationTapUrl()
+}
+
+export function getNativePlatformName(): NativePlatform | null {
+	return getNativePlatform()
+}
+
 function storeLastNativeNotificationTapUrl(url: string): void {
 	if (typeof window === 'undefined') return
 	try {
