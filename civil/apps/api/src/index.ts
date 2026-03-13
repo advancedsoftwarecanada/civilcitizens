@@ -293,6 +293,7 @@ type CivilAiDebugConversationSummary = {
   status: string | null
   lastModel: string | null
   lastServer: string | null
+  lastServerBaseUrl: string | null
   lastError: string | null
 }
 
@@ -305,6 +306,7 @@ type CivilAiDebugTurnRecord = {
   status: string
   durationMs: number | null
   serverName: string | null
+  serverBaseUrl: string | null
   model: string | null
   errorMessage: string | null
   assistantContent: string | null
@@ -387,12 +389,8 @@ function normalizeCivilAiBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, '')
 }
 
-function getCivilAiPreferredServerId() {
-  return process.env.NODE_ENV === 'production' ? 'prod-lm-studio' : 'dev-lm-studio'
-}
-
-function getCivilAiPreferredBaseUrl() {
-  return process.env.NODE_ENV === 'production' ? 'http://192.168.2.253:1234' : 'http://192.168.2.53:1234'
+function getDefaultCivilPublicHost() {
+  return process.env.NODE_ENV === 'production' ? 'civilcitizens.ca' : 'dev.civilcitizens.ca'
 }
 
 function getCivilPublicBaseUrl() {
@@ -557,11 +555,10 @@ async function persistCivilAiHistory(userId: string, appendedEntries: CivilAiHis
 
 async function loadCivilAiServersConfig() {
   const configPath = resolveCivilAiServersPath()
-  const preferredServerId = getCivilAiPreferredServerId()
   const fallbackServer: CivilAiServerConfig = {
-    id: preferredServerId,
-    name: process.env.NODE_ENV === 'production' ? 'Prod LM Studio' : 'Dev LM Studio',
-    baseUrl: getCivilAiPreferredBaseUrl(),
+    id: 'local-lm-studio',
+    name: 'Local LM Studio',
+    baseUrl: 'http://127.0.0.1:1234',
     provider: 'lm-studio',
     enabled: true,
     default: true,
@@ -596,12 +593,7 @@ async function loadCivilAiServersConfig() {
       return { configPath, defaultServerId: fallbackServer.id, servers: [fallbackServer] }
     }
 
-    const resolvedDefaultServerId =
-      servers.find((server) => server.id === preferredServerId)?.id ||
-      defaultServerId ||
-      servers.find((server) => server.default)?.id ||
-      servers[0]?.id ||
-      fallbackServer.id
+    const resolvedDefaultServerId = defaultServerId || servers.find((server) => server.default)?.id || servers[0]?.id || fallbackServer.id
 
     return { configPath, defaultServerId: resolvedDefaultServerId, servers }
   } catch {
@@ -2385,7 +2377,7 @@ const MEDIA_S3_ACCESS_KEY = process.env.MEDIA_S3_ACCESS_KEY || 'minioadmin'
 const MEDIA_S3_SECRET_KEY = process.env.MEDIA_S3_SECRET_KEY || 'minioadmin'
 const MEDIA_BUCKET_PUBLIC = process.env.MEDIA_BUCKET_PUBLIC || 'civil-media'
 const MEDIA_BUCKET_ORIGINAL = process.env.MEDIA_BUCKET_ORIGINAL || 'civil-media-raw'
-const CIVIL_PUBLIC_HOST = process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca'
+const CIVIL_PUBLIC_HOST = process.env.CIVIL_PUBLIC_HOST || getDefaultCivilPublicHost()
 const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `https://${CIVIL_PUBLIC_HOST}/media`).replace(/\/$/, '')
 const MEDIA_SIGNED_URL_TTL = Number(process.env.MEDIA_SIGNED_URL_TTL_SECONDS || 900)
 const LEGACY_MEDIA_BASE_URLS = [
@@ -12001,6 +11993,13 @@ async function executeCivilAiChatRequest(args: {
               directAnswerUsed: status === 'direct_answer',
               groundedAnswerUsed: status === 'grounded_answer',
               upstreamInputChars: upstreamInput?.length ?? 0,
+              serverTarget: resolvedServer
+                ? {
+                    id: resolvedServer.id,
+                    name: resolvedServer.name,
+                    baseUrl: resolvedServer.baseUrl,
+                  }
+                : null,
             }
           : null,
         references:
@@ -34374,6 +34373,9 @@ app.get('/admin/ai/conversations', async (req: FastifyRequest, reply: FastifyRep
   const query = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50) }).safeParse(req.query ?? {})
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
+  const civilAiServerConfig = await loadCivilAiServersConfig()
+  const serverBaseUrlByName = new Map(civilAiServerConfig.servers.map((server) => [server.name, server.baseUrl]))
+
   type AdminAiConversationRow = {
     id: string
     user_id: string | null
@@ -34423,6 +34425,7 @@ app.get('/admin/ai/conversations', async (req: FastifyRequest, reply: FastifyRep
     status: row.status,
     lastModel: row.last_model,
     lastServer: row.last_server,
+    lastServerBaseUrl: row.last_server ? serverBaseUrlByName.get(row.last_server) ?? null : null,
     lastError: row.last_error,
   }))
 
@@ -34444,6 +34447,11 @@ app.get('/admin/ai/conversations/:conversationId', async (req: FastifyRequest, r
   await ensureCivilAiDebugTables()
   const params = z.object({ conversationId: z.string().trim().min(1).max(120) }).safeParse(req.params)
   if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+  const civilAiServerConfig = await loadCivilAiServersConfig()
+  const serverBaseUrlByName = new Map(civilAiServerConfig.servers.map((server) => [server.name, server.baseUrl]))
+  const activeServer =
+    civilAiServerConfig.servers.find((server) => server.id === civilAiServerConfig.defaultServerId) ?? civilAiServerConfig.servers[0] ?? null
 
   const summaryRows = await prisma.$queryRaw<Array<{
     id: string
@@ -34527,27 +34535,49 @@ app.get('/admin/ai/conversations/:conversationId', async (req: FastifyRequest, r
     LIMIT 100
   `
 
-  const turns: CivilAiDebugTurnRecord[] = turnRows.map((row: AdminAiTurnRow) => ({
-    id: row.id,
-    conversationId: row.conversation_id,
-    userId: row.user_id,
-    createdAt: row.created_at.toISOString(),
-    latestUserMessage: row.latest_user_message,
-    status: row.status,
-    durationMs: row.duration_ms,
-    serverName: row.server_name,
-    model: row.model,
-    errorMessage: row.error_message,
-    assistantContent: row.assistant_content,
-    requestMessages: parseLoggedJsonText(row.request_messages_text),
-    viewerContext: parseLoggedJsonText(row.viewer_context_text),
-    retrievalDebug: parseLoggedJsonText(row.retrieval_debug_text),
-    references: parseLoggedJsonText(row.references_text),
-    upstreamInput: row.upstream_input_text,
-    rawResponse: parseLoggedJsonText(row.raw_response_text) ?? row.raw_response_text,
-  }))
+  const turns: CivilAiDebugTurnRecord[] = turnRows.map((row: AdminAiTurnRow) => {
+    const retrievalDebug = parseLoggedJsonText(row.retrieval_debug_text)
+    const retrievalServerTarget =
+      retrievalDebug && typeof retrievalDebug === 'object' && !Array.isArray(retrievalDebug)
+        ? (retrievalDebug as { serverTarget?: { baseUrl?: unknown } }).serverTarget
+        : null
+
+    return {
+      id: row.id,
+      conversationId: row.conversation_id,
+      userId: row.user_id,
+      createdAt: row.created_at.toISOString(),
+      latestUserMessage: row.latest_user_message,
+      status: row.status,
+      durationMs: row.duration_ms,
+      serverName: row.server_name,
+      serverBaseUrl:
+        retrievalServerTarget && typeof retrievalServerTarget.baseUrl === 'string'
+          ? retrievalServerTarget.baseUrl
+          : row.server_name
+            ? serverBaseUrlByName.get(row.server_name) ?? null
+            : null,
+      model: row.model,
+      errorMessage: row.error_message,
+      assistantContent: row.assistant_content,
+      requestMessages: parseLoggedJsonText(row.request_messages_text),
+      viewerContext: parseLoggedJsonText(row.viewer_context_text),
+      retrievalDebug,
+      references: parseLoggedJsonText(row.references_text),
+      upstreamInput: row.upstream_input_text,
+      rawResponse: parseLoggedJsonText(row.raw_response_text) ?? row.raw_response_text,
+    }
+  })
 
   return reply.send({
+    aiConfig: {
+      publicHost: CIVIL_PUBLIC_HOST,
+      publicBaseUrl: getCivilPublicBaseUrl(),
+      defaultServerId: civilAiServerConfig.defaultServerId,
+      configPath: civilAiServerConfig.configPath,
+      activeServer,
+      servers: civilAiServerConfig.servers,
+    },
     conversation: {
       id: summary.id,
       userId: summary.user_id,
@@ -34561,6 +34591,7 @@ app.get('/admin/ai/conversations/:conversationId', async (req: FastifyRequest, r
       status: summary.status,
       lastModel: summary.last_model,
       lastServer: summary.last_server,
+      lastServerBaseUrl: summary.last_server ? serverBaseUrlByName.get(summary.last_server) ?? null : null,
       lastError: summary.last_error,
     } satisfies CivilAiDebugConversationSummary,
     turns,
