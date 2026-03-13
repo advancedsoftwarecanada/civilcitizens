@@ -1648,13 +1648,6 @@ export default function UserPostsPage({ params }: PageProps) {
           </section>
         </div>
 
-        {profile?.bio ? (
-          <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
-            <h2 className="text-lg font-semibold text-slate-900">About</h2>
-            <div className="prose prose-sm mt-3 max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: profile.bio }} />
-          </section>
-        ) : null}
-
         {sortedExperiences.length > 0 ? (
           <section className="rounded-[28px] border border-white/60 bg-white/90 p-6 shadow-subtle">
             <h2 className="text-lg font-semibold text-slate-900">Experience</h2>
