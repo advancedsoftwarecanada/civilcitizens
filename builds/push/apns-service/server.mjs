@@ -122,6 +122,7 @@ const server = http.createServer(async (req, res) => {
       const message = typeof body.message === 'string' ? body.message : 'Test notification'
 
       const sound = normalizeSound(body.sound)
+      const channelId = typeof body.channelId === 'string' && body.channelId.trim() ? body.channelId.trim() : undefined
 
       const data = body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : undefined
 
@@ -133,7 +134,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const client = platform === 'android' ? await createFcmClientFromEnv() : await createApnsClientFromEnv()
-      const result = await client.send({ deviceToken, title, body: message, badge, data, sound })
+      const result = await client.send({ deviceToken, title, body: message, badge, data, sound, channelId })
       return sendJson(res, 200, { ok: true, platform, result })
     }
 

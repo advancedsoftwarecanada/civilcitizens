@@ -106,7 +106,11 @@ export default function IncomingMessageCallOverlay() {
 
     if (!canAttemptPlayback) return
 
-    const audio = ringtoneRef.current ?? new Audio('/ringtone.mp4')
+    const audio = ringtoneRef.current ?? new Audio()
+    if (!ringtoneRef.current) {
+      const preferredSource = audio.canPlayType('audio/x-caf') ? '/ringtone.caf' : '/ringtone.mp4'
+      audio.src = preferredSource
+    }
     audio.loop = true
     audio.preload = 'auto'
     ringtoneRef.current = audio
