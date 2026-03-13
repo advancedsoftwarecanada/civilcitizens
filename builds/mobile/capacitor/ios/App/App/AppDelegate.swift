@@ -16,8 +16,39 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     private let lastNotificationUrlKey = "cc:lastNotificationUrl"
     private let lastNotificationUrlAtKey = "cc:lastNotificationUrlAt"
 
+    private func persistNotificationTarget(from userInfo: [AnyHashable: Any]) {
+        func persist(_ rawValue: String) {
+            let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { return }
+            UserDefaults.standard.set(trimmed, forKey: lastNotificationUrlKey)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastNotificationUrlAtKey)
+        }
+
+        if let civil = userInfo["civil"] as? [AnyHashable: Any] {
+            if let url = civil["url"] as? String {
+                persist(url)
+                return
+            }
+            if let threadId = civil["threadId"] as? String, !threadId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                persist("/messages?thread=\(threadId)")
+                return
+            }
+        }
+
+        if let url = userInfo["url"] as? String {
+            persist(url)
+            return
+        }
+        if let threadId = userInfo["threadId"] as? String, !threadId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            persist("/messages?thread=\(threadId)")
+        }
+    }
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        if let remoteNotification = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
+            persistNotificationTarget(from: remoteNotification)
+        }
         return true
     }
 
@@ -35,16 +66,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
         defer { completionHandler() }
 
         let userInfo = response.notification.request.content.userInfo
-        // We store custom keys under the "civil" object in the APNs payload.
-        if let civil = userInfo["civil"] as? [AnyHashable: Any] {
-            if let url = civil["url"] as? String {
-                let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    UserDefaults.standard.set(trimmed, forKey: lastNotificationUrlKey)
-                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastNotificationUrlAtKey)
-                }
-            }
-        }
+        persistNotificationTarget(from: userInfo)
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {

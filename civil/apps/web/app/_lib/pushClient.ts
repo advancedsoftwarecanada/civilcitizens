@@ -1,6 +1,7 @@
 'use client'
 
 import { buildApiUrl, parseApiResponse } from './api'
+import { endpointHostFromValue, writeWebPushDebugState } from './webPushDebug'
 
 type PushEnableStatus =
   | 'enabled'
@@ -79,6 +80,22 @@ function getSupportErrorMessage(): string | null {
     return 'On iOS, install the app to your home screen before enabling notifications.'
   }
   return null
+}
+
+function recordDebug(source: string, result: string, options?: {
+  error?: string | null
+  hasExistingSubscription?: boolean | null
+  endpoint?: string | null
+}): void {
+  writeWebPushDebugState({
+    source,
+    result,
+    error: options?.error ?? null,
+    hasExistingSubscription: options?.hasExistingSubscription ?? null,
+    endpointHost: endpointHostFromValue(options?.endpoint),
+    canEnable: getSupportErrorMessage() === null,
+    supportError: getSupportErrorMessage(),
+  })
 }
 
 async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
@@ -208,8 +225,13 @@ export async function isPushEnabled(): Promise<boolean> {
     const registration = await getExistingServiceWorkerRegistration()
     if (!registration) return false
     const subscription = await registration.pushManager.getSubscription()
+    recordDebug('isPushEnabled', subscription ? 'subscription_present' : 'subscription_missing', {
+      hasExistingSubscription: Boolean(subscription),
+      endpoint: subscription?.endpoint ?? null,
+    })
     return Boolean(subscription)
   } catch {
+    recordDebug('isPushEnabled', 'subscription_check_failed', { error: 'subscription_check_failed' })
     return false
   }
 }
@@ -217,6 +239,7 @@ export async function isPushEnabled(): Promise<boolean> {
 export async function enablePush(): Promise<PushEnableResult> {
   const supportError = getSupportErrorMessage()
   if (supportError) {
+    recordDebug('enablePush', 'skipped_support_error', { error: supportError })
     return {
       ok: false,
       status: isIosDevice() && !isIosInstalledPwaMode() ? 'ios_install_required' : 'unsupported',
@@ -226,10 +249,12 @@ export async function enablePush(): Promise<PushEnableResult> {
 
   const authToken = getStoredAuthToken()
   if (!authToken) {
+    recordDebug('enablePush', 'skipped_no_auth_token', { error: 'no_auth_token' })
     return { ok: false, status: 'unauthorized', message: 'Sign in before enabling notifications.' }
   }
 
   if (Notification.permission === 'denied') {
+    recordDebug('enablePush', 'skipped_permission_denied', { error: 'permission_denied' })
     return {
       ok: false,
       status: 'permission-denied',
@@ -239,6 +264,7 @@ export async function enablePush(): Promise<PushEnableResult> {
 
   const permission = await Notification.requestPermission()
   if (permission === 'denied') {
+    recordDebug('enablePush', 'permission_denied_after_prompt', { error: 'permission_denied' })
     return {
       ok: false,
       status: 'permission-denied',
@@ -246,6 +272,7 @@ export async function enablePush(): Promise<PushEnableResult> {
     }
   }
   if (permission !== 'granted') {
+    recordDebug('enablePush', 'permission_not_granted', { error: permission })
     return {
       ok: false,
       status: 'permission-dismissed',
@@ -258,6 +285,10 @@ export async function enablePush(): Promise<PushEnableResult> {
     const existing = await registration.pushManager.getSubscription()
     if (existing) {
       await sendSubscriptionToServer(existing, authToken)
+      recordDebug('enablePush', 'existing_subscription_synced', {
+        hasExistingSubscription: true,
+        endpoint: existing.endpoint,
+      })
       return { ok: true, status: 'already-enabled' }
     }
 
@@ -273,12 +304,14 @@ export async function enablePush(): Promise<PushEnableResult> {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       if (/applicationserverkey|vapid|invalid/i.test(errorMessage)) {
+        recordDebug('enablePush', 'invalid_vapid_key', { error: errorMessage })
         return {
           ok: false,
           status: 'invalid-vapid-key',
           message: 'The VAPID public key is invalid or not accepted by the browser.',
         }
       }
+      recordDebug('enablePush', 'subscription_failed', { error: errorMessage })
       return {
         ok: false,
         status: 'subscription-failed',
@@ -287,9 +320,14 @@ export async function enablePush(): Promise<PushEnableResult> {
     }
 
     await sendSubscriptionToServer(subscription, authToken)
+    recordDebug('enablePush', 'new_subscription_synced', {
+      hasExistingSubscription: false,
+      endpoint: subscription.endpoint,
+    })
     return { ok: true, status: 'enabled' }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'push_enable_failed'
+    recordDebug('enablePush', 'server_error', { error: message })
     if (message.includes('unauthorized')) {
       return { ok: false, status: 'unauthorized', message: 'Sign in before enabling notifications.' }
     }
