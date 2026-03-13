@@ -587,6 +587,23 @@ function generateKey() {
   return Math.random().toString(36).slice(2)
 }
 
+function normalizeApiError(value: unknown): string | null {
+  if (!value) return null
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    const joined = value.map((item) => normalizeApiError(item)).filter(Boolean).join(' ')
+    return joined.length ? joined : null
+  }
+  if (typeof value === 'object') {
+    const joined = Object.values(value as Record<string, unknown>)
+      .map((item) => normalizeApiError(item))
+      .filter(Boolean)
+      .join(' ')
+    return joined.length ? joined : null
+  }
+  return String(value)
+}
+
 function emptyExperience(): ExperienceFormState {
   return {
     key: generateKey(),
@@ -602,6 +619,7 @@ function emptyExperience(): ExperienceFormState {
 
 export default function ProfileEditPage() {
   const router = useRouter()
+  const [hydrated, setHydrated] = useState(false)
   const [token, setToken] = useState<string | null>(null)
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const [profile, setProfile] = useState<ProfileResponse | null>(null)
@@ -1196,7 +1214,7 @@ export default function ProfileEditPage() {
             return
           }
           const payload = await res.json().catch(() => ({}))
-          const message = typeof payload?.error === 'string' ? payload.error : 'Unable to load your profile.'
+          const message = normalizeApiError(payload?.error) ?? normalizeApiError(payload?.message) ?? 'Unable to load your profile.'
           setError(message)
           return
         }
@@ -1259,6 +1277,10 @@ export default function ProfileEditPage() {
     },
     [mapExperiencesFromResponse],
   )
+
+  useEffect(() => {
+    setHydrated(true)
+  }, [])
 
   useEffect(() => {
     const promise = loadViewer()
@@ -1747,12 +1769,7 @@ export default function ProfileEditPage() {
       const payload = await res.json().catch(() => null)
 
       if (!res.ok) {
-        const rawError =
-          typeof payload?.error === 'string'
-            ? payload.error
-            : typeof payload?.error?.message === 'string'
-            ? payload.error.message
-            : null
+        const rawError = normalizeApiError(payload?.error) ?? normalizeApiError(payload?.message)
 
         const friendlyErrorMap: Record<string, string> = {
           experiences_not_available:
@@ -1969,7 +1986,9 @@ export default function ProfileEditPage() {
           </Link>
         </div>
 
-        {error ? (
+        {!hydrated || (loading && !profile && !error) ? (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">Loading profile editor…</div>
+        ) : error ? (
           <div className="rounded-3xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">{error}</div>
         ) : (
           <form onSubmit={onSubmit} className="space-y-4">
