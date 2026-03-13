@@ -147,21 +147,12 @@ function normalizeCivilAiBaseUrl(value: string) {
   return value.trim().replace(/\/+$/, '')
 }
 
-function getCivilAiPreferredServerId() {
-  return process.env.NODE_ENV === 'production' ? 'prod-lm-studio' : 'dev-lm-studio'
-}
-
-function getCivilAiPreferredBaseUrl() {
-  return process.env.NODE_ENV === 'production' ? 'http://192.168.2.253:1234' : 'http://192.168.2.53:1234'
-}
-
 async function loadCivilAiServerConfig() {
   const configPath = resolveCivilAiServersPath()
-  const preferredServerId = getCivilAiPreferredServerId()
   const fallback: CivilAiServerConfig = {
-    id: preferredServerId,
-    name: process.env.NODE_ENV === 'production' ? 'Prod LM Studio' : 'Dev LM Studio',
-    baseUrl: getCivilAiPreferredBaseUrl(),
+    id: 'local-lm-studio',
+    name: 'Local LM Studio',
+    baseUrl: 'http://127.0.0.1:1234',
     provider: 'lm-studio',
     enabled: true,
     default: true,
@@ -188,7 +179,7 @@ async function loadCivilAiServerConfig() {
       }
       if (server.enabled) servers.push(server)
     }
-    return servers.find((entry) => entry.id === preferredServerId) || servers.find((entry) => entry.default) || servers[0] || fallback
+    return servers.find((entry) => entry.default) || servers[0] || fallback
   } catch {
     return fallback
   }
