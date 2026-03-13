@@ -116,7 +116,9 @@ export default function FamilyFeedClient({
   headerContent,
 }: FamilyFeedClientProps) {
   const viewer = useViewerStore((s) => s.me)
+  const viewerHydrated = useViewerStore((s) => s.hydrated)
   const familyView = useViewerStore((s) => s.familyView)
+  const familyViewHydrated = useViewerStore((s) => s.familyViewHydrated)
   const [posts, setPosts] = useState<FamilyFeedPost[]>([])
   const [loading, setLoading] = useState(true)
   const [composerText, setComposerText] = useState('')
@@ -127,11 +129,20 @@ export default function FamilyFeedClient({
 
   const familyDisplayName = memberDisplayName ?? familyView?.displayName ?? viewer?.name ?? 'Family member'
   const familyModeBand = memberModeBand ?? familyView?.modeBand ?? 'JUNIOR'
+  const effectiveMemberId = memberId ?? familyView?.memberId ?? null
   const avatarSrc = memberAvatarUrl ?? (memberId ? null : viewer?.avatarUrl) ?? buildFamilyAvatarDataUrl(familyDisplayName, familyModeBand)
   const readyImages = useMemo(() => photos.map((photo) => photo.mediaUrl).filter((value): value is string => Boolean(value)), [photos])
   const canSubmit = !readOnly && (composerText.trim().length > 0 || readyImages.length > 0) && !submitting && !uploading
 
   const loadFeed = useCallback(async () => {
+    if (!viewerHydrated || !familyViewHydrated) return
+
+    if (viewer?.accountType !== 'family_member' && !effectiveMemberId) {
+      setPosts([])
+      setLoading(false)
+      return
+    }
+
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
@@ -141,7 +152,7 @@ export default function FamilyFeedClient({
     setLoading(true)
     try {
       const searchParams = new URLSearchParams()
-      if (memberId) searchParams.set('memberId', memberId)
+      if (effectiveMemberId) searchParams.set('memberId', effectiveMemberId)
       const response = await fetch(buildApiUrl(`/family/feed/posts${searchParams.toString() ? `?${searchParams.toString()}` : ''}`), {
         headers: { authorization: `Bearer ${token}` },
         cache: 'no-store',
@@ -162,7 +173,7 @@ export default function FamilyFeedClient({
     } finally {
       setLoading(false)
     }
-  }, [memberId])
+  }, [effectiveMemberId, familyViewHydrated, viewer?.accountType, viewerHydrated])
 
   useEffect(() => {
     void loadFeed()
