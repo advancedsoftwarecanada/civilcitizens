@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { isAndroidInstalledPwaContext, isIosInstalledPwaContext } from '../_lib/appleInstallGate'
 import { AUTH_SESSION_CHANGED_EVENT } from '../_lib/authSession'
-import { ensureNativePushRegistration, isNativeApp, isNativePushOptedOut } from '../_lib/nativePush'
+import { ensureNativePushRegistration, getNativePlatformName, isNativePushOptedOut } from '../_lib/nativePush'
 import { canEnablePush as canEnableWebPush, enablePush as enableWebPush, getPermissionState as getWebPushPermissionState } from '../_lib/pushClient'
 
 function hasAuthToken(): boolean {
@@ -15,7 +15,7 @@ function hasAuthToken(): boolean {
 async function syncPushRegistration(): Promise<void> {
   if (!hasAuthToken()) return
 
-  if (isNativeApp()) {
+  if (getNativePlatformName()) {
     if (isNativePushOptedOut()) return
     await ensureNativePushRegistration({ requestIfPrompt: false })
     return
@@ -33,6 +33,22 @@ export default function PushRegistrationSync() {
   const syncInFlightRef = useRef<Promise<void> | null>(null)
   const syncTimeoutRef = useRef<number | null>(null)
   const lastSyncAtRef = useRef(0)
+  const [nativePlatform, setNativePlatform] = useState<string | null>(() => getNativePlatformName())
+
+  useEffect(() => {
+    if (nativePlatform) return undefined
+
+    const intervalId = window.setInterval(() => {
+      const platform = getNativePlatformName()
+      if (!platform) return
+      setNativePlatform(platform)
+      window.clearInterval(intervalId)
+    }, 300)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [nativePlatform])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -81,6 +97,20 @@ export default function PushRegistrationSync() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
+
+  useEffect(() => {
+    if (!nativePlatform) return
+    if (syncInFlightRef.current) return
+
+    syncInFlightRef.current = syncPushRegistration()
+      .catch((error) => {
+        console.warn('push_registration_sync_failed', error)
+      })
+      .finally(() => {
+        lastSyncAtRef.current = Date.now()
+        syncInFlightRef.current = null
+      })
+  }, [nativePlatform])
 
   return null
 }
