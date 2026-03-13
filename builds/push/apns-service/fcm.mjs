@@ -109,12 +109,13 @@ export async function createFcmClientFromEnv() {
   return {
     projectId: serviceAccount.projectId,
     endpoint,
-    async send({ deviceToken, title, body, badge, data, sound }) {
+    async send({ deviceToken, title, body, badge, data, sound, channelId }) {
       const accessToken = await getAccessToken(serviceAccount.projectId, serviceAccount.clientEmail, serviceAccount.privateKey)
       const notification = {
         title: title ?? 'Civil',
         body: body ?? 'Test notification',
       }
+      const soundName = typeof sound === 'string' && sound.trim() ? sound.trim().replace(/\.[A-Za-z0-9]+$/, '') : undefined
       const payload = {
         message: {
           token: deviceToken,
@@ -124,7 +125,8 @@ export async function createFcmClientFromEnv() {
             priority: 'high',
             notification: {
               ...(typeof badge === 'number' ? { notification_count: Math.max(0, Math.floor(badge)) } : {}),
-              ...(typeof sound === 'string' && sound.trim() ? { sound: 'default' } : {}),
+              ...(soundName ? { sound: soundName } : {}),
+              ...(typeof channelId === 'string' && channelId.trim() ? { channel_id: channelId.trim() } : {}),
             },
           },
         },

@@ -5115,6 +5115,7 @@ async function deliverNativePushToToken(args: {
   message: string
   badge?: number
   sound?: string
+  channelId?: string
   data?: Record<string, unknown>
 }) {
   const response = await fetch(`${PUSH_DELIVERY_URL}/send-test`, {
@@ -5130,6 +5131,7 @@ async function deliverNativePushToToken(args: {
       message: args.message,
       badge: args.badge,
       sound: args.sound,
+      channelId: args.channelId,
       data: args.data,
     }),
   })
@@ -5539,7 +5541,9 @@ function isThreadMuted(mutedUntil: Date | null | undefined): boolean {
   return new Date(mutedUntil).getTime() > Date.now()
 }
 
-const CALL_NOTIFICATION_SOUND = 'civil-general.caf'
+const IOS_CALL_NOTIFICATION_SOUND = 'ringtone.caf'
+const ANDROID_CALL_NOTIFICATION_SOUND = 'ringtone'
+const ANDROID_CALL_NOTIFICATION_CHANNEL_ID = 'incoming_calls'
 
 async function sendNativePushForIncomingCall(args: {
   recipientUserId: string
@@ -5563,7 +5567,8 @@ async function sendNativePushForIncomingCall(args: {
         deviceToken: token,
         title: args.title,
         message: args.message,
-        sound: CALL_NOTIFICATION_SOUND,
+        sound: platform === 'android' ? ANDROID_CALL_NOTIFICATION_SOUND : IOS_CALL_NOTIFICATION_SOUND,
+        ...(platform === 'android' ? { channelId: ANDROID_CALL_NOTIFICATION_CHANNEL_ID } : {}),
         data: {
           kind: 'call',
           callId: args.callId,
