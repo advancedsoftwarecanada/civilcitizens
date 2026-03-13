@@ -27,13 +27,15 @@ function parsePushPayload(event) {
   }
 }
 
-async function hasOpenCivilClient() {
+async function hasVisibleCivilClient() {
   const openClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
   return openClients.some((client) => {
     if (!client || !client.url) return false
     try {
       const currentUrl = new URL(client.url)
-      return currentUrl.origin === self.location.origin
+      if (currentUrl.origin !== self.location.origin) return false
+      if (client.focused) return true
+      return client.visibilityState === 'visible'
     } catch {
       return false
     }
@@ -68,7 +70,7 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     (async () => {
-      if (await hasOpenCivilClient()) {
+      if (await hasVisibleCivilClient()) {
         return
       }
       await self.registration.showNotification(title, options)
