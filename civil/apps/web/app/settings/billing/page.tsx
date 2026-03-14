@@ -416,7 +416,7 @@ export default function BillingSettingsPage() {
 
   return (
     <>
-      <div className="border-b bg-white py-4 shadow-sm lg:hidden">
+      <div className="border-b bg-white py-4 shadow-sm xl:hidden">
         <div className="mx-auto max-w-screen-lg px-4">
           <Sidebar me={me ?? undefined} active="billing" />
         </div>
