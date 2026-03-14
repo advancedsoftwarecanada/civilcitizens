@@ -1449,7 +1449,7 @@ export default function UserPostsPage({ params }: PageProps) {
     if (!profile || !relationship?.friendshipId) return
     const token = requireAuthToken()
     if (!token) return
-    
+
     try {
       const res = await fetch(buildApiUrl(`/friends/${relationship.friendshipId}`), {
         method: 'DELETE',
@@ -1457,7 +1457,7 @@ export default function UserPostsPage({ params }: PageProps) {
           authorization: `Bearer ${token}`,
         },
       })
-      
+
       if (!res.ok) {
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
         pushToast(payload?.error ?? 'Unable to remove friend.', 'error')
