@@ -8,6 +8,7 @@ export default function CommunitiesFeedPage() {
       sidebarActive="communities"
       title="Community Feed"
       description="Only posts from the ridings, chambers, and local groups you follow."
+      showFeedSummary={false}
       emptyState="No community updates yet. Follow a few more ridings or chambers to start building this feed."
       emptyStateCta={{ label: 'Open Community Settings', href: '/communities/settings' }}
       rightRail={<RightRail mode="communitiesFeed" />}

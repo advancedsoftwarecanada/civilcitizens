@@ -25,6 +25,7 @@ export default function ProvinceChamberPage({ params }: PageProps) {
       sidebarActive="communities"
       title={formattedCommunityName}
       description={`Community feed for ${formattedCommunityName}, ${provinceName}`}
+      showFeedSummary={false}
       province={params.province}
       community={params.chamber}
       emptyState={`No posts in ${formattedCommunityName} yet. Be the first to post!`}

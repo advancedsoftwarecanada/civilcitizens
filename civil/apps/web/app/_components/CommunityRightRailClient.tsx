@@ -36,6 +36,11 @@ type CommunityOrganizationsResponse = {
   items?: CommunityOrganization[]
 }
 
+type CommunityFeedActivityResponse = {
+  events?: Array<{ id: string }>
+  jobs?: Array<{ id: string }>
+}
+
 const numberFormatter = new Intl.NumberFormat('en-CA')
 
 function getOrganizationBadge(org: CommunityOrganization): 'Hot' | 'New' | null {
@@ -56,6 +61,7 @@ export default function CommunityRightRailClient({
 }) {
   const [stats, setStats] = useState<CommunityStatsResponse | null>(null)
   const [organizations, setOrganizations] = useState<CommunityOrganization[]>([])
+  const [feedActivity, setFeedActivity] = useState<{ eventCount: number; jobCount: number } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -65,7 +71,7 @@ export default function CommunityRightRailClient({
       const headers = token ? { authorization: `Bearer ${token}` } : undefined
 
       try {
-        const [statsRes, orgsRes] = await Promise.all([
+        const [statsRes, orgsRes, activityRes] = await Promise.all([
           fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/stats`), {
             headers,
             cache: 'no-store',
@@ -74,6 +80,15 @@ export default function CommunityRightRailClient({
             headers,
             cache: 'no-store',
           }),
+          fetch(
+            buildApiUrl(
+              `/feed/activity?scope=communities&province=${encodeURIComponent(province)}&community=${encodeURIComponent(municipality)}&eventLimit=50&jobLimit=50`,
+            ),
+            {
+              headers,
+              cache: 'no-store',
+            },
+          ),
         ])
 
         if (!cancelled) {
@@ -90,11 +105,22 @@ export default function CommunityRightRailClient({
           } else {
             setOrganizations([])
           }
+
+          if (activityRes.ok) {
+            const payload = (await activityRes.json().catch(() => null)) as CommunityFeedActivityResponse | null
+            setFeedActivity({
+              eventCount: Array.isArray(payload?.events) ? payload.events.length : 0,
+              jobCount: Array.isArray(payload?.jobs) ? payload.jobs.length : 0,
+            })
+          } else {
+            setFeedActivity(null)
+          }
         }
       } catch {
         if (!cancelled) {
           setStats(null)
           setOrganizations([])
+          setFeedActivity(null)
         }
       }
     }
@@ -152,6 +178,54 @@ export default function CommunityRightRailClient({
           ) : (
             <p className="mt-2 text-sm text-slate-500">No nearby communities available yet.</p>
           )}
+        </div>
+      </Block>
+
+      <Block title="Community Feed">
+        <div className="space-y-3 text-sm text-slate-700">
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold text-slate-600">Posts</p>
+                <p className="mt-1 text-slate-900">
+                  Today {numberFormatter.format(stats?.postsToday ?? 0)} | This month {numberFormatter.format(stats?.postsThisMonth ?? 0)}
+                </p>
+              </div>
+              <Link
+                href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}`}
+                className="text-xs font-semibold text-[var(--cc-primary)] hover:underline"
+              >
+                Open
+              </Link>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold text-slate-600">Events</p>
+                <p className="mt-1 text-slate-900">Upcoming {numberFormatter.format(feedActivity?.eventCount ?? 0)}</p>
+              </div>
+              <Link href="/events" className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
+                Open
+              </Link>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold text-slate-600">Open roles</p>
+                <p className="mt-1 text-slate-900">Active {numberFormatter.format(feedActivity?.jobCount ?? 0)}</p>
+              </div>
+              <Link
+                href={`/work?provinceCode=${encodeURIComponent(province.toUpperCase())}&communitySlug=${encodeURIComponent(municipality.toLowerCase())}`}
+                className="text-xs font-semibold text-[var(--cc-primary)] hover:underline"
+              >
+                Open
+              </Link>
+            </div>
+          </div>
         </div>
       </Block>
 
