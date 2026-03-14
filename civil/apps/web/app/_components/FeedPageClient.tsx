@@ -1171,8 +1171,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       {headerContent ? <div>{headerContent}</div> : null}
 
       <CivilComposerLauncher
-        title={scope !== 'organizations' ? title : undefined}
-        description={scope !== 'organizations' ? description : undefined}
         coverUrl={composerCoverUrl}
         avatarSrc={me?.avatarUrl ?? null}
         avatarAlt={viewerDisplayName}

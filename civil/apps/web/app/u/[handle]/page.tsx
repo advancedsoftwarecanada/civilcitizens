@@ -1,11 +1,21 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
-import { HiOutlineUserPlus, HiOutlineBriefcase, HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
+import { FaUserTie } from 'react-icons/fa'
+import {
+  HiOutlineCalendarDays,
+  HiOutlineChatBubbleOvalLeft,
+  HiOutlineChevronDown,
+  HiOutlinePhone,
+  HiOutlineUserPlus,
+  HiOutlineUsers,
+  HiOutlineVideoCamera,
+  HiOutlineBuildingLibrary,
+} from 'react-icons/hi2'
 import CivilCard from '../../_components/CivilCard'
 import FamilyFeedClient from '../../_components/FamilyFeedClient'
 import Sidebar from '../../_components/Sidebar'
@@ -140,6 +150,62 @@ type ConnectionAcceptResponse = {
   error?: string
 }
 
+type InviteSurface = 'event' | 'organization'
+
+type InviteableOrganization = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string
+  communitySlug: string
+  logoUrl?: string | null
+  coverUrl?: string | null
+}
+
+type InviteableEvent = {
+  id: string
+  eventId: string
+  title: string
+  startsAt: string
+  primaryPhotoUrl: string | null
+  organization: {
+    id: string
+    name: string
+    slug: string
+    provinceCode: string
+    communitySlug: string
+  }
+}
+
+type OrganizationsResponse = {
+  items?: Array<{
+    id: string
+    name: string
+    slug: string
+    provinceCode: string | null
+    communitySlug: string | null
+    logoUrl?: string | null
+    coverUrl?: string | null
+  }>
+}
+
+type EventsSidebarResponse = {
+  rsvps?: Array<{
+    id: string
+    eventId: string
+    title: string
+    startsAt: string
+    primaryPhotoUrl: string | null
+    organization: {
+      id: string
+      name: string
+      slug: string
+      provinceCode: string | null
+      communitySlug: string | null
+    }
+  }>
+}
+
 function formatDate(iso?: string) {
   if (!iso) return ''
   const date = new Date(iso)
@@ -164,6 +230,18 @@ function formatDateRange(iso?: string | null) {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })
+}
+
+function formatEventStart(iso?: string | null) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function formatExperienceRange(exp: UserExperience) {
@@ -258,6 +336,13 @@ export default function UserPostsPage({ params }: PageProps) {
   const [connectionAction, setConnectionAction] = useState<'send' | 'accept' | 'reject' | null>(null)
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
+  const [inviteModalOpen, setInviteModalOpen] = useState(false)
+  const [inviteSurface, setInviteSurface] = useState<InviteSurface>('event')
+  const [inviteOrganizations, setInviteOrganizations] = useState<InviteableOrganization[]>([])
+  const [inviteEvents, setInviteEvents] = useState<InviteableEvent[]>([])
+  const [inviteItemsLoading, setInviteItemsLoading] = useState(false)
+  const [inviteItemsError, setInviteItemsError] = useState<string | null>(null)
+  const [inviteSendingKey, setInviteSendingKey] = useState<string | null>(null)
   const [messageLoading, setMessageLoading] = useState(false)
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
   const [familyBlockLoading, setFamilyBlockLoading] = useState(false)
@@ -476,12 +561,21 @@ export default function UserPostsPage({ params }: PageProps) {
   const publicBirthDate = formatBirthDate(profile?.dateOfBirth)
   const publicBirthYear = formatBirthYear(profile?.birthYear)
   const publicBirthCountry = profile?.countryOfBirth?.trim() ?? ''
+  const isBornInCanada = publicBirthCountry.toLowerCase() === 'canada'
   const identityPills = [
-    profile?.createdAt ? `Joined ${formatDate(profile.createdAt) || '—'}` : null,
-    publicBirthDate ? `Born ${publicBirthDate}` : publicBirthYear ? `Born ${publicBirthYear}` : null,
-    publicBirthCountry ? `Born in ${publicBirthCountry}` : null,
-    profile?.isVerified ? 'Verified Canadian' : null,
-  ].filter((value): value is string => Boolean(value))
+    profile?.isVerified ? { label: 'Verified Canadian', tone: 'verified' as const, iconSrc: '/self-verified.png' } : null,
+    profile?.createdAt ? { label: `Joined ${formatDate(profile.createdAt) || '—'}`, tone: 'default' as const } : null,
+    publicBirthDate ? { label: `Born ${publicBirthDate}`, tone: 'default' as const } : publicBirthYear ? { label: `Born ${publicBirthYear}`, tone: 'default' as const } : null,
+    publicBirthCountry
+      ? {
+          label: `Born in ${publicBirthCountry}`,
+          tone: (isBornInCanada ? 'verified' : 'default') as const,
+          iconSrc: isBornInCanada ? '/self-verified.png' : undefined,
+        }
+      : null,
+  ].filter(
+    (value): value is { label: string; tone: 'verified' | 'default'; iconSrc?: string } => Boolean(value),
+  )
   const isSendingFriendRequest = friendshipAction === 'send'
   const isAcceptingFriendRequest = friendshipAction === 'accept'
   const isRejectingFriendRequest = friendshipAction === 'reject'
@@ -524,6 +618,409 @@ export default function UserPostsPage({ params }: PageProps) {
     : []
   const canDirectlyReachProfile =
     !isOwner && (resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected')
+
+  const closeDetailsMenu = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
+    const details = event.currentTarget.closest('details')
+    if (details instanceof HTMLDetailsElement) {
+      details.open = false
+    }
+  }
+
+  useEffect(() => {
+    const closeOpenMenus = () => {
+      document.querySelectorAll<HTMLDetailsElement>('details.profile-action-menu[open]').forEach((details) => {
+        details.open = false
+      })
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) {
+        closeOpenMenus()
+        return
+      }
+      if (target.closest('details.profile-action-menu')) return
+      closeOpenMenus()
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeOpenMenus()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+
+  const menuPanelClassName =
+    'mt-2 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:absolute sm:left-0 sm:top-full sm:z-20 sm:min-w-[220px] sm:w-auto'
+  const menuItemClassName =
+    'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55'
+  const destructiveMenuItemClassName =
+    'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-55'
+
+  const handleSendFamilyFriendRequest = async () => {
+    if (!profile || resolvedViewer?.accountType !== 'family_member') return
+    const token = requireAuthToken()
+    if (!token) return
+
+    try {
+      const response = await fetch(buildApiUrl('/family/friends/requests'), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ username: profile.handle }),
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as { message?: string; error?: string } | null
+      if (!response.ok) {
+        pushToast(payload?.error ?? 'Unable to send that Family invite right now.', 'error')
+        return
+      }
+      pushToast(payload?.message?.trim() || "An invite has been sent to this user's parent or guardian if it exists.", 'success')
+    } catch (err) {
+      console.error('Failed to send family friend request from profile', err)
+      pushToast('Unable to send that Family invite right now.', 'error')
+    }
+  }
+
+  const handleInviteToSurface = (surface: InviteSurface) => {
+    const token = requireAuthToken()
+    if (!token || !profile) return
+    setInviteSurface(surface)
+    setInviteItemsError(null)
+    setInviteModalOpen(true)
+  }
+
+  useEffect(() => {
+    if (!inviteModalOpen) return
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      setInviteModalOpen(false)
+      redirectToAuthModal('login')
+      return
+    }
+
+    let cancelled = false
+
+    const loadInviteOptions = async () => {
+      setInviteItemsLoading(true)
+      setInviteItemsError(null)
+
+      try {
+        const headers = { authorization: `Bearer ${token}` }
+        const [followsRes, ownedRes, membershipsRes, eventsRes] = await Promise.all([
+          fetch(buildApiUrl('/organizations/follows'), { headers, cache: 'no-store' }),
+          fetch(buildApiUrl('/organizations/owned'), { headers, cache: 'no-store' }),
+          fetch(buildApiUrl('/organizations/memberships'), { headers, cache: 'no-store' }),
+          fetch(buildApiUrl('/events/sidebar'), { headers, cache: 'no-store' }),
+        ])
+
+        if ([followsRes, ownedRes, membershipsRes, eventsRes].some((response) => response.status === 401)) {
+          if (!cancelled) {
+            setInviteModalOpen(false)
+            redirectToAuthModal('login')
+          }
+          return
+        }
+
+        const [followsPayload, ownedPayload, membershipsPayload, eventsPayload] = await Promise.all([
+          followsRes.ok ? followsRes.json().catch(() => null) : Promise.resolve(null),
+          ownedRes.ok ? ownedRes.json().catch(() => null) : Promise.resolve(null),
+          membershipsRes.ok ? membershipsRes.json().catch(() => null) : Promise.resolve(null),
+          eventsRes.ok ? eventsRes.json().catch(() => null) : Promise.resolve(null),
+        ])
+
+        if (cancelled) return
+
+        const organizationMap = new Map<string, InviteableOrganization>()
+        const addOrganizations = (items: OrganizationsResponse['items']) => {
+          items?.forEach((item) => {
+            const provinceCode = item.provinceCode?.trim() ?? ''
+            const communitySlug = item.communitySlug?.trim() ?? ''
+            if (!item.id || !item.name || !item.slug || !provinceCode || !communitySlug) return
+            if (organizationMap.has(item.id)) return
+            organizationMap.set(item.id, {
+              id: item.id,
+              name: item.name,
+              slug: item.slug,
+              provinceCode,
+              communitySlug,
+              logoUrl: item.logoUrl ?? null,
+              coverUrl: item.coverUrl ?? null,
+            })
+          })
+        }
+
+        addOrganizations((followsPayload as OrganizationsResponse | null)?.items)
+        addOrganizations((ownedPayload as OrganizationsResponse | null)?.items)
+        addOrganizations((membershipsPayload as OrganizationsResponse | null)?.items)
+
+        const events = (((eventsPayload as EventsSidebarResponse | null)?.rsvps) ?? []).flatMap((item) => {
+          const provinceCode = item.organization.provinceCode?.trim() ?? ''
+          const communitySlug = item.organization.communitySlug?.trim() ?? ''
+          if (!item.id || !item.eventId || !item.title || !provinceCode || !communitySlug) return []
+          return [{
+            id: item.id,
+            eventId: item.eventId,
+            title: item.title,
+            startsAt: item.startsAt,
+            primaryPhotoUrl: item.primaryPhotoUrl ?? null,
+            organization: {
+              id: item.organization.id,
+              name: item.organization.name,
+              slug: item.organization.slug,
+              provinceCode,
+              communitySlug,
+            },
+          } satisfies InviteableEvent]
+        })
+
+        setInviteOrganizations(Array.from(organizationMap.values()).sort((left, right) => left.name.localeCompare(right.name)))
+        setInviteEvents(
+          events.sort((left, right) => {
+            const leftTime = Date.parse(left.startsAt)
+            const rightTime = Date.parse(right.startsAt)
+            if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+              return leftTime - rightTime
+            }
+            return left.title.localeCompare(right.title)
+          }),
+        )
+      } catch (error) {
+        console.error('Failed to load profile invite options', error)
+        if (!cancelled) {
+          setInviteItemsError('Unable to load your events and organizations right now.')
+        }
+      } finally {
+        if (!cancelled) {
+          setInviteItemsLoading(false)
+        }
+      }
+    }
+
+    loadInviteOptions().catch(() => {
+      /* noop */
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [inviteModalOpen])
+
+  const renderActionMenu = ({
+    label,
+    tone = 'neutral',
+    icon,
+    disabled = false,
+    children,
+  }: {
+    label: string
+    tone?: 'neutral' | 'primary' | 'success'
+    icon?: ReactNode
+    disabled?: boolean
+    children: ReactNode
+  }) => {
+    const summaryClassName = clsx(
+      'inline-flex w-full cursor-pointer list-none items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-semibold shadow-sm transition sm:w-auto [&::-webkit-details-marker]:hidden',
+      tone === 'primary' && 'bg-[var(--cc-primary)] text-white hover:brightness-110',
+      tone === 'success' && 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300',
+      tone === 'neutral' && 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900',
+      disabled && 'cursor-not-allowed opacity-55',
+    )
+
+    if (disabled) {
+      return (
+        <button type="button" className={summaryClassName} disabled>
+          {icon}
+          {label}
+          <HiOutlineChevronDown className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )
+    }
+
+    return (
+      <details className="group relative w-full sm:w-auto profile-action-menu">
+        <summary className={summaryClassName}>
+          {icon}
+          {label}
+          <HiOutlineChevronDown className="h-4 w-4 transition group-open:rotate-180" aria-hidden="true" />
+        </summary>
+        <div className={menuPanelClassName}>{children}</div>
+      </details>
+    )
+  }
+
+  const renderConnectMenu = () => {
+    const connectTone =
+      resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected'
+        ? 'success'
+        : 'primary'
+
+    return renderActionMenu({
+      label: 'Connect',
+      tone: connectTone,
+      icon: <HiOutlineUserPlus className="h-4 w-4" aria-hidden="true" />,
+      children: (
+        <>
+          {resolvedRelationship.friendshipStatus === 'incoming' ? (
+            <>
+              <button type="button" className={menuItemClassName} onClick={(event) => {
+                closeDetailsMenu(event)
+                void handleAcceptFriendRequest()
+              }} disabled={!relationship?.friendshipId || isAcceptingFriendRequest}>
+                <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+                {isAcceptingFriendRequest ? 'Accepting friend…' : 'Add Friend'}
+              </button>
+              <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+                closeDetailsMenu(event)
+                void handleRejectFriendRequest()
+              }} disabled={!relationship?.friendshipId || isRejectingFriendRequest}>
+                <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+                Dismiss friend request
+              </button>
+            </>
+          ) : resolvedRelationship.friendshipStatus === 'friends' ? (
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              setRemoveFriendModalOpen(true)
+            }}>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              Remove friend
+            </button>
+          ) : resolvedRelationship.friendshipStatus === 'outgoing' ? (
+            <button type="button" className={menuItemClassName} disabled>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              Friend request sent
+            </button>
+          ) : (
+            <button type="button" className={menuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              void handleSendFriendRequest()
+            }} disabled={isSendingFriendRequest}>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              {isSendingFriendRequest ? 'Sending friend invite…' : 'Add Friend'}
+            </button>
+          )}
+
+          {resolvedViewer?.accountType === 'family_member' ? (
+            <button type="button" className={menuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              void handleSendFamilyFriendRequest()
+            }}>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              Add Family
+            </button>
+          ) : null}
+
+          {resolvedRelationship.connectionStatus === 'incoming' ? (
+            <>
+              <button type="button" className={menuItemClassName} onClick={(event) => {
+                closeDetailsMenu(event)
+                void handleAcceptConnectionRequest()
+              }} disabled={!relationship?.connectionId || isAcceptingConnectionRequest}>
+                <FaUserTie className="h-4 w-4" aria-hidden="true" />
+                {isAcceptingConnectionRequest ? 'Accepting network…' : 'Add Business Network'}
+              </button>
+              <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+                closeDetailsMenu(event)
+                void handleRejectConnectionRequest()
+              }} disabled={!relationship?.connectionId || isRejectingConnectionRequest}>
+                <FaUserTie className="h-4 w-4" aria-hidden="true" />
+                Dismiss business request
+              </button>
+            </>
+          ) : resolvedRelationship.connectionStatus === 'connected' ? (
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              setRemoveConnectionModalOpen(true)
+            }}>
+              <FaUserTie className="h-4 w-4" aria-hidden="true" />
+              Remove Business Network
+            </button>
+          ) : resolvedRelationship.connectionStatus === 'outgoing' ? (
+            <button type="button" className={menuItemClassName} disabled>
+              <FaUserTie className="h-4 w-4" aria-hidden="true" />
+              Business request sent
+            </button>
+          ) : (
+            <button type="button" className={menuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              void handleSendConnectionRequest()
+            }} disabled={isSendingConnectionRequest}>
+              <FaUserTie className="h-4 w-4" aria-hidden="true" />
+              {isSendingConnectionRequest ? 'Sending network invite…' : 'Add Business Network'}
+            </button>
+          )}
+        </>
+      ),
+    })
+  }
+
+  const renderMessageMenu = () =>
+    renderActionMenu({
+      label: 'Message',
+      icon: <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />,
+      disabled: !canDirectlyReachProfile || messageLoading || callActionMode !== null,
+      children: (
+        <>
+          <button type="button" className={menuItemClassName} onClick={(event) => {
+            closeDetailsMenu(event)
+            void handleStartDirectMessage()
+          }} disabled={messageLoading || callActionMode !== null}>
+            <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
+            {messageLoading ? 'Opening text…' : 'Text'}
+          </button>
+          <button type="button" className={menuItemClassName} onClick={(event) => {
+            closeDetailsMenu(event)
+            void handleStartDirectCall('audio')
+          }} disabled={messageLoading || callActionMode !== null}>
+            <HiOutlinePhone className="h-4 w-4" aria-hidden="true" />
+            {callActionMode === 'audio' ? 'Calling…' : 'Audio'}
+          </button>
+          <button type="button" className={menuItemClassName} onClick={(event) => {
+            closeDetailsMenu(event)
+            void handleStartDirectCall('video')
+          }} disabled={messageLoading || callActionMode !== null}>
+            <HiOutlineVideoCamera className="h-4 w-4" aria-hidden="true" />
+            {callActionMode === 'video' ? 'Starting video…' : 'Video'}
+          </button>
+        </>
+      ),
+    })
+
+  const renderInviteMenu = () =>
+    renderActionMenu({
+      label: 'Invite to',
+      icon: <HiOutlineCalendarDays className="h-4 w-4" aria-hidden="true" />,
+      children: (
+        <>
+          <button type="button" className={menuItemClassName} onClick={(event) => {
+            closeDetailsMenu(event)
+            handleInviteToSurface('event')
+          }}>
+            <HiOutlineCalendarDays className="h-4 w-4" aria-hidden="true" />
+            Event
+          </button>
+          <button type="button" className={menuItemClassName} onClick={(event) => {
+            closeDetailsMenu(event)
+            handleInviteToSurface('organization')
+          }}>
+            <HiOutlineBuildingLibrary className="h-4 w-4" aria-hidden="true" />
+            Organization
+          </button>
+        </>
+      ),
+    })
   const renderFriendshipPrimaryCta = () => {
     switch (resolvedRelationship.friendshipStatus) {
       case 'incoming':
@@ -687,7 +1184,7 @@ export default function UserPostsPage({ params }: PageProps) {
             onClick={handleSendConnectionRequest}
             disabled={isSendingConnectionRequest}
           >
-            <HiOutlineBriefcase className="mr-2 h-4 w-4" aria-hidden="true" />
+            <FaUserTie className="mr-2 h-4 w-4" aria-hidden="true" />
             Connect
           </button>
         )
@@ -765,6 +1262,80 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       return payload.thread.id
+    },
+    [profile, resolveDirectTargetId],
+  )
+
+  const handleSendProfileInvite = useCallback(
+    async (surface: InviteSurface, item: InviteableEvent | InviteableOrganization) => {
+      if (!profile) return
+      const token = requireAuthToken()
+      if (!token) return
+
+      const targetUserId = await resolveDirectTargetId(token)
+      if (!targetUserId || !isValidUserId(targetUserId)) {
+        pushToast('Unable to send invite right now.', 'error')
+        return
+      }
+
+      const requestKey = surface === 'event' ? `event:${(item as InviteableEvent).eventId}` : `organization:${item.id}`
+      setInviteSendingKey(requestKey)
+
+      try {
+        const response = await fetch(buildApiUrl('/profile/invites'), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(
+            surface === 'event'
+              ? {
+                  type: 'event',
+                  targetUserId,
+                  eventId: (item as InviteableEvent).eventId,
+                }
+              : {
+                  type: 'organization',
+                  targetUserId,
+                  organizationId: item.id,
+                },
+          ),
+        })
+
+        if (response.status === 401) {
+          setInviteModalOpen(false)
+          redirectToAuthModal('login')
+          return
+        }
+
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        if (!response.ok) {
+          const message =
+            payload?.error === 'event_not_joined'
+              ? 'You can only invite people to events you are going to.'
+              : payload?.error === 'organization_not_joined'
+                ? 'You can only invite people to organizations you follow or belong to.'
+                : payload?.error === 'user_not_found'
+                  ? 'That profile is no longer available.'
+                  : 'Unable to send invite right now.'
+          pushToast(message, 'error')
+          return
+        }
+
+        pushToast(
+          surface === 'event'
+            ? `Event invite sent to @${profile.handle}.`
+            : `Organization invite sent to @${profile.handle}.`,
+          'success',
+        )
+        setInviteModalOpen(false)
+      } catch (error) {
+        console.error('Failed to send profile invite', error)
+        pushToast('Unable to send invite right now.', 'error')
+      } finally {
+        setInviteSendingKey(null)
+      }
     },
     [profile, resolveDirectTargetId],
   )
@@ -1553,47 +2124,14 @@ export default function UserPostsPage({ params }: PageProps) {
                   {isOwner ? (
                     null
                   ) : (
-                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:items-center lg:max-w-[420px] lg:justify-end">
+                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center lg:max-w-[520px] lg:justify-end">
                       {isFamilyMemberSession ? (
                         renderFamilyProfileActions()
                       ) : (
                         <>
-                          {renderFriendshipPrimaryCta()}
-                          {canDirectlyReachProfile ? (
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                                onClick={() => {
-                                  void handleStartDirectCall('audio')
-                                }}
-                                disabled={messageLoading || callActionMode !== null}
-                              >
-                                <HiOutlinePhone className="mr-2 h-4 w-4" aria-hidden="true" />
-                                {callActionMode === 'audio' ? 'Calling...' : 'Call'}
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                                onClick={() => {
-                                  void handleStartDirectCall('video')
-                                }}
-                                disabled={messageLoading || callActionMode !== null}
-                              >
-                                <HiOutlineVideoCamera className="mr-2 h-4 w-4" aria-hidden="true" />
-                                {callActionMode === 'video' ? 'Starting video...' : 'Video'}
-                              </button>
-                              <button
-                                type="button"
-                                className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                onClick={handleStartDirectMessage}
-                                disabled={messageLoading || callActionMode !== null}
-                              >
-                                {messageLoading ? 'Opening...' : 'Message'}
-                              </button>
-                            </div>
-                          ) : null}
-                          {renderConnectionPrimaryCta()}
+                          {renderConnectMenu()}
+                          {renderMessageMenu()}
+                          {renderInviteMenu()}
                         </>
                       )}
                     </div>
@@ -1603,8 +2141,17 @@ export default function UserPostsPage({ params }: PageProps) {
                 {identityPills.length ? (
                   <div className="mt-5 flex flex-wrap gap-2 text-sm font-medium text-slate-600">
                     {identityPills.map((pill) => (
-                      <span key={pill} className="rounded-full border border-slate-200 bg-white px-3.5 py-1.5 text-sm font-medium text-slate-600 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
-                        {pill}
+                      <span
+                        key={pill.label}
+                        className={clsx(
+                          'inline-flex items-center gap-2 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium shadow-[0_1px_0_rgba(15,23,42,0.03)]',
+                          pill.tone === 'verified'
+                            ? 'border border-red-300 text-red-700'
+                            : 'border border-slate-200 text-slate-600',
+                        )}
+                      >
+                        {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 object-contain" aria-hidden="true" /> : null}
+                        {pill.label}
                       </span>
                     ))}
                   </div>
@@ -1824,6 +2371,101 @@ export default function UserPostsPage({ params }: PageProps) {
         <div className="lg:hidden">
           <RightRail />
         </div>
+
+        <Modal
+          open={inviteModalOpen}
+          onClose={() => {
+            if (inviteSendingKey) return
+            setInviteModalOpen(false)
+          }}
+          title={inviteSurface === 'event' ? `Invite @${profile?.handle ?? handleParam} to an event` : `Invite @${profile?.handle ?? handleParam} to an organization`}
+          maxWidthClassName="max-w-2xl"
+        >
+          <div className="space-y-4 p-1">
+            <p className="text-sm text-slate-600">
+              {inviteSurface === 'event'
+                ? 'Choose one of your upcoming events. We will send a notification with a direct link.'
+                : 'Choose one of your organizations. We will send a notification with a direct link.'}
+            </p>
+
+            {inviteItemsLoading ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                Loading your {inviteSurface === 'event' ? 'events' : 'organizations'}…
+              </div>
+            ) : inviteItemsError ? (
+              <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{inviteItemsError}</div>
+            ) : inviteSurface === 'event' ? (
+              inviteEvents.length > 0 ? (
+                <div className="space-y-3">
+                  {inviteEvents.map((event) => {
+                    const requestKey = `event:${event.eventId}`
+                    const isSending = inviteSendingKey === requestKey
+                    return (
+                      <button
+                        key={requestKey}
+                        type="button"
+                        className="flex w-full items-center gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-slate-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => {
+                          void handleSendProfileInvite('event', event)
+                        }}
+                        disabled={Boolean(inviteSendingKey)}
+                      >
+                        <div className="h-14 w-14 overflow-hidden rounded-2xl bg-slate-100">
+                          {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt="" className="h-full w-full object-cover" /> : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-semibold text-slate-900">{event.title}</div>
+                          <div className="truncate text-xs text-slate-500">{event.organization.name}</div>
+                          <div className="truncate text-xs text-slate-500">{formatEventStart(event.startsAt) || 'Date to be announced'}</div>
+                        </div>
+                        <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+                          {isSending ? 'Sending…' : 'Invite'}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                  You do not have any upcoming events to invite people to yet.
+                </div>
+              )
+            ) : inviteOrganizations.length > 0 ? (
+              <div className="space-y-3">
+                {inviteOrganizations.map((organization) => {
+                  const requestKey = `organization:${organization.id}`
+                  const isSending = inviteSendingKey === requestKey
+                  return (
+                    <button
+                      key={requestKey}
+                      type="button"
+                      className="flex w-full items-center gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-slate-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => {
+                        void handleSendProfileInvite('organization', organization)
+                      }}
+                      disabled={Boolean(inviteSendingKey)}
+                    >
+                      <div className="h-14 w-14 overflow-hidden rounded-2xl bg-slate-100">
+                        {organization.logoUrl ? <img src={organization.logoUrl} alt="" className="h-full w-full object-cover" /> : null}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-slate-900">{organization.name}</div>
+                        <div className="truncate text-xs text-slate-500">/com/{organization.provinceCode.toLowerCase()}/{organization.communitySlug.toLowerCase()}</div>
+                      </div>
+                      <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">
+                        {isSending ? 'Sending…' : 'Invite'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                You are not following or part of any organizations yet.
+              </div>
+            )}
+          </div>
+        </Modal>
 
         <Modal
           open={removeFriendModalOpen}

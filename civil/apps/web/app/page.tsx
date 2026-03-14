@@ -7,7 +7,7 @@ import {
   FaUsers,
   FaHandshake,
   FaStore,
-  FaBriefcase,
+  FaUserTie,
   FaComments,
   FaWallet,
   FaShoppingCart,
@@ -272,13 +272,13 @@ export default function Home() {
               <p className="text-slate-700 mt-3">Connect directly with verified businesses nationwide.</p>
             </article>
             <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <IconWrap><FaUserTie size={42} /></IconWrap>
               <h3 className="text-lg font-bold">Contracts & Delivery Included</h3>
               <p className="text-slate-700 mt-3">Create contracts at checkout and coordinate delivery in the same workflow.</p>
             </article>
 
             <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <IconWrap><FaUserTie size={42} /></IconWrap>
               <h3 className="text-lg font-bold">Contracts at checkout</h3>
               <p className="text-slate-700 mt-3">Define pickup, drop-off, timing, and service scope clearly.</p>
             </article>
@@ -345,7 +345,7 @@ export default function Home() {
             </article>
 
             <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <IconWrap><FaUserTie size={42} /></IconWrap>
               <h3 className="text-lg font-bold">Build Your Business</h3>
               <p className="text-slate-700 mt-3">Start your own transport business.</p>
             </article>
@@ -384,7 +384,7 @@ export default function Home() {
         <div className="container mx-auto px-4 text-center space-y-10">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
             <article className="benefit-card p-6 flex flex-col items-center text-center">
-              <IconWrap><FaBriefcase size={42} /></IconWrap>
+              <IconWrap><FaUserTie size={42} /></IconWrap>
               <h3 className="text-lg font-bold">Professional Profiles</h3>
               <p className="text-slate-700 mt-3">Highlight skills, certifications, and achievements — built for substance.</p>
             </article>

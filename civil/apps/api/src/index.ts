@@ -3782,7 +3782,10 @@ function normalizeFamilyFeedImages(images: Prisma.JsonValue | null): string[] {
   return images.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
 }
 
-function formatFamilyFeedPost(post: Pick<FamilyFeedPostRecord, 'id' | 'familyMemberId' | 'body' | 'images' | 'createdAt' | 'updatedAt'>, member: ReturnType<typeof normalizeFamilyMemberSummary>) {
+function formatChildFamilyFeedPost(
+  post: Pick<FamilyFeedPostRecord, 'id' | 'familyMemberId' | 'body' | 'images' | 'createdAt' | 'updatedAt'>,
+  member: ReturnType<typeof normalizeFamilyMemberSummary>,
+ ) {
   return {
     id: post.id,
     familyMemberId: post.familyMemberId,
@@ -3792,9 +3795,60 @@ function formatFamilyFeedPost(post: Pick<FamilyFeedPostRecord, 'id' | 'familyMem
     updatedAt: post.updatedAt.toISOString(),
     author: {
       id: member.id,
+      handle: member.username,
       name: member.displayName,
       avatarUrl: member.avatarUrl,
       coverUrl: member.coverUrl,
+      badgeLabel: member.relationshipLabel,
+    },
+    target: {
+      id: member.id,
+      name: member.displayName,
+      relationshipLabel: member.relationshipLabel,
+      modeBand: member.modeBand,
+      modeLabel: member.modeLabel,
+    },
+  }
+}
+
+function formatParentFamilyFeedPost(
+  post: {
+    id: string
+    familyMemberId: string
+    body: string
+    images: Prisma.JsonValue | null
+    createdAt: Date
+    updatedAt: Date
+  },
+  member: ReturnType<typeof normalizeFamilyMemberSummary>,
+  author: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    coverUrl: string | null
+  },
+) {
+  const authorName = author.name?.trim() || author.handle || 'Parent'
+
+  return {
+    id: post.id,
+    familyMemberId: post.familyMemberId,
+    body: post.body,
+    images: normalizeFamilyFeedImages(post.images),
+    createdAt: post.createdAt.toISOString(),
+    updatedAt: post.updatedAt.toISOString(),
+    author: {
+      id: author.id,
+      handle: author.handle,
+      name: authorName,
+      avatarUrl: normalizeMediaUrl(author.avatarUrl ?? null),
+      coverUrl: normalizeMediaUrl(author.coverUrl ?? null),
+      badgeLabel: 'Parent',
+    },
+    target: {
+      id: member.id,
+      name: member.displayName,
       relationshipLabel: member.relationshipLabel,
       modeBand: member.modeBand,
       modeLabel: member.modeLabel,
@@ -5935,6 +5989,11 @@ const ORG_NOTIFICATION_TYPES = {
   USER_INVITE: 'org_user_invite',
 } as const
 
+const PROFILE_INVITE_NOTIFICATION_TYPES = {
+  EVENT: 'profile_event_invite',
+  ORGANIZATION: 'profile_organization_invite',
+} as const
+
 const POLL_NOTIFICATION_TYPES = {
   RESULTS_AVAILABLE: 'poll_results_available',
 } as const
@@ -5987,6 +6046,54 @@ async function notifyConnectionAcceptance(connectionId: string, requesterId: str
       connectionId,
       status: 'accepted',
       url: '/network/professionals',
+    },
+  })
+}
+
+async function notifyProfileEventInvite(args: {
+  inviteeUserId: string
+  actorUserId: string
+  eventId: string
+  eventTitle: string
+  hostOrganizationId: string
+  hostOrganizationName: string
+  hostProvinceCode: string
+  hostCommunitySlug: string
+  hostOrganizationSlug: string
+}) {
+  const eventUrl = `/com/${encodeURIComponent(args.hostProvinceCode)}/${encodeURIComponent(args.hostCommunitySlug)}/orgs/${encodeURIComponent(args.hostOrganizationSlug)}/events/${encodeURIComponent(args.eventId)}`
+  await createNotificationRecord({
+    userId: args.inviteeUserId,
+    actorId: args.actorUserId,
+    type: PROFILE_INVITE_NOTIFICATION_TYPES.EVENT,
+    payload: {
+      eventId: args.eventId,
+      title: args.eventTitle,
+      organizationId: args.hostOrganizationId,
+      organizationName: args.hostOrganizationName,
+      url: eventUrl,
+    },
+  })
+}
+
+async function notifyProfileOrganizationInvite(args: {
+  inviteeUserId: string
+  actorUserId: string
+  organizationId: string
+  organizationName: string
+  provinceCode: string
+  communitySlug: string
+  organizationSlug: string
+}) {
+  const organizationUrl = `/com/${encodeURIComponent(args.provinceCode)}/${encodeURIComponent(args.communitySlug)}/orgs/${encodeURIComponent(args.organizationSlug)}`
+  await createNotificationRecord({
+    userId: args.inviteeUserId,
+    actorId: args.actorUserId,
+    type: PROFILE_INVITE_NOTIFICATION_TYPES.ORGANIZATION,
+    payload: {
+      organizationId: args.organizationId,
+      title: args.organizationName,
+      url: organizationUrl,
     },
   })
 }
@@ -14583,10 +14690,40 @@ app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) =
     },
   })
 
+  let parentRows: Array<{
+    id: string
+    familyMemberId: string
+    body: string
+    images: Prisma.JsonValue | null
+    createdAt: Date
+    updatedAt: Date
+  }> = []
+
+  try {
+    parentRows = await prisma.familyFeedPost.findMany({
+      where: {
+        parentId: targetMember.parentId,
+        familyMemberId: targetMember.id,
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 40,
+      select: {
+        id: true,
+        familyMemberId: true,
+        body: true,
+        images: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+  } catch (error) {
+    if (!isSchemaOutOfDateError(error)) throw error
+  }
+
   const normalizedMember = normalizeFamilyMemberSummary(targetMember)
-  return reply.send({
-    items: rows.map((row) =>
-      formatFamilyFeedPost(
+  const items = [
+    ...rows.map((row) =>
+      formatChildFamilyFeedPost(
         {
           id: row.id,
           familyMemberId: targetMember.id,
@@ -14598,6 +14735,11 @@ app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) =
         normalizedMember,
       ),
     ),
+    ...parentRows.map((row) => formatParentFamilyFeedPost(row, normalizedMember, targetMember.parent)),
+  ].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()).slice(0, 40)
+
+  return reply.send({
+    items,
   })
 })
 
@@ -14627,19 +14769,16 @@ app.post('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) 
     return reply.code(400).send({ error: 'family_feed_post_empty' })
   }
 
-  const created = await prisma.post.create({
+  const created = await prisma.familyFeedPost.create({
     data: {
-      authorId: targetMember.parentId,
-      type: FAMILY_FEED_POST_TYPE,
-      title: buildFamilyFeedPostTitle(targetMember.id),
+      parentId: targetMember.parentId,
+      familyMemberId: targetMember.id,
       body,
       images: images.length ? (images as any) : undefined,
-      audience: 'family',
-      visibility: 'public',
-      jurisdiction: 'self',
     },
     select: {
       id: true,
+      familyMemberId: true,
       body: true,
       images: true,
       createdAt: true,
@@ -14649,17 +14788,7 @@ app.post('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) 
 
   const normalizedMember = normalizeFamilyMemberSummary(targetMember)
   return reply.code(201).send({
-    post: formatFamilyFeedPost(
-      {
-        id: created.id,
-        familyMemberId: targetMember.id,
-        body: created.body,
-        images: created.images,
-        createdAt: created.createdAt,
-        updatedAt: created.updatedAt,
-      },
-      normalizedMember,
-    ),
+    post: formatParentFamilyFeedPost(created, normalizedMember, targetMember.parent),
   })
 })
 
@@ -15281,7 +15410,7 @@ app.post('/profile/photo', async (req: FastifyRequest, reply: FastifyReply) =>
       return reply.send({
         ok: true,
         post: createdFamilyPost
-          ? formatFamilyFeedPost(
+          ? formatChildFamilyFeedPost(
               {
                 id: createdFamilyPost.id,
                 familyMemberId: updatedMember.id,
@@ -32114,6 +32243,139 @@ app.get('/events/sidebar', async (req: FastifyRequest, reply: FastifyReply) =>
       rsvps: rsvps.slice(0, 12),
       manageableOrganizations: manageableOrganizations.slice(0, 12),
     })
+  }),
+)
+
+app.post('/profile/invites', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const actorUserId = (await resolveUserId(req)) ?? null
+    if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = z
+      .object({
+        type: z.enum(['event', 'organization']),
+        targetUserId: z.string().trim().min(1),
+        eventId: z.string().trim().min(1).optional(),
+        organizationId: z.string().trim().min(1).optional(),
+      })
+      .safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+    if (body.data.targetUserId === actorUserId) return reply.code(400).send({ error: 'invalid_invitee' })
+
+    const targetUser = await prisma.user.findUnique({ where: { id: body.data.targetUserId }, select: { id: true } })
+    if (!targetUser) return reply.code(404).send({ error: 'user_not_found' })
+
+    if (body.data.type === 'organization') {
+      const organizationId = body.data.organizationId?.trim() ?? ''
+      if (!organizationId) return reply.code(400).send({ error: 'organization_required' })
+
+      const [org, follow, membership] = await Promise.all([
+        prisma.business.findFirst({
+          where: { id: organizationId, status: BusinessStatus.ACTIVE },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            provinceCode: true,
+            communitySlug: true,
+            ownerId: true,
+          },
+        }),
+        prisma.businessFollow.findUnique({
+          where: { businessId_userId: { businessId: organizationId, userId: actorUserId } },
+          select: { businessId: true },
+        }),
+        prisma.businessMembership.findUnique({
+          where: { businessId_userId: { businessId: organizationId, userId: actorUserId } },
+          select: { businessId: true },
+        }),
+      ])
+
+      if (!org || !org.provinceCode || !org.communitySlug) return reply.code(404).send({ error: 'organization_not_found' })
+      if (!(org.ownerId === actorUserId || follow || membership)) return reply.code(403).send({ error: 'organization_not_joined' })
+
+      await notifyProfileOrganizationInvite({
+        inviteeUserId: targetUser.id,
+        actorUserId,
+        organizationId: org.id,
+        organizationName: org.name,
+        provinceCode: org.provinceCode,
+        communitySlug: org.communitySlug,
+        organizationSlug: org.slug,
+      })
+
+      return reply.code(201).send({ ok: true })
+    }
+
+    const eventId = body.data.eventId?.trim() ?? ''
+    if (!eventId) return reply.code(400).send({ error: 'event_required' })
+
+    const organizations = await prisma.business.findMany({
+      where: {
+        status: BusinessStatus.ACTIVE,
+        OR: [
+          { ownerId: actorUserId },
+          { follows: { some: { userId: actorUserId } } },
+          { memberships: { some: { userId: actorUserId } } },
+        ],
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        provinceCode: true,
+        communitySlug: true,
+        metadata: true,
+      },
+      take: 1000,
+    })
+
+    let matchedEvent:
+      | {
+          id: string
+          title: string
+          organizationId: string
+          organizationName: string
+          organizationSlug: string
+          provinceCode: string
+          communitySlug: string
+        }
+      | null = null
+
+    for (const org of organizations) {
+      if (!org.provinceCode || !org.communitySlug) continue
+      const system = readOrganizationSystemState(org.metadata)
+      const event = system.events.find((item) => item.id === eventId)
+      if (!event) continue
+      const viewerRsvp = system.eventRsvps.find((row) => row.eventId === eventId && row.userId === actorUserId && row.status === 'GOING')
+      if (!viewerRsvp) continue
+      matchedEvent = {
+        id: event.id,
+        title: event.title,
+        organizationId: org.id,
+        organizationName: org.name,
+        organizationSlug: org.slug,
+        provinceCode: org.provinceCode,
+        communitySlug: org.communitySlug,
+      }
+      break
+    }
+
+    if (!matchedEvent) return reply.code(403).send({ error: 'event_not_joined' })
+
+    await notifyProfileEventInvite({
+      inviteeUserId: targetUser.id,
+      actorUserId,
+      eventId: matchedEvent.id,
+      eventTitle: matchedEvent.title,
+      hostOrganizationId: matchedEvent.organizationId,
+      hostOrganizationName: matchedEvent.organizationName,
+      hostProvinceCode: matchedEvent.provinceCode,
+      hostCommunitySlug: matchedEvent.communitySlug,
+      hostOrganizationSlug: matchedEvent.organizationSlug,
+    })
+
+    return reply.code(201).send({ ok: true })
   }),
 )
 
