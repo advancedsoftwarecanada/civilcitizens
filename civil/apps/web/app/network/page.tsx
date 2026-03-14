@@ -8,6 +8,7 @@ export default function NetworkFeedPage() {
       sidebarActive="network"
       title="Network Feed"
       description="Professional updates from your Civil network across Canada."
+      showFeedSummary={false}
       emptyState="No network activity yet. Start connecting with professionals and their updates will show up here."
       emptyStateCta={{ label: 'Find People', href: '/search' }}
       rightRail={<RightRail mode="network" showRsvps />}

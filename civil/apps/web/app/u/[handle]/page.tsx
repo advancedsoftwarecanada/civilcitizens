@@ -564,8 +564,6 @@ export default function UserPostsPage({ params }: PageProps) {
   const isBornInCanada = publicBirthCountry.toLowerCase() === 'canada'
   const identityPills = [
     profile?.isVerified ? { label: 'Verified Canadian', tone: 'verified' as const, iconSrc: '/self-verified.png' } : null,
-    profile?.createdAt ? { label: `Joined ${formatDate(profile.createdAt) || '—'}`, tone: 'default' as const } : null,
-    publicBirthDate ? { label: `Born ${publicBirthDate}`, tone: 'default' as const } : publicBirthYear ? { label: `Born ${publicBirthYear}`, tone: 'default' as const } : null,
     publicBirthCountry
       ? {
           label: `Born in ${publicBirthCountry}`,
@@ -573,6 +571,8 @@ export default function UserPostsPage({ params }: PageProps) {
           iconSrc: isBornInCanada ? '/self-verified.png' : undefined,
         }
       : null,
+    profile?.createdAt ? { label: `Joined ${formatDate(profile.createdAt) || '—'}`, tone: 'default' as const } : null,
+    publicBirthDate ? { label: `Born ${publicBirthDate}`, tone: 'default' as const } : publicBirthYear ? { label: `Born ${publicBirthYear}`, tone: 'default' as const } : null,
   ].filter(
     (value): value is { label: string; tone: 'verified' | 'default'; iconSrc?: string } => Boolean(value),
   )
