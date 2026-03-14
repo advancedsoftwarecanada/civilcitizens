@@ -14,7 +14,7 @@ export type PollResultsVisibility = z.infer<typeof PollResultsVisibilityEnum>
 export const PostVisibilityEnum = z.enum(['public', 'members'])
 export type PostVisibility = z.infer<typeof PostVisibilityEnum>
 
-export const PostAudienceEnum = z.enum(['friends', 'network', 'community', 'organization'])
+export const PostAudienceEnum = z.enum(['friends', 'family', 'network', 'community', 'organization'])
 export type PostAudience = z.infer<typeof PostAudienceEnum>
 
 export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])

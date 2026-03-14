@@ -14,7 +14,7 @@ export default function SuspendedPageClient() {
         </div>
         <h1 className="mt-6 text-3xl font-semibold text-slate-950">Account Suspended</h1>
         <p className="mt-4 max-w-xl text-base leading-7 text-slate-600">
-          Your account has been suspended by Family Mode, please ask your parent or guardian to restore your account.
+          Your account has been suspended by Guardian Mode, please ask your parent or guardian to restore your account.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button
@@ -28,10 +28,10 @@ export default function SuspendedPageClient() {
             Exit locked device
           </button>
           <Link
-            href="/settings/family"
+            href="/settings/guardian"
             className="inline-flex rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
           >
-            Back to Family Mode
+            Back to Guardian Mode
           </Link>
         </div>
       </div>

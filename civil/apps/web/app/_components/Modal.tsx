@@ -28,21 +28,42 @@ export default function Modal({
     const container = document.createElement('div')
     container.dataset.ccModalMount = 'true'
     document.body.appendChild(container)
+    const scrollY = window.scrollY
+    const documentElement = document.documentElement
+    const previousHtmlOverflow = documentElement.style.overflow
     const previousOverflow = document.body.style.overflow
+    const previousPosition = document.body.style.position
+    const previousTop = document.body.style.top
+    const previousLeft = document.body.style.left
+    const previousRight = document.body.style.right
+    const previousWidth = document.body.style.width
     const appRoot = document.getElementById('cc-app-root')
     const previousAppRootOverflow = appRoot?.style.overflow
+    documentElement.style.overflow = 'hidden'
     document.body.style.overflow = 'hidden'
+    document.body.style.position = 'fixed'
+    document.body.style.top = `-${scrollY}px`
+    document.body.style.left = '0'
+    document.body.style.right = '0'
+    document.body.style.width = '100%'
     if (appRoot) {
       appRoot.style.overflow = 'hidden'
     }
     setPortalEl(container)
     return () => {
+      documentElement.style.overflow = previousHtmlOverflow
       document.body.style.overflow = previousOverflow
+      document.body.style.position = previousPosition
+      document.body.style.top = previousTop
+      document.body.style.left = previousLeft
+      document.body.style.right = previousRight
+      document.body.style.width = previousWidth
       if (appRoot) {
         appRoot.style.overflow = previousAppRootOverflow ?? ''
       }
       container.remove()
       setPortalEl(null)
+      window.scrollTo({ top: scrollY, left: 0, behavior: 'auto' })
     }
   }, [open])
 
@@ -73,19 +94,28 @@ export default function Modal({
   }
   if (!open || !portalEl) return null
   const widthClass = maxWidthClassName ?? 'max-w-md'
+  const safeAreaStyle = {
+    paddingTop: 'max(1rem, env(safe-area-inset-top))',
+    paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+  } as const
+  const panelStyle = {
+    maxHeight: 'calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)) - 2rem)',
+  } as const
 
   return createPortal(
     <div
-      className="cc-safe-modal-overlay fixed inset-0 z-50 overflow-y-auto"
+      className="cc-safe-modal-overlay fixed inset-0 z-50 overflow-hidden overscroll-none p-4 sm:p-6"
       onClick={closeOnBackdrop ? onClose : undefined}
       onClickCapture={onCaptureClick}
       data-cc-modal-root
+      style={safeAreaStyle}
     >
       <div className="absolute inset-0 bg-black/50" />
-      <div className="relative flex min-h-full items-start justify-center">
+      <div className="relative flex h-[100dvh] items-center justify-center">
         <div
-          className={`cc-safe-modal-panel relative flex w-full ${widthClass} flex-col rounded-lg bg-white shadow-xl`}
+          className={`cc-safe-modal-panel relative flex w-full ${widthClass} min-h-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-xl`}
           onClick={(e) => e.stopPropagation()}
+          style={panelStyle}
         >
           {title ? (
             <div className="flex shrink-0 items-center justify-between border-b px-5 py-4">
@@ -95,7 +125,7 @@ export default function Modal({
               </button>
             </div>
           ) : null}
-          <div className="flex-1 overflow-y-auto p-5">{children}</div>
+          <div className="flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
         </div>
       </div>
     </div>,

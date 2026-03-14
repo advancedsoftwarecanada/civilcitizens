@@ -2644,7 +2644,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               <HiOutlineVideoCamera className="h-5 w-5" />
             </button>
             <Link
-              href={familyParentHandle ? `/u/${encodeURIComponent(familyParentHandle)}` : '/settings/family'}
+              href={familyParentHandle ? `/u/${encodeURIComponent(familyParentHandle)}` : '/settings/guardian'}
               className="inline-flex items-center justify-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
             >
               View Parent Profile

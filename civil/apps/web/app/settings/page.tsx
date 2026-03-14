@@ -479,9 +479,9 @@ export default function SettingsPage() {
       },
       {
         key: 'family',
-        label: 'Family Mode',
-        description: 'Create supervised family profiles and prepare devices for parent-managed accounts.',
-        href: '/settings/family',
+        label: 'Guardian Mode',
+        description: 'Enable supervised profiles for children, adolescents, and youth, and prepare devices for guardian-managed accounts.',
+        href: '/settings/guardian',
         icon: HiOutlineUserGroup,
       },
       {

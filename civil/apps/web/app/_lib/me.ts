@@ -14,6 +14,7 @@ export type FamilyModeSummary = {
   affirmedProfileTruthAt?: string | null
   acceptedChildSafetyInfoAt?: string | null
   memberCount?: number
+  relationshipCount?: number
 }
 
 export type FamilyMemberSessionSummary = {
@@ -88,6 +89,7 @@ export function hasFamilyModeEnabled(me: Pick<MeResponse, 'familyMode'> | null |
 }
 
 export function hasFamilyProfilesAvailable(me: Pick<MeResponse, 'familyMode'> | null | undefined): boolean {
-  if (!me?.familyMode?.enabled) return false
-  return me.familyMode.memberCount !== 0
+  const memberCount = me?.familyMode?.memberCount ?? 0
+  const relationshipCount = me?.familyMode?.relationshipCount ?? 0
+  return memberCount > 0 || relationshipCount > 0 || Boolean(me?.familyMode?.enabled && memberCount > 0)
 }
