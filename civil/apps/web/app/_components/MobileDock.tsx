@@ -654,7 +654,7 @@ export default function MobileDock() {
                     href={profileHref}
                     size="rail"
                     name={familyCardIdentity?.name ?? effectiveViewer?.name ?? 'Civil Citizen'}
-                    subtitle={familyCardIdentity?.subtitle ?? 'View profile'}
+                    subtitle={familyCardIdentity?.subtitle}
                     avatarAlt={familyCardIdentity?.avatarAlt ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'Civil citizen'}
                     avatarInitials={familyCardIdentity?.avatarInitials ?? effectiveViewer?.name ?? effectiveViewer?.handle ?? 'C'}
                     avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveViewer?.avatarUrl ?? null}

@@ -108,59 +108,13 @@ function ParentFamilyFeedView() {
     [members, selectedMemberId],
   )
 
-  const headerContent = (
-    <div className="space-y-4">
-      <section className="rounded-[28px] border border-slate-200 bg-white/90 px-5 py-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Friends</p>
-            <h1 className="mt-2 text-2xl font-semibold text-slate-950">Family</h1>
-            <p className="mt-1 text-sm text-slate-600">Choose a supervised profile to post updates that only that child sees in Family mode.</p>
-          </div>
-        </div>
-        {loading ? (
-          <p className="mt-4 text-sm text-slate-500">Loading supervised profiles…</p>
-        ) : members.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-            No supervised profiles yet. <Link href="/settings/family" className="font-semibold text-[var(--cc-primary)] hover:underline">Create one in Family Mode settings</Link>.
-          </div>
-        ) : (
-          <div className="mt-4 flex flex-wrap gap-3">
-            {members.map((member) => {
-              const active = member.id === selectedMemberId
-              const avatarSrc = member.avatarUrl ?? buildFamilyAvatarDataUrl(member.displayName, member.modeBand)
-              return (
-                <button
-                  key={member.id}
-                  type="button"
-                  onClick={() => setSelectedMemberId(member.id)}
-                  className={active
-                    ? 'flex min-w-[220px] items-center gap-3 rounded-2xl border border-emerald-500 bg-emerald-50 px-3 py-3 text-left shadow-sm shadow-emerald-100'
-                    : 'flex min-w-[220px] items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/40 px-3 py-3 text-left transition hover:border-emerald-300 hover:bg-emerald-50/70'}
-                >
-                  <img src={avatarSrc} alt="" className="h-12 w-12 rounded-full border border-slate-200 object-cover" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{member.displayName}</p>
-                    <p className="text-xs text-emerald-700">{member.relationshipLabel} · {member.modeLabel}</p>
-                    {member.suspended ? <p className="text-xs font-semibold text-amber-700">Suspended</p> : null}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </section>
-    </div>
-  )
-
   if (!selectedMember) {
     return (
       <FamilyFeedClient
         readOnly
-        title="Family Feed"
-        description="Choose a supervised profile to view their Family feed."
+        title=""
+        description=""
         emptyState="No Family feed selected yet."
-        headerContent={headerContent}
       />
     )
   }
@@ -171,10 +125,9 @@ function ParentFamilyFeedView() {
       memberDisplayName={selectedMember.displayName}
       memberModeBand={selectedMember.modeBand}
       memberAvatarUrl={selectedMember.avatarUrl ?? null}
-      title="Family Feed"
-      description={`Post specifically for ${selectedMember.displayName}. This feed stays latest-only and only appears in that child's Family shell.`}
+      title=""
+      description=""
       emptyState={`No Family updates for ${selectedMember.displayName} yet.`}
-      headerContent={headerContent}
     />
   )
 }

@@ -4,12 +4,14 @@ import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useR
 import clsx from 'clsx'
 import CivilPost from './CivilPost'
 import CivilComposerShell from './CivilComposerShell'
+import CivilComposerLauncher from './CivilComposerLauncher'
 import DashboardShell from './DashboardShell'
+import Modal from './Modal'
 import { RightRail } from './RightRail'
 import VerifiedAvatar from './VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
-import { buildFamilyAvatarDataUrl, buildFamilyCoverDataUrl } from '../_lib/familyIdentity'
+import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
 import { useViewerStore } from '../_lib/viewerStore'
 import { pushToast } from './useToasts'
 
@@ -20,6 +22,14 @@ type FamilyFeedPost = {
   createdAt: string
   updatedAt: string
   author: {
+    id: string
+    handle: string
+    name: string
+    avatarUrl?: string | null
+    coverUrl?: string | null
+    badgeLabel: string
+  }
+  target: {
     id: string
     name: string
     relationshipLabel: string
@@ -125,12 +135,18 @@ export default function FamilyFeedClient({
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const familyDisplayName = memberDisplayName ?? familyView?.displayName ?? viewer?.name ?? 'Family member'
   const familyModeBand = memberModeBand ?? familyView?.modeBand ?? 'JUNIOR'
   const effectiveMemberId = memberId ?? familyView?.memberId ?? null
-  const avatarSrc = memberAvatarUrl ?? (memberId ? null : viewer?.avatarUrl) ?? buildFamilyAvatarDataUrl(familyDisplayName, familyModeBand)
+  const composerDisplayName = viewer?.name?.trim() || viewer?.handle || 'You'
+  const avatarSrc = viewer?.avatarUrl ?? buildFamilyAvatarDataUrl(composerDisplayName, familyModeBand)
+  const composerActions = [
+    { type: 'post', label: 'Post', icon: '📝' },
+    { type: 'photo', label: 'Photos', icon: '📷' },
+  ]
   const readyImages = useMemo(() => photos.map((photo) => photo.mediaUrl).filter((value): value is string => Boolean(value)), [photos])
   const canSubmit = !readOnly && (composerText.trim().length > 0 || readyImages.length > 0) && !submitting && !uploading
 
@@ -353,9 +369,9 @@ export default function FamilyFeedClient({
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
-      return
+      return false
     }
-    if (!canSubmit) return
+    if (!canSubmit) return false
 
     setSubmitting(true)
     try {
@@ -366,7 +382,7 @@ export default function FamilyFeedClient({
           authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          memberId: memberId ?? undefined,
+          memberId: effectiveMemberId ?? undefined,
           body: composerText.trim(),
           images: readyImages,
         }),
@@ -374,28 +390,53 @@ export default function FamilyFeedClient({
       const payload = (await response.json().catch(() => null)) as { error?: string; post?: FamilyFeedPost } | null
       if (!response.ok || !payload?.post) {
         pushToast(payload?.error ?? 'Unable to share that update right now.', 'error')
-        return
+        return false
       }
 
       setPosts((prev) => [payload.post!, ...prev])
       setComposerText('')
       photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl))
       setPhotos([])
+      return true
     } catch (error) {
       console.error('Failed to create family feed post', error)
       pushToast('Unable to share that update right now.', 'error')
+      return false
     } finally {
       setSubmitting(false)
     }
-  }, [canSubmit, composerText, photos, readyImages])
+  }, [canSubmit, composerText, effectiveMemberId, photos, readyImages])
 
   return (
     <DashboardShell rightRail={<RightRail sticky={false} />} mainClassName="min-w-0 space-y-6">
-      <CivilComposerShell title={title} description={description} headerContent={headerContent}>
-        {!readOnly ? (
+      {headerContent ? <div>{headerContent}</div> : null}
+
+      {!readOnly ? (
+        <CivilComposerLauncher
+          coverUrl={viewer?.coverUrl ?? null}
+          avatarSrc={avatarSrc}
+          avatarAlt={composerDisplayName}
+          avatarInitials={composerDisplayName}
+          avatarHref={viewer?.handle ? `/u/${viewer.handle}` : undefined}
+          prompt={`What's on your mind, ${composerDisplayName.split(' ')[0] ?? 'there'}?`}
+          actions={composerActions}
+          onPrimaryClick={() => setComposerOpen(true)}
+          onActionClick={() => setComposerOpen(true)}
+        />
+      ) : null}
+
+      <Modal
+        open={composerOpen}
+        onClose={() => setComposerOpen(false)}
+        title="Share Family update"
+        maxWidthClassName="max-w-3xl"
+        closeOnBackdrop={false}
+        closeOnEscape={false}
+      >
+        <CivilComposerShell bodyClassName="space-y-4">
           <div className="rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
             <div className="flex items-start gap-3">
-              <VerifiedAvatar src={avatarSrc} alt={familyDisplayName} initials={familyDisplayName} size={52} className="shrink-0" />
+              <VerifiedAvatar src={avatarSrc} alt={composerDisplayName} initials={composerDisplayName} size={52} className="shrink-0" />
               <div className="min-w-0 flex-1 space-y-3">
                 <textarea
                   value={composerText}
@@ -438,7 +479,11 @@ export default function FamilyFeedClient({
                   </div>
                   <button
                     type="button"
-                    onClick={() => void submitUpdate()}
+                    onClick={() => {
+                      void submitUpdate().then((success) => {
+                        if (success) setComposerOpen(false)
+                      })
+                    }}
                     disabled={!canSubmit}
                     className="inline-flex items-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -449,8 +494,8 @@ export default function FamilyFeedClient({
             </div>
             <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGE_TYPES} multiple className="hidden" onChange={handlePhotoSelect} />
           </div>
-        ) : null}
-      </CivilComposerShell>
+        </CivilComposerShell>
+      </Modal>
 
       <div className="space-y-4">
         {loading ? (
@@ -468,7 +513,7 @@ export default function FamilyFeedClient({
               details={
                 <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
                   <span className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85">
-                    {post.author.relationshipLabel}
+                    {post.author.badgeLabel}
                   </span>
                   <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
                     {post.images.length ? 'Photo' : 'Update'}
@@ -477,8 +522,8 @@ export default function FamilyFeedClient({
               }
               avatarAlt={post.author.name}
               avatarInitials={post.author.name}
-              avatarSrc={buildFamilyAvatarDataUrl(post.author.name, post.author.modeBand)}
-              coverUrl={buildFamilyCoverDataUrl(post.author.name, post.author.modeBand)}
+              avatarSrc={post.author.avatarUrl ?? undefined}
+              coverUrl={post.author.coverUrl ?? undefined}
               body={post.body || undefined}
               images={post.images}
             />
