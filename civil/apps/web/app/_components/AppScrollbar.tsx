@@ -117,7 +117,7 @@ export default function AppScrollbar() {
   if (!enabled || !metrics.visible) return null
 
   return (
-    <div className="pointer-events-none fixed inset-y-0 right-0 z-[70] hidden w-5 lg:block" aria-hidden="true">
+    <div className="pointer-events-none fixed inset-y-0 right-0 z-[70] hidden w-5 xl:block" aria-hidden="true">
       <div className="absolute inset-y-2 right-1 flex w-3 justify-center rounded-full bg-[linear-gradient(180deg,rgba(248,250,252,0.42)_0%,rgba(226,232,240,0.2)_100%)]">
         <button
           type="button"

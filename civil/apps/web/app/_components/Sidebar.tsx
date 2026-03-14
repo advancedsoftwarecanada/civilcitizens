@@ -197,8 +197,8 @@ export default function Sidebar({ me, active }: SidebarProps) {
   return (
     <aside
       className={clsx(
-        'hidden lg:fixed lg:left-0 lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:w-72 lg:flex-col lg:flex-shrink-0 lg:overflow-hidden lg:border-r lg:border-slate-200 lg:bg-white lg:px-[var(--sidebar-pad)] lg:pb-[10px] lg:[--sidebar-offset:0px] xl:w-80 xl:[--sidebar-offset:0px]',
-        familyView ? 'lg:pt-0' : 'lg:pt-[var(--cc-top-nav-offset)]',
+        'hidden xl:fixed xl:left-0 xl:top-0 xl:flex xl:h-screen xl:max-h-screen xl:w-72 xl:flex-col xl:flex-shrink-0 xl:overflow-hidden xl:border-r xl:border-slate-200 xl:bg-white xl:px-[var(--sidebar-pad)] xl:pb-[10px] xl:[--sidebar-offset:0px] 2xl:w-80 2xl:[--sidebar-offset:0px]',
+        familyView ? 'xl:pt-0' : 'xl:pt-[var(--cc-top-nav-offset)]',
       )}
       style={{ ...spacingVars, ...sidebarBleedStyle }}
     >

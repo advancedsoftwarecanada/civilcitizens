@@ -516,14 +516,14 @@ export default function UserPostPage({ params }: PageProps) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
-      <div className="border-b border-white/60 bg-white/80 py-4 shadow-sm backdrop-blur lg:hidden">
+      <div className="border-b border-white/60 bg-white/80 py-4 shadow-sm backdrop-blur xl:hidden">
         <div className="mx-auto max-w-6xl px-4">
           <Sidebar me={viewer ?? undefined} active="home" />
         </div>
       </div>
 
-      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 lg:pl-[18rem] lg:pr-0 xl:pl-[20rem] xl:pr-0">
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 xl:pl-[18rem] xl:pr-0 2xl:pl-[20rem] 2xl:pr-0">
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
 
           <main className="space-y-8 py-8">
             {status === 'loading' ? (
@@ -696,7 +696,7 @@ export default function UserPostPage({ params }: PageProps) {
                     ))}
                   </div>
                   {viewer ? (
-                    <CommentComposer className="mt-4 hidden lg:block" onSubmit={(body) => handleReply(null, body)} />
+                    <CommentComposer className="mt-4 hidden xl:block" onSubmit={(body) => handleReply(null, body)} />
                   ) : (
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
                       <span>Sign in to join the conversation.</span>
@@ -720,7 +720,7 @@ export default function UserPostPage({ params }: PageProps) {
                       currentUser={viewer}
                     />
                   </div>
-                  {viewer ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
+                  {viewer ? <div className="h-28 xl:hidden" aria-hidden="true" /> : null}
                 </section>
 
                 {repostModalOpen && shareTarget ? (
@@ -740,7 +740,7 @@ export default function UserPostPage({ params }: PageProps) {
             ) : null}
           </main>
 
-          <aside className="hidden lg:block">
+          <aside className="hidden xl:block">
             <RightRail />
           </aside>
         </div>

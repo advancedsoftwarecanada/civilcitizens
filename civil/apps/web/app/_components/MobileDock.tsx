@@ -570,7 +570,7 @@ export default function MobileDock() {
     <>
       <nav
         data-mobile-dock="true"
-        className="fixed inset-x-0 bottom-0 z-40 min-h-[var(--mobile-dock-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 min-h-[var(--mobile-dock-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 xl:hidden"
         style={{ bottom: 'var(--mobile-dock-bottom-offset)' }}
         role="navigation"
         aria-label="Mobile navigation"
@@ -628,7 +628,7 @@ export default function MobileDock() {
       </nav>
 
       {menuMounted ? (
-        <div className="fixed inset-0 z-50 lg:hidden" aria-modal="true" role="dialog">
+        <div className="fixed inset-0 z-50 xl:hidden" aria-modal="true" role="dialog">
           <button
             type="button"
             aria-label="Close menu"
@@ -753,7 +753,7 @@ export default function MobileDock() {
       ) : null}
 
       {moreMounted ? (
-        <div className="fixed inset-0 z-50 lg:hidden" aria-modal="true" role="dialog">
+        <div className="fixed inset-0 z-50 xl:hidden" aria-modal="true" role="dialog">
           <button
             type="button"
             aria-label="Close more panel"

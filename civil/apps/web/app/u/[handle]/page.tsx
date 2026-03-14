@@ -2036,7 +2036,7 @@ export default function UserPostsPage({ params }: PageProps) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white">
-      <div className="border-b border-white/60 bg-white/70 py-4 shadow-sm backdrop-blur lg:hidden">
+      <div className="border-b border-white/60 bg-white/70 py-4 shadow-sm backdrop-blur xl:hidden">
         <div className="mx-auto max-w-6xl px-4">
           <Sidebar me={resolvedViewer ?? undefined} />
         </div>
@@ -2051,7 +2051,7 @@ export default function UserPostsPage({ params }: PageProps) {
         <div className={profile ? 'space-y-6' : undefined}>
           {profile ? (
             <section className="overflow-hidden rounded-[26px] shadow-[0_28px_90px_rgba(15,23,42,0.16)]">
-              <div className="relative h-[180px] w-full bg-slate-100 sm:h-[220px] lg:h-[320px]">
+              <div className="relative h-[180px] w-full bg-slate-100 sm:h-[220px] xl:h-[320px]">
                 {coverDisplayUrl ? (
                   <img
                     src={coverDisplayUrl}
@@ -2093,8 +2093,8 @@ export default function UserPostsPage({ params }: PageProps) {
           >
             {profile ? (
               <>
-                <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="flex flex-col gap-5 lg:min-w-0 lg:flex-1">
+                <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="flex flex-col gap-5 xl:min-w-0 xl:flex-1">
                     <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                       <VerifiedAvatar
                         src={profile.avatarUrl}
@@ -2114,7 +2114,7 @@ export default function UserPostsPage({ params }: PageProps) {
                         </div>
                         {profile.bio ? (
                           <div
-                            className="max-w-3xl text-sm leading-6 text-slate-600 lg:text-base [&_p]:m-0 [&_p+p]:mt-3 [&_br]:content-[''] [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_a]:font-medium [&_a]:text-[var(--cc-primary)] [&_a]:underline"
+                            className="max-w-3xl text-sm leading-6 text-slate-600 xl:text-base [&_p]:m-0 [&_p+p]:mt-3 [&_br]:content-[''] [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_a]:font-medium [&_a]:text-[var(--cc-primary)] [&_a]:underline"
                             dangerouslySetInnerHTML={{ __html: profile.bio }}
                           />
                         ) : null}
@@ -2124,7 +2124,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   {isOwner ? (
                     null
                   ) : (
-                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center lg:max-w-[520px] lg:justify-end">
+                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center xl:max-w-[520px] xl:justify-end">
                       {isFamilyMemberSession ? (
                         renderFamilyProfileActions()
                       ) : (
@@ -2368,7 +2368,7 @@ export default function UserPostsPage({ params }: PageProps) {
           )}
         </div>
 
-        <div className="lg:hidden">
+        <div className="xl:hidden">
           <RightRail />
         </div>
 
