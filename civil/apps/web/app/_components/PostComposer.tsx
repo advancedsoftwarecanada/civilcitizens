@@ -155,7 +155,8 @@ type PostComposerProps = {
   businessTarget?: { businessId: string; businessName?: string | null } | null
   onPostCreated?: (post: ApiPost) => void
   variant?: 'card' | 'plain'
-  defaultAudience?: 'friends' | 'network' | 'community' | 'business'
+  defaultAudience?: 'friends' | 'family' | 'network' | 'community' | 'business'
+  allowFamilyAudience?: boolean
   hideAudience?: boolean
 }
 
@@ -169,6 +170,7 @@ const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/h
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 
 const FRIENDS_VALUE = 'friends'
+const FAMILY_VALUE = 'family'
 const NETWORK_VALUE = 'network'
 const BUSINESS_VALUE = 'business'
 const COMMUNITY_PREFIX = 'community:'
@@ -196,7 +198,7 @@ const formatCommunityLabel = (target: CommunityTarget) => {
 
 const deriveInitialAudienceSelection = (
   currentTarget: CommunityTarget | null,
-  defaultAudience: 'friends' | 'network' | 'community' | 'business',
+  defaultAudience: 'friends' | 'family' | 'network' | 'community' | 'business',
   options: CommunityTarget[],
   businessTarget: PostComposerProps['businessTarget'],
 ) => {
@@ -212,6 +214,7 @@ const deriveInitialAudienceSelection = (
     return COMMUNITY_PROMPT_VALUE
   }
   if (defaultAudience === 'business') return BUSINESS_VALUE
+  if (defaultAudience === 'family') return FAMILY_VALUE
   if (defaultAudience === 'network') return NETWORK_VALUE
   return FRIENDS_VALUE
 }
@@ -288,6 +291,7 @@ export default function PostComposer({
   onPostCreated,
   variant = 'card',
   defaultAudience = 'friends',
+  allowFamilyAudience = false,
   hideAudience = false,
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -358,6 +362,7 @@ export default function PostComposer({
     }
     setAudienceSelection((prev) => {
       if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience !== 'community') {
+        if (defaultAudience === 'family') return FAMILY_VALUE
         return defaultAudience === 'network' ? NETWORK_VALUE : FRIENDS_VALUE
       }
       if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience === 'community' && normalizedCommunityOptions.length === 1) {
@@ -376,12 +381,16 @@ export default function PostComposer({
               return buildCommunityValue(firstOption)
             }
           }
+          if (defaultAudience === 'family') return FAMILY_VALUE
           return defaultAudience === 'network' ? NETWORK_VALUE : FRIENDS_VALUE
         }
       }
+      if (prev === FAMILY_VALUE && !allowFamilyAudience) {
+        return defaultAudience === 'network' ? NETWORK_VALUE : FRIENDS_VALUE
+      }
       return prev
     })
-  }, [businessTarget, communityTarget, defaultAudience, normalizedCommunityOptions])
+  }, [allowFamilyAudience, businessTarget, communityTarget, defaultAudience, normalizedCommunityOptions])
 
   const startPhotoUpload = useCallback(async (id: string, file: File) => {
     setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
@@ -621,6 +630,8 @@ export default function PostComposer({
         ? 'organization'
         : targetCommunity
           ? 'community'
+          : audienceSelection === FAMILY_VALUE
+            ? 'family'
           : audienceSelection === NETWORK_VALUE
             ? 'network'
             : 'friends'
@@ -812,6 +823,12 @@ export default function PostComposer({
                 <option value={BUSINESS_VALUE}>{businessTarget.businessName ?? 'Organization'}</option>
               ) : (
                 <>
+                  {allowFamilyAudience && defaultAudience !== 'community' ? (
+                    <optgroup label="Family">
+                      <option value={FAMILY_VALUE}>Family</option>
+                    </optgroup>
+                  ) : null}
+
                   {defaultAudience !== 'community' ? (
                     <optgroup label="Friends">
                       <option value={FRIENDS_VALUE}>Friends</option>
@@ -864,6 +881,8 @@ export default function PostComposer({
             ) : null}
             {activeBusinessTarget?.businessId ? (
               <p className="text-xs text-slate-500">Posting to {activeBusinessTarget.businessName ?? 'this organization'}</p>
+            ) : audienceSelection === FAMILY_VALUE ? (
+              <p className="text-xs text-slate-500">Posting to your Family circle</p>
             ) : null}
             {activeCommunity && !audienceLocked && !isPromptSelected ? (
               <p className="text-xs text-slate-500">

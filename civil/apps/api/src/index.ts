@@ -2720,6 +2720,33 @@ async function recordUserPostImpressions(userId: string, postIds: string[]) {
 
 type CitySummaryType = z.infer<typeof CitySummarySchema>
 
+type ProfileFamilyRelationship =
+  | 'mother'
+  | 'father'
+  | 'grandmother'
+  | 'grandfather'
+  | 'sister'
+  | 'brother'
+  | 'aunt'
+  | 'uncle'
+  | 'cousin'
+  | 'second_cousin'
+  | 'niece'
+  | 'nephew'
+  | 'wife'
+  | 'husband'
+  | 'significant_other'
+  | 'partner'
+  | 'mother_in_law'
+  | 'father_in_law'
+  | 'sister_in_law'
+  | 'brother_in_law'
+  | 'daughter_in_law'
+  | 'son_in_law'
+  | 'other'
+
+type ProfileFamilyRelationshipDirection = 'outbound' | 'inbound'
+
 type CommunityMetaPayload = {
   nearbyCommunities?: CitySummaryType[]
   computedAt?: string
@@ -2810,6 +2837,15 @@ type CommunityMetaPayload = {
       updatedAt: string
     }>
   }> | null
+  profileFamilyRelationships?: Array<{
+    relatedUserId: string
+    relatedHandle: string
+    relatedName?: string | null
+    familyType: ProfileFamilyRelationship
+    direction: ProfileFamilyRelationshipDirection
+    createdAt: string
+    updatedAt?: string | null
+  }> | null
 }
 
 type FamilyModeBand = 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
@@ -2820,6 +2856,7 @@ type FamilyFriendRequestRecord = NonNullable<CommunityMetaPayload['familyFriendR
 type FamilyFriendshipRecord = NonNullable<CommunityMetaPayload['familyFriendships']>[number]
 type FamilyMessageThreadRecord = NonNullable<CommunityMetaPayload['familyMessageThreads']>[number]
 type FamilyParentConversationRecord = NonNullable<CommunityMetaPayload['familyParentConversations']>[number]
+type ProfileFamilyRelationshipRecord = NonNullable<CommunityMetaPayload['profileFamilyRelationships']>[number]
 
 const FAMILY_MEMBER_USERNAME_MIN_LENGTH = 6
 const FAMILY_MEMBER_USERNAME_MAX_LENGTH = 20
@@ -3055,6 +3092,57 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
         } satisfies FamilyParentConversationRecord]
       })
     : null
+  const profileFamilyRelationships = Array.isArray(payload.profileFamilyRelationships)
+    ? payload.profileFamilyRelationships.flatMap((rawValue) => {
+        if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
+        const value = rawValue as Record<string, unknown>
+        const familyType =
+          value.familyType === 'mother' ||
+          value.familyType === 'father' ||
+          value.familyType === 'grandmother' ||
+          value.familyType === 'grandfather' ||
+          value.familyType === 'sister' ||
+          value.familyType === 'brother' ||
+          value.familyType === 'aunt' ||
+          value.familyType === 'uncle' ||
+          value.familyType === 'cousin' ||
+          value.familyType === 'second_cousin' ||
+          value.familyType === 'niece' ||
+          value.familyType === 'nephew' ||
+          value.familyType === 'wife' ||
+          value.familyType === 'husband' ||
+          value.familyType === 'significant_other' ||
+          value.familyType === 'partner' ||
+          value.familyType === 'mother_in_law' ||
+          value.familyType === 'father_in_law' ||
+          value.familyType === 'sister_in_law' ||
+          value.familyType === 'brother_in_law' ||
+          value.familyType === 'daughter_in_law' ||
+          value.familyType === 'son_in_law' ||
+          value.familyType === 'other'
+            ? value.familyType
+            : null
+        const direction = value.direction === 'outbound' || value.direction === 'inbound' ? value.direction : null
+        if (
+          typeof value.relatedUserId !== 'string' ||
+          typeof value.relatedHandle !== 'string' ||
+          typeof value.createdAt !== 'string' ||
+          !familyType ||
+          !direction
+        ) {
+          return []
+        }
+        return [{
+          relatedUserId: value.relatedUserId,
+          relatedHandle: value.relatedHandle,
+          relatedName: typeof value.relatedName === 'string' ? value.relatedName : null,
+          familyType,
+          direction,
+          createdAt: value.createdAt,
+          updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : null,
+        } satisfies ProfileFamilyRelationshipRecord]
+      })
+    : null
   return {
     nearbyCommunities: nearby,
     computedAt,
@@ -3073,6 +3161,7 @@ function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): Communi
     familyFriendships,
     familyMessageThreads,
     familyParentConversations,
+    profileFamilyRelationships,
     reference,
   }
 }
@@ -3209,6 +3298,33 @@ function getStoredFamilyParentConversations(value: Prisma.JsonValue | null | und
   return parseCommunityMeta(value)?.familyParentConversations ?? []
 }
 
+function getStoredProfileFamilyRelationships(value: Prisma.JsonValue | null | undefined): ProfileFamilyRelationshipRecord[] {
+  return parseCommunityMeta(value)?.profileFamilyRelationships ?? []
+}
+
+function hasStoredProfileFamilyRelationshipWithUser(
+  value: Prisma.JsonValue | null | undefined,
+  relatedUserId: string,
+) {
+  return getStoredProfileFamilyRelationships(value).some((entry) => entry.relatedUserId === relatedUserId)
+}
+
+async function canViewerAccessFamilyAudiencePost(args: { viewerId?: string | null; authorId: string }) {
+  const viewerId = args.viewerId?.trim()
+  if (!viewerId) return false
+  if (viewerId === args.authorId) return true
+
+  const [viewerUser, authorUser] = await Promise.all([
+    prisma.user.findUnique({ where: { id: viewerId }, select: { communityMeta: true } }),
+    prisma.user.findUnique({ where: { id: args.authorId }, select: { communityMeta: true } }),
+  ])
+
+  return (
+    hasStoredProfileFamilyRelationshipWithUser(viewerUser?.communityMeta, args.authorId) ||
+    hasStoredProfileFamilyRelationshipWithUser(authorUser?.communityMeta, viewerId)
+  )
+}
+
 function writeStoredFamilyFriendRequests(baseMeta: Record<string, unknown>, requests: FamilyFriendRequestRecord[]) {
   baseMeta.familyFriendRequests = requests as unknown as Prisma.InputJsonValue
 }
@@ -3223,6 +3339,10 @@ function writeStoredFamilyMessageThreads(baseMeta: Record<string, unknown>, thre
 
 function writeStoredFamilyParentConversations(baseMeta: Record<string, unknown>, conversations: FamilyParentConversationRecord[]) {
   baseMeta.familyParentConversations = conversations as unknown as Prisma.InputJsonValue
+}
+
+function writeStoredProfileFamilyRelationships(baseMeta: Record<string, unknown>, relationships: ProfileFamilyRelationshipRecord[]) {
+  baseMeta.profileFamilyRelationships = relationships as unknown as Prisma.InputJsonValue
 }
 
 function upsertFamilyFriendRequest(requests: FamilyFriendRequestRecord[], nextRequest: FamilyFriendRequestRecord) {
@@ -3248,6 +3368,18 @@ function upsertFamilyParentConversation(
     (conversation) => !(conversation.memberId === nextConversation.memberId && conversation.parentId === nextConversation.parentId),
   )
   return [nextConversation, ...remaining].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+}
+
+function upsertProfileFamilyRelationship(
+  relationships: ProfileFamilyRelationshipRecord[],
+  nextRelationship: ProfileFamilyRelationshipRecord,
+) {
+  const remaining = relationships.filter((relationship) => relationship.relatedUserId !== nextRelationship.relatedUserId)
+  return [nextRelationship, ...remaining].sort((left, right) => {
+    const leftKey = left.updatedAt ?? left.createdAt
+    const rightKey = right.updatedAt ?? right.createdAt
+    return rightKey.localeCompare(leftKey)
+  })
 }
 
 function formatFamilyFriendUser(entry: FamilyFriendshipRecord) {
@@ -3775,6 +3907,247 @@ const FAMILY_FEED_POST_TYPE = 'family'
 
 function buildFamilyFeedPostTitle(memberId: string) {
   return `family-feed:${memberId}`
+}
+
+function buildLegacyFamilyFeedMirrorKey(args: {
+  memberId: string
+  body: string
+  createdAt: Date
+  images: Prisma.JsonValue | null
+}) {
+  return JSON.stringify({
+    memberId: args.memberId,
+    body: args.body,
+    createdAt: args.createdAt.toISOString(),
+    images: normalizeFamilyFeedImages(args.images),
+  })
+}
+
+async function loadLatestFamilyPostAtByMember(parentId: string, memberIds: string[]) {
+  const latestByMember = new Map<string, string>()
+  if (!memberIds.length) return latestByMember
+
+  const rows = await Promise.all(memberIds.map(async (memberId) => {
+    const [postRow, legacyRow] = await Promise.all([
+      prisma.post.findFirst({
+        where: {
+          authorId: parentId,
+          type: FAMILY_FEED_POST_TYPE,
+          title: buildFamilyFeedPostTitle(memberId),
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        select: { createdAt: true },
+      }),
+      (async () => {
+        try {
+          return await prisma.familyFeedPost.findFirst({
+            where: {
+              parentId,
+              familyMemberId: memberId,
+            },
+            orderBy: [{ createdAt: 'desc' }],
+            select: { createdAt: true },
+          })
+        } catch (error) {
+          if (!isSchemaOutOfDateError(error)) throw error
+          return null
+        }
+      })(),
+    ])
+
+    const timestamps = [postRow?.createdAt, legacyRow?.createdAt]
+      .filter((value): value is Date => value instanceof Date)
+      .map((value) => value.getTime())
+    if (!timestamps.length) return [memberId, null] as const
+
+    return [memberId, new Date(Math.max(...timestamps)).toISOString()] as const
+  }))
+
+  for (const [memberId, latestPostAt] of rows) {
+    if (latestPostAt) latestByMember.set(memberId, latestPostAt)
+  }
+
+  return latestByMember
+}
+
+async function loadLatestPublicPostAtByUsers(userIds: string[]) {
+  const latestByUser = new Map<string, string>()
+  if (!userIds.length) return latestByUser
+
+  const rows = await Promise.all(userIds.map(async (userId) => {
+    let latestDate: Date | null = null
+    try {
+      const row = await prisma.post.findFirst({
+        where: {
+          authorId: userId,
+          publishedAt: { not: null },
+          visibility: 'public',
+        },
+        orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+        select: {
+          publishedAt: true,
+          createdAt: true,
+        },
+      })
+      latestDate = row?.publishedAt ?? row?.createdAt ?? null
+    } catch (error) {
+      if (!isSchemaOutOfDateError(error)) throw error
+      const fallbackRow = await prisma.post.findFirst({
+        where: {
+          authorId: userId,
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        select: {
+          createdAt: true,
+        },
+      })
+      latestDate = fallbackRow?.createdAt ?? null
+    }
+
+    return [userId, latestDate ? latestDate.toISOString() : null] as const
+  }))
+
+  for (const [userId, latestPostAt] of rows) {
+    if (latestPostAt) latestByUser.set(userId, latestPostAt)
+  }
+
+  return latestByUser
+}
+
+async function loadProfileFamilyRelationshipsForRail(value: Prisma.JsonValue | null | undefined) {
+  try {
+    const relationships = getStoredProfileFamilyRelationships(value)
+    if (!relationships.length) return []
+
+    const dedupedRelationships = Array.from(new Map(relationships.map((entry) => [entry.relatedUserId, entry])).values())
+    const relatedUserIds = dedupedRelationships.map((entry) => entry.relatedUserId)
+    const [relatedUsers, latestPostAtByUser]: [
+      Array<{ id: string; handle: string; name: string | null; avatarUrl: string | null; coverUrl: string | null }>,
+      Map<string, string>,
+    ] = await Promise.all([
+      prisma.user.findMany({
+        where: { id: { in: relatedUserIds } },
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+          avatarUrl: true,
+          coverUrl: true,
+        },
+      }),
+      loadLatestPublicPostAtByUsers(relatedUserIds),
+    ])
+
+    const usersById = new Map(relatedUsers.map((user: typeof relatedUsers[number]) => [user.id, user]))
+
+    return dedupedRelationships.flatMap((relationship) => {
+      const user = usersById.get(relationship.relatedUserId)
+      if (!user) return []
+
+      return [{
+        id: user.id,
+        handle: user.handle,
+        displayName: user.name?.trim() || relationship.relatedName?.trim() || user.handle,
+        relationshipLabel: PROFILE_FAMILY_RELATIONSHIP_LABELS[relationship.familyType],
+        avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
+        coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
+        latestPostAt: latestPostAtByUser.get(user.id) ?? null,
+      }]
+    })
+  } catch (error) {
+    console.error('profile_family_relationship_rail_load_failed', error)
+    return []
+  }
+}
+
+async function syncLegacyParentFamilyFeedPosts(parentId: string) {
+  try {
+    const [legacyRows, mirroredRows]: [
+      Array<{
+        familyMemberId: string
+        body: string
+        images: Prisma.JsonValue | null
+        createdAt: Date
+        updatedAt: Date
+      }>,
+      Array<{
+        title: string
+        body: string
+        images: Prisma.JsonValue | null
+        createdAt: Date
+      }>,
+    ] = await Promise.all([
+      prisma.familyFeedPost.findMany({
+        where: { parentId },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 80,
+        select: {
+          familyMemberId: true,
+          body: true,
+          images: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.post.findMany({
+        where: {
+          authorId: parentId,
+          type: FAMILY_FEED_POST_TYPE,
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 200,
+        select: {
+          title: true,
+          body: true,
+          images: true,
+          createdAt: true,
+        },
+      }),
+    ])
+
+    if (!legacyRows.length) return
+
+    const mirroredKeys = new Set(
+      mirroredRows
+        .filter((row) => row.title.startsWith('family-feed:'))
+        .map((row) => buildLegacyFamilyFeedMirrorKey({
+          memberId: row.title.slice('family-feed:'.length),
+          body: row.body,
+          createdAt: row.createdAt,
+          images: row.images,
+        })),
+    )
+
+    const missingRows = legacyRows.filter((row) => !mirroredKeys.has(buildLegacyFamilyFeedMirrorKey({
+      memberId: row.familyMemberId,
+      body: row.body,
+      createdAt: row.createdAt,
+      images: row.images,
+    })))
+
+    if (!missingRows.length) return
+
+    await prisma.$transaction(
+      missingRows.map((row) =>
+        prisma.post.create({
+          data: {
+            authorId: parentId,
+            body: row.body,
+            images: normalizeFamilyFeedImages(row.images).length ? (normalizeFamilyFeedImages(row.images) as any) : undefined,
+            type: FAMILY_FEED_POST_TYPE,
+            title: buildFamilyFeedPostTitle(row.familyMemberId),
+            audience: 'family',
+            visibility: 'public',
+            jurisdiction: 'self',
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+          },
+        }),
+      ),
+    )
+  } catch (error) {
+    if (!isSchemaOutOfDateError(error)) throw error
+  }
 }
 
 function normalizeFamilyFeedImages(images: Prisma.JsonValue | null): string[] {
@@ -5488,6 +5861,28 @@ function buildPushAlert(record: NotificationRecord, actor: ReturnType<typeof for
       message: `${actorLabel} invited you to join ${organizationName}.`,
     }
   }
+  if (record.type === PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const relationshipLabel = typeof payload?.relationshipLabel === 'string' ? payload.relationshipLabel.trim() : 'Family'
+    return {
+      title: 'Family request',
+      message: `${actorLabel} wants to add you as ${relationshipLabel}.`,
+    }
+  }
+  if (record.type === PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY_RESPONSE) {
+    const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+      ? (record.payload as Record<string, unknown>)
+      : null
+    const relationshipLabel = typeof payload?.relationshipLabel === 'string' ? payload.relationshipLabel.trim() : 'family'
+    const status = typeof payload?.status === 'string' ? payload.status.trim().toLowerCase() : ''
+    const verb = status === 'accepted' ? 'accepted' : status === 'rejected' ? 'declined' : 'responded to'
+    return {
+      title: 'Family request response',
+      message: `${actorLabel} ${verb} your ${relationshipLabel} request.`,
+    }
+  }
   if (record.type === POLL_NOTIFICATION_TYPES.RESULTS_AVAILABLE) {
     const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
       ? (record.payload as Record<string, unknown>)
@@ -5992,6 +6387,34 @@ const ORG_NOTIFICATION_TYPES = {
 const PROFILE_INVITE_NOTIFICATION_TYPES = {
   EVENT: 'profile_event_invite',
   ORGANIZATION: 'profile_organization_invite',
+  FAMILY: 'profile_family_invite',
+  FAMILY_RESPONSE: 'profile_family_invite_response',
+} as const
+
+const PROFILE_FAMILY_RELATIONSHIP_LABELS = {
+  mother: 'Mother',
+  father: 'Father',
+  grandmother: 'Grandmother',
+  grandfather: 'Grandfather',
+  sister: 'Sister',
+  brother: 'Brother',
+  aunt: 'Aunt',
+  uncle: 'Uncle',
+  cousin: 'Cousin',
+  second_cousin: 'Second Cousin',
+  niece: 'Niece',
+  nephew: 'Nephew',
+  wife: 'Wife',
+  husband: 'Husband',
+  significant_other: 'Significant Other',
+  partner: 'Partner',
+  mother_in_law: 'Mother-in-law',
+  father_in_law: 'Father-in-law',
+  sister_in_law: 'Sister-in-law',
+  brother_in_law: 'Brother-in-law',
+  daughter_in_law: 'Daughter-in-law',
+  son_in_law: 'Son-in-law',
+  other: 'Other',
 } as const
 
 const POLL_NOTIFICATION_TYPES = {
@@ -6094,6 +6517,54 @@ async function notifyProfileOrganizationInvite(args: {
       organizationId: args.organizationId,
       title: args.organizationName,
       url: organizationUrl,
+    },
+  })
+}
+
+async function notifyProfileFamilyInvite(args: {
+  inviteeUserId: string
+  actorUserId: string
+  actorHandle: string
+  relationship: ProfileFamilyRelationship
+}) {
+  const relationshipLabel = PROFILE_FAMILY_RELATIONSHIP_LABELS[args.relationship]
+  const profileUrl = `/u/${encodeURIComponent(args.actorHandle)}`
+  const requestedAt = new Date().toISOString()
+  await createNotificationRecord({
+    userId: args.inviteeUserId,
+    actorId: args.actorUserId,
+    type: PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY,
+    payload: {
+      relationship: args.relationship,
+      relationshipLabel,
+      status: 'pending',
+      requestedAt,
+      url: profileUrl,
+      sourceUrl: profileUrl,
+    },
+  })
+}
+
+async function notifyProfileFamilyInviteResponse(args: {
+  inviteeUserId: string
+  actorUserId: string
+  actorHandle: string
+  relationship: ProfileFamilyRelationship
+  status: 'accepted' | 'rejected'
+}) {
+  const relationshipLabel = PROFILE_FAMILY_RELATIONSHIP_LABELS[args.relationship]
+  const profileUrl = `/u/${encodeURIComponent(args.actorHandle)}`
+  await createNotificationRecord({
+    userId: args.inviteeUserId,
+    actorId: args.actorUserId,
+    type: PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY_RESPONSE,
+    payload: {
+      relationship: args.relationship,
+      relationshipLabel,
+      status: args.status,
+      respondedAt: new Date().toISOString(),
+      url: profileUrl,
+      sourceUrl: profileUrl,
     },
   })
 }
@@ -13977,6 +14448,10 @@ app.get('/family', async (req: FastifyRequest, reply: FastifyReply) => {
 
   const eligibility = isParentProfileEligibleForFamilyMode(user)
   const familyMode = parseCommunityMeta(user.communityMeta ?? null)?.familyMode ?? null
+  const [latestPostAtByMember, profileRelationships] = await Promise.all([
+    loadLatestFamilyPostAtByMember(userId, user.familyMembers.map((member) => member.id)),
+    loadProfileFamilyRelationshipsForRail(user.communityMeta),
+  ])
 
   return reply.send({
     profileEligibility: {
@@ -13994,8 +14469,8 @@ app.get('/family', async (req: FastifyRequest, reply: FastifyReply) => {
     },
     childSafetyInfoUrl: '/privacy',
     pendingDraft: familyMemberDrafts[0] ? normalizeFamilyMemberDraftSummary(familyMemberDrafts[0]) : null,
-    members: user.familyMembers.map((member) =>
-      normalizeFamilyMemberSummary(
+    members: user.familyMembers.map((member) => {
+      const summary = normalizeFamilyMemberSummary(
         usedLegacyFamilyMemberSchema
           ? {
               ...member,
@@ -14004,8 +14479,13 @@ app.get('/family', async (req: FastifyRequest, reply: FastifyReply) => {
               ...getLegacyFamilyMemberPermissionSettings(user?.communityMeta, member.id),
             }
           : member,
-      ),
-    ),
+      )
+      return {
+        ...summary,
+        latestPostAt: latestPostAtByMember.get(member.id) ?? null,
+      }
+    }),
+    profileRelationships,
   })
 })
 
@@ -14660,6 +15140,51 @@ app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) =
   const query = z.object({ memberId: z.string().trim().min(1).optional() }).safeParse(req.query ?? {})
   if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
+  if (authContext.actor === 'user' && !query.data.memberId) {
+    const viewerUser = await prisma.user.findUnique({
+      where: { id: authContext.userId },
+      select: { communityMeta: true },
+    })
+    if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
+
+    const relatedUserIds = Array.from(
+      new Set(getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry) => entry.relatedUserId).filter(Boolean)),
+    )
+    if (!relatedUserIds.length) {
+      return reply.send({ items: [] })
+    }
+
+    const authorIds = Array.from(new Set([authContext.userId, ...relatedUserIds]))
+    const posts: PostWithAuthor[] = await prisma.post.findMany({
+      where: {
+        authorId: { in: authorIds },
+        audience: 'family',
+        type: { not: FAMILY_FEED_POST_TYPE },
+        visibility: 'public',
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 40,
+      include: POST_INCLUDE,
+    })
+
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(
+      authContext.userId,
+      posts.map((post) => post.id),
+      5,
+    )
+
+    return reply.send({
+      items: posts.map((post) =>
+        formatPost(post, {
+          viewerId: authContext.userId,
+          viewerReaction: reactionsByPost[post.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
+          recentComments: recentCommentsByPost[post.id] ?? [],
+        }),
+      ),
+    })
+  }
+
   const targetMember = await resolveReadableFamilyFeedTargetMember(authContext, query.data.memberId)
   if (!targetMember) {
     return reply.code(authContext.actor === 'user' ? 400 : 404).send({
@@ -14721,6 +15246,14 @@ app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) =
   }
 
   const normalizedMember = normalizeFamilyMemberSummary(targetMember)
+  const mirroredKeys = new Set(
+    rows.map((row) => buildLegacyFamilyFeedMirrorKey({
+      memberId: targetMember.id,
+      body: row.body,
+      createdAt: row.createdAt,
+      images: row.images,
+    })),
+  )
   const items = [
     ...rows.map((row) =>
       formatChildFamilyFeedPost(
@@ -14735,7 +15268,14 @@ app.get('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) =
         normalizedMember,
       ),
     ),
-    ...parentRows.map((row) => formatParentFamilyFeedPost(row, normalizedMember, targetMember.parent)),
+    ...parentRows
+      .filter((row) => !mirroredKeys.has(buildLegacyFamilyFeedMirrorKey({
+        memberId: row.familyMemberId,
+        body: row.body,
+        createdAt: row.createdAt,
+        images: row.images,
+      })))
+      .map((row) => formatParentFamilyFeedPost(row, normalizedMember, targetMember.parent)),
   ].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()).slice(0, 40)
 
   return reply.send({
@@ -14756,6 +15296,60 @@ app.post('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) 
   }).safeParse(req.body ?? {})
   if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
+  if (authContext.actor === 'user' && !parse.data.memberId) {
+    const viewerUser = await prisma.user.findUnique({
+      where: { id: authContext.userId },
+      select: { communityMeta: true, handle: true },
+    })
+    if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
+
+    const relatedUserIds = Array.from(
+      new Set(getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry) => entry.relatedUserId).filter(Boolean)),
+    )
+    if (!relatedUserIds.length) {
+      return reply.code(400).send({ error: 'family_audience_unavailable' })
+    }
+
+    const body = sanitizePlainText(parse.data.body)
+    const images = parse.data.images.filter(Boolean)
+    if (!body && images.length === 0) {
+      return reply.code(400).send({ error: 'family_feed_post_empty' })
+    }
+
+    const slugBase = buildPostSlugBase({ handle: viewerUser.handle, title: undefined, body })
+    const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const seoSlug = await generateUniquePostSlug(slugBase, tx)
+      return tx.post.create({
+        data: {
+          authorId: authContext.userId,
+          body,
+          images: images.length ? (images as any) : undefined,
+          type: images.length ? 'photo' : 'post',
+          seoSlug,
+          audience: 'family',
+          visibility: 'public',
+          jurisdiction: 'self',
+        },
+        include: POST_INCLUDE,
+      })
+    })
+
+    const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await loadViewerPostFormattingContext(
+      authContext.userId,
+      [created.id],
+      5,
+    )
+
+    return reply.code(201).send({
+      post: formatPost(created, {
+        viewerId: authContext.userId,
+        viewerReaction: reactionsByPost[created.id] ?? null,
+        viewerPollOptionId: pollSelectionsByPost[created.id] ?? null,
+        recentComments: recentCommentsByPost[created.id] ?? [],
+      }),
+    })
+  }
+
   const targetMember = await resolveFamilyFeedTargetMember(authContext, parse.data.memberId)
   if (!targetMember) {
     return reply.code(authContext.actor === 'user' ? 400 : 404).send({
@@ -14769,16 +15363,19 @@ app.post('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) 
     return reply.code(400).send({ error: 'family_feed_post_empty' })
   }
 
-  const created = await prisma.familyFeedPost.create({
+  const created = await prisma.post.create({
     data: {
-      parentId: targetMember.parentId,
-      familyMemberId: targetMember.id,
+      authorId: targetMember.parentId,
       body,
       images: images.length ? (images as any) : undefined,
+      type: FAMILY_FEED_POST_TYPE,
+      title: buildFamilyFeedPostTitle(targetMember.id),
+      audience: 'family',
+      visibility: 'public',
+      jurisdiction: 'self',
     },
     select: {
       id: true,
-      familyMemberId: true,
       body: true,
       images: true,
       createdAt: true,
@@ -14788,7 +15385,17 @@ app.post('/family/feed/posts', async (req: FastifyRequest, reply: FastifyReply) 
 
   const normalizedMember = normalizeFamilyMemberSummary(targetMember)
   return reply.code(201).send({
-    post: formatParentFamilyFeedPost(created, normalizedMember, targetMember.parent),
+    post: formatChildFamilyFeedPost(
+      {
+        id: created.id,
+        familyMemberId: targetMember.id,
+        body: created.body,
+        images: created.images,
+        createdAt: created.createdAt,
+        updatedAt: created.updatedAt,
+      },
+      normalizedMember,
+    ),
   })
 })
 
@@ -15714,7 +16321,7 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
     const userId = (req as any).user?.id
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-    const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true } })
+    const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, communityMeta: true } })
     if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
     let business: {
@@ -15777,6 +16384,25 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       communitySlug = community.slug
     }
 
+    if (parse.data.audience === 'family' && (business || (provinceCode && communitySlug))) {
+      return reply.code(400).send({ error: 'family_posts_must_be_personal' })
+    }
+
+    if (parse.data.audience === 'family') {
+      const communityMeta = parseCommunityMeta(author.communityMeta ?? null)
+      const hasFamilyModeEnabled = Boolean(communityMeta?.familyMode?.enabledAt)
+      const hasProfileRelationships = getStoredProfileFamilyRelationships(author.communityMeta).length > 0
+      let hasFamilyMembers = false
+
+      if (hasFamilyModeEnabled) {
+        hasFamilyMembers = (await prisma.familyMember.count({ where: { parentId: userId } })) > 0
+      }
+
+      if (!hasFamilyMembers && !hasProfileRelationships) {
+        return reply.code(400).send({ error: 'family_audience_unavailable' })
+      }
+    }
+
     const { body: rawBody, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
     const showBusinessAuthor = Boolean(business && parse.data.showBusinessAuthor)
 
@@ -15793,6 +16419,8 @@ app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       ? 'organization'
       : provinceCode && communitySlug
         ? 'community'
+        : audience === 'family'
+          ? 'family'
         : audience === 'network'
           ? 'network'
           : 'friends'
@@ -16080,11 +16708,15 @@ app.post('/posts/vote', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true, audience: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
     if (post.moderationStatus !== ModerationStatus.VISIBLE) {
       return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
+    if (post.audience === 'family') {
+      const canAccess = await canViewerAccessFamilyAudiencePost({ viewerId: userId, authorId: post.authorId })
+      if (!canAccess) return reply.code(404).send({ error: 'post_not_found' })
     }
 
     if (post.visibility === 'members' && post.businessId) {
@@ -16177,11 +16809,15 @@ app.post('/posts/react', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true, audience: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
     if (post.moderationStatus !== ModerationStatus.VISIBLE) {
       return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
+    if (post.audience === 'family') {
+      const canAccess = await canViewerAccessFamilyAudiencePost({ viewerId: userId, authorId: post.authorId })
+      if (!canAccess) return reply.code(404).send({ error: 'post_not_found' })
     }
 
     if (post.visibility === 'members' && post.businessId) {
@@ -16289,13 +16925,17 @@ app.get('/posts/:id/comments', async (req: FastifyRequest, reply: FastifyReply) 
 
     const post = await prisma.post.findUnique({
       where: { id: params.data.id },
-      select: { id: true, visibility: true, businessId: true, moderationStatus: true, authorId: true },
+      select: { id: true, visibility: true, businessId: true, moderationStatus: true, authorId: true, audience: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
 
     const viewerId = (req as any).user?.id as string | undefined
     const blockState = await loadViewerBlockState(viewerId)
     if (isPostHiddenFromViewer(post, blockState)) return reply.code(404).send({ error: 'post_not_found' })
+    if (post.audience === 'family') {
+      const canAccess = await canViewerAccessFamilyAudiencePost({ viewerId, authorId: post.authorId })
+      if (!canAccess) return reply.code(404).send({ error: 'post_not_found' })
+    }
 
     if (post.visibility === 'members' && post.businessId) {
       if (!viewerId) return reply.code(404).send({ error: 'post_not_found' })
@@ -16375,11 +17015,15 @@ app.post('/comments', async (req: FastifyRequest, reply: FastifyReply) =>
 
     const post = await prisma.post.findUnique({
       where: { id: postId },
-      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true },
+      select: { id: true, authorId: true, createdAt: true, updatedAt: true, visibility: true, businessId: true, moderationStatus: true, audience: true },
     })
     if (!post) return reply.code(404).send({ error: 'post_not_found' })
     if (post.moderationStatus !== ModerationStatus.VISIBLE) {
       return reply.code(423).send({ error: moderationLockedErrorCode('POST') })
+    }
+    if (post.audience === 'family') {
+      const canAccess = await canViewerAccessFamilyAudiencePost({ viewerId: userId, authorId: post.authorId })
+      if (!canAccess) return reply.code(404).send({ error: 'post_not_found' })
     }
 
     if (post.visibility === 'members' && post.businessId) {
@@ -16836,6 +17480,9 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
     } catch (error) {
       if (!isFamilyMemberTableMissing(error)) throw error
     }
+    const familyRelationshipCount = Array.from(
+      new Set(getStoredProfileFamilyRelationships(user.communityMeta).map((entry) => entry.relatedUserId).filter(Boolean)),
+    ).length
     return reply.send({
       ...normalizedUser,
       homeCommunity,
@@ -16854,6 +17501,7 @@ app.get('/auth/me', async (req: FastifyRequest, reply: FastifyReply) => {
         affirmedProfileTruthAt: communityMeta?.familyMode?.affirmedProfileTruthAt ?? null,
         acceptedChildSafetyInfoAt: communityMeta?.familyMode?.acceptedChildSafetyInfoAt ?? null,
         memberCount: familyMemberCount,
+        relationshipCount: familyRelationshipCount,
       },
       accountType: 'user',
       familyMemberSession: null,
@@ -32379,6 +33027,102 @@ app.post('/profile/invites', async (req: FastifyRequest, reply: FastifyReply) =>
   }),
 )
 
+app.post('/profile/family-requests', async (req: FastifyRequest, reply: FastifyReply) =>
+  withSchemaGuard(req, reply, async () => {
+    const actorUserId = (await resolveUserId(req)) ?? null
+    if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+    const body = z
+      .object({
+        targetUserId: z.string().trim().min(1),
+        relationship: z.enum([
+          'mother',
+          'father',
+          'grandmother',
+          'grandfather',
+          'sister',
+          'brother',
+          'aunt',
+          'uncle',
+          'cousin',
+          'second_cousin',
+          'niece',
+          'nephew',
+          'wife',
+          'husband',
+          'significant_other',
+          'partner',
+          'mother_in_law',
+          'father_in_law',
+          'sister_in_law',
+          'brother_in_law',
+          'daughter_in_law',
+          'son_in_law',
+          'other',
+        ]),
+      })
+      .safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+    if (body.data.targetUserId === actorUserId) return reply.code(400).send({ error: 'invalid_invitee' })
+
+    const [actorUser, targetUser] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: actorUserId },
+        select: { id: true, handle: true, name: true, communityMeta: true },
+      }),
+      prisma.user.findUnique({
+        where: { id: body.data.targetUserId },
+        select: { id: true, handle: true, name: true, communityMeta: true },
+      }),
+    ])
+
+    if (!actorUser) return reply.code(401).send({ error: 'unauthorized' })
+    if (!targetUser) return reply.code(404).send({ error: 'user_not_found' })
+
+    const actorRelationships = getStoredProfileFamilyRelationships(actorUser.communityMeta)
+    const targetRelationships = getStoredProfileFamilyRelationships(targetUser.communityMeta)
+    const alreadyRelated =
+      actorRelationships.some((entry) => entry.relatedUserId === targetUser.id) ||
+      targetRelationships.some((entry) => entry.relatedUserId === actorUser.id)
+    if (alreadyRelated) {
+      return reply.code(409).send({ error: 'already_family' })
+    }
+
+    const existingNotifications: Array<{ payload: unknown }> = await prisma.notification.findMany({
+      where: {
+        userId: targetUser.id,
+        actorId: actorUser.id,
+        type: PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: { payload: true },
+    })
+    let hasPendingInvite = false
+    for (const entry of existingNotifications) {
+      const payload = entry.payload && typeof entry.payload === 'object' && !Array.isArray(entry.payload)
+        ? (entry.payload as Record<string, unknown>)
+        : null
+      if (typeof payload?.status === 'string' && payload.status.trim().toLowerCase() === 'pending') {
+        hasPendingInvite = true
+        break
+      }
+    }
+    if (hasPendingInvite) {
+      return reply.code(409).send({ error: 'family_invite_pending' })
+    }
+
+    await notifyProfileFamilyInvite({
+      inviteeUserId: targetUser.id,
+      actorUserId: actorUser.id,
+      actorHandle: actorUser.handle,
+      relationship: body.data.relationship,
+    })
+
+    return reply.code(201).send({ ok: true })
+  }),
+)
+
 app.get('/events/:organizationId/:eventId', async (req: FastifyRequest, reply: FastifyReply) =>
   withSchemaGuard(req, reply, async () => {
     const viewerId = (await resolveUserId(req)) ?? null
@@ -32612,6 +33356,10 @@ app.get('/posts/slug/:slug', async (req: FastifyRequest, reply: FastifyReply) =>
     const viewerId = (req as any).user?.id as string | undefined
     const viewerBlockState = await loadViewerBlockState(viewerId)
     if (isPostHiddenFromViewer(post, viewerBlockState)) return reply.code(404).send({ error: 'not found' })
+    if (post.audience === 'family') {
+      const canAccess = await canViewerAccessFamilyAudiencePost({ viewerId, authorId: post.authorId })
+      if (!canAccess) return reply.code(404).send({ error: 'not found' })
+    }
     if (post.business && post.business.moderationStatus !== ModerationStatus.VISIBLE) {
       return reply.code(404).send({ error: 'not found' })
     }
@@ -32708,6 +33456,10 @@ app.get('/posts/:id', async (req: FastifyRequest, reply: FastifyReply) =>
     const viewerId = (req as any).user?.id as string | undefined
     const viewerBlockState = await loadViewerBlockState(viewerId)
     if (isPostHiddenFromViewer(post, viewerBlockState)) return reply.code(404).send({ error: 'not found' })
+    if (post.audience === 'family') {
+      const canAccess = await canViewerAccessFamilyAudiencePost({ viewerId, authorId: post.authorId })
+      if (!canAccess) return reply.code(404).send({ error: 'not found' })
+    }
     if (post.business && post.business.moderationStatus !== ModerationStatus.VISIBLE) {
       return reply.code(404).send({ error: 'not found' })
     }
@@ -32807,9 +33559,7 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
       .safeParse(req.query)
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
     const { cursor, limit, jurisdiction, sort, scope = 'all', province, community } = parse.data
-    const where: Prisma.PostWhereInput = {
-      type: { not: FAMILY_FEED_POST_TYPE },
-    }
+    const where: Prisma.PostWhereInput = {}
     if (jurisdiction) {
       where.jurisdiction = jurisdiction
     }
@@ -32844,6 +33594,14 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
 
     if (!viewerId && scope !== 'all' && !province && !community) {
       return reply.code(401).send({ error: 'unauthorized' })
+    }
+
+    const allowHomeFamilyPosts = Boolean(viewerId && scope === 'all' && !province && !community)
+    if (!allowHomeFamilyPosts) {
+      where.type = { not: FAMILY_FEED_POST_TYPE }
+    }
+    if (allowHomeFamilyPosts && viewerId) {
+      await syncLegacyParentFamilyFeedPosts(viewerId)
     }
 
     if (viewerId && !province && !community) {
@@ -32883,6 +33641,15 @@ app.get('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
                   ? ({ audience: 'friends' } as any)
                   : ({ audience: { in: ['friends'] } } as any)),
               },
+              ...(scope === 'all'
+                ? [
+                    {
+                      authorId: viewerId,
+                      type: FAMILY_FEED_POST_TYPE,
+                      audience: 'family',
+                    } as Prisma.PostWhereInput,
+                  ]
+                : []),
               {
                 authorId: { in: [...allowedAuthorIds] },
                 businessId: { not: null },
@@ -33508,6 +34275,9 @@ app.get('/users/:handle/posts', async (req: FastifyRequest, reply: FastifyReply)
       const allowedAudiences: string[] = []
       if (relationship.friendshipStatus === 'friends') {
         allowedAudiences.push('friends')
+      }
+      if (viewerId && viewerId !== user.id && (await canViewerAccessFamilyAudiencePost({ viewerId, authorId: user.id }))) {
+        allowedAudiences.push('family')
       }
       if (relationship.connectionStatus === 'connected') {
         allowedAudiences.push('network')
@@ -37287,6 +38057,137 @@ app.post('/notifications/:id/respond', async (req: FastifyRequest, reply: Fastif
       select: NOTIFICATION_SELECT,
     })
     if (!notification) return reply.code(404).send({ error: 'notification_not_found' })
+
+    if (notification.type === PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY) {
+      const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+        ? (notification.payload as Record<string, unknown>)
+        : null
+      if (!payload) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+      const statusRaw = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : 'pending'
+      if (statusRaw !== 'pending') {
+        return reply.code(409).send({ error: 'invitation_not_pending' })
+      }
+
+      const relationship =
+        payload.relationship === 'mother' ||
+        payload.relationship === 'father' ||
+        payload.relationship === 'grandmother' ||
+        payload.relationship === 'grandfather' ||
+        payload.relationship === 'sister' ||
+        payload.relationship === 'brother' ||
+        payload.relationship === 'aunt' ||
+        payload.relationship === 'uncle' ||
+        payload.relationship === 'cousin' ||
+        payload.relationship === 'second_cousin' ||
+        payload.relationship === 'niece' ||
+        payload.relationship === 'nephew' ||
+        payload.relationship === 'wife' ||
+        payload.relationship === 'husband' ||
+        payload.relationship === 'significant_other' ||
+        payload.relationship === 'partner' ||
+        payload.relationship === 'mother_in_law' ||
+        payload.relationship === 'father_in_law' ||
+        payload.relationship === 'sister_in_law' ||
+        payload.relationship === 'brother_in_law' ||
+        payload.relationship === 'daughter_in_law' ||
+        payload.relationship === 'son_in_law' ||
+        payload.relationship === 'other'
+          ? payload.relationship
+          : null
+      if (!relationship) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+      const requesterUserId = notification.actorId
+      if (!requesterUserId) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+      const [requesterUser, targetUser] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: requesterUserId },
+          select: { id: true, handle: true, name: true, communityMeta: true },
+        }),
+        prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, handle: true, name: true, communityMeta: true },
+        }),
+      ])
+      if (!requesterUser || !targetUser) return reply.code(404).send({ error: 'user_not_found' })
+
+      const nowIso = new Date().toISOString()
+      const nextStatus: 'accepted' | 'rejected' = body.data.action === 'accept' ? 'accepted' : 'rejected'
+      const nextPayload: Prisma.InputJsonValue = {
+        ...payload,
+        status: nextStatus,
+        respondedAt: nowIso,
+      }
+
+      const writes: Prisma.PrismaPromise<unknown>[] = [
+        prisma.notification.update({
+          where: { id: notification.id },
+          data: {
+            payload: nextPayload,
+            readAt: notification.readAt ?? new Date(),
+          },
+        }),
+      ]
+
+      if (body.data.action === 'accept') {
+        const requesterRelationships = getStoredProfileFamilyRelationships(requesterUser.communityMeta)
+        const targetRelationships = getStoredProfileFamilyRelationships(targetUser.communityMeta)
+
+        const requesterBaseMeta = readBaseCommunityMeta(requesterUser.communityMeta ?? null)
+        writeStoredProfileFamilyRelationships(
+          requesterBaseMeta,
+          upsertProfileFamilyRelationship(requesterRelationships, {
+            relatedUserId: targetUser.id,
+            relatedHandle: targetUser.handle,
+            relatedName: targetUser.name ?? null,
+            familyType: relationship,
+            direction: 'outbound',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          }),
+        )
+
+        const targetBaseMeta = readBaseCommunityMeta(targetUser.communityMeta ?? null)
+        writeStoredProfileFamilyRelationships(
+          targetBaseMeta,
+          upsertProfileFamilyRelationship(targetRelationships, {
+            relatedUserId: requesterUser.id,
+            relatedHandle: requesterUser.handle,
+            relatedName: requesterUser.name ?? null,
+            familyType: relationship,
+            direction: 'inbound',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          }),
+        )
+
+        writes.push(
+          prisma.user.update({
+            where: { id: requesterUser.id },
+            data: { communityMeta: requesterBaseMeta as Prisma.InputJsonValue },
+          }),
+          prisma.user.update({
+            where: { id: targetUser.id },
+            data: { communityMeta: targetBaseMeta as Prisma.InputJsonValue },
+          }),
+        )
+      }
+
+      await prisma.$transaction(writes)
+
+      if (requesterUser.id !== userId) {
+        await notifyProfileFamilyInviteResponse({
+          inviteeUserId: requesterUser.id,
+          actorUserId: targetUser.id,
+          actorHandle: targetUser.handle,
+          relationship,
+          status: nextStatus,
+        })
+      }
+
+      return reply.send({ ok: true, status: nextStatus })
+    }
 
     if (notification.type === FAMILY_NOTIFICATION_TYPES.FRIEND_REQUEST) {
       const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)

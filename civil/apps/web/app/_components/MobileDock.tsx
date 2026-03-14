@@ -685,7 +685,7 @@ export default function MobileDock() {
                     <p className="mt-1 truncate text-sm font-semibold text-slate-950">{familyView.displayName}</p>
                     <p className="mt-1 text-xs leading-5 text-slate-600">{familyView.relationshipLabel} • Age {familyView.age} • {familyView.modeLabel}</p>
                     <Link
-                      href="/settings/family/settings"
+                      href="/settings/guardian/settings"
                       onClick={handleCloseMenu}
                       className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
                     >

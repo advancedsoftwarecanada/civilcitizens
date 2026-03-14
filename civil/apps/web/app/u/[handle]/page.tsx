@@ -17,6 +17,7 @@ import {
   HiOutlineBuildingLibrary,
 } from 'react-icons/hi2'
 import CivilCard from '../../_components/CivilCard'
+import CivilComposerLauncher from '../../_components/CivilComposerLauncher'
 import FamilyFeedClient from '../../_components/FamilyFeedClient'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
@@ -28,6 +29,7 @@ import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
+import { hasFamilyProfilesAvailable } from '../../_lib/me'
 import { formatUserDisplayName } from '../../_lib/text'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { ensureViewerMe } from '../../_lib/viewerMe'
@@ -42,9 +44,14 @@ type Viewer = {
   handle: string
   name?: string | null
   avatarUrl?: string | null
+  coverUrl?: string | null
   isPremium?: boolean
   isVerified?: boolean
   accountType?: 'user' | 'family_member'
+  familyMode?: {
+    enabled?: boolean
+    memberCount?: number
+  } | null
   familyMemberSession?: {
     parentId?: string | null
     parentHandle?: string | null
@@ -151,6 +158,57 @@ type ConnectionAcceptResponse = {
 }
 
 type InviteSurface = 'event' | 'organization'
+
+type FamilyInviteRelationshipValue =
+  | 'mother'
+  | 'father'
+  | 'grandmother'
+  | 'grandfather'
+  | 'sister'
+  | 'brother'
+  | 'aunt'
+  | 'uncle'
+  | 'cousin'
+  | 'second_cousin'
+  | 'niece'
+  | 'nephew'
+  | 'wife'
+  | 'husband'
+  | 'significant_other'
+  | 'partner'
+  | 'mother_in_law'
+  | 'father_in_law'
+  | 'sister_in_law'
+  | 'brother_in_law'
+  | 'daughter_in_law'
+  | 'son_in_law'
+  | 'other'
+
+const FAMILY_INVITE_RELATIONSHIP_OPTIONS: Array<{ value: FamilyInviteRelationshipValue; label: string }> = [
+  { value: 'mother', label: 'Mother' },
+  { value: 'father', label: 'Father' },
+  { value: 'grandmother', label: 'Grandmother' },
+  { value: 'grandfather', label: 'Grandfather' },
+  { value: 'sister', label: 'Sister' },
+  { value: 'brother', label: 'Brother' },
+  { value: 'aunt', label: 'Aunt' },
+  { value: 'uncle', label: 'Uncle' },
+  { value: 'cousin', label: 'Cousin' },
+  { value: 'second_cousin', label: 'Second Cousin' },
+  { value: 'niece', label: 'Niece' },
+  { value: 'nephew', label: 'Nephew' },
+  { value: 'wife', label: 'Wife' },
+  { value: 'husband', label: 'Husband' },
+  { value: 'significant_other', label: 'Significant Other' },
+  { value: 'partner', label: 'Partner' },
+  { value: 'mother_in_law', label: 'Mother-in-law' },
+  { value: 'father_in_law', label: 'Father-in-law' },
+  { value: 'sister_in_law', label: 'Sister-in-law' },
+  { value: 'brother_in_law', label: 'Brother-in-law' },
+  { value: 'daughter_in_law', label: 'Daughter-in-law' },
+  { value: 'son_in_law', label: 'Son-in-law' },
+  { value: 'other', label: 'Other' },
+]
 
 type InviteableOrganization = {
   id: string
@@ -337,6 +395,9 @@ export default function UserPostsPage({ params }: PageProps) {
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
   const [inviteModalOpen, setInviteModalOpen] = useState(false)
+  const [familyInviteModalOpen, setFamilyInviteModalOpen] = useState(false)
+  const [familyInviteRelationship, setFamilyInviteRelationship] = useState<FamilyInviteRelationshipValue>('mother')
+  const [familyInviteSending, setFamilyInviteSending] = useState(false)
   const [inviteSurface, setInviteSurface] = useState<InviteSurface>('event')
   const [inviteOrganizations, setInviteOrganizations] = useState<InviteableOrganization[]>([])
   const [inviteEvents, setInviteEvents] = useState<InviteableEvent[]>([])
@@ -348,6 +409,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [familyBlockLoading, setFamilyBlockLoading] = useState(false)
   const resolvedViewer = cachedViewer ?? viewer
   const hasStoredToken = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : false
+  const canPostToFamily = resolvedViewer?.accountType === 'user' && hasFamilyProfilesAvailable(resolvedViewer)
 
   const loadViewer = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -561,6 +623,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const publicBirthDate = formatBirthDate(profile?.dateOfBirth)
   const publicBirthYear = formatBirthYear(profile?.birthYear)
   const publicBirthCountry = profile?.countryOfBirth?.trim() ?? ''
+  const familyInviteRelationshipLabel =
+    FAMILY_INVITE_RELATIONSHIP_OPTIONS.find((option) => option.value === familyInviteRelationship)?.label ?? 'Mother'
   const isBornInCanada = publicBirthCountry.toLowerCase() === 'canada'
   const identityPills = [
     profile?.isVerified ? { label: 'Verified Canadian', tone: 'verified' as const, iconSrc: '/self-verified.png' } : null,
@@ -690,6 +754,13 @@ export default function UserPostsPage({ params }: PageProps) {
       console.error('Failed to send family friend request from profile', err)
       pushToast('Unable to send that Family invite right now.', 'error')
     }
+  }
+
+  const openFamilyInviteModal = () => {
+    const token = requireAuthToken()
+    if (!token || !profile) return
+    setFamilyInviteRelationship('mother')
+    setFamilyInviteModalOpen(true)
   }
 
   const handleInviteToSurface = (surface: InviteSurface) => {
@@ -861,13 +932,21 @@ export default function UserPostsPage({ params }: PageProps) {
   }
 
   const renderConnectMenu = () => {
+    const hasIncomingFriendRequest = resolvedRelationship.friendshipStatus === 'incoming'
+    const hasIncomingConnectionRequest = resolvedRelationship.connectionStatus === 'incoming'
     const connectTone =
       resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected'
         ? 'success'
         : 'primary'
 
+    const connectLabel = hasIncomingFriendRequest
+      ? 'Accept Friend'
+      : hasIncomingConnectionRequest
+        ? 'Accept Network'
+        : 'Connect'
+
     return renderActionMenu({
-      label: 'Connect',
+      label: connectLabel,
       tone: connectTone,
       icon: <HiOutlineUserPlus className="h-4 w-4" aria-hidden="true" />,
       children: (
@@ -879,14 +958,14 @@ export default function UserPostsPage({ params }: PageProps) {
                 void handleAcceptFriendRequest()
               }} disabled={!relationship?.friendshipId || isAcceptingFriendRequest}>
                 <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
-                {isAcceptingFriendRequest ? 'Accepting friend…' : 'Add Friend'}
+                {isAcceptingFriendRequest ? 'Accepting friend…' : 'Accept Friend Request'}
               </button>
               <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
                 closeDetailsMenu(event)
                 void handleRejectFriendRequest()
               }} disabled={!relationship?.friendshipId || isRejectingFriendRequest}>
                 <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
-                Dismiss friend request
+                Decline Friend Request
               </button>
             </>
           ) : resolvedRelationship.friendshipStatus === 'friends' ? (
@@ -920,6 +999,14 @@ export default function UserPostsPage({ params }: PageProps) {
               <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
               Add Family
             </button>
+          ) : profile?.accountType !== 'family_member' ? (
+            <button type="button" className={menuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              openFamilyInviteModal()
+            }} disabled={familyInviteSending}>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              Add Family
+            </button>
           ) : null}
 
           {resolvedRelationship.connectionStatus === 'incoming' ? (
@@ -929,14 +1016,14 @@ export default function UserPostsPage({ params }: PageProps) {
                 void handleAcceptConnectionRequest()
               }} disabled={!relationship?.connectionId || isAcceptingConnectionRequest}>
                 <FaUserTie className="h-4 w-4" aria-hidden="true" />
-                {isAcceptingConnectionRequest ? 'Accepting network…' : 'Add Business Network'}
+                {isAcceptingConnectionRequest ? 'Accepting network…' : 'Accept Business Request'}
               </button>
               <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
                 closeDetailsMenu(event)
                 void handleRejectConnectionRequest()
               }} disabled={!relationship?.connectionId || isRejectingConnectionRequest}>
                 <FaUserTie className="h-4 w-4" aria-hidden="true" />
-                Dismiss business request
+                Decline Business Request
               </button>
             </>
           ) : resolvedRelationship.connectionStatus === 'connected' ? (
@@ -1021,174 +1108,114 @@ export default function UserPostsPage({ params }: PageProps) {
         </>
       ),
     })
-  const renderFriendshipPrimaryCta = () => {
-    switch (resolvedRelationship.friendshipStatus) {
-      case 'incoming':
-        return (
-          <div className="flex flex-col gap-2 text-sm font-semibold">
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-center text-amber-700">
-              This person sent you a friend request.
+  const renderRelationshipRequestCards = () => {
+    const cards: ReactNode[] = []
+
+    if (resolvedRelationship.friendshipStatus === 'incoming' || resolvedRelationship.friendshipStatus === 'outgoing') {
+      const isIncomingFriendRequest = resolvedRelationship.friendshipStatus === 'incoming'
+      cards.push(
+        <div
+          key="friend-request"
+          className="rounded-[28px] border border-amber-200 bg-[linear-gradient(135deg,rgba(255,251,235,0.98)_0%,rgba(255,247,237,0.98)_100%)] p-5 shadow-[0_22px_70px_rgba(245,158,11,0.10)] sm:p-6"
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+              <HiOutlineUsers className="h-5 w-5" aria-hidden="true" />
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-700">Friend Request</p>
+              <h2 className="mt-1 text-lg font-semibold text-slate-950">
+                {isIncomingFriendRequest ? 'This person wants to be your friend.' : 'Friend request pending'}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                {isIncomingFriendRequest
+                  ? 'Accept or decline it here without digging through notifications.'
+                  : 'You already sent a friend request to this profile.'}
+              </p>
+            </div>
+          </div>
+          {isIncomingFriendRequest ? (
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
-                className="inline-flex flex-1 items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex flex-1 items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleAcceptFriendRequest}
                 disabled={!relationship?.friendshipId || isAcceptingFriendRequest}
               >
-                Accept request
+                {isAcceptingFriendRequest ? 'Accepting friend…' : 'Accept Friend Request'}
               </button>
               <button
                 type="button"
-                className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex flex-1 items-center justify-center rounded-full border border-amber-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-amber-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleRejectFriendRequest}
                 disabled={!relationship?.friendshipId || isRejectingFriendRequest}
               >
-                Dismiss
+                {isRejectingFriendRequest ? 'Declining…' : 'Decline'}
               </button>
             </div>
-          </div>
-        )
-      case 'outgoing':
-        return (
-          <div className="inline-flex items-center justify-center rounded-full border border-amber-200 bg-amber-50 px-5 py-2 text-sm font-semibold text-amber-700">
-            Request sent
-          </div>
-        )
-      case 'friends':
-        return (
-          <details className="group relative w-full sm:w-auto">
-            <summary className="inline-flex w-full cursor-pointer list-none items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-5 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 sm:w-auto [&::-webkit-details-marker]:hidden">
-              <span role="img" aria-label="Handshake">
-                🤝
-              </span>
-              Friends
-              <svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="transition group-open:rotate-180"
-              >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </summary>
-            <div className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:absolute sm:left-0 sm:top-full sm:z-20 sm:min-w-[180px] sm:w-auto">
-              <button
-                type="button"
-                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                onClick={() => setRemoveFriendModalOpen(true)}
-              >
-                Remove friend
-              </button>
+          ) : (
+            <div className="mt-4 inline-flex items-center rounded-full border border-amber-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-amber-700">
+              Request sent
             </div>
-          </details>
-        )
-      case 'self':
-        return null
-      default:
-        return (
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={handleSendFriendRequest}
-            disabled={isSendingFriendRequest}
-          >
-            <HiOutlineUserPlus className="mr-2 h-4 w-4" aria-hidden="true" />
-            Add friend
-          </button>
-        )
+          )}
+        </div>,
+      )
     }
-  }
 
-  const renderConnectionPrimaryCta = () => {
-    switch (resolvedRelationship.connectionStatus) {
-      case 'incoming':
-        return (
-          <div className="flex flex-col gap-2 text-sm font-semibold">
-            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-2 text-center text-sky-700">
-              This person sent you a connection request.
+    if (resolvedRelationship.connectionStatus === 'incoming' || resolvedRelationship.connectionStatus === 'outgoing') {
+      const isIncomingConnectionRequest = resolvedRelationship.connectionStatus === 'incoming'
+      cards.push(
+        <div
+          key="connection-request"
+          className="rounded-[28px] border border-sky-200 bg-[linear-gradient(135deg,rgba(240,249,255,0.98)_0%,rgba(239,246,255,0.98)_100%)] p-5 shadow-[0_22px_70px_rgba(14,165,233,0.10)] sm:p-6"
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-sky-100 text-sky-700">
+              <FaUserTie className="h-4 w-4" aria-hidden="true" />
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-sky-700">Business Network</p>
+              <h2 className="mt-1 text-lg font-semibold text-slate-950">
+                {isIncomingConnectionRequest ? 'This person wants to connect professionally.' : 'Business request pending'}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                {isIncomingConnectionRequest
+                  ? 'Respond here if you want to add them to your business network.'
+                  : 'You already sent a business-network request to this profile.'}
+              </p>
+            </div>
+          </div>
+          {isIncomingConnectionRequest ? (
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
-                className="inline-flex flex-1 items-center justify-center rounded-full bg-slate-900 px-5 py-2 text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex flex-1 items-center justify-center rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleAcceptConnectionRequest}
                 disabled={!relationship?.connectionId || isAcceptingConnectionRequest}
               >
-                Accept connect
+                {isAcceptingConnectionRequest ? 'Accepting network…' : 'Accept Business Request'}
               </button>
               <button
                 type="button"
-                className="inline-flex flex-1 items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex flex-1 items-center justify-center rounded-full border border-sky-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleRejectConnectionRequest}
                 disabled={!relationship?.connectionId || isRejectingConnectionRequest}
               >
-                Dismiss
+                {isRejectingConnectionRequest ? 'Declining…' : 'Decline'}
               </button>
             </div>
-          </div>
-        )
-      case 'outgoing':
-        return (
-          <div className="inline-flex items-center justify-center rounded-full border border-sky-200 bg-sky-50 px-5 py-2 text-sm font-semibold text-sky-700">
-            Connect request sent
-          </div>
-        )
-      case 'connected':
-        return (
-          <details className="group relative w-full sm:w-auto">
-            <summary className="inline-flex w-full cursor-pointer list-none items-center justify-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-5 py-2 text-sm font-semibold text-sky-700 transition hover:border-sky-300 sm:w-auto [&::-webkit-details-marker]:hidden">
-              <span role="img" aria-label="Professional connection">
-                🧑‍💼
-              </span>
-              Connected
-              <svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="transition group-open:rotate-180"
-              >
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </summary>
-            <div className="mt-2 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:absolute sm:left-0 sm:top-full sm:z-20 sm:min-w-[200px] sm:w-auto">
-              <button
-                type="button"
-                className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                onClick={() => setRemoveConnectionModalOpen(true)}
-              >
-                Remove connection
-              </button>
+          ) : (
+            <div className="mt-4 inline-flex items-center rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-sky-700">
+              Request sent
             </div>
-          </details>
-        )
-      case 'self':
-        return null
-      default:
-        return (
-          <button
-            type="button"
-            className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={handleSendConnectionRequest}
-            disabled={isSendingConnectionRequest}
-          >
-            <FaUserTie className="mr-2 h-4 w-4" aria-hidden="true" />
-            Connect
-          </button>
-        )
+          )}
+        </div>,
+      )
     }
+
+    if (!cards.length || isOwner) return null
+
+    return <section className={clsx('grid gap-4', cards.length > 1 && 'xl:grid-cols-2')}>{cards}</section>
   }
 
   const rightRailContent = <RightRail sticky={false} />
@@ -1339,6 +1366,56 @@ export default function UserPostsPage({ params }: PageProps) {
     },
     [profile, resolveDirectTargetId],
   )
+
+  const handleSendFamilyInvite = useCallback(async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+
+    const targetUserId = await resolveDirectTargetId(token)
+    if (!targetUserId || !isValidUserId(targetUserId)) {
+      pushToast('Unable to send family request right now.', 'error')
+      return
+    }
+
+    setFamilyInviteSending(true)
+    try {
+      const response = await fetch(buildApiUrl('/profile/family-requests'), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          targetUserId,
+          relationship: familyInviteRelationship,
+        }),
+      })
+
+      if (response.status === 401) {
+        setFamilyInviteModalOpen(false)
+        redirectToAuthModal('login')
+        return
+      }
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      if (!response.ok) {
+        const message = payload?.error === 'user_not_found'
+          ? 'That profile is no longer available.'
+          : 'Unable to send family request right now.'
+        pushToast(message, 'error')
+        return
+      }
+
+      pushToast(`Family request sent to @${profile.handle}.`, 'success')
+      setFamilyInviteModalOpen(false)
+    } catch (error) {
+      console.error('Failed to send family request', error)
+      pushToast('Unable to send family request right now.', 'error')
+    } finally {
+      setFamilyInviteSending(false)
+    }
+  }, [familyInviteRelationship, profile, resolveDirectTargetId])
 
   const handleSendFriendRequest = async () => {
     if (!profile) return
@@ -2065,6 +2142,8 @@ export default function UserPostsPage({ params }: PageProps) {
             </section>
           ) : null}
 
+          {profile ? renderRelationshipRequestCards() : null}
+
           {profile && isOwner ? (
             <div className="flex flex-wrap items-center justify-center gap-3 px-2">
               <Link
@@ -2093,69 +2172,72 @@ export default function UserPostsPage({ params }: PageProps) {
           >
             {profile ? (
               <>
-                <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="flex flex-col gap-5 xl:min-w-0 xl:flex-1">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div className="space-y-7">
+                  <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+                    <div className="flex items-center gap-4 sm:gap-5">
                       <VerifiedAvatar
                         src={profile.avatarUrl}
                         alt={profileDisplayName}
                         initials={profileDisplayName}
-                        size={108}
+                        size={120}
                         isVerified={Boolean(profile.isVerified)}
                         isBusiness={Boolean(profile.isPremium)}
                         href={avatarThreadUrl ?? undefined}
-                        roundedClassName="rounded-[28px]"
+                        roundedClassName="rounded-[30px]"
                         className="shrink-0"
                       />
-                      <div className="space-y-2">
-                        <div className="space-y-1">
-                          <h1 className="text-3xl font-bold leading-tight tracking-tight text-slate-950 sm:text-4xl">{profileDisplayName}</h1>
-                          <p className="text-lg font-semibold text-slate-600">@{profile.handle}</p>
-                        </div>
-                        {profile.bio ? (
-                          <div
-                            className="max-w-3xl text-sm leading-6 text-slate-600 xl:text-base [&_p]:m-0 [&_p+p]:mt-3 [&_br]:content-[''] [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_a]:font-medium [&_a]:text-[var(--cc-primary)] [&_a]:underline"
-                            dangerouslySetInnerHTML={{ __html: profile.bio }}
-                          />
-                        ) : null}
+                      <div className="space-y-1.5">
+                        <h1 className="text-3xl font-bold leading-tight tracking-tight text-slate-950 sm:text-4xl">{profileDisplayName}</h1>
+                        <p className="text-base font-semibold text-slate-600 sm:text-lg">@{profile.handle}</p>
                       </div>
                     </div>
-                  </div>
-                  {isOwner ? (
-                    null
-                  ) : (
-                    <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center xl:max-w-[520px] xl:justify-end">
-                      {isFamilyMemberSession ? (
-                        renderFamilyProfileActions()
-                      ) : (
-                        <>
-                          {renderConnectMenu()}
-                          {renderMessageMenu()}
-                          {renderInviteMenu()}
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
 
-                {identityPills.length ? (
-                  <div className="mt-5 flex flex-wrap gap-2 text-sm font-medium text-slate-600">
-                    {identityPills.map((pill) => (
-                      <span
-                        key={pill.label}
-                        className={clsx(
-                          'inline-flex items-center gap-2 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium shadow-[0_1px_0_rgba(15,23,42,0.03)]',
-                          pill.tone === 'verified'
-                            ? 'border border-red-300 text-red-700'
-                            : 'border border-slate-200 text-slate-600',
+                    {!isOwner ? (
+                      <div className="flex w-full flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:max-w-[540px] xl:justify-end xl:self-center">
+                        {isFamilyMemberSession ? (
+                          renderFamilyProfileActions()
+                        ) : (
+                          <>
+                            {renderConnectMenu()}
+                            {renderMessageMenu()}
+                            {renderInviteMenu()}
+                          </>
                         )}
-                      >
-                        {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 object-contain" aria-hidden="true" /> : null}
-                        {pill.label}
-                      </span>
-                    ))}
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
+
+                  {identityPills.length ? (
+                    <div className="flex flex-wrap gap-2 text-sm font-medium text-slate-600">
+                      {identityPills.map((pill) => (
+                        <span
+                          key={pill.label}
+                          className={clsx(
+                            'inline-flex items-center gap-2 rounded-full bg-white px-3.5 py-1.5 text-sm font-medium shadow-[0_1px_0_rgba(15,23,42,0.03)]',
+                            pill.tone === 'verified'
+                              ? 'border border-red-300 text-red-700'
+                              : 'border border-slate-200 text-slate-600',
+                          )}
+                        >
+                          {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 object-contain" aria-hidden="true" /> : null}
+                          {pill.label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="rounded-[28px] border border-slate-200 bg-slate-50/70 px-5 py-5 sm:px-6">
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Profile description</p>
+                    {profile.bio ? (
+                      <div
+                        className="mt-3 max-w-none text-sm leading-7 text-slate-600 sm:text-[15px] [&_p]:m-0 [&_p+p]:mt-3 [&_br]:content-[''] [&_ul]:my-3 [&_ol]:my-3 [&_li]:my-1 [&_a]:font-medium [&_a]:text-[var(--cc-primary)] [&_a]:underline"
+                        dangerouslySetInnerHTML={{ __html: profile.bio }}
+                      />
+                    ) : (
+                      <p className="mt-3 text-sm leading-7 text-slate-500 sm:text-[15px]">No profile description yet.</p>
+                    )}
+                  </div>
+                </div>
 
                 <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
                   {profileStatCards.map((card) => {
@@ -2256,45 +2338,24 @@ export default function UserPostsPage({ params }: PageProps) {
 
         {isOwner ? (
           <>
-            <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
-              <div className="flex items-center gap-3">
-                <VerifiedAvatar
-                  src={viewer?.avatarUrl ?? null}
-                  alt={ownerDisplayName}
-                  initials={ownerInitials}
-                  size={56}
-                  isVerified={isViewerVerified}
-                  isBusiness={isViewerBusiness}
-                  className="shrink-0"
-                  href={viewer?.handle ? `/u/${viewer.handle}` : undefined}
-                />
-                <button
-                  type="button"
-                  className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-500 transition hover:bg-white hover:text-slate-700"
-                  onClick={() => openComposer('post')}
-                >
-                  What&apos;s on your mind, {ownerFirstName}?
-                </button>
-              </div>
-              <div className="flex flex-wrap items-center gap-3 text-xs font-semibold text-slate-500">
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('post')}>
-                  <span role="img" aria-label="Post">📝</span>
-                  Post
-                </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('article')}>
-                  <span role="img" aria-label="Article">📄</span>
-                  Article
-                </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('poll')}>
-                  <span role="img" aria-label="Poll">📊</span>
-                  Poll
-                </button>
-                <button type="button" className="flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1.5 transition hover:border-slate-300 hover:text-slate-700" onClick={() => openComposer('photo')}>
-                  <span role="img" aria-label="Photos">📷</span>
-                  Photos
-                </button>
-              </div>
-            </section>
+            <CivilComposerLauncher
+              coverUrl={viewer?.coverUrl ?? null}
+              avatarSrc={viewer?.avatarUrl ?? null}
+              avatarAlt={ownerDisplayName}
+              avatarInitials={ownerInitials}
+              avatarHref={viewer?.handle ? `/u/${viewer.handle}` : undefined}
+              isVerified={isViewerVerified}
+              isBusiness={isViewerBusiness}
+              prompt={`What's on your mind, ${ownerFirstName}?`}
+              actions={[
+                { type: 'post', label: 'Post', icon: '📝' },
+                { type: 'article', label: 'Article', icon: '📄' },
+                { type: 'poll', label: 'Poll', icon: '📊' },
+                { type: 'photo', label: 'Photos', icon: '📷' },
+              ]}
+              onPrimaryClick={() => openComposer('post')}
+              onActionClick={(type) => openComposer(type as PostType)}
+            />
 
             <Modal
               open={composerOpen}
@@ -2308,6 +2369,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <PostComposer
                 me={viewer}
                 defaultPostType={composerDefaultType}
+                allowFamilyAudience={canPostToFamily}
                 onPostCreated={(post) => {
                   handlePostCreated(post)
                   setComposerOpen(false)
@@ -2464,6 +2526,74 @@ export default function UserPostsPage({ params }: PageProps) {
                 You are not following or part of any organizations yet.
               </div>
             )}
+          </div>
+        </Modal>
+
+        <Modal
+          open={familyInviteModalOpen}
+          onClose={() => {
+            if (familyInviteSending) return
+            setFamilyInviteModalOpen(false)
+          }}
+          title={`Add @${profile?.handle ?? handleParam} as family`}
+          maxWidthClassName="max-w-lg"
+        >
+          <div className="space-y-4 p-1">
+            <p className="text-sm text-slate-600">
+              How are you related? We will send a notification with a direct link back to your profile.
+            </p>
+
+            <div className="space-y-2 text-sm font-semibold text-slate-700">
+              <span>Relationship</span>
+              <details className="group relative" data-family-relationship-picker>
+                <summary className="flex cursor-pointer list-none items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm font-medium text-slate-900 shadow-sm transition hover:border-slate-300 [&::-webkit-details-marker]:hidden">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Selected</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">{familyInviteRelationshipLabel}</div>
+                  </div>
+                  <HiOutlineChevronDown className="h-4 w-4 text-slate-500 transition group-open:rotate-180" aria-hidden="true" />
+                </summary>
+                <div className="mt-2 space-y-2 rounded-[24px] border border-slate-200 bg-slate-50/80 p-2">
+                  {FAMILY_INVITE_RELATIONSHIP_OPTIONS.map((option) => {
+                    const selected = option.value === familyInviteRelationship
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={clsx(
+                          'flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left text-sm font-semibold transition',
+                          selected
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900',
+                        )}
+                        onClick={(event) => {
+                          setFamilyInviteRelationship(option.value)
+                          const details = event.currentTarget.closest('details')
+                          if (details instanceof HTMLDetailsElement) {
+                            details.open = false
+                          }
+                        }}
+                        disabled={familyInviteSending}
+                      >
+                        <span>{option.label}</span>
+                        {selected ? <span className="text-xs font-bold uppercase tracking-[0.24em] text-white/80">Selected</span> : null}
+                      </button>
+                    )
+                  })}
+                </div>
+              </details>
+            </div>
+
+            <button
+              type="button"
+              className="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => {
+                void handleSendFamilyInvite()
+              }}
+              disabled={familyInviteSending}
+            >
+              {familyInviteSending ? 'Sending…' : 'Send family request'}
+            </button>
           </div>
         </Modal>
 

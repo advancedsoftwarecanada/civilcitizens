@@ -112,6 +112,7 @@ type FamilyFeedClientProps = {
   emptyState?: string
   readOnly?: boolean
   headerContent?: ReactNode
+  rightRail?: ReactNode
 }
 
 export default function FamilyFeedClient({
@@ -124,6 +125,7 @@ export default function FamilyFeedClient({
   emptyState = 'The Family Feed is quiet right now. Share a quick update or add a photo to get started.',
   readOnly = false,
   headerContent,
+  rightRail,
 }: FamilyFeedClientProps) {
   const viewer = useViewerStore((s) => s.me)
   const viewerHydrated = useViewerStore((s) => s.hydrated)
@@ -408,7 +410,7 @@ export default function FamilyFeedClient({
   }, [canSubmit, composerText, effectiveMemberId, photos, readyImages])
 
   return (
-    <DashboardShell rightRail={<RightRail sticky={false} />} mainClassName="min-w-0 space-y-6">
+    <DashboardShell rightRail={rightRail ?? <RightRail sticky={false} />} mainClassName="min-w-0 space-y-6">
       {headerContent ? <div>{headerContent}</div> : null}
 
       {!readOnly ? (

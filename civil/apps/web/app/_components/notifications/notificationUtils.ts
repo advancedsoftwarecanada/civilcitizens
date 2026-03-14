@@ -141,6 +141,7 @@ export function getNotificationRequestStatus(notification: NotificationItem): Fr
 export function isActionableNotification(notification: NotificationItem): boolean {
   return (
     notification.type === 'friend_request' ||
+    notification.type === 'profile_family_invite' ||
     notification.type === 'family_child_friend_request' ||
     notification.type === 'event_guest_speaker_invite' ||
     notification.type === 'event_sponsor_invite'
@@ -211,6 +212,19 @@ export function getNotificationMessage(notification: NotificationItem) {
       return inviteTitle ? `invited you to event: ${inviteTitle}` : 'invited you to an event'
     case 'profile_organization_invite':
       return inviteTitle ? `invited you to organization: ${inviteTitle}` : 'invited you to an organization'
+    case 'profile_family_invite': {
+      const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : ''
+      return relationshipLabel ? `wants to add you as ${relationshipLabel}` : 'wants to add you as family'
+    }
+    case 'profile_family_invite_response': {
+      const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : 'family'
+      const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+      return status === 'accepted'
+        ? `accepted your ${relationshipLabel} request`
+        : status === 'rejected'
+          ? `declined your ${relationshipLabel} request`
+          : `responded to your ${relationshipLabel} request`
+    }
     case 'poll_results_available': {
       const questionPreview = typeof notification.payload?.questionPreview === 'string' ? notification.payload.questionPreview.trim() : ''
       return questionPreview ? `poll results are ready: "${questionPreview}"` : 'poll results are now available'
@@ -248,6 +262,8 @@ export function getNotificationMessage(notification: NotificationItem) {
 export function getNotificationOpenLabel(notification: NotificationItem): string | null {
   if (notification.type === 'profile_event_invite') return 'View event'
   if (notification.type === 'profile_organization_invite') return 'View organization'
+  if (notification.type === 'profile_family_invite') return 'View profile'
+  if (notification.type === 'profile_family_invite_response') return 'View profile'
   return null
 }
 

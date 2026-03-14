@@ -4,24 +4,24 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { FaUserTie } from 'react-icons/fa'
+import { FaHouseUser, FaUserTie } from 'react-icons/fa'
 import {
   HiOutlineChatBubbleOvalLeft,
   HiOutlineCurrencyDollar,
   HiOutlineHome,
-  HiOutlineBuildingOffice2,
-  HiOutlineBuildingLibrary,
   HiOutlineCalendarDays,
-  HiOutlineShoppingBag,
+  HiOutlineShoppingCart,
   HiOutlineUserCircle,
   HiOutlineUsers,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
+import { RiCommunityLine } from 'react-icons/ri'
+import { VscOrganization } from 'react-icons/vsc'
 import CivilCard from './CivilCard'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
-import { hasFamilyProfilesAvailable, type FamilyModeSummary, type MeResponse } from '../_lib/me'
+import { type FamilyModeSummary, type MeResponse } from '../_lib/me'
 import type { FamilyViewState } from '../_lib/familyView'
 
 type SidebarViewer = {
@@ -55,10 +55,10 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
   { key: 'network', label: 'Network', href: '/network', icon: FaUserTie },
-  { key: 'communities', label: 'Communities', href: '/communities', icon: HiOutlineBuildingOffice2 },
-  { key: 'organizations', label: 'Organizations', href: '/organizations', icon: HiOutlineBuildingLibrary },
+  { key: 'communities', label: 'Communities', href: '/communities', icon: RiCommunityLine },
+  { key: 'organizations', label: 'Organizations', href: '/organizations', icon: VscOrganization },
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
-  { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
+  { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
   // TODO(app-store): restore News, Podcasts, Music, and Video nav items once those product areas are ready.
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
@@ -68,7 +68,7 @@ const FAMILY_CHILD_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Family & Friends', href: '/home', icon: HiOutlineHome },
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'My Friends', href: '/friends', icon: HiOutlineUsers },
-  { key: 'account', label: 'Settings', href: '/settings/family/settings', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Settings', href: '/settings/guardian/settings', icon: HiOutlineUserCircle },
 ]
 
 export function getSidebarNavItems(
@@ -76,7 +76,7 @@ export function getSidebarNavItems(
   me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
 ): SidebarNavItem[] {
   if (!familyView) {
-    if (me?.accountType === 'user' && hasFamilyProfilesAvailable(me)) {
+    if (me?.accountType === 'user') {
       const [homeItem, messagesItem, friendsItem] = PRIMARY_NAV
       if (!homeItem || !messagesItem || !friendsItem) return PRIMARY_NAV
 
@@ -84,7 +84,7 @@ export function getSidebarNavItems(
         homeItem,
         messagesItem,
         friendsItem,
-        { key: 'family', label: 'Family', href: '/family', icon: HiOutlineUsers },
+        { key: 'family', label: 'Family', href: '/family', icon: FaHouseUser },
         ...PRIMARY_NAV.slice(3),
       ]
     }
