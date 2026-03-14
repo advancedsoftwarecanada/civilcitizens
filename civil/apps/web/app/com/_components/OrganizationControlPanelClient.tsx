@@ -2,10 +2,10 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { FaUserTie } from 'react-icons/fa'
 import {
   HiOutlineBuildingOffice2,
   HiOutlineCalendarDays,
-  HiOutlineBriefcase,
   HiOutlineShoppingBag,
   HiOutlineUserGroup,
   HiOutlineUsers,
@@ -128,7 +128,7 @@ export default function OrganizationControlPanelClient({
         label: 'Jobs',
         description: 'Manage job listings and hiring visibility.',
         href: `${base}/jobs/manage`,
-        icon: HiOutlineBriefcase,
+        icon: FaUserTie,
       },
       {
         label: 'Shop',

@@ -2011,7 +2011,6 @@ export default function ProfileEditPage() {
               <CivilCard
                 size="hero"
                 name={profileDisplayName}
-                subtitle="View profile"
                 avatarAlt={profileDisplayName}
                 avatarInitials={displayInitials}
                 avatarSrc={avatarDisplayUrl}

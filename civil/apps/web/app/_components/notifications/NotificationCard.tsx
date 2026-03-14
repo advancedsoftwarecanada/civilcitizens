@@ -7,6 +7,7 @@ import {
   formatRelativeTime,
   getActorDisplayName,
   getFriendshipId,
+  getNotificationOpenLabel,
   getNotificationRequestStatus,
   getNotificationMessage,
   getNotificationTargetUrl,
@@ -41,6 +42,7 @@ export function NotificationCard({
   const initials = actorName ?? 'C'
   const message = getNotificationMessage(notification)
   const targetUrl = getNotificationTargetUrl(notification)
+  const openLabel = getNotificationOpenLabel(notification)
   const actorCoverUrl = notification.actor?.coverUrl ?? null
   const hasActorCover = Boolean(actorCoverUrl)
   const requesterChild = notification.type === 'family_child_friend_request' && notification.payload?.requesterChild && typeof notification.payload.requesterChild === 'object' && !Array.isArray(notification.payload.requesterChild)
@@ -190,6 +192,17 @@ export function NotificationCard({
         {actionable && requestStatus && !allowResponse ? (
           <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-slate-500">
             {requestStatus === 'accepted' ? 'Accepted' : 'Declined'}
+          </div>
+        ) : null}
+        {!actionable && targetUrl && openLabel ? (
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={targetUrl}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {openLabel}
+            </Link>
           </div>
         ) : null}
       </div>

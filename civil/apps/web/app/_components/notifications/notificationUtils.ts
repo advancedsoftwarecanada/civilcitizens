@@ -171,6 +171,7 @@ function formatReplySnippet(notification: NotificationItem, maxLength = 50): str
 }
 
 export function getNotificationMessage(notification: NotificationItem) {
+  const inviteTitle = typeof notification.payload?.title === 'string' ? notification.payload.title.trim() : ''
   switch (notification.type) {
     case 'friend_request':
       return 'sent you a friend request'
@@ -206,6 +207,10 @@ export function getNotificationMessage(notification: NotificationItem) {
       const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
       return status === 'accepted' ? 'accepted your sponsor invite' : status === 'declined' ? 'declined your sponsor invite' : 'responded to your sponsor invite'
     }
+    case 'profile_event_invite':
+      return inviteTitle ? `invited you to event: ${inviteTitle}` : 'invited you to an event'
+    case 'profile_organization_invite':
+      return inviteTitle ? `invited you to organization: ${inviteTitle}` : 'invited you to an organization'
     case 'poll_results_available': {
       const questionPreview = typeof notification.payload?.questionPreview === 'string' ? notification.payload.questionPreview.trim() : ''
       return questionPreview ? `poll results are ready: "${questionPreview}"` : 'poll results are now available'
@@ -238,6 +243,12 @@ export function getNotificationMessage(notification: NotificationItem) {
     default:
       return 'shared an update'
   }
+}
+
+export function getNotificationOpenLabel(notification: NotificationItem): string | null {
+  if (notification.type === 'profile_event_invite') return 'View event'
+  if (notification.type === 'profile_organization_invite') return 'View organization'
+  return null
 }
 
 export function getNotificationTargetUrl(notification: NotificationItem): string | null {

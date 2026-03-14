@@ -4,14 +4,15 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
+import { FaUserTie } from 'react-icons/fa'
 import {
   HiOutlineChatBubbleOvalLeft,
+  HiOutlineCurrencyDollar,
   HiOutlineHome,
   HiOutlineBuildingOffice2,
   HiOutlineBuildingLibrary,
   HiOutlineCalendarDays,
   HiOutlineShoppingBag,
-  HiOutlineBriefcase,
   HiOutlineUserCircle,
   HiOutlineUsers,
 } from 'react-icons/hi2'
@@ -53,12 +54,12 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Civil Pulse', href: '/home', icon: HiOutlineHome },
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
-  { key: 'network', label: 'Network', href: '/network', icon: HiOutlineBriefcase },
+  { key: 'network', label: 'Network', href: '/network', icon: FaUserTie },
   { key: 'communities', label: 'Communities', href: '/communities', icon: HiOutlineBuildingOffice2 },
   { key: 'organizations', label: 'Organizations', href: '/organizations', icon: HiOutlineBuildingLibrary },
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingBag },
-  { key: 'work', label: 'Work', href: '/work', icon: HiOutlineBriefcase },
+  { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
   // TODO(app-store): restore News, Podcasts, Music, and Video nav items once those product areas are ready.
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
 ]
@@ -208,7 +209,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
           href={profileHref}
           size="md"
           name={displayName}
-          subtitle={familyView || isOnOwnProfile ? undefined : familyCardIdentity?.subtitle ?? 'View profile'}
+          subtitle={familyView || isOnOwnProfile ? undefined : familyCardIdentity?.subtitle}
           avatarAlt={familyCardIdentity?.avatarAlt ?? displayName}
           avatarInitials={avatarInitials}
           avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveMe?.avatarUrl ?? null}
