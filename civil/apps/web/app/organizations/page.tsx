@@ -8,6 +8,7 @@ export default function OrganizationsPage() {
       sidebarActive="organizations"
       title="Organizations"
       description="Updates from organizations you follow."
+      showFeedSummary={false}
       emptyState="No organization updates yet. Follow organizations in your community to see their posts here."
       emptyStateCta={{ label: 'Browse Communities', href: '/communities' }}
       rightRail={<RightRail showOrganizations hideContacts hideCommunities />}

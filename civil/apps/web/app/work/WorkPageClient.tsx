@@ -266,37 +266,49 @@ export default function WorkPageClient() {
           <h1 className="text-2xl font-semibold text-slate-900">Work</h1>
           <p className="mt-1 text-sm text-slate-600">Find roles from Civil organizations and apply with your Civil profile.</p>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search jobs"
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
-            <input
-              value={provinceCode}
-              onChange={(event) => setProvinceCode(event.target.value)}
-              placeholder="Province code (e.g. ON)"
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
-            <input
-              value={communitySlug}
-              onChange={(event) => setCommunitySlug(event.target.value)}
-              placeholder="Community slug"
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            />
-            <select
-              value={industrySlug}
-              onChange={(event) => setIndustrySlug(event.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            >
-              <option value="">All industries</option>
-              {industries.map((industry) => (
-                <option key={industry.id} value={industry.slug}>
-                  {industry.name}
-                </option>
-              ))}
-            </select>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label className="space-y-1.5 text-sm font-medium text-slate-700">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Keyword</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search jobs"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="space-y-1.5 text-sm font-medium text-slate-700">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Province</span>
+              <input
+                value={provinceCode}
+                onChange={(event) => setProvinceCode(event.target.value)}
+                placeholder="Province code, like ON"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="space-y-1.5 text-sm font-medium text-slate-700">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Community</span>
+              <input
+                value={communitySlug}
+                onChange={(event) => setCommunitySlug(event.target.value)}
+                placeholder="Community slug"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="space-y-1.5 text-sm font-medium text-slate-700">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Industry</span>
+              <select
+                value={industrySlug}
+                onChange={(event) => setIndustrySlug(event.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                <option value="">All industries</option>
+                {industries.map((industry) => (
+                  <option key={industry.id} value={industry.slug}>
+                    {industry.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         </section>
 
