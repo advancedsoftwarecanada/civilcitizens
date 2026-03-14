@@ -29,7 +29,7 @@ import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
-import { hasFamilyProfilesAvailable } from '../../_lib/me'
+import { hasFamilyProfilesAvailable, type FamilyModeSummary } from '../../_lib/me'
 import { formatUserDisplayName } from '../../_lib/text'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { ensureViewerMe } from '../../_lib/viewerMe'
@@ -48,10 +48,7 @@ type Viewer = {
   isPremium?: boolean
   isVerified?: boolean
   accountType?: 'user' | 'family_member'
-  familyMode?: {
-    enabled?: boolean
-    memberCount?: number
-  } | null
+  familyMode?: FamilyModeSummary | null
   familyMemberSession?: {
     parentId?: string | null
     parentHandle?: string | null

@@ -17,7 +17,7 @@ import PostFeedItem from '../_components/PostFeedItem'
 import { RightRail } from '../_components/RightRail'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
-import { hasFamilyProfilesAvailable } from '../_lib/me'
+import { hasFamilyProfilesAvailable, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { buildFamilyAvatarDataUrl, buildFamilyCoverDataUrl } from '../_lib/familyIdentity'
 import { buildApiUrl } from '../_lib/api'
@@ -319,7 +319,7 @@ function AdultFamilyCircleFeed({
   viewer,
 }: {
   rightRail: React.ReactNode
-  viewer: ReturnType<typeof useViewerStore>['me'] | null
+  viewer: MeResponse | null
 }) {
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(true)

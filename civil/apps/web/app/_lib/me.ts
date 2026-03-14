@@ -62,6 +62,14 @@ export type MeResponse = {
   familyMemberSession?: FamilyMemberSessionSummary | null
 }
 
+type FamilyModeLike = {
+  familyMode?: {
+    enabled?: boolean | null
+    memberCount?: number | null
+    relationshipCount?: number | null
+  } | null
+}
+
 export function hasHomeCommunity(me: MeResponse | null | undefined): boolean {
   const home = me?.homeCommunity ?? me?.homeChamber
   return Boolean(home && home.communitySlug && home.provinceCode)
@@ -84,11 +92,11 @@ export function isPremiumMember(me: MeResponse | null | undefined): boolean {
   return Boolean(me?.isPremium)
 }
 
-export function hasFamilyModeEnabled(me: Pick<MeResponse, 'familyMode'> | null | undefined): boolean {
+export function hasFamilyModeEnabled(me: FamilyModeLike | null | undefined): boolean {
   return Boolean(me?.familyMode?.enabled)
 }
 
-export function hasFamilyProfilesAvailable(me: Pick<MeResponse, 'familyMode'> | null | undefined): boolean {
+export function hasFamilyProfilesAvailable(me: FamilyModeLike | null | undefined): boolean {
   const memberCount = me?.familyMode?.memberCount ?? 0
   const relationshipCount = me?.familyMode?.relationshipCount ?? 0
   return memberCount > 0 || relationshipCount > 0 || Boolean(me?.familyMode?.enabled && memberCount > 0)
