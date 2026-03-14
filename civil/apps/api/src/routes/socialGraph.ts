@@ -84,7 +84,7 @@ export function registerSocialGraphRoutes(app: FastifyInstance, deps: SocialGrap
         include: deps.friendshipWithUsersInclude,
       })
 
-      return reply.send({ items: rows.map((row) => deps.formatFriendship(row, userId)) })
+      return reply.send({ items: rows.map((row: (typeof rows)[number]) => deps.formatFriendship(row, userId)) })
     }),
   )
 
