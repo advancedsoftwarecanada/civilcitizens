@@ -569,7 +569,7 @@ export default function UserPostsPage({ params }: PageProps) {
     publicBirthCountry
       ? {
           label: `Born in ${publicBirthCountry}`,
-          tone: (isBornInCanada ? 'verified' : 'default') as const,
+          tone: isBornInCanada ? ('verified' as const) : ('default' as const),
           iconSrc: isBornInCanada ? '/self-verified.png' : undefined,
         }
       : null,
