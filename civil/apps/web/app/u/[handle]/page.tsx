@@ -80,6 +80,12 @@ type UserProfile = {
   communityCount?: number
   organizationCount?: number
   connectionCount?: number
+  homeChamber?: {
+    provinceCode: string
+    provinceName?: string | null
+    chamberSlug: string
+    chamberName?: string | null
+  } | null
   accountType?: 'user' | 'family_member'
   familyProfile?: {
     memberId: string
@@ -353,6 +359,19 @@ function parseExperienceLocation(raw?: string | null): { label: string; href?: s
   }
 
   return null
+}
+
+function formatCommunityLabel(value: string | null | undefined) {
+  if (!value) return ''
+  return value
+    .split('-')
+    .map((part) => {
+      const trimmed = part.trim()
+      if (!trimmed) return ''
+      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+    })
+    .filter(Boolean)
+    .join(' - ')
 }
 
 type PageProps = {
@@ -1215,7 +1234,7 @@ export default function UserPostsPage({ params }: PageProps) {
     return <section className={clsx('grid gap-4', cards.length > 1 && 'xl:grid-cols-2')}>{cards}</section>
   }
 
-  const rightRailContent = <RightRail sticky={false} />
+  const rightRailContent = <RightRail />
 
   const openComposer = (type: PostType = 'post') => {
     setComposerDefaultType(type)
@@ -2234,6 +2253,33 @@ export default function UserPostsPage({ params }: PageProps) {
                       <p className="mt-3 text-sm leading-7 text-slate-500 sm:text-[15px]">No profile description yet.</p>
                     )}
                   </div>
+
+                  {profile.homeChamber ? (
+                    <div className="rounded-[28px] border border-slate-200 bg-white px-5 py-5 shadow-sm sm:px-6">
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Home community</p>
+                          <div className="text-sm text-slate-600">
+                            Proud member of{' '}
+                            <span className="font-semibold text-slate-900">
+                              {profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <CivilCard
+                          size="rail"
+                          name={profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+                          avatarAlt={profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+                          avatarInitials={profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+                          subtitle={profile.homeChamber.provinceName ?? profile.homeChamber.provinceCode}
+                          href={`/${encodeURIComponent(profile.homeChamber.provinceCode.toLowerCase())}/${encodeURIComponent(profile.homeChamber.chamberSlug)}`}
+                          titleHref={`/${encodeURIComponent(profile.homeChamber.provinceCode.toLowerCase())}/${encodeURIComponent(profile.homeChamber.chamberSlug)}`}
+                          className="w-full"
+                        />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
