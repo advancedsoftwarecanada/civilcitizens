@@ -17,6 +17,35 @@ type DistrictQueryRow = {
   matchMethod: 'contains' | 'nearest'
 }
 
+type DistrictGeometry = {
+  type: 'Polygon' | 'MultiPolygon'
+  coordinates: unknown[]
+}
+
+type ResolvedDistrict = {
+  code: number
+  slug: string
+  name: string
+  provinceCode: string
+  center: {
+    lat: number
+    lng: number
+  }
+  bounds: [number, number, number, number]
+  geometry: DistrictGeometry
+  matchMethod: 'contains' | 'nearest' | null
+}
+
+type ElectoralDistrictListRow = {
+  code: number
+  slug: string
+  name: string
+  provinceCode: string
+  centroidLat: number
+  centroidLng: number
+  bbox: unknown
+}
+
 type DistrictStatsCount = {
   provinceCode: string
   communitySlug: string
@@ -177,7 +206,7 @@ async function resolvePointFromPostalCode(postalCode: string) {
   }
 }
 
-async function findElectoralDistrict(lat: number, lng: number) {
+async function findElectoralDistrict(lat: number, lng: number): Promise<ResolvedDistrict | null> {
   const rows = (await prisma.$queryRaw(Prisma.sql`
     WITH user_point AS (
       SELECT ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326) AS geom
@@ -225,12 +254,12 @@ async function findElectoralDistrict(lat: number, lng: number) {
       lng: Number(row.centroidLng),
     },
     bounds: parsedBounds,
-    geometry: JSON.parse(row.geometryJson) as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] },
+    geometry: JSON.parse(row.geometryJson) as DistrictGeometry,
     matchMethod: row.matchMethod,
   }
 }
 
-async function findElectoralDistrictBySlug(provinceCode: string, communitySlug: string) {
+async function findElectoralDistrictBySlug(provinceCode: string, communitySlug: string): Promise<ResolvedDistrict | null> {
   const rows = (await prisma.$queryRaw(Prisma.sql`
     SELECT
       district."code",
@@ -267,7 +296,7 @@ async function findElectoralDistrictBySlug(provinceCode: string, communitySlug: 
       lng: Number(row.centroidLng),
     },
     bounds: parsedBounds,
-    geometry: JSON.parse(row.geometryJson) as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] },
+    geometry: JSON.parse(row.geometryJson) as DistrictGeometry,
     matchMethod: null as 'contains' | 'nearest' | null,
   }
 }
@@ -277,7 +306,7 @@ async function listElectoralDistrictsForProvince(args: {
   lat?: number | null
   lng?: number | null
   selectedDistrictCode?: number | null
-}) {
+}): Promise<ResolvedDistrict[]> {
   const hasPoint = Number.isFinite(args.lat) && Number.isFinite(args.lng)
 
   if (hasPoint) {
@@ -312,7 +341,7 @@ async function listElectoralDistrictsForProvince(args: {
         district."centroidGeom" <-> reference_point.geom ASC
     `)) as DistrictQueryRow[]
 
-    return rows.map((row) => ({
+    return rows.map((row: DistrictQueryRow) => ({
       code: row.code,
       slug: row.slug,
       name: row.name,
@@ -322,12 +351,12 @@ async function listElectoralDistrictsForProvince(args: {
         lng: Number(row.centroidLng),
       },
       bounds: Array.isArray(row.bounds) ? row.bounds : (JSON.parse(row.bounds) as [number, number, number, number]),
-      geometry: JSON.parse(row.geometryJson) as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] },
+      geometry: JSON.parse(row.geometryJson) as DistrictGeometry,
       matchMethod: row.matchMethod,
     }))
   }
 
-  const rows = await prisma.electoralDistrict.findMany({
+  const rows = (await prisma.electoralDistrict.findMany({
     where: { provinceCode: args.provinceCode },
     orderBy: [{ name: 'asc' }],
     select: {
@@ -339,10 +368,10 @@ async function listElectoralDistrictsForProvince(args: {
       centroidLng: true,
       bbox: true,
     },
-  })
+  })) as ElectoralDistrictListRow[]
 
   const ordered = args.selectedDistrictCode
-    ? rows.slice().sort((left, right) => {
+    ? rows.slice().sort((left: ElectoralDistrictListRow, right: ElectoralDistrictListRow) => {
         if (left.code === args.selectedDistrictCode) return -1
         if (right.code === args.selectedDistrictCode) return 1
         return left.name.localeCompare(right.name)
@@ -359,9 +388,9 @@ async function listElectoralDistrictsForProvince(args: {
         WHERE district."code" IN (${Prisma.join(selectedCodes)})
       `)) as Array<{ code: number; geometryJson: string }>)
     : []
-  const geometryMap = new Map(geometries.map((row) => [row.code, JSON.parse(row.geometryJson) as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] }]))
+  const geometryMap = new Map(geometries.map((row: { code: number; geometryJson: string }) => [row.code, JSON.parse(row.geometryJson) as DistrictGeometry]))
 
-  return ordered.map((row) => ({
+  return ordered.map((row: ElectoralDistrictListRow) => ({
     code: row.code,
     slug: row.slug,
     name: row.name,
@@ -371,7 +400,7 @@ async function listElectoralDistrictsForProvince(args: {
       lng: Number(row.centroidLng),
     },
     bounds: Array.isArray(row.bbox) ? (row.bbox as [number, number, number, number]) : ([0, 0, 0, 0] as [number, number, number, number]),
-    geometry: geometryMap.get(row.code) ?? ({ type: 'Polygon', coordinates: [] } as { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] }),
+    geometry: geometryMap.get(row.code) ?? ({ type: 'Polygon', coordinates: [] } as DistrictGeometry),
     matchMethod: row.code === args.selectedDistrictCode ? ('contains' as const) : null,
   }))
 }
@@ -486,7 +515,7 @@ export async function browseElectoralDistricts(args: {
   let resolvedFrom: 'coordinates' | 'postal_code' | null = null
   let postalCode: string | null = null
   let userLocation: { lat: number; lng: number } | null = null
-  let selectedDistrict: Awaited<ReturnType<typeof findElectoralDistrict>> | Awaited<ReturnType<typeof findElectoralDistrictBySlug>> | null = null
+  let selectedDistrict: ResolvedDistrict | null = null
 
   if (Number.isFinite(args.lat) && Number.isFinite(args.lng)) {
     resolvedFrom = 'coordinates'
@@ -544,8 +573,8 @@ export async function browseElectoralDistricts(args: {
       : Promise.resolve([] as DistrictStatsCount[]),
   ])
 
-  const followMap = new Map(followCounts.map((entry) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
-  const postMap = new Map(postCounts.map((entry) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
+  const followMap = new Map(followCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
+  const postMap = new Map(postCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
 
   return {
     provinceCode,
@@ -555,7 +584,7 @@ export async function browseElectoralDistricts(args: {
     styleUrl: getMapStyleUrl(),
     userLocation,
     selectedDistrictCode: selectedDistrict?.code ?? districts[0]?.code ?? null,
-    districts: districts.map((district) => {
+    districts: districts.map((district: ResolvedDistrict) => {
       const key = `${district.provinceCode}:${district.slug}`
       return {
         ...district,
