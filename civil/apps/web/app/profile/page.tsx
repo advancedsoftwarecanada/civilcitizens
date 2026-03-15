@@ -253,6 +253,19 @@ function parseExperienceLocation(raw: string | null | undefined): ExperienceLoca
   return null
 }
 
+function formatCommunityLabel(value: string | null | undefined) {
+  if (!value) return ''
+  return value
+    .split('-')
+    .map((part) => {
+      const trimmed = part.trim()
+      if (!trimmed) return ''
+      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1)
+    })
+    .filter(Boolean)
+    .join(' - ')
+}
+
 const buildPostPermalink = (post: {
   id: string
   seoSlug?: string | null
@@ -1957,12 +1970,27 @@ export default function ProfileEditPage() {
       </section>
 
       {profile?.homeChamber ? (
-        <section className="surface-card space-y-3 p-5 shadow-subtle">
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Home city</p>
-          <div className="text-sm text-slate-600">
-            <div className="text-base font-semibold text-slate-900">{profile.homeChamber.chamberName ?? profile.homeChamber.chamberSlug}</div>
-            <div className="text-slate-500">{profile.homeChamber.provinceName ?? profile.homeChamber.provinceCode}</div>
+        <section className="surface-card space-y-4 p-5 shadow-subtle">
+          <div className="space-y-1">
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Home community</p>
+            <div className="text-sm text-slate-600">
+              Proud member of{' '}
+              <span className="font-semibold text-slate-900">
+                {profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+              </span>
+            </div>
           </div>
+
+          <CivilCard
+            size="rail"
+            name={profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+            avatarAlt={profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+            avatarInitials={profile.homeChamber.chamberName ?? formatCommunityLabel(profile.homeChamber.chamberSlug)}
+            subtitle={profile.homeChamber.provinceName ?? profile.homeChamber.provinceCode}
+            href={`/${encodeURIComponent(profile.homeChamber.provinceCode.toLowerCase())}/${encodeURIComponent(profile.homeChamber.chamberSlug)}`}
+            titleHref={`/${encodeURIComponent(profile.homeChamber.provinceCode.toLowerCase())}/${encodeURIComponent(profile.homeChamber.chamberSlug)}`}
+            className="w-full"
+          />
         </section>
       ) : null}
     </div>
