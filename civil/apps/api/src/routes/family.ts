@@ -155,7 +155,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       deps.loadProfileFamilyRelationshipsForRail(user.communityMeta),
     ])
 
-    const storedRelationshipIds = new Set(profileRelationships.map((entry: { id: string }) => entry.id))
+    const storedRelationshipIds = new Set<string>(profileRelationships.map((entry: { id: string }) => entry.id))
     const notificationRelationshipMap = await loadAcceptedNotificationRelationshipMap(userId, storedRelationshipIds)
 
     let notificationDerivedRelationships: Array<{

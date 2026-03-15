@@ -17,6 +17,14 @@ type UserConnectionsDeps = {
 }
 
 export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserConnectionsDeps) {
+  type RelatedUser = {
+    id: string
+    handle: string | null
+    name: string
+    avatarUrl: string | null
+    coverUrl: string | null
+  }
+
   const IMMEDIATE_FAMILY_TYPES = new Set([
     'husband', 'wife', 'spouse', 'partner', 'common_law_partner', 'fiance', 'widowed_spouse',
     'mother', 'father', 'parent', 'stepfather', 'stepmother', 'adoptive_father', 'adoptive_mother', 'foster_parent',
@@ -407,7 +415,7 @@ export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserCo
       const dedupedRelationships = Array.from(new Map(storedRelationships.map((entry) => [entry.relatedUserId, entry])).values())
       const relatedUserIds = dedupedRelationships.map((entry) => entry.relatedUserId)
 
-      const relatedUsers = relatedUserIds.length
+      const relatedUsers: RelatedUser[] = relatedUserIds.length
         ? await prisma.user.findMany({
             where: { id: { in: relatedUserIds } },
             select: {
@@ -421,7 +429,7 @@ export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserCo
           })
         : []
 
-      const relatedUsersById = new Map(relatedUsers.map((entry) => [entry.id, entry]))
+      const relatedUsersById = new Map<string, RelatedUser>(relatedUsers.map((entry: RelatedUser) => [entry.id, entry]))
       const relationshipItems = dedupedRelationships.flatMap((relationship) => {
         const relatedUser = relatedUsersById.get(relationship.relatedUserId)
         if (!relatedUser) return []
@@ -470,7 +478,7 @@ export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserCo
           },
         })
 
-        guardianOf = familyMembers.map((member) => {
+        guardianOf = familyMembers.map((member: (typeof familyMembers)[number]) => {
           const normalized = deps.normalizeFamilyMemberSummary(member)
           return {
             id: normalized.id,
