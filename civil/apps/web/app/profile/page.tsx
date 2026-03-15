@@ -1919,7 +1919,7 @@ export default function ProfileEditPage() {
   )
 
   const rightRail = (
-    <div className="sticky top-8 space-y-4">
+    <div className="space-y-4">
       <section id="connections-card" className="surface-card space-y-4 p-5 shadow-subtle">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Account</p>

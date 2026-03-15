@@ -2160,6 +2160,22 @@ export default function UserPostsPage({ params }: PageProps) {
 
           {profile ? renderRelationshipRequestCards() : null}
 
+          {profile && !isOwner ? (
+            <div className="flex justify-center px-2">
+              <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-center">
+                {isFamilyMemberSession ? (
+                  renderFamilyProfileActions()
+                ) : (
+                  <>
+                    {renderConnectMenu()}
+                    {renderMessageMenu()}
+                    {renderInviteMenu()}
+                  </>
+                )}
+              </div>
+            </div>
+          ) : null}
+
           {profile && isOwner ? (
             <div className="flex flex-wrap items-center justify-center gap-3 px-2">
               <Link
@@ -2189,8 +2205,7 @@ export default function UserPostsPage({ params }: PageProps) {
             {profile ? (
               <>
                 <div className="space-y-7">
-                  <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-                    <div className="flex items-center gap-4 sm:gap-5">
+                  <div className="flex items-center gap-4 sm:gap-5 min-w-0">
                       <VerifiedAvatar
                         src={profile.avatarUrl}
                         alt={profileDisplayName}
@@ -2202,25 +2217,10 @@ export default function UserPostsPage({ params }: PageProps) {
                         roundedClassName="rounded-[30px]"
                         className="shrink-0"
                       />
-                      <div className="space-y-1.5">
+                      <div className="min-w-0 flex-1 space-y-1.5">
                         <h1 className="text-3xl font-bold leading-tight tracking-tight text-slate-950 sm:text-4xl">{profileDisplayName}</h1>
                         <p className="text-base font-semibold text-slate-600 sm:text-lg">@{profile.handle}</p>
                       </div>
-                    </div>
-
-                    {!isOwner ? (
-                      <div className="flex w-full flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center xl:w-auto xl:max-w-[540px] xl:justify-end xl:self-center">
-                        {isFamilyMemberSession ? (
-                          renderFamilyProfileActions()
-                        ) : (
-                          <>
-                            {renderConnectMenu()}
-                            {renderMessageMenu()}
-                            {renderInviteMenu()}
-                          </>
-                        )}
-                      </div>
-                    ) : null}
                   </div>
 
                   {identityPills.length ? (

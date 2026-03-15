@@ -198,7 +198,6 @@ export function RightRail({
   showOrganizations = false,
   showRsvps = false,
   organizationLinkTarget = 'org',
-  sticky = true,
   hideContactsAndCommunities = false,
   hideContacts = false,
   hideCommunities = false,
@@ -209,7 +208,6 @@ export function RightRail({
   showOrganizations?: boolean
   showRsvps?: boolean
   organizationLinkTarget?: 'org' | 'chat'
-  sticky?: boolean
   hideContactsAndCommunities?: boolean
   hideContacts?: boolean
   hideCommunities?: boolean
@@ -577,7 +575,7 @@ export function RightRail({
 
   if (status === 'loading') {
     return (
-      <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
+      <div className="space-y-6">
         <div className="surface-card h-48 animate-pulse p-5" />
         <div className="surface-card h-48 animate-pulse p-5" />
       </div>
@@ -588,7 +586,7 @@ export function RightRail({
 
   if (mode === 'communitiesFeed') {
     return (
-      <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
+      <div className="space-y-6">
         <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
           {data?.communities.length ? (
             <ul className="space-y-3">
@@ -599,17 +597,17 @@ export function RightRail({
                   .join(' ')
 
                 return (
-                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
+                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
                     <Link
                       href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                      className="max-w-[160px] truncate text-sm font-semibold text-white hover:text-white"
+                      className="flex-1 whitespace-normal break-words text-sm font-semibold leading-5 text-white hover:text-white"
                     >
                       {formattedName}
                     </Link>
                     {comm.newPosts > 0 ? (
                       <Link
                         href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                        className="flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
+                        className="mt-0.5 shrink-0 flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
                       >
                         <HiOutlineBell className="h-4 w-4" />
                         ({comm.newPosts})
@@ -652,7 +650,7 @@ export function RightRail({
   }
 
   return (
-    <div className={sticky ? 'sticky top-8 space-y-6' : 'space-y-6'}>
+    <div className="space-y-6">
       {showPendingFriendRequests && pendingFriendRequests.length ? (
         <Block title="Pending Friend Requests" action={{ label: 'View all', href: '/friends' }}>
           <ul className="space-y-3">
@@ -1063,17 +1061,17 @@ export function RightRail({
                   .join(' ')
 
                 return (
-                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
+                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
                     <Link
                       href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                      className="max-w-[160px] truncate text-sm font-semibold text-white hover:text-white"
+                      className="flex-1 whitespace-normal break-words text-sm font-semibold leading-5 text-white hover:text-white"
                     >
                       {formattedName}
                     </Link>
                     {comm.newPosts > 0 && (
                       <Link
                         href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                        className="flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
+                        className="mt-0.5 shrink-0 flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
                       >
                         <HiOutlineBell className="h-4 w-4" />
                         ({comm.newPosts})

@@ -143,7 +143,7 @@ export default function CommunityRightRailClient({
   const nearby = Array.isArray(stats?.nearbyCommunities) ? stats.nearbyCommunities.slice(0, 5) : []
 
   return (
-    <div className="sticky top-8 space-y-6">
+    <div className="space-y-6">
       <Block title="Community Stats">
         <dl className="space-y-3 text-sm text-slate-700">
           <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
