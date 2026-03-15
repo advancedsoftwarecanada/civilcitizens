@@ -1108,13 +1108,20 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }, [follows, selectedCommunitySlug, selectedProvince])
 
   const normalizedFollows = useMemo(() => {
-    const homeKey = homeCommunity ? `${homeCommunity.province}:${homeCommunity.slug}` : null
+    if (!homeCommunity) {
+      return follows.map((follow) => ({
+        ...follow,
+        home: false,
+      }))
+    }
+
+    const homeKey = `${homeCommunity.province}:${homeCommunity.slug}`
     const mapped = follows.map((follow) => ({
       ...follow,
-      home: homeKey ? `${follow.province}:${follow.communitySlug}` === homeKey : false,
+      home: `${follow.province}:${follow.communitySlug}` === homeKey,
     }))
 
-    if (!homeKey || mapped.some((follow) => follow.home)) {
+    if (mapped.some((follow) => follow.home)) {
       return mapped
     }
 
