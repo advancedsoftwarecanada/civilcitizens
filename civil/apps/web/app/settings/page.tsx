@@ -11,6 +11,7 @@ import {
   HiOutlineBuildingLibrary,
   HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
+  HiOutlineDocumentText,
   HiOutlineShoppingBag,
   HiOutlineTrash,
   HiOutlineUserGroup,
@@ -497,6 +498,13 @@ export default function SettingsPage() {
         description: 'Submit service or feature requests and track reported content you filed.',
         href: '/settings/support',
         icon: HiOutlineChatBubbleLeftRight,
+      },
+      {
+        key: 'legal',
+        label: 'Legal',
+        description: 'View credits, map attributions, and other legal notices.',
+        href: '/settings/legal/credits',
+        icon: HiOutlineDocumentText,
       },
       {
         key: 'logout',

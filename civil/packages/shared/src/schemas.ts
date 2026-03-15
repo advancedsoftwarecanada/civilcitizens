@@ -443,6 +443,82 @@ export const ElectoralDistrictContextResponseSchema = z.object({
 })
 export type ElectoralDistrictContextResponse = z.infer<typeof ElectoralDistrictContextResponseSchema>
 
+export const ElectoralDistrictBrowserInput = z
+  .object({
+    provinceCode: z.string().trim().min(2).max(2).optional(),
+    communitySlug: z.string().trim().min(1).max(160).optional(),
+    postalCode: z.string().trim().min(3).max(12).optional(),
+    lat: z.coerce.number().min(-90).max(90).optional(),
+    lng: z.coerce.number().min(-180).max(180).optional(),
+    limit: z.coerce.number().int().min(1).max(24).default(12).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasProvince = Boolean(value.provinceCode?.trim())
+    const hasCommunitySlug = Boolean(value.communitySlug?.trim())
+    const hasPostal = Boolean(value.postalCode?.trim())
+    const hasLat = typeof value.lat === 'number'
+    const hasLng = typeof value.lng === 'number'
+
+    if (!hasProvince && !hasPostal && !(hasLat && hasLng)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'province_or_location_required',
+        path: ['provinceCode'],
+      })
+    }
+
+    if (hasLat !== hasLng) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'lat_lng_required_together',
+        path: hasLat ? ['lng'] : ['lat'],
+      })
+    }
+
+    if (hasCommunitySlug && !hasProvince) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'province_required_for_community',
+        path: ['communitySlug'],
+      })
+    }
+  })
+export type ElectoralDistrictBrowserInput = z.infer<typeof ElectoralDistrictBrowserInput>
+
+export const ElectoralDistrictBrowserDistrictSchema = z.object({
+  code: z.number().int(),
+  slug: z.string(),
+  name: z.string(),
+  provinceCode: z.string(),
+  center: z.object({
+    lat: z.number(),
+    lng: z.number(),
+  }),
+  bounds: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+  geometry: GeoJsonPolygonLikeSchema,
+  matchMethod: z.enum(['contains', 'nearest']).nullable(),
+  postsToday: z.number().int().nonnegative(),
+  followerCount: z.number().int().nonnegative(),
+})
+export type ElectoralDistrictBrowserDistrict = z.infer<typeof ElectoralDistrictBrowserDistrictSchema>
+
+export const ElectoralDistrictBrowserResponseSchema = z.object({
+  provinceCode: z.string(),
+  resolvedFrom: z.enum(['coordinates', 'postal_code']).nullable(),
+  postalCode: z.string().nullable(),
+  tileServerBaseUrl: z.string(),
+  styleUrl: z.string(),
+  userLocation: z
+    .object({
+      lat: z.number(),
+      lng: z.number(),
+    })
+    .nullable(),
+  selectedDistrictCode: z.number().int().nullable(),
+  districts: z.array(ElectoralDistrictBrowserDistrictSchema),
+})
+export type ElectoralDistrictBrowserResponse = z.infer<typeof ElectoralDistrictBrowserResponseSchema>
+
 export const ExperienceInput = z
   .object({
     title: z.string().trim().min(1).max(120),
