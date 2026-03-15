@@ -214,6 +214,14 @@ export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserCo
     deps.withSchemaGuard(req, reply, async () => reply.code(410).send({ error: 'person_follow_disabled' })),
   )
 
+  app.post('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => reply.code(410).send({ error: 'person_follow_disabled' })),
+  )
+
+  app.delete('/users/:handle/follow', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => reply.code(410).send({ error: 'person_follow_disabled' })),
+  )
+
   app.get('/users/:handle/connections', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const params = HandleParam.safeParse(req.params)
