@@ -146,7 +146,7 @@ export default function FriendsRightRail() {
   }
 
   return (
-    <div className="sticky top-8 space-y-6">
+    <div className="space-y-6">
       <Block
         title="Friends"
         action={sortedFriends.length ? { label: String(sortedFriends.length), href: '#' } : undefined}

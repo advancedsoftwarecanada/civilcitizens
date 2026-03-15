@@ -284,7 +284,7 @@ function ParentFamilyFeedView() {
         loading={loading}
         onSelectMember={setSelectedMemberId}
       />
-      <RightRail sticky={false} hideContacts hideCommunities />
+      <RightRail hideContacts hideCommunities />
     </div>
   )
 
