@@ -332,7 +332,7 @@ export function registerProfileInviteRoutes(app: FastifyInstance, deps: ProfileI
       await prisma.$transaction([
         prisma.user.update({ where: { id: actorUser.id }, data: { communityMeta: actorBaseMeta as Prisma.InputJsonValue } }),
         prisma.user.update({ where: { id: targetUser.id }, data: { communityMeta: targetBaseMeta as Prisma.InputJsonValue } }),
-        ...relatedNotifications.map((notification) => {
+        ...relatedNotifications.map((notification: (typeof relatedNotifications)[number]) => {
           const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
             ? (notification.payload as Record<string, unknown>)
             : {}
