@@ -119,6 +119,9 @@ export async function seedElectoralDistricts(options: { force?: boolean } = {}):
           "updatedAt" = NOW()
       `)
     }
+  }, {
+    maxWait: 30_000,
+    timeout: 10 * 60 * 1000,
   })
 
   return cache.features.length
