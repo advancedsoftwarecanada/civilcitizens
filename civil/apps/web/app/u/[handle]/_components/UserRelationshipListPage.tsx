@@ -1,19 +1,14 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { RightRail } from '../../../_components/RightRail'
 import { buildApiUrl } from '../../../_lib/api'
 import DashboardShell from '../../../_components/DashboardShell'
-import { formatDisplayName } from '../../../_lib/text'
 import MessagesNavBlock from '../../../_components/MessagesNavBlock'
 import { hasFamilyProfilesAvailable } from '../../../_lib/me'
-import { getStoredToken } from '../../../_lib/tokenStorage'
-import { redirectToAuthModal } from '../../../_lib/authModal'
-import { pushToast } from '../../../_components/useToasts'
 import CivilCard from '../../../_components/CivilCard'
 import { useViewerStore } from '../../../_lib/viewerStore'
+import ProfileRelationshipCard from './ProfileRelationshipCard'
 
 type UserListItem = {
   id: string
@@ -57,12 +52,10 @@ function itemCountText(count: number, title: string) {
 }
 
 export default function UserRelationshipListPage({ handle, kind, title }: Props) {
-  const router = useRouter()
   const viewer = useViewerStore((state) => state.me)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [items, setItems] = useState<Array<UserListItem | CommunityListItem | OrganizationListItem>>([])
-  const [messageLoadingUserId, setMessageLoadingUserId] = useState<string | null>(null)
 
   useEffect(() => {
     const run = async () => {
@@ -105,52 +98,6 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
     </div>
   )
 
-  const handleStartDirectMessage = useCallback(
-    async (entry: UserListItem) => {
-      const token = getStoredToken()
-      if (!token) {
-        redirectToAuthModal('login')
-        return
-      }
-
-      const targetUserId = typeof entry.id === 'string' ? entry.id.trim() : ''
-      if (!targetUserId) {
-        pushToast('Unable to open that conversation right now.', 'error')
-        return
-      }
-      if (messageLoadingUserId) return
-
-      setMessageLoadingUserId(targetUserId)
-      try {
-        const res = await fetch(buildApiUrl('/messages/threads/direct'), {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ userId: targetUserId }),
-        })
-        const payload = (await res.json().catch(() => null)) as { thread?: { id?: string } | null; error?: string } | null
-        if (!res.ok || !payload?.thread?.id) {
-          if (payload?.error === 'not_friends') {
-            pushToast('Direct messages require friendship or an accepted network connection.', 'error')
-            return
-          }
-          pushToast('Unable to open that conversation right now.', 'error')
-          return
-        }
-
-        router.push(`/messages?inbox=friends&thread=${encodeURIComponent(payload.thread.id)}`)
-      } catch (err) {
-        console.error('Failed to open direct message thread', err)
-        pushToast('Unable to open that conversation right now.', 'error')
-      } finally {
-        setMessageLoadingUserId((current) => (current === targetUserId ? null : current))
-      }
-    },
-    [messageLoadingUserId, router],
-  )
-
   return (
     <DashboardShell rightRail={rightRail}>
       <div className="space-y-6">
@@ -172,41 +119,16 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
           <div className="grid gap-4">
             {items.map((entry) => {
               if ('handle' in entry) {
-                const displayName = formatDisplayName(entry.name) || formatDisplayName(entry.handle) || entry.handle
                 return (
                   <div key={`user-${entry.id}`}>
-                    <CivilCard
-                      size="lg"
-                      name={displayName}
-                      avatarAlt={displayName}
-                      avatarInitials={displayName}
-                      avatarSrc={entry.avatarUrl}
-                      avatarHref={`/u/${entry.handle}`}
-                      titleHref={`/u/${entry.handle}`}
+                    <ProfileRelationshipCard
+                      userId={entry.id}
+                      handle={entry.handle}
+                      name={entry.name}
+                      avatarUrl={entry.avatarUrl}
                       coverUrl={entry.coverUrl}
-                      subtitle={`@${entry.handle}`}
-                      trailing={
-                        kind === 'friends' ? (
-                          <div className="flex shrink-0 items-center gap-2">
-                            <Link
-                              href={`/u/${entry.handle}`}
-                              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/40 bg-white/10 px-3 text-sm font-semibold text-white transition hover:border-white/60 hover:bg-white/20"
-                            >
-                              View Profile
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void handleStartDirectMessage(entry)
-                              }}
-                              disabled={messageLoadingUserId === entry.id || Boolean(messageLoadingUserId)}
-                              className="inline-flex min-h-10 items-center justify-center rounded-xl border border-white/50 bg-white px-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-                            >
-                              {messageLoadingUserId === entry.id ? 'Opening...' : 'Message'}
-                            </button>
-                          </div>
-                        ) : null
-                      }
+                      contextLabel={kind === 'connections' ? 'Network' : 'Friend'}
+                      since={entry.since ?? null}
                     />
                   </div>
                 )

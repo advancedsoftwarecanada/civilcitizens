@@ -13,6 +13,7 @@ type CivilCommentIdentityProps = {
   meta?: string
   badgeLabel?: string
   showAvatar?: boolean
+  linkProfile?: boolean
   className?: string
 }
 
@@ -25,8 +26,11 @@ export default function CivilCommentIdentity({
   meta,
   badgeLabel,
   showAvatar = true,
+  linkProfile = true,
   className,
 }: CivilCommentIdentityProps) {
+  const profileHref = `/u/${handle}`
+
   return (
     <div className={clsx('inline-flex min-w-0 items-start gap-2.5', className)}>
       {showAvatar ? (
@@ -37,21 +41,27 @@ export default function CivilCommentIdentity({
           size={32}
           isVerified={isVerified}
           isBusiness={isBusiness}
-          href={`/u/${handle}`}
+          href={linkProfile ? profileHref : undefined}
           className="shrink-0"
         />
       ) : null}
       <div className="min-w-0 space-y-0.5">
         <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 leading-4">
-          <Link
-            href={`/u/${handle}`}
-            className="max-w-full truncate text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]"
-          >
-            {name}
-          </Link>
-          <Link href={`/u/${handle}`} className="text-xs font-medium text-slate-500 hover:text-[var(--cc-primary)]">
-            @{handle}
-          </Link>
+          {linkProfile ? (
+            <>
+              <Link href={profileHref} className="max-w-full truncate text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
+                {name}
+              </Link>
+              <Link href={profileHref} className="text-xs font-medium text-slate-500 hover:text-[var(--cc-primary)]">
+                @{handle}
+              </Link>
+            </>
+          ) : (
+            <>
+              <span className="max-w-full truncate text-sm font-semibold text-slate-900">{name}</span>
+              <span className="text-xs font-medium text-slate-500">@{handle}</span>
+            </>
+          )}
           {badgeLabel ? (
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
               {badgeLabel}

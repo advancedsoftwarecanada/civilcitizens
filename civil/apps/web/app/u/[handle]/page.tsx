@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
 import { FaUserTie } from 'react-icons/fa'
@@ -126,6 +126,10 @@ type ProfileRelationship = {
   connectionStatus: 'self' | 'connected' | 'incoming' | 'outgoing' | 'none'
   connectionId?: string
   connectionSince?: string | null
+  profileFamilyRelationship?: {
+    familyType: FamilyInviteRelationshipValue
+    relationshipLabel: string
+  } | null
 }
 
 type FriendRequestPayload = {
@@ -163,22 +167,52 @@ type ConnectionAcceptResponse = {
 type InviteSurface = 'event' | 'organization'
 
 type FamilyInviteRelationshipValue =
+  | 'husband'
+  | 'wife'
+  | 'spouse'
+  | 'partner'
+  | 'common_law_partner'
+  | 'fiance'
+  | 'ex_husband'
+  | 'ex_wife'
+  | 'widowed_spouse'
   | 'mother'
   | 'father'
+  | 'parent'
+  | 'stepfather'
+  | 'stepmother'
+  | 'adoptive_father'
+  | 'adoptive_mother'
+  | 'foster_parent'
+  | 'son'
+  | 'daughter'
+  | 'child'
+  | 'stepson'
+  | 'stepdaughter'
+  | 'adopted_son'
+  | 'adopted_daughter'
+  | 'foster_child'
   | 'grandmother'
   | 'grandfather'
+  | 'grandparent'
+  | 'grandson'
+  | 'granddaughter'
+  | 'grandchild'
   | 'sister'
   | 'brother'
+  | 'sibling'
+  | 'half_brother'
+  | 'half_sister'
+  | 'step_brother'
+  | 'step_sister'
   | 'aunt'
   | 'uncle'
   | 'cousin'
   | 'second_cousin'
   | 'niece'
   | 'nephew'
-  | 'wife'
-  | 'husband'
-  | 'significant_other'
-  | 'partner'
+  | 'great_uncle'
+  | 'great_aunt'
   | 'mother_in_law'
   | 'father_in_law'
   | 'sister_in_law'
@@ -187,31 +221,111 @@ type FamilyInviteRelationshipValue =
   | 'son_in_law'
   | 'other'
 
-const FAMILY_INVITE_RELATIONSHIP_OPTIONS: Array<{ value: FamilyInviteRelationshipValue; label: string }> = [
-  { value: 'mother', label: 'Mother' },
-  { value: 'father', label: 'Father' },
-  { value: 'grandmother', label: 'Grandmother' },
-  { value: 'grandfather', label: 'Grandfather' },
-  { value: 'sister', label: 'Sister' },
-  { value: 'brother', label: 'Brother' },
-  { value: 'aunt', label: 'Aunt' },
-  { value: 'uncle', label: 'Uncle' },
-  { value: 'cousin', label: 'Cousin' },
-  { value: 'second_cousin', label: 'Second Cousin' },
-  { value: 'niece', label: 'Niece' },
-  { value: 'nephew', label: 'Nephew' },
-  { value: 'wife', label: 'Wife' },
-  { value: 'husband', label: 'Husband' },
-  { value: 'significant_other', label: 'Significant Other' },
-  { value: 'partner', label: 'Partner' },
-  { value: 'mother_in_law', label: 'Mother-in-law' },
-  { value: 'father_in_law', label: 'Father-in-law' },
-  { value: 'sister_in_law', label: 'Sister-in-law' },
-  { value: 'brother_in_law', label: 'Brother-in-law' },
-  { value: 'daughter_in_law', label: 'Daughter-in-law' },
-  { value: 'son_in_law', label: 'Son-in-law' },
-  { value: 'other', label: 'Other' },
+type FamilyInviteRelationshipGroup = {
+  key: string
+  label: string
+  subtitle: string
+  options: Array<{ value: FamilyInviteRelationshipValue; label: string }>
+}
+
+const FAMILY_INVITE_RELATIONSHIP_GROUPS: FamilyInviteRelationshipGroup[] = [
+  {
+    key: 'spouse-partner',
+    label: 'Spouse / Partner',
+    subtitle: 'Primary Household Unit',
+    options: [
+      { value: 'husband', label: 'Husband' },
+      { value: 'wife', label: 'Wife' },
+      { value: 'spouse', label: 'Spouse' },
+      { value: 'partner', label: 'Partner' },
+      { value: 'common_law_partner', label: 'Common Law Partner' },
+      { value: 'fiance', label: 'Fiance / Fiancee' },
+      { value: 'ex_husband', label: 'Ex Husband' },
+      { value: 'ex_wife', label: 'Ex Wife' },
+      { value: 'widowed_spouse', label: 'Widowed Spouse' },
+    ],
+  },
+  {
+    key: 'children',
+    label: 'Children',
+    subtitle: 'Next Generation Down',
+    options: [
+      { value: 'son', label: 'Son' },
+      { value: 'daughter', label: 'Daughter' },
+      { value: 'child', label: 'Child' },
+      { value: 'stepson', label: 'Stepson' },
+      { value: 'stepdaughter', label: 'Stepdaughter' },
+      { value: 'adopted_son', label: 'Adopted Son' },
+      { value: 'adopted_daughter', label: 'Adopted Daughter' },
+      { value: 'foster_child', label: 'Foster Child' },
+      { value: 'grandson', label: 'Grandson' },
+      { value: 'granddaughter', label: 'Granddaughter' },
+      { value: 'grandchild', label: 'Grandchild' },
+    ],
+  },
+  {
+    key: 'parents',
+    label: 'Parents',
+    subtitle: 'Next Generation Up',
+    options: [
+      { value: 'father', label: 'Father' },
+      { value: 'mother', label: 'Mother' },
+      { value: 'parent', label: 'Parent' },
+      { value: 'stepfather', label: 'Stepfather' },
+      { value: 'stepmother', label: 'Stepmother' },
+      { value: 'adoptive_father', label: 'Adoptive Father' },
+      { value: 'adoptive_mother', label: 'Adoptive Mother' },
+      { value: 'foster_parent', label: 'Foster Parent' },
+      { value: 'grandfather', label: 'Grandfather' },
+      { value: 'grandmother', label: 'Grandmother' },
+      { value: 'grandparent', label: 'Grandparent' },
+    ],
+  },
+  {
+    key: 'siblings',
+    label: 'Siblings',
+    subtitle: 'Same Generation',
+    options: [
+      { value: 'brother', label: 'Brother' },
+      { value: 'sister', label: 'Sister' },
+      { value: 'sibling', label: 'Sibling' },
+      { value: 'half_brother', label: 'Half Brother' },
+      { value: 'half_sister', label: 'Half Sister' },
+      { value: 'step_brother', label: 'Step Brother' },
+      { value: 'step_sister', label: 'Step Sister' },
+    ],
+  },
+  {
+    key: 'extended',
+    label: 'Extended Family',
+    subtitle: 'Second Degree Relatives',
+    options: [
+      { value: 'uncle', label: 'Uncle' },
+      { value: 'aunt', label: 'Aunt' },
+      { value: 'nephew', label: 'Nephew' },
+      { value: 'niece', label: 'Niece' },
+      { value: 'cousin', label: 'Cousin' },
+      { value: 'second_cousin', label: 'Second Cousin' },
+      { value: 'great_uncle', label: 'Great Uncle' },
+      { value: 'great_aunt', label: 'Great Aunt' },
+    ],
+  },
+  {
+    key: 'in-laws',
+    label: 'In Laws',
+    subtitle: 'Family by Marriage',
+    options: [
+      { value: 'father_in_law', label: 'Father in Law' },
+      { value: 'mother_in_law', label: 'Mother in Law' },
+      { value: 'brother_in_law', label: 'Brother in Law' },
+      { value: 'sister_in_law', label: 'Sister in Law' },
+      { value: 'son_in_law', label: 'Son in Law' },
+      { value: 'daughter_in_law', label: 'Daughter in Law' },
+    ],
+  },
 ]
+
+const FAMILY_INVITE_RELATIONSHIP_OPTIONS = FAMILY_INVITE_RELATIONSHIP_GROUPS.flatMap((group) => group.options)
 
 type InviteableOrganization = {
   id: string
@@ -391,6 +505,8 @@ function buildPostUrl(post: ApiPost) {
 export default function UserPostsPage({ params }: PageProps) {
   const handleParam = decodeURIComponent(params.handle)
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const cachedViewer = useViewerStore((s) => s.me)
   const familyView = useViewerStore((s) => s.familyView)
   const viewerHydrated = useViewerStore((s) => s.hydrated)
@@ -410,10 +526,12 @@ export default function UserPostsPage({ params }: PageProps) {
   const [connectionAction, setConnectionAction] = useState<'send' | 'accept' | 'reject' | null>(null)
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
+  const [removeFamilyModalOpen, setRemoveFamilyModalOpen] = useState(false)
   const [inviteModalOpen, setInviteModalOpen] = useState(false)
   const [familyInviteModalOpen, setFamilyInviteModalOpen] = useState(false)
-  const [familyInviteRelationship, setFamilyInviteRelationship] = useState<FamilyInviteRelationshipValue>('mother')
+  const [familyInviteRelationship, setFamilyInviteRelationship] = useState<FamilyInviteRelationshipValue | null>(null)
   const [familyInviteSending, setFamilyInviteSending] = useState(false)
+  const [removingFamilyRelationship, setRemovingFamilyRelationship] = useState(false)
   const [inviteSurface, setInviteSurface] = useState<InviteSurface>('event')
   const [inviteOrganizations, setInviteOrganizations] = useState<InviteableOrganization[]>([])
   const [inviteEvents, setInviteEvents] = useState<InviteableEvent[]>([])
@@ -630,7 +748,9 @@ export default function UserPostsPage({ params }: PageProps) {
       connectionStatus: isOwner ? 'self' : 'none',
       connectionId: undefined,
       connectionSince: null,
+      profileFamilyRelationship: null,
     }
+  const currentProfileFamilyRelationship = resolvedRelationship.profileFamilyRelationship ?? null
   const friendCount = profile?.friendCount ?? 0
   const communityCount = profile?.communityCount ?? 0
   const organizationCount = profile?.organizationCount ?? 0
@@ -640,7 +760,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const publicBirthYear = formatBirthYear(profile?.birthYear)
   const publicBirthCountry = profile?.countryOfBirth?.trim() ?? ''
   const familyInviteRelationshipLabel =
-    FAMILY_INVITE_RELATIONSHIP_OPTIONS.find((option) => option.value === familyInviteRelationship)?.label ?? 'Mother'
+    FAMILY_INVITE_RELATIONSHIP_OPTIONS.find((option) => option.value === familyInviteRelationship)?.label ?? 'Select Type'
   const isBornInCanada = publicBirthCountry.toLowerCase() === 'canada'
   const identityPills = [
     profile?.isVerified ? { label: 'Verified Canadian', tone: 'verified' as const, iconSrc: '/self-verified.png' } : null,
@@ -775,9 +895,21 @@ export default function UserPostsPage({ params }: PageProps) {
   const openFamilyInviteModal = () => {
     const token = requireAuthToken()
     if (!token || !profile) return
-    setFamilyInviteRelationship('mother')
+    setFamilyInviteRelationship(null)
     setFamilyInviteModalOpen(true)
   }
+
+  useEffect(() => {
+    if (searchParams.get('addFamily') !== '1') return
+    if (!profile || familyInviteModalOpen) return
+
+    openFamilyInviteModal()
+
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.delete('addFamily')
+    const nextQuery = nextParams.toString()
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false })
+  }, [familyInviteModalOpen, openFamilyInviteModal, pathname, profile, router, searchParams])
 
   const handleInviteToSurface = (surface: InviteSurface) => {
     const token = requireAuthToken()
@@ -1015,7 +1147,7 @@ export default function UserPostsPage({ params }: PageProps) {
               <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
               Add Family
             </button>
-          ) : profile?.accountType !== 'family_member' ? (
+          ) : profile?.accountType !== 'family_member' && !currentProfileFamilyRelationship ? (
             <button type="button" className={menuItemClassName} onClick={(event) => {
               closeDetailsMenu(event)
               openFamilyInviteModal()
@@ -1065,6 +1197,25 @@ export default function UserPostsPage({ params }: PageProps) {
             </button>
           )}
         </>
+      ),
+    })
+  }
+
+  const renderFamilyRelationshipMenu = () => {
+    if (!currentProfileFamilyRelationship) return null
+
+    return renderActionMenu({
+      label: `Your ${currentProfileFamilyRelationship.relationshipLabel}`,
+      tone: 'neutral',
+      icon: <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />,
+      children: (
+        <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+          closeDetailsMenu(event)
+          setRemoveFamilyModalOpen(true)
+        }}>
+          <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+          Remove Family relationship
+        </button>
       ),
     })
   }
@@ -1387,6 +1538,10 @@ export default function UserPostsPage({ params }: PageProps) {
     if (!profile) return
     const token = requireAuthToken()
     if (!token) return
+    if (!familyInviteRelationship) {
+      pushToast('Select a family type first.', 'error')
+      return
+    }
 
     const targetUserId = await resolveDirectTargetId(token)
     if (!targetUserId || !isValidUserId(targetUserId)) {
@@ -1416,6 +1571,11 @@ export default function UserPostsPage({ params }: PageProps) {
 
       const payload = (await response.json().catch(() => null)) as { error?: string } | null
       if (!response.ok) {
+        if (payload?.error === 'already_family') {
+          pushToast('This Family connection is already complete.', 'info')
+          setFamilyInviteModalOpen(false)
+          return
+        }
         const message = payload?.error === 'user_not_found'
           ? 'That profile is no longer available.'
           : 'Unable to send family request right now.'
@@ -1613,6 +1773,63 @@ export default function UserPostsPage({ params }: PageProps) {
     } catch (err) {
       console.error('Failed to remove connection', err)
       pushToast('Unable to remove connection right now.', 'error')
+    }
+  }
+
+  const handleRemoveFamilyRelationship = async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+
+    setRemovingFamilyRelationship(true)
+    try {
+      const res = await fetch(buildApiUrl(`/profile/family-relationships/${encodeURIComponent(profile.id)}`), {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (res.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!res.ok) {
+        if (payload?.error === 'family_relationship_not_found') {
+          setRelationship((prev) => ({
+            friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+            friendshipId: prev?.friendshipId,
+            friendshipSince: prev?.friendshipSince ?? null,
+            connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+            connectionId: prev?.connectionId,
+            connectionSince: prev?.connectionSince ?? null,
+            profileFamilyRelationship: null,
+          }))
+          setRemoveFamilyModalOpen(false)
+          pushToast('Family relationship already removed.', 'info')
+          return
+        }
+        pushToast(payload?.error ?? 'Unable to remove Family relationship right now.', 'error')
+        return
+      }
+
+      setRelationship((prev) => ({
+        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+        friendshipId: prev?.friendshipId,
+        friendshipSince: prev?.friendshipSince ?? null,
+        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+        connectionId: prev?.connectionId,
+        connectionSince: prev?.connectionSince ?? null,
+        profileFamilyRelationship: null,
+      }))
+      setRemoveFamilyModalOpen(false)
+      pushToast('Family relationship removed from both profiles.', 'info')
+    } catch (err) {
+      console.error('Failed to remove Family relationship', err)
+      pushToast('Unable to remove Family relationship right now.', 'error')
+    } finally {
+      setRemovingFamilyRelationship(false)
     }
   }
 
@@ -2167,6 +2384,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   renderFamilyProfileActions()
                 ) : (
                   <>
+                    {renderFamilyRelationshipMenu()}
                     {renderConnectMenu()}
                     {renderMessageMenu()}
                     {renderInviteMenu()}
@@ -2235,7 +2453,7 @@ export default function UserPostsPage({ params }: PageProps) {
                               : 'border border-slate-200 text-slate-600',
                           )}
                         >
-                          {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 object-contain" aria-hidden="true" /> : null}
+                          {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 object-contain" style={{ width: 'auto', height: 'auto' }} aria-hidden="true" /> : null}
                           {pill.label}
                         </span>
                       ))}
@@ -2581,62 +2799,78 @@ export default function UserPostsPage({ params }: PageProps) {
           title={`Add @${profile?.handle ?? handleParam} as family`}
           maxWidthClassName="max-w-lg"
         >
-          <div className="space-y-4 p-1">
-            <p className="text-sm text-slate-600">
-              How are you related? We will send a notification with a direct link back to your profile.
-            </p>
+          <div className="flex min-h-0 flex-col">
+            <div className="space-y-4 p-1">
+              <p className="text-sm text-slate-600">
+                How are you related? We will send a notification with a direct link back to your profile.
+              </p>
 
-            <div className="space-y-2 text-sm font-semibold text-slate-700">
-              <span>Relationship</span>
-              <details className="group relative" data-family-relationship-picker>
-                <summary className="flex cursor-pointer list-none items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm font-medium text-slate-900 shadow-sm transition hover:border-slate-300 [&::-webkit-details-marker]:hidden">
-                  <div>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Selected</div>
-                    <div className="mt-1 text-sm font-semibold text-slate-900">{familyInviteRelationshipLabel}</div>
+              <div className="space-y-2 text-sm font-semibold text-slate-700">
+                <span>Relationship</span>
+                <details className="group relative" data-family-relationship-picker>
+                  <summary className="flex cursor-pointer list-none items-center justify-between rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left text-sm font-medium text-slate-900 shadow-sm transition hover:border-slate-300 [&::-webkit-details-marker]:hidden">
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Selected</div>
+                      <div className={clsx('mt-1 text-sm font-semibold', familyInviteRelationship ? 'text-slate-900' : 'text-slate-400')}>
+                        {familyInviteRelationshipLabel}
+                      </div>
+                    </div>
+                    <HiOutlineChevronDown className="h-4 w-4 text-slate-500 transition group-open:rotate-180" aria-hidden="true" />
+                  </summary>
+                  <div className="mt-2 max-h-[52dvh] space-y-4 overflow-y-auto rounded-[24px] border border-slate-200 bg-slate-50/80 p-3">
+                    {FAMILY_INVITE_RELATIONSHIP_GROUPS.map((group) => (
+                      <div key={group.key} className="space-y-2">
+                        <div className="px-2">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">{group.label}</div>
+                          <div className="mt-0.5 text-xs font-medium text-slate-500">{group.subtitle}</div>
+                        </div>
+                        <div className="space-y-2">
+                          {group.options.map((option) => {
+                            const selected = option.value === familyInviteRelationship
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                className={clsx(
+                                  'flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left text-sm font-semibold transition',
+                                  selected
+                                    ? 'border-red-600 bg-red-600 text-white'
+                                    : 'border-transparent text-slate-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700',
+                                )}
+                                onClick={(event) => {
+                                  setFamilyInviteRelationship(option.value)
+                                  const details = event.currentTarget.closest('details')
+                                  if (details instanceof HTMLDetailsElement) {
+                                    details.open = false
+                                  }
+                                }}
+                                disabled={familyInviteSending}
+                              >
+                                <span>{option.label}</span>
+                                {selected ? <span className="text-xs font-bold uppercase tracking-[0.24em] text-white/85">Selected</span> : null}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <HiOutlineChevronDown className="h-4 w-4 text-slate-500 transition group-open:rotate-180" aria-hidden="true" />
-                </summary>
-                <div className="mt-2 space-y-2 rounded-[24px] border border-slate-200 bg-slate-50/80 p-2">
-                  {FAMILY_INVITE_RELATIONSHIP_OPTIONS.map((option) => {
-                    const selected = option.value === familyInviteRelationship
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={clsx(
-                          'flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left text-sm font-semibold transition',
-                          selected
-                            ? 'bg-slate-900 text-white'
-                            : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900',
-                        )}
-                        onClick={(event) => {
-                          setFamilyInviteRelationship(option.value)
-                          const details = event.currentTarget.closest('details')
-                          if (details instanceof HTMLDetailsElement) {
-                            details.open = false
-                          }
-                        }}
-                        disabled={familyInviteSending}
-                      >
-                        <span>{option.label}</span>
-                        {selected ? <span className="text-xs font-bold uppercase tracking-[0.24em] text-white/80">Selected</span> : null}
-                      </button>
-                    )
-                  })}
-                </div>
-              </details>
+                </details>
+              </div>
             </div>
 
-            <button
-              type="button"
-              className="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => {
-                void handleSendFamilyInvite()
-              }}
-              disabled={familyInviteSending}
-            >
-              {familyInviteSending ? 'Sending…' : 'Send family request'}
-            </button>
+            <div className="sticky bottom-[-20px] z-10 -mx-5 -mb-5 mt-5 border-t border-slate-200 bg-white/95 px-5 pb-5 pt-4 backdrop-blur">
+              <button
+                type="button"
+                className="inline-flex w-full items-center justify-center rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  void handleSendFamilyInvite()
+                }}
+                disabled={familyInviteSending || !familyInviteRelationship}
+              >
+                {familyInviteSending ? 'Sending…' : 'Send family request'}
+              </button>
+            </div>
           </div>
         </Modal>
 
@@ -2691,6 +2925,42 @@ export default function UserPostsPage({ params }: PageProps) {
                 onClick={handleRemoveConnection}
               >
                 Remove connection
+              </button>
+            </div>
+          </div>
+        </Modal>
+
+        <Modal
+          open={removeFamilyModalOpen}
+          onClose={() => {
+            if (removingFamilyRelationship) return
+            setRemoveFamilyModalOpen(false)
+          }}
+          title="Remove Family relationship?"
+          maxWidthClassName="max-w-md"
+        >
+          <div className="p-6">
+            <p className="mb-6 text-slate-600">
+              This removes the Family relationship from both profiles so you can start over cleanly.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                className="rounded-full px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => setRemoveFamilyModalOpen(false)}
+                disabled={removingFamilyRelationship}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  void handleRemoveFamilyRelationship()
+                }}
+                disabled={removingFamilyRelationship}
+              >
+                {removingFamilyRelationship ? 'Removing…' : 'Remove Family'}
               </button>
             </div>
           </div>

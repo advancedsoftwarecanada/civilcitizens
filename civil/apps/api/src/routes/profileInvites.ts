@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
-import { BusinessStatus } from '@prisma/client'
+import { BusinessStatus, Prisma } from '@prisma/client'
 import { z } from 'zod'
 
 const ProfileInviteInput = z.object({
@@ -13,22 +13,52 @@ const ProfileInviteInput = z.object({
 const ProfileFamilyRequestInput = z.object({
   targetUserId: z.string().trim().min(1),
   relationship: z.enum([
+    'husband',
+    'wife',
+    'spouse',
+    'partner',
+    'common_law_partner',
+    'fiance',
+    'ex_husband',
+    'ex_wife',
+    'widowed_spouse',
     'mother',
     'father',
+    'parent',
+    'stepfather',
+    'stepmother',
+    'adoptive_father',
+    'adoptive_mother',
+    'foster_parent',
+    'son',
+    'daughter',
+    'child',
+    'stepson',
+    'stepdaughter',
+    'adopted_son',
+    'adopted_daughter',
+    'foster_child',
     'grandmother',
     'grandfather',
+    'grandparent',
+    'grandson',
+    'granddaughter',
+    'grandchild',
     'sister',
     'brother',
+    'sibling',
+    'half_brother',
+    'half_sister',
+    'step_brother',
+    'step_sister',
     'aunt',
     'uncle',
     'cousin',
     'second_cousin',
     'niece',
     'nephew',
-    'wife',
-    'husband',
-    'significant_other',
-    'partner',
+    'great_uncle',
+    'great_aunt',
     'mother_in_law',
     'father_in_law',
     'sister_in_law',
@@ -37,6 +67,10 @@ const ProfileFamilyRequestInput = z.object({
     'son_in_law',
     'other',
   ]),
+})
+
+const ProfileFamilyRelationshipParams = z.object({
+  targetUserId: z.string().trim().min(1),
 })
 
 type ProfileInviteDeps = Record<string, any>
@@ -193,10 +227,9 @@ export function registerProfileInviteRoutes(app: FastifyInstance, deps: ProfileI
 
       const actorRelationships = deps.getStoredProfileFamilyRelationships(actorUser.communityMeta)
       const targetRelationships = deps.getStoredProfileFamilyRelationships(targetUser.communityMeta)
-      const alreadyRelated =
-        actorRelationships.some((entry: { relatedUserId: string }) => entry.relatedUserId === targetUser.id) ||
-        targetRelationships.some((entry: { relatedUserId: string }) => entry.relatedUserId === actorUser.id)
-      if (alreadyRelated) {
+      const actorAlreadyRelated = actorRelationships.some((entry: { relatedUserId: string }) => entry.relatedUserId === targetUser.id)
+      const targetAlreadyRelated = targetRelationships.some((entry: { relatedUserId: string }) => entry.relatedUserId === actorUser.id)
+      if (actorAlreadyRelated && targetAlreadyRelated) {
         return reply.code(409).send({ error: 'already_family' })
       }
 
@@ -232,6 +265,92 @@ export function registerProfileInviteRoutes(app: FastifyInstance, deps: ProfileI
       })
 
       return reply.code(201).send({ ok: true })
+    }),
+  )
+
+  app.delete('/profile/family-relationships/:targetUserId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const actorUserId = (await deps.resolveUserId(req)) ?? null
+      if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = ProfileFamilyRelationshipParams.safeParse(req.params ?? {})
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+      if (params.data.targetUserId === actorUserId) return reply.code(400).send({ error: 'invalid_target' })
+
+      const [actorUser, targetUser] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: actorUserId },
+          select: { id: true, communityMeta: true },
+        }),
+        prisma.user.findUnique({
+          where: { id: params.data.targetUserId },
+          select: { id: true, communityMeta: true },
+        }),
+      ])
+
+      if (!actorUser) return reply.code(401).send({ error: 'unauthorized' })
+      if (!targetUser) return reply.code(404).send({ error: 'user_not_found' })
+
+      const actorRelationships = deps.getStoredProfileFamilyRelationships(actorUser.communityMeta)
+      const targetRelationships = deps.getStoredProfileFamilyRelationships(targetUser.communityMeta)
+      const nextActorRelationships = actorRelationships.filter((entry: { relatedUserId: string }) => entry.relatedUserId !== targetUser.id)
+      const nextTargetRelationships = targetRelationships.filter((entry: { relatedUserId: string }) => entry.relatedUserId !== actorUser.id)
+
+      if (nextActorRelationships.length === actorRelationships.length && nextTargetRelationships.length === targetRelationships.length) {
+        return reply.code(404).send({ error: 'family_relationship_not_found' })
+      }
+
+      const actorBaseMeta = deps.readBaseCommunityMeta(actorUser.communityMeta ?? null)
+      deps.writeStoredProfileFamilyRelationships(actorBaseMeta, nextActorRelationships)
+
+      const targetBaseMeta = deps.readBaseCommunityMeta(targetUser.communityMeta ?? null)
+      deps.writeStoredProfileFamilyRelationships(targetBaseMeta, nextTargetRelationships)
+
+      const nowIso = new Date().toISOString()
+      const relatedNotifications = await prisma.notification.findMany({
+        where: {
+          OR: [
+            {
+              userId: actorUser.id,
+              actorId: targetUser.id,
+            },
+            {
+              userId: targetUser.id,
+              actorId: actorUser.id,
+            },
+          ],
+          type: {
+            in: [deps.PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY, deps.PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY_RESPONSE],
+          },
+        },
+        select: {
+          id: true,
+          payload: true,
+        },
+      })
+
+      await prisma.$transaction([
+        prisma.user.update({ where: { id: actorUser.id }, data: { communityMeta: actorBaseMeta as Prisma.InputJsonValue } }),
+        prisma.user.update({ where: { id: targetUser.id }, data: { communityMeta: targetBaseMeta as Prisma.InputJsonValue } }),
+        ...relatedNotifications.map((notification) => {
+          const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+            ? (notification.payload as Record<string, unknown>)
+            : {}
+          return prisma.notification.update({
+            where: { id: notification.id },
+            data: {
+              payload: {
+                ...payload,
+                status: 'removed',
+                reciprocalCompleted: false,
+                removedAt: nowIso,
+              } as Prisma.InputJsonValue,
+            },
+          })
+        }),
+      ])
+
+      return reply.send({ ok: true })
     }),
   )
 }

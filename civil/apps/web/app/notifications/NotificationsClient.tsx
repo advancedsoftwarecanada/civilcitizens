@@ -7,7 +7,7 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { NotificationCard } from '../_components/notifications/NotificationCard'
-import type { FriendActionState, NotificationItem } from '../_components/notifications/notificationUtils'
+import type { FriendActionState, NotificationActionOptions, NotificationItem } from '../_components/notifications/notificationUtils'
 import { getFriendshipId, isChatNotificationType } from '../_components/notifications/notificationUtils'
 import { emitNotificationsMarkedReadEvent, NOTIFICATIONS_MARKED_READ_EVENT, type NotificationsMarkedReadDetail } from '../_components/notifications/notificationEvents'
 import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from '../_components/notifications/notificationStream'
@@ -200,17 +200,17 @@ export default function NotificationsClient() {
   }, [nextCursor, loadingMore, loadNotifications])
 
   const handleNotificationRequestAction = useCallback(
-    async (notification: NotificationItem, action: 'accept' | 'reject') => {
+    async (notification: NotificationItem, action: 'accept' | 'reject', options?: NotificationActionOptions) => {
       const token = getStoredToken()
       if (!token) {
         redirectToAuthModal('login')
-        return
+        return false
       }
       setFriendActionState({ notificationId: notification.id, action })
       try {
         const isFriend = notification.type === 'friend_request'
         const friendshipId = isFriend ? getFriendshipId(notification) : null
-        if (isFriend && !friendshipId) return
+        if (isFriend && !friendshipId) return false
 
         const res = await fetch(
           isFriend
@@ -222,7 +222,7 @@ export default function NotificationsClient() {
               authorization: `Bearer ${token}`,
               ...(!isFriend ? { 'content-type': 'application/json' } : {}),
             },
-            body: !isFriend ? JSON.stringify({ action }) : undefined,
+            body: !isFriend ? JSON.stringify({ action, reciprocalRelationship: options?.reciprocalRelationship }) : undefined,
           },
         )
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
@@ -235,6 +235,7 @@ export default function NotificationsClient() {
                 const nextPayload = {
                   ...((item.payload ?? {}) as Record<string, unknown>),
                   status: action === 'accept' ? 'accepted' : 'rejected',
+                  reciprocalCompleted: notification.type === 'profile_family_invite' ? Boolean(options?.reciprocalRelationship) : item.payload?.reciprocalCompleted,
                 }
                 return {
                   ...item,
@@ -245,15 +246,15 @@ export default function NotificationsClient() {
               }),
             )
             pushToast('Request already resolved.', 'info')
-            return
+            return true
           }
           if (res.status === 404) {
             setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
             pushToast('That request is no longer available.', 'info')
-            return
+            return true
           }
           pushToast(payload?.error ?? 'Unable to update request right now.', 'error')
-          return
+          return false
         }
         const timestamp = new Date().toISOString()
         setNotifications((prev) =>
@@ -262,6 +263,7 @@ export default function NotificationsClient() {
             const nextPayload = {
               ...((item.payload ?? {}) as Record<string, unknown>),
               status: action === 'accept' ? 'accepted' : 'rejected',
+                  reciprocalCompleted: notification.type === 'profile_family_invite' ? Boolean(options?.reciprocalRelationship) : item.payload?.reciprocalCompleted,
             }
             return {
               ...item,
@@ -282,9 +284,11 @@ export default function NotificationsClient() {
         } else {
           pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
         }
+        return true
       } catch (err) {
         console.error('Failed to respond to request', err)
         pushToast('Unable to update request right now.', 'error')
+        return false
       } finally {
         setFriendActionState(null)
       }

@@ -217,7 +217,10 @@ function ParentFamilyFeedView() {
         cache: 'no-store',
       })
       if (response.status === 401) {
-        redirectToAuthModal('login')
+        pushToast('Unable to load Family right now.', 'error')
+        setMembers([])
+        setProfileRelationships([])
+        setSelectedMemberId('')
         return
       }
       const payload = (await response.json().catch(() => null)) as FamilyResponse | null
@@ -342,7 +345,8 @@ function AdultFamilyCircleFeed({
         cache: 'no-store',
       })
       if (response.status === 401) {
-        redirectToAuthModal('login')
+        setError('Unable to load Family posts right now.')
+        setPosts([])
         return
       }
       const payload = (await response.json().catch(() => null)) as { items?: ApiPost[] } | null
