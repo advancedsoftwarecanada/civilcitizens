@@ -30,7 +30,7 @@ services:
       dockerfile: ./apps/api/Dockerfile
     environment:
       # Required: Prisma database URL (uses local Postgres service)
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/civil
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/civil}
       # Point to the Redis service on the Compose network (not localhost)
       REDIS_URL: redis://redis:6379
       # Provide a default JWT secret; override in deployment via environment if desired
@@ -73,6 +73,7 @@ services:
       CIVIL_ENV_PRIMARY: ${CIVIL_ENV_PRIMARY:-}
       CIVIL_ENV_FILES: ${CIVIL_ENV_FILES:-}
       CIVIL_ADMIN_EMAILS: ${CIVIL_ADMIN_EMAILS:-}
+      MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://192.168.2.254:8080}
     # Do not publish API to host; Nginx proxies to it via internal network
     depends_on: [postgres, redis, meeting-rtc]
     healthcheck:
@@ -142,7 +143,7 @@ services:
       context: .
       dockerfile: ./apps/worker/Dockerfile
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/civil
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/civil}
       # Worker currently only needs Redis
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info
@@ -174,6 +175,7 @@ services:
       NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-https://${CIVIL_PUBLIC_HOST:-dev.civilcitizens.ca}}
       NEXT_PUBLIC_MEDIA_BASE_URL: ${NEXT_PUBLIC_MEDIA_BASE_URL:-https://${CIVIL_PUBLIC_HOST:-dev.civilcitizens.ca}/media}
       NEXT_PUBLIC_GTAG_ID: ${NEXT_PUBLIC_GTAG_ID:-}
+      MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://192.168.2.254:8080}
     depends_on:
       api:
         condition: service_healthy
@@ -185,7 +187,7 @@ services:
 
   postgres:
     profiles: [infra]
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.4-alpine
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: civil
@@ -193,6 +195,27 @@ services:
       - ${POSTGRES_DATA_DIR:-pgdata}:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d civil"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-gis-shadow:
+    profiles: [shadow-infra]
+    image: postgis/postgis:16-3.4-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_GIS_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_GIS_DB:-civil}
+    volumes:
+      - ${POSTGRES_GIS_DATA_DIR:-pgdata_gis_shadow}:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_GIS_HOST_PORT:-5743}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_GIS_DB:-civil}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     profiles: [infra]
@@ -238,6 +261,7 @@ services:
 
 volumes:
   pgdata:
+  pgdata_gis_shadow:
   redisdata:
   miniostorage:
   pushdata:

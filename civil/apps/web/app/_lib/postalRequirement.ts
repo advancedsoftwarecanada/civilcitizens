@@ -1,10 +1,22 @@
 const STORAGE_PREFIX = 'cc:homePostal:'
 export const GEOLOCATION_POSTAL_SENTINEL = '__GEOLOCATION__'
 const GEOLOCATION_POSTAL_SENTINEL_NORMALIZED = GEOLOCATION_POSTAL_SENTINEL.replace(/[^A-Z0-9]/g, '').toUpperCase()
+const POSTAL_FSA_REGEX = /^[ABCEGHJKLMNPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]$/
+const POSTAL_FULL_REGEX = /^[ABCEGHJKLMNPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\d[ABCEGHJ-NPRSTV-Z]\d$/
 
 function normalizePostal(value: string | null | undefined) {
   if (!value) return ''
   return value.replace(/[^A-Z0-9]/g, '').toUpperCase()
+}
+
+export function normalizePostalCodeForLookup(value?: string | null): string | null {
+  if (!value || isGeolocationSentinel(value)) return null
+  const normalized = normalizePostal(value)
+  if (normalized.length < 3) return null
+  const fsa = normalized.slice(0, 3)
+  if (!POSTAL_FSA_REGEX.test(fsa)) return null
+  const full = normalized.slice(0, 6)
+  return POSTAL_FULL_REGEX.test(full) ? full : fsa
 }
 
 function isGeolocationSentinel(value: string | null | undefined) {

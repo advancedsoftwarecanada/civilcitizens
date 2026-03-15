@@ -382,6 +382,67 @@ export const PostalLookupResponseSchema = z.object({
 })
 export type PostalLookupResponse = z.infer<typeof PostalLookupResponseSchema>
 
+const GeoJsonPolygonLikeSchema = z.object({
+  type: z.enum(['Polygon', 'MultiPolygon']),
+  coordinates: z.array(z.any()),
+})
+
+export const ElectoralDistrictContextInput = z
+  .object({
+    postalCode: z.string().trim().min(3).max(12).optional(),
+    lat: z.coerce.number().min(-90).max(90).optional(),
+    lng: z.coerce.number().min(-180).max(180).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const hasPostal = Boolean(value.postalCode?.trim())
+    const hasLat = typeof value.lat === 'number'
+    const hasLng = typeof value.lng === 'number'
+
+    if (!hasPostal && !(hasLat && hasLng)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'postal_or_coordinates_required',
+        path: ['postalCode'],
+      })
+    }
+
+    if (hasLat !== hasLng) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'lat_lng_required_together',
+        path: hasLat ? ['lng'] : ['lat'],
+      })
+    }
+  })
+export type ElectoralDistrictContextInput = z.infer<typeof ElectoralDistrictContextInput>
+
+export const ElectoralDistrictContextResponseSchema = z.object({
+  resolvedFrom: z.enum(['coordinates', 'postal_code']),
+  postalCode: z.string().nullable(),
+  tileServerBaseUrl: z.string(),
+  styleUrl: z.string(),
+  userLocation: z.object({
+    lat: z.number(),
+    lng: z.number(),
+  }),
+  district: z
+    .object({
+      code: z.number().int(),
+      slug: z.string(),
+      name: z.string(),
+      provinceCode: z.string(),
+      center: z.object({
+        lat: z.number(),
+        lng: z.number(),
+      }),
+      bounds: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+      geometry: GeoJsonPolygonLikeSchema,
+      matchMethod: z.enum(['contains', 'nearest']),
+    })
+    .nullable(),
+})
+export type ElectoralDistrictContextResponse = z.infer<typeof ElectoralDistrictContextResponseSchema>
+
 export const ExperienceInput = z
   .object({
     title: z.string().trim().min(1).max(120),

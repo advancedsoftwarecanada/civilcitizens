@@ -86,6 +86,7 @@ model User {
   jobPromotionsCreated      JobPromotion[]        @relation("JobPromotionCreator")
   jobAnalyticsEvents        JobAnalyticsEvent[]   @relation("JobAnalyticsActor")
   pushSubscriptions         PushSubscription[]
+  location                  UserLocation?
   communityMeta             Json?
   lastViewedHomeAt          DateTime?
   lastViewedFriendsAt       DateTime?
@@ -556,6 +557,8 @@ model CensusDivision {
   centroidLng   Float?
   bbox          Json?
   geometry      Json?
+  boundaryGeom  Unsupported("geometry(MultiPolygon,4326)")?
+  centroidGeom  Unsupported("geometry(Point,4326)")?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   province      Province @relation(fields: [provinceCode], references: [code])
@@ -579,6 +582,8 @@ model CensusSubdivision {
   centroidLng         Float?
   bbox                Json?
   geometry            Json?
+  boundaryGeom        Unsupported("geometry(MultiPolygon,4326)")?
+  centroidGeom        Unsupported("geometry(Point,4326)")?
   defaultCommunitySlug  String?
   defaultCommunityName  String?
   createdAt           DateTime @default(now())
@@ -603,6 +608,8 @@ model ForwardSortationArea {
   centroidLng        Float?
   bbox               Json?
   geometry           Json?
+  boundaryGeom       Unsupported("geometry(MultiPolygon,4326)")?
+  pointGeom          Unsupported("geometry(Point,4326)")?
   defaultCommunitySlug String?
   defaultCommunityName String?
   createdAt          DateTime @default(now())
@@ -645,6 +652,40 @@ model City {
   @@index([provinceCode])
   @@index([latitude, longitude])
   @@index([censusSubdivisionId])
+}
+
+model ElectoralDistrict {
+  code          Int      @id
+  slug          String   @unique
+  name          String
+  provinceCode  String
+  centroidLat   Float
+  centroidLng   Float
+  bbox          Json?
+  boundaryGeom  Unsupported("geometry(MultiPolygon,4326)")
+  centroidGeom  Unsupported("geometry(Point,4326)")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  userLocations UserLocation[]
+
+  @@index([provinceCode])
+}
+
+model UserLocation {
+  id                    String            @id @default(cuid())
+  userId                String            @unique
+  postalCode            String?
+  latitude              Float
+  longitude             Float
+  source                String
+  electoralDistrictCode Int?
+  pointGeom             Unsupported("geometry(Point,4326)")
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  user                  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  electoralDistrict     ElectoralDistrict? @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
+
+  @@index([electoralDistrictCode])
 }
 
 model Hashtag {
