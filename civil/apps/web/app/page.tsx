@@ -80,7 +80,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="text-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
                 <div className="mx-auto mt-4 grid max-w-[320px] grid-cols-2 gap-2 sm:max-w-none sm:flex sm:flex-wrap sm:items-center sm:justify-center sm:gap-3">
                   <a
                     href="https://apps.apple.com/ca/app/civil-citizens/id6740553511"
@@ -216,7 +216,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
               </div>
             </div>
 
@@ -310,7 +310,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
               </div>
             </div>
 
@@ -360,7 +360,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
               </div>
             </div>
 
@@ -446,7 +446,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
               </div>
             </div>
 
@@ -520,7 +520,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
               </div>
             </div>
 
@@ -578,7 +578,7 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
             <div className="hidden lg:flex items-center justify-center">
               <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
               </div>
             </div>
 
@@ -647,7 +647,7 @@ export default function Home() {
         <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4 text-center space-y-4">
           <div className="mx-auto max-w-xs sm:max-w-sm">
-            <Image src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="w-full h-auto" />
+            <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
           </div>
           <div className="max-w-3xl mx-auto space-y-3">
             <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.35em] text-white/80">Community. Commerce. Careers. Governance.</p>

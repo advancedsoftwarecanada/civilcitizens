@@ -187,7 +187,7 @@ export default function VerifyPageClient() {
       <div className="absolute inset-0 bg-slate-950/45" aria-hidden />
       <div className="relative mx-auto w-full max-w-4xl px-4 py-10">
         <div className="mb-6 flex justify-center">
-          <Image src="/logo-white.svg" alt="Civil Citizens" width={160} height={44} className="h-auto w-[160px]" priority />
+          <img src="/logo-white.svg" alt="Civil Citizens" width={160} height={44} className="w-[160px]" />
         </div>
 
         <div className="mx-auto max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-8">
