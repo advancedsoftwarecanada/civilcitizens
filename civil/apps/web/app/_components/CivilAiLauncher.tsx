@@ -646,7 +646,7 @@ export default function CivilAiLauncher() {
       >
         <span className="cc-civil-ai-launcher__border" aria-hidden="true" />
         <span className="cc-civil-ai-launcher__surface">
-          <img src="/PWA-ICON.png?v=20260306" alt="Civil AI" className="h-[3.2rem] w-[3.2rem] object-contain" />
+          <img src="/civil-ai.png" alt="Civil AI" className="h-[3.2rem] w-[3.2rem] object-contain" />
         </span>
       </button>
 
@@ -657,7 +657,7 @@ export default function CivilAiLauncher() {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[var(--cc-primary)]/10 bg-white p-1 shadow-[0_8px_18px_rgba(213,43,30,0.1)]">
-                    <img src="/PWA-ICON.png?v=20260306" alt="Civil AI" className="h-full w-full rounded-xl object-contain" />
+                    <img src="/civil-ai.png" alt="Civil AI" className="h-full w-full rounded-xl object-contain" />
                   </div>
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[var(--cc-primary)]">Civil AI</p>

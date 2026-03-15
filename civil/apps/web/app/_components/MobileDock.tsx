@@ -45,7 +45,7 @@ const DEFAULT_NAV_BUTTONS: Array<{
   { key: 'cart', label: 'Cart', icon: HiOutlineShoppingCart },
   { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
-  { key: 'ai', label: 'Civil AI', imageSrc: '/PWA-ICON.png?v=20260306' },
+  { key: 'ai', label: 'Civil AI', imageSrc: '/civil-ai.png' },
   { key: 'more', label: 'More', icon: HiOutlineBars3 },
 ] as const
 
