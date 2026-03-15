@@ -100,7 +100,15 @@ export default function VerifiedAvatar({
       </div>
       {badgeVariant && !hideBadge ? (
         <span className="pointer-events-none absolute -bottom-1.5 -right-1 z-10 drop-shadow-lg">
-          <Image src={badgeImage} alt={badgeAlt ?? 'Status badge'} width={pinSize} height={pinSize} className="block" priority={false} />
+          <Image
+            src={badgeImage}
+            alt={badgeAlt ?? 'Status badge'}
+            width={pinSize}
+            height={pinSize}
+            className="block"
+            style={{ width: 'auto', height: 'auto' }}
+            priority={false}
+          />
         </span>
       ) : null}
     </>

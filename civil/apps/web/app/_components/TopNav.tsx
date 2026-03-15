@@ -354,6 +354,10 @@ export default function TopNav() {
     if (!dropdownOpen) return undefined
     const handleClick = (event: MouseEvent) => {
       if (!dropdownRef.current) return
+      const target = event.target
+      if (target instanceof Element && target.closest('[data-cc-modal-root]')) {
+        return
+      }
       if (!dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false)
       }
@@ -455,17 +459,17 @@ export default function TopNav() {
   }, [])
 
   const handleNotificationRequestAction = useCallback(
-    async (notification: NotificationItem, action: 'accept' | 'reject') => {
+    async (notification: NotificationItem, action: 'accept' | 'reject', options?: { reciprocalRelationship?: string }) => {
       const token = getStoredToken()
       if (!token) {
         redirectToAuthModal('login')
-        return
+        return false
       }
       setFriendActionState({ notificationId: notification.id, action })
       try {
         const isFriend = notification.type === 'friend_request'
         const friendshipId = isFriend ? getFriendshipId(notification) : null
-        if (isFriend && !friendshipId) return
+        if (isFriend && !friendshipId) return false
 
         const res = await fetch(
           isFriend
@@ -477,7 +481,7 @@ export default function TopNav() {
               authorization: `Bearer ${token}`,
               ...(!isFriend ? { 'content-type': 'application/json' } : {}),
             },
-            body: !isFriend ? JSON.stringify({ action }) : undefined,
+            body: !isFriend ? JSON.stringify({ action, reciprocalRelationship: options?.reciprocalRelationship }) : undefined,
           },
         )
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
@@ -490,6 +494,7 @@ export default function TopNav() {
                 const nextPayload = {
                   ...((item.payload ?? {}) as Record<string, unknown>),
                   status: action === 'accept' ? 'accepted' : 'rejected',
+                  reciprocalCompleted: notification.type === 'profile_family_invite' ? Boolean(options?.reciprocalRelationship) : item.payload?.reciprocalCompleted,
                 }
                 return {
                   ...item,
@@ -503,7 +508,7 @@ export default function TopNav() {
               setUnreadCount((prev) => Math.max(0, prev - 1))
             }
             pushToast('Request already resolved.', 'info')
-            return
+            return true
           }
           if (res.status === 404) {
             setNotifications((prev) => prev.filter((item) => item.id !== notification.id))
@@ -511,10 +516,10 @@ export default function TopNav() {
               setUnreadCount((prev) => Math.max(0, prev - 1))
             }
             pushToast('That request is no longer available.', 'info')
-            return
+            return true
           }
           pushToast(payload?.error ?? 'Unable to update request right now.', 'error')
-          return
+          return false
         }
         const timestamp = new Date().toISOString()
         setNotifications((prev) =>
@@ -523,6 +528,7 @@ export default function TopNav() {
             const nextPayload = {
               ...((item.payload ?? {}) as Record<string, unknown>),
               status: action === 'accept' ? 'accepted' : 'rejected',
+                  reciprocalCompleted: notification.type === 'profile_family_invite' ? Boolean(options?.reciprocalRelationship) : item.payload?.reciprocalCompleted,
             }
             return {
               ...item,
@@ -544,9 +550,11 @@ export default function TopNav() {
         } else {
           pushToast(action === 'accept' ? 'Friend request accepted.' : 'Friend request dismissed.', action === 'accept' ? 'success' : 'info')
         }
+        return true
       } catch (err) {
         console.error('Failed to respond to request', err)
         pushToast('Unable to update request right now.', 'error')
+        return false
       } finally {
         setFriendActionState(null)
       }

@@ -1,4 +1,171 @@
 import { formatDisplayName } from '../../_lib/text'
+
+export type ProfileFamilyRelationshipValue =
+  | 'husband'
+  | 'wife'
+  | 'spouse'
+  | 'partner'
+  | 'common_law_partner'
+  | 'fiance'
+  | 'ex_husband'
+  | 'ex_wife'
+  | 'widowed_spouse'
+  | 'mother'
+  | 'father'
+  | 'parent'
+  | 'stepfather'
+  | 'stepmother'
+  | 'adoptive_father'
+  | 'adoptive_mother'
+  | 'foster_parent'
+  | 'son'
+  | 'daughter'
+  | 'child'
+  | 'stepson'
+  | 'stepdaughter'
+  | 'adopted_son'
+  | 'adopted_daughter'
+  | 'foster_child'
+  | 'grandmother'
+  | 'grandfather'
+  | 'grandparent'
+  | 'grandson'
+  | 'granddaughter'
+  | 'grandchild'
+  | 'sister'
+  | 'brother'
+  | 'sibling'
+  | 'half_brother'
+  | 'half_sister'
+  | 'step_brother'
+  | 'step_sister'
+  | 'aunt'
+  | 'uncle'
+  | 'cousin'
+  | 'second_cousin'
+  | 'niece'
+  | 'nephew'
+  | 'great_uncle'
+  | 'great_aunt'
+  | 'mother_in_law'
+  | 'father_in_law'
+  | 'sister_in_law'
+  | 'brother_in_law'
+  | 'daughter_in_law'
+  | 'son_in_law'
+  | 'other'
+
+const PROFILE_FAMILY_RELATIONSHIP_LABELS: Record<ProfileFamilyRelationshipValue, string> = {
+  husband: 'Husband',
+  wife: 'Wife',
+  spouse: 'Spouse',
+  partner: 'Partner',
+  common_law_partner: 'Common Law Partner',
+  fiance: 'Fiance / Fiancee',
+  ex_husband: 'Ex Husband',
+  ex_wife: 'Ex Wife',
+  widowed_spouse: 'Widowed Spouse',
+  mother: 'Mother',
+  father: 'Father',
+  parent: 'Parent',
+  stepfather: 'Stepfather',
+  stepmother: 'Stepmother',
+  adoptive_father: 'Adoptive Father',
+  adoptive_mother: 'Adoptive Mother',
+  foster_parent: 'Foster Parent',
+  son: 'Son',
+  daughter: 'Daughter',
+  child: 'Child',
+  stepson: 'Stepson',
+  stepdaughter: 'Stepdaughter',
+  adopted_son: 'Adopted Son',
+  adopted_daughter: 'Adopted Daughter',
+  foster_child: 'Foster Child',
+  grandmother: 'Grandmother',
+  grandfather: 'Grandfather',
+  grandparent: 'Grandparent',
+  grandson: 'Grandson',
+  granddaughter: 'Granddaughter',
+  grandchild: 'Grandchild',
+  sister: 'Sister',
+  brother: 'Brother',
+  sibling: 'Sibling',
+  half_brother: 'Half Brother',
+  half_sister: 'Half Sister',
+  step_brother: 'Step Brother',
+  step_sister: 'Step Sister',
+  aunt: 'Aunt',
+  uncle: 'Uncle',
+  cousin: 'Cousin',
+  second_cousin: 'Second Cousin',
+  niece: 'Niece',
+  nephew: 'Nephew',
+  great_uncle: 'Great Uncle',
+  great_aunt: 'Great Aunt',
+  mother_in_law: 'Mother-in-law',
+  father_in_law: 'Father-in-law',
+  sister_in_law: 'Sister-in-law',
+  brother_in_law: 'Brother-in-law',
+  daughter_in_law: 'Daughter-in-law',
+  son_in_law: 'Son-in-law',
+  other: 'Other',
+}
+
+const PROFILE_FAMILY_RECIPROCAL_OPTIONS_BY_RELATION: Partial<Record<ProfileFamilyRelationshipValue, ProfileFamilyRelationshipValue[]>> = {
+  husband: ['wife', 'husband', 'spouse', 'partner', 'common_law_partner'],
+  wife: ['husband', 'wife', 'spouse', 'partner', 'common_law_partner'],
+  spouse: ['spouse', 'husband', 'wife', 'partner', 'common_law_partner'],
+  partner: ['partner', 'spouse', 'husband', 'wife', 'common_law_partner'],
+  common_law_partner: ['common_law_partner', 'partner', 'spouse', 'husband', 'wife'],
+  fiance: ['fiance', 'partner', 'spouse'],
+  ex_husband: ['ex_wife', 'ex_husband'],
+  ex_wife: ['ex_husband', 'ex_wife'],
+  widowed_spouse: ['widowed_spouse'],
+  mother: ['child', 'son', 'daughter', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child'],
+  father: ['child', 'son', 'daughter', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child'],
+  parent: ['child', 'son', 'daughter', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child'],
+  stepfather: ['stepson', 'stepdaughter'],
+  stepmother: ['stepson', 'stepdaughter'],
+  adoptive_father: ['adopted_son', 'adopted_daughter'],
+  adoptive_mother: ['adopted_son', 'adopted_daughter'],
+  foster_parent: ['foster_child'],
+  son: ['parent', 'mother', 'father', 'stepmother', 'stepfather', 'adoptive_mother', 'adoptive_father', 'foster_parent'],
+  daughter: ['parent', 'mother', 'father', 'stepmother', 'stepfather', 'adoptive_mother', 'adoptive_father', 'foster_parent'],
+  child: ['parent', 'mother', 'father', 'stepmother', 'stepfather', 'adoptive_mother', 'adoptive_father', 'foster_parent'],
+  stepson: ['stepmother', 'stepfather'],
+  stepdaughter: ['stepmother', 'stepfather'],
+  adopted_son: ['adoptive_mother', 'adoptive_father'],
+  adopted_daughter: ['adoptive_mother', 'adoptive_father'],
+  foster_child: ['foster_parent'],
+  grandmother: ['grandchild', 'grandson', 'granddaughter'],
+  grandfather: ['grandchild', 'grandson', 'granddaughter'],
+  grandparent: ['grandchild', 'grandson', 'granddaughter'],
+  grandson: ['grandparent', 'grandmother', 'grandfather'],
+  granddaughter: ['grandparent', 'grandmother', 'grandfather'],
+  grandchild: ['grandparent', 'grandmother', 'grandfather'],
+  sister: ['sibling', 'sister', 'brother', 'half_sister', 'half_brother', 'step_sister', 'step_brother'],
+  brother: ['sibling', 'brother', 'sister', 'half_brother', 'half_sister', 'step_brother', 'step_sister'],
+  sibling: ['sibling', 'brother', 'sister', 'half_brother', 'half_sister', 'step_brother', 'step_sister'],
+  half_brother: ['half_brother', 'half_sister', 'brother', 'sister', 'sibling'],
+  half_sister: ['half_sister', 'half_brother', 'sister', 'brother', 'sibling'],
+  step_brother: ['step_brother', 'step_sister', 'brother', 'sister', 'sibling'],
+  step_sister: ['step_sister', 'step_brother', 'sister', 'brother', 'sibling'],
+  aunt: ['niece', 'nephew'],
+  uncle: ['nephew', 'niece'],
+  great_aunt: ['niece', 'nephew'],
+  great_uncle: ['nephew', 'niece'],
+  niece: ['aunt', 'uncle'],
+  nephew: ['uncle', 'aunt'],
+  mother_in_law: ['daughter_in_law', 'son_in_law'],
+  father_in_law: ['son_in_law', 'daughter_in_law'],
+  sister_in_law: ['sister_in_law', 'brother_in_law'],
+  brother_in_law: ['brother_in_law', 'sister_in_law'],
+  daughter_in_law: ['mother_in_law', 'father_in_law'],
+  son_in_law: ['father_in_law', 'mother_in_law'],
+  cousin: ['cousin'],
+  second_cousin: ['second_cousin'],
+  other: ['other'],
+}
 export type NotificationActor = {
   id: string
   handle: string
@@ -24,6 +191,10 @@ export type NotificationItem = {
 export type FriendActionState = {
   notificationId: string
   action: 'accept' | 'reject'
+}
+
+export type NotificationActionOptions = {
+  reciprocalRelationship?: ProfileFamilyRelationshipValue
 }
 
 export type FriendRequestStatus = 'pending' | 'accepted' | 'rejected'
@@ -214,7 +385,7 @@ export function getNotificationMessage(notification: NotificationItem) {
       return inviteTitle ? `invited you to organization: ${inviteTitle}` : 'invited you to an organization'
     case 'profile_family_invite': {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : ''
-      return relationshipLabel ? `wants to add you as ${relationshipLabel}` : 'wants to add you as family'
+      return relationshipLabel ? `has added you as their ${relationshipLabel}` : 'has added you as family'
     }
     case 'profile_family_invite_response': {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : 'family'
@@ -257,6 +428,22 @@ export function getNotificationMessage(notification: NotificationItem) {
     default:
       return 'shared an update'
   }
+}
+
+export function getProfileFamilyRelationshipLabel(value: unknown) {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim() as ProfileFamilyRelationshipValue
+  return PROFILE_FAMILY_RELATIONSHIP_LABELS[normalized] ?? null
+}
+
+export function getNotificationFamilyInviteOptions(notification: NotificationItem) {
+  const relationship = typeof notification.payload?.relationship === 'string'
+    ? (notification.payload.relationship.trim() as ProfileFamilyRelationshipValue)
+    : null
+  if (!relationship) return []
+
+  const optionValues = PROFILE_FAMILY_RECIPROCAL_OPTIONS_BY_RELATION[relationship] ?? [relationship]
+  return optionValues.map((value) => ({ value, label: PROFILE_FAMILY_RELATIONSHIP_LABELS[value] ?? value }))
 }
 
 export function getNotificationOpenLabel(notification: NotificationItem): string | null {

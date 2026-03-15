@@ -104,6 +104,7 @@ export default function CivilPostComments({
                     meta={createdLabel}
                     badgeLabel={identityBadge}
                     showAvatar={false}
+                    linkProfile={false}
                     className="max-w-full"
                   />
 

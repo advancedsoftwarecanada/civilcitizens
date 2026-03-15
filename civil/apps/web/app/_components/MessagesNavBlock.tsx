@@ -11,8 +11,8 @@ import {
 } from '../_lib/messagesNav'
 
 const NAV_ITEMS: Array<{ key: MessagesNavSection; label: string; href: string }> = [
-  { key: 'friends', label: 'Friends', href: '/messages?inbox=friends' },
   { key: 'family', label: 'Family', href: '/messages?inbox=family' },
+  { key: 'friends', label: 'Friends', href: '/messages?inbox=friends' },
   { key: 'network', label: 'Network', href: '/messages?inbox=network' },
   { key: 'groups', label: 'Groups', href: '/messages?inbox=groups' },
   { key: 'market', label: 'Market', href: '/market/chats' },

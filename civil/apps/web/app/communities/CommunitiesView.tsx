@@ -96,6 +96,12 @@ type PendingHomeChangeConfirmation = {
   communityName: string
 }
 
+type PendingUnfollowConfirmation = {
+  provinceCode: string
+  communitySlug: string
+  communityName: string
+}
+
 const populationFormatter = new Intl.NumberFormat('en-CA')
 const POSTAL_CODE_PLACEHOLDER = 'e.g. M5V-2T6'
 
@@ -248,6 +254,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [welcomeAutoSaving, setWelcomeAutoSaving] = useState(false)
   const [welcomeHomeConfirmation, setWelcomeHomeConfirmation] = useState<WelcomeHomeConfirmation | null>(null)
   const [pendingHomeChangeConfirmation, setPendingHomeChangeConfirmation] = useState<PendingHomeChangeConfirmation | null>(null)
+  const [pendingUnfollowConfirmation, setPendingUnfollowConfirmation] = useState<PendingUnfollowConfirmation | null>(null)
   const [postalOwnerId, setPostalOwnerId] = useState<string | null>(null)
   const [suggestionSavingKey, setSuggestionSavingKey] = useState<string | null>(null)
   const [selectedBrowserProvince, setSelectedBrowserProvince] = useState('')
@@ -1096,6 +1103,25 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     }
   }
 
+  function requestUnfollowCommunity(provinceCode: string, communitySlug: string, communityName: string) {
+    setPendingUnfollowConfirmation({ provinceCode, communitySlug, communityName })
+  }
+
+  async function confirmUnfollowCommunity() {
+    if (!pendingUnfollowConfirmation) return
+    await handleUnfollow({
+      province: pendingUnfollowConfirmation.provinceCode,
+      communitySlug: pendingUnfollowConfirmation.communitySlug,
+      home: false,
+      chamber: {
+        slug: pendingUnfollowConfirmation.communitySlug,
+        province: pendingUnfollowConfirmation.provinceCode,
+        name: pendingUnfollowConfirmation.communityName,
+      },
+    })
+    setPendingUnfollowConfirmation(null)
+  }
+
   const canSave = useMemo(() => {
     if (!selectedProvince || !selectedCommunitySlug) return false
     if (!homeCommunity) return true
@@ -1751,11 +1777,19 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           isSelectedDistrictHome={districtIsHome}
           isFollowPending={suggestionSavingKey === districtSavingKey}
           onSelectDistrict={setSelectedBrowserDistrictCode}
-          onFollowSelectedDistrict={() => {
+          onToggleSelectedDistrictFollow={() => {
             if (activeBrowserDistrict) {
-              void followCommunity(activeBrowserDistrict.provinceCode, activeBrowserDistrict.slug, {
-                savingKey: districtSavingKey ?? undefined,
-              })
+              if (districtIsFollowing) {
+                requestUnfollowCommunity(
+                  activeBrowserDistrict.provinceCode,
+                  activeBrowserDistrict.slug,
+                  activeBrowserDistrict.name,
+                )
+              } else {
+                void followCommunity(activeBrowserDistrict.provinceCode, activeBrowserDistrict.slug, {
+                  savingKey: districtSavingKey ?? undefined,
+                })
+              }
             }
           }}
         />
@@ -2119,6 +2153,43 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     </div>
   )
 
+  const unfollowConfirmationOverlay = !pendingUnfollowConfirmation ? null : (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-6 backdrop-blur-sm" aria-modal="true" role="dialog">
+      <div className="w-full max-w-lg rounded-[28px] border border-white/15 bg-white shadow-[0_32px_120px_rgba(15,23,42,0.38)]">
+        <div className="border-b border-slate-200 px-6 py-5 sm:px-8">
+          <h2 className="text-2xl font-bold text-slate-950">Unfollow community?</h2>
+        </div>
+
+        <div className="space-y-5 px-6 py-6 sm:px-8">
+          <div className="space-y-3 text-sm leading-6 text-slate-700">
+            <p>
+              You will no longer see posts in <span className="font-semibold text-slate-900">{pendingUnfollowConfirmation.communityName}</span>.
+            </p>
+          </div>
+
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => setPendingUnfollowConfirmation(null)}
+              disabled={Boolean(managingFollow)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-full bg-red-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-400"
+              onClick={() => void confirmUnfollowCommunity()}
+              disabled={Boolean(managingFollow)}
+            >
+              {Boolean(managingFollow) ? 'Unfollowing…' : 'Unfollow'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <>
       <div className="border-b bg-white py-4 shadow-sm xl:hidden">
@@ -2137,6 +2208,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       </DashboardShell>
       {geoOverlay}
       {homeChangeConfirmationOverlay}
+      {unfollowConfirmationOverlay}
     </>
   )
 }

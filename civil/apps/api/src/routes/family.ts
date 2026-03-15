@@ -18,6 +18,54 @@ const FamilyFriendRequestInput = z
 type FamilyRoutesDeps = Record<string, any>
 
 export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDeps) {
+  async function loadAcceptedNotificationRelationshipMap(userId: string, excludedUserIds?: Set<string>) {
+    try {
+      const notifications = await prisma.notification.findMany({
+        where: {
+          OR: [{ userId }, { actorId: userId }],
+          type: { in: ['profile_family_invite', 'profile_family_invite_response'] },
+        },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 100,
+        select: {
+          userId: true,
+          actorId: true,
+          payload: true,
+          createdAt: true,
+        },
+      })
+
+      const relationshipMap = new Map<string, { relationship: string; createdAt: string }>()
+
+      for (const notification of notifications) {
+        const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+          ? (notification.payload as Record<string, unknown>)
+          : null
+        if (!payload) continue
+
+        const status = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : ''
+        if (status !== 'accepted') continue
+
+        const relationship = typeof payload.relationship === 'string' ? payload.relationship.trim() : ''
+        if (!relationship) continue
+
+        const relatedUserId = notification.userId === userId ? notification.actorId : notification.userId
+        if (!relatedUserId || relatedUserId === userId || excludedUserIds?.has(relatedUserId)) continue
+        if (!relationshipMap.has(relatedUserId)) {
+          relationshipMap.set(relatedUserId, {
+            relationship,
+            createdAt: notification.createdAt.toISOString(),
+          })
+        }
+      }
+
+      return relationshipMap
+    } catch (error) {
+      console.error('accepted_family_notification_relationships_load_failed', error)
+      return new Map<string, { relationship: string; createdAt: string }>()
+    }
+  }
+
   app.get('/family', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = (req as any).user?.id
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
@@ -107,6 +155,62 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       deps.loadProfileFamilyRelationshipsForRail(user.communityMeta),
     ])
 
+    const storedRelationshipIds = new Set(profileRelationships.map((entry: { id: string }) => entry.id))
+    const notificationRelationshipMap = await loadAcceptedNotificationRelationshipMap(userId, storedRelationshipIds)
+
+    let notificationDerivedRelationships: Array<{
+      id: string
+      handle: string
+      displayName: string
+      relationshipLabel: string
+      avatarUrl: string | null
+      coverUrl: string | null
+      latestPostAt: string | null
+    }> = []
+
+    if (notificationRelationshipMap.size > 0) {
+      try {
+        const relatedUserIds = [...notificationRelationshipMap.keys()]
+        const [relatedUsers, latestPostAtByUser] = await Promise.all([
+          prisma.user.findMany({
+            where: { id: { in: relatedUserIds } },
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              coverUrl: true,
+            },
+          }),
+          deps.loadLatestPublicPostAtByUsers(relatedUserIds),
+        ])
+
+        notificationDerivedRelationships = relatedUsers.flatMap((relatedUser: (typeof relatedUsers)[number]) => {
+          const relationshipMeta = notificationRelationshipMap.get(relatedUser.id)
+          if (!relationshipMeta) return []
+
+          return [{
+            id: relatedUser.id,
+            handle: relatedUser.handle,
+            displayName: relatedUser.name?.trim() || relatedUser.handle,
+            relationshipLabel: deps.profileFamilyRelationshipLabels[relationshipMeta.relationship] ?? relationshipMeta.relationship,
+            avatarUrl: deps.normalizeMediaUrl(relatedUser.avatarUrl ?? null),
+            coverUrl: deps.normalizeMediaUrl(relatedUser.coverUrl ?? null),
+            latestPostAt: latestPostAtByUser.get(relatedUser.id) ?? null,
+          }]
+        })
+      } catch (error) {
+        console.error('accepted_family_notification_relationship_profiles_load_failed', error)
+      }
+    }
+
+    const mergedProfileRelationships = [...profileRelationships, ...notificationDerivedRelationships].sort((left, right) => {
+      const leftTime = left.latestPostAt ? new Date(left.latestPostAt).getTime() : 0
+      const rightTime = right.latestPostAt ? new Date(right.latestPostAt).getTime() : 0
+      if (rightTime !== leftTime) return rightTime - leftTime
+      return left.displayName.localeCompare(right.displayName)
+    })
+
     return reply.send({
       profileEligibility: { ...eligibility, complete: Object.values(eligibility).every(Boolean) },
       familyMode: {
@@ -131,7 +235,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         )
         return { ...summary, latestPostAt: latestPostAtByMember.get(member.id) ?? null }
       }),
-      profileRelationships,
+      profileRelationships: mergedProfileRelationships,
     })
   })
 
@@ -554,7 +658,10 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       const viewerUser = await prisma.user.findUnique({ where: { id: authContext.userId }, select: { communityMeta: true } })
       if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
 
-      const relatedUserIds = Array.from(new Set(deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry: any) => entry.relatedUserId).filter(Boolean)))
+      const storedRelatedUserIds = deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry: any) => entry.relatedUserId).filter(Boolean)
+      const notificationRelatedUserIds = [...(await loadAcceptedNotificationRelationshipMap(authContext.userId)).keys()]
+
+      const relatedUserIds = Array.from(new Set([...storedRelatedUserIds, ...notificationRelatedUserIds]))
       if (!relatedUserIds.length) return reply.send({ items: [] })
 
       const authorIds = Array.from(new Set([authContext.userId, ...relatedUserIds]))

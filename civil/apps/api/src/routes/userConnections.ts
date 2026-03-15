@@ -5,14 +5,31 @@ import { HandleParam, findCommunity } from '@civil/shared'
 
 type UserConnectionsDeps = {
   formatFriendUser: (user: any) => any
+  getStoredProfileFamilyRelationships: (value: any) => Array<{ relatedUserId: string; familyType: string; relatedName?: string | null }>
+  isFamilyMemberTableMissing: (error: unknown) => boolean
   loadAcceptedFriendIds: (userId: string) => Promise<string[]>
   loadViewerAuthContext: (req: FastifyRequest) => Promise<any>
   normalizeMediaUrl: (url?: string | null) => string | null
+  normalizeFamilyMemberSummary: (member: any) => any
   normalizeUserMedia: <T extends { avatarUrl?: string | null; coverUrl?: string | null }>(user: T) => T
+  profileFamilyRelationshipLabels: Record<string, string>
   withSchemaGuard: (req: FastifyRequest, reply: FastifyReply, handler: () => Promise<any>) => Promise<any>
 }
 
 export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserConnectionsDeps) {
+  const IMMEDIATE_FAMILY_TYPES = new Set([
+    'husband', 'wife', 'spouse', 'partner', 'common_law_partner', 'fiance', 'widowed_spouse',
+    'mother', 'father', 'parent', 'stepfather', 'stepmother', 'adoptive_father', 'adoptive_mother', 'foster_parent',
+    'son', 'daughter', 'child', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child',
+    'brother', 'sister', 'sibling', 'half_brother', 'half_sister', 'step_brother', 'step_sister',
+  ])
+  const EXTENDED_FAMILY_TYPES = new Set([
+    'grandmother', 'grandfather', 'grandparent', 'grandson', 'granddaughter', 'grandchild',
+    'aunt', 'uncle', 'niece', 'nephew', 'cousin', 'second_cousin', 'great_aunt', 'great_uncle',
+    'mother_in_law', 'father_in_law', 'sister_in_law', 'brother_in_law', 'son_in_law', 'daughter_in_law',
+    'ex_husband', 'ex_wife', 'other',
+  ])
+
   app.get('/home/right-rail', async (req: FastifyRequest, reply: FastifyReply) => {
     const authContext = await deps.loadViewerAuthContext(req)
     if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
@@ -370,6 +387,113 @@ export function registerUserConnectionsRoutes(app: FastifyInstance, deps: UserCo
       }))
 
       return { userHandle: user.handle, items }
+    }),
+  )
+
+  app.get('/users/:handle/family', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const params = HandleParam.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      const handle = params.data.handle.replace(/^@/, '').toLowerCase()
+      const user = await prisma.user.findUnique({
+        where: { handle },
+        select: { id: true, handle: true, communityMeta: true },
+      })
+
+      if (!user) return reply.code(404).send({ error: 'not_found' })
+
+      const storedRelationships = deps.getStoredProfileFamilyRelationships(user.communityMeta)
+      const dedupedRelationships = Array.from(new Map(storedRelationships.map((entry) => [entry.relatedUserId, entry])).values())
+      const relatedUserIds = dedupedRelationships.map((entry) => entry.relatedUserId)
+
+      const relatedUsers = relatedUserIds.length
+        ? await prisma.user.findMany({
+            where: { id: { in: relatedUserIds } },
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+              avatarUrl: true,
+              coverUrl: true,
+            },
+            orderBy: [{ name: 'asc' }, { handle: 'asc' }],
+          })
+        : []
+
+      const relatedUsersById = new Map(relatedUsers.map((entry) => [entry.id, entry]))
+      const relationshipItems = dedupedRelationships.flatMap((relationship) => {
+        const relatedUser = relatedUsersById.get(relationship.relatedUserId)
+        if (!relatedUser) return []
+
+        return [{
+          id: relatedUser.id,
+          handle: relatedUser.handle,
+          name: relatedUser.name,
+          avatarUrl: deps.normalizeMediaUrl(relatedUser.avatarUrl ?? null),
+          coverUrl: deps.normalizeMediaUrl(relatedUser.coverUrl ?? null),
+          relationshipLabel: deps.profileFamilyRelationshipLabels[relationship.familyType] ?? relationship.familyType,
+          relationshipType: relationship.familyType,
+        }]
+      })
+
+      let guardianOf: Array<{
+        id: string
+        handle: string | null
+        name: string
+        avatarUrl: string | null
+        coverUrl: string | null
+        relationshipLabel: string
+      }> = []
+
+      try {
+        const familyMembers = await prisma.familyMember.findMany({
+          where: { parentId: user.id },
+          orderBy: [{ createdAt: 'asc' }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            relationship: true,
+            username: true,
+            avatarUrl: true,
+            coverUrl: true,
+            dateOfBirth: true,
+            allowChildOwnMediaEdits: true,
+            allowChildOwnUsernameEdits: true,
+            notifyParentOnMediaChanges: true,
+            suspendedAt: true,
+            suspendedById: true,
+            suspensionNote: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+
+        guardianOf = familyMembers.map((member) => {
+          const normalized = deps.normalizeFamilyMemberSummary(member)
+          return {
+            id: normalized.id,
+            handle: normalized.username ?? null,
+            name: normalized.displayName,
+            avatarUrl: normalized.avatarUrl ?? null,
+            coverUrl: normalized.coverUrl ?? null,
+            relationshipLabel: normalized.relationshipLabel,
+          }
+        })
+      } catch (error) {
+        if (!deps.isFamilyMemberTableMissing(error)) throw error
+      }
+
+      const immediateFamily = relationshipItems.filter((entry) => IMMEDIATE_FAMILY_TYPES.has(entry.relationshipType))
+      const extendedFamily = relationshipItems.filter((entry) => !IMMEDIATE_FAMILY_TYPES.has(entry.relationshipType) || EXTENDED_FAMILY_TYPES.has(entry.relationshipType))
+
+      return {
+        userHandle: user.handle,
+        immediateFamily,
+        guardianOf,
+        extendedFamily,
+      }
     }),
   )
 }

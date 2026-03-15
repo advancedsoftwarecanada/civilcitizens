@@ -5,22 +5,52 @@ import { Prisma } from '@prisma/client'
 type AnalyticsNotificationDeps = Record<string, any>
 
 const FAMILY_RELATIONSHIP_VALUES = new Set([
+  'husband',
+  'wife',
+  'spouse',
+  'partner',
+  'common_law_partner',
+  'fiance',
+  'ex_husband',
+  'ex_wife',
+  'widowed_spouse',
   'mother',
   'father',
+  'parent',
+  'stepfather',
+  'stepmother',
+  'adoptive_father',
+  'adoptive_mother',
+  'foster_parent',
+  'son',
+  'daughter',
+  'child',
+  'stepson',
+  'stepdaughter',
+  'adopted_son',
+  'adopted_daughter',
+  'foster_child',
   'grandmother',
   'grandfather',
+  'grandparent',
+  'grandson',
+  'granddaughter',
+  'grandchild',
   'sister',
   'brother',
+  'sibling',
+  'half_brother',
+  'half_sister',
+  'step_brother',
+  'step_sister',
   'aunt',
   'uncle',
   'cousin',
   'second_cousin',
   'niece',
   'nephew',
-  'wife',
-  'husband',
-  'significant_other',
-  'partner',
+  'great_uncle',
+  'great_aunt',
   'mother_in_law',
   'father_in_law',
   'sister_in_law',
@@ -29,6 +59,72 @@ const FAMILY_RELATIONSHIP_VALUES = new Set([
   'son_in_law',
   'other',
 ])
+
+const RECIPROCAL_FAMILY_RELATIONSHIP_OPTIONS_BY_TYPE: Partial<Record<string, string[]>> = {
+  husband: ['wife', 'husband', 'spouse', 'partner', 'common_law_partner'],
+  wife: ['husband', 'wife', 'spouse', 'partner', 'common_law_partner'],
+  spouse: ['spouse', 'husband', 'wife', 'partner', 'common_law_partner'],
+  partner: ['partner', 'spouse', 'husband', 'wife', 'common_law_partner'],
+  common_law_partner: ['common_law_partner', 'partner', 'spouse', 'husband', 'wife'],
+  fiance: ['fiance', 'partner', 'spouse'],
+  ex_husband: ['ex_wife', 'ex_husband'],
+  ex_wife: ['ex_husband', 'ex_wife'],
+  widowed_spouse: ['widowed_spouse'],
+  mother: ['child', 'son', 'daughter', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child'],
+  father: ['child', 'son', 'daughter', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child'],
+  parent: ['child', 'son', 'daughter', 'stepson', 'stepdaughter', 'adopted_son', 'adopted_daughter', 'foster_child'],
+  stepfather: ['stepson', 'stepdaughter'],
+  stepmother: ['stepson', 'stepdaughter'],
+  adoptive_father: ['adopted_son', 'adopted_daughter'],
+  adoptive_mother: ['adopted_son', 'adopted_daughter'],
+  foster_parent: ['foster_child'],
+  son: ['parent', 'mother', 'father', 'stepmother', 'stepfather', 'adoptive_mother', 'adoptive_father', 'foster_parent'],
+  daughter: ['parent', 'mother', 'father', 'stepmother', 'stepfather', 'adoptive_mother', 'adoptive_father', 'foster_parent'],
+  child: ['parent', 'mother', 'father', 'stepmother', 'stepfather', 'adoptive_mother', 'adoptive_father', 'foster_parent'],
+  stepson: ['stepmother', 'stepfather'],
+  stepdaughter: ['stepmother', 'stepfather'],
+  adopted_son: ['adoptive_mother', 'adoptive_father'],
+  adopted_daughter: ['adoptive_mother', 'adoptive_father'],
+  foster_child: ['foster_parent'],
+  grandmother: ['grandchild', 'grandson', 'granddaughter'],
+  grandfather: ['grandchild', 'grandson', 'granddaughter'],
+  grandparent: ['grandchild', 'grandson', 'granddaughter'],
+  grandson: ['grandparent', 'grandmother', 'grandfather'],
+  granddaughter: ['grandparent', 'grandmother', 'grandfather'],
+  grandchild: ['grandparent', 'grandmother', 'grandfather'],
+  sister: ['sibling', 'sister', 'brother', 'half_sister', 'half_brother', 'step_sister', 'step_brother'],
+  brother: ['sibling', 'brother', 'sister', 'half_brother', 'half_sister', 'step_brother', 'step_sister'],
+  sibling: ['sibling', 'brother', 'sister', 'half_brother', 'half_sister', 'step_brother', 'step_sister'],
+  half_brother: ['half_brother', 'half_sister', 'brother', 'sister', 'sibling'],
+  half_sister: ['half_sister', 'half_brother', 'sister', 'brother', 'sibling'],
+  step_brother: ['step_brother', 'step_sister', 'brother', 'sister', 'sibling'],
+  step_sister: ['step_sister', 'step_brother', 'sister', 'brother', 'sibling'],
+  aunt: ['niece', 'nephew'],
+  uncle: ['nephew', 'niece'],
+  great_aunt: ['niece', 'nephew'],
+  great_uncle: ['nephew', 'niece'],
+  niece: ['aunt', 'uncle'],
+  nephew: ['uncle', 'aunt'],
+  mother_in_law: ['daughter_in_law', 'son_in_law'],
+  father_in_law: ['son_in_law', 'daughter_in_law'],
+  sister_in_law: ['sister_in_law', 'brother_in_law'],
+  brother_in_law: ['brother_in_law', 'sister_in_law'],
+  daughter_in_law: ['mother_in_law', 'father_in_law'],
+  son_in_law: ['father_in_law', 'mother_in_law'],
+  cousin: ['cousin'],
+  second_cousin: ['second_cousin'],
+  other: ['other'],
+}
+
+function resolveReciprocalFamilyRelationship(value: string) {
+  return RECIPROCAL_FAMILY_RELATIONSHIP_OPTIONS_BY_TYPE[value]?.[0] ?? value
+}
+
+function isAllowedReciprocalFamilyRelationship(sourceRelationship: string, reciprocalRelationship: string) {
+  const allowedOptions = RECIPROCAL_FAMILY_RELATIONSHIP_OPTIONS_BY_TYPE[sourceRelationship]
+  if (!allowedOptions?.length) return reciprocalRelationship === resolveReciprocalFamilyRelationship(sourceRelationship)
+  return allowedOptions.includes(reciprocalRelationship)
+}
 
 export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: AnalyticsNotificationDeps) {
   app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -79,6 +175,14 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
           : null
         if (!relationship) return reply.code(400).send({ error: 'invalid_notification_payload' })
 
+        const reciprocalRelationship =
+          typeof body.data.reciprocalRelationship === 'string' && FAMILY_RELATIONSHIP_VALUES.has(body.data.reciprocalRelationship)
+            ? body.data.reciprocalRelationship
+            : null
+        if (reciprocalRelationship && !isAllowedReciprocalFamilyRelationship(relationship, reciprocalRelationship)) {
+          return reply.code(400).send({ error: 'invalid_reciprocal_relationship' })
+        }
+
         const requesterUserId = notification.actorId
         if (!requesterUserId) return reply.code(400).send({ error: 'invalid_notification_payload' })
 
@@ -90,7 +194,13 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
 
         const nowIso = new Date().toISOString()
         const nextStatus: 'accepted' | 'rejected' = body.data.action === 'accept' ? 'accepted' : 'rejected'
-        const nextPayload: Prisma.InputJsonValue = { ...payload, status: nextStatus, respondedAt: nowIso }
+        const nextPayload: Prisma.InputJsonValue = {
+          ...payload,
+          status: nextStatus,
+          respondedAt: nowIso,
+          reciprocalRelationship: body.data.action === 'accept' ? reciprocalRelationship ?? undefined : undefined,
+          reciprocalCompleted: body.data.action === 'accept' ? Boolean(reciprocalRelationship) : false,
+        }
 
         const writes: Prisma.PrismaPromise<unknown>[] = [
           prisma.notification.update({ where: { id: notification.id }, data: { payload: nextPayload, readAt: notification.readAt ?? new Date() } }),
@@ -99,6 +209,8 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
         if (body.data.action === 'accept') {
           const requesterRelationships = deps.getStoredProfileFamilyRelationships(requesterUser.communityMeta)
           const targetRelationships = deps.getStoredProfileFamilyRelationships(targetUser.communityMeta)
+          const existingRequesterRelationship = requesterRelationships.find((entry: { relatedUserId: string }) => entry.relatedUserId === targetUser.id) ?? null
+          const existingTargetRelationship = targetRelationships.find((entry: { relatedUserId: string }) => entry.relatedUserId === requesterUser.id) ?? null
 
           const requesterBaseMeta = deps.readBaseCommunityMeta(requesterUser.communityMeta ?? null)
           deps.writeStoredProfileFamilyRelationships(
@@ -108,8 +220,8 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
               relatedHandle: targetUser.handle,
               relatedName: targetUser.name ?? null,
               familyType: relationship,
-              direction: 'outbound',
-              createdAt: nowIso,
+              direction: existingRequesterRelationship?.direction ?? 'outbound',
+              createdAt: existingRequesterRelationship?.createdAt ?? nowIso,
               updatedAt: nowIso,
             }),
           )
@@ -121,9 +233,9 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
               relatedUserId: requesterUser.id,
               relatedHandle: requesterUser.handle,
               relatedName: requesterUser.name ?? null,
-              familyType: relationship,
-              direction: 'inbound',
-              createdAt: nowIso,
+              familyType: reciprocalRelationship ?? existingTargetRelationship?.familyType ?? resolveReciprocalFamilyRelationship(relationship),
+              direction: existingTargetRelationship?.direction ?? 'inbound',
+              createdAt: existingTargetRelationship?.createdAt ?? nowIso,
               updatedAt: nowIso,
             }),
           )
