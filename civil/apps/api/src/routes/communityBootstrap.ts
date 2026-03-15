@@ -169,7 +169,6 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
     if (!community) return reply.code(404).send({ error: 'community_not_found' })
 
     await prisma.$transaction(async (tx: any) => {
-      await tx.communityFollow.updateMany({ where: { userId, home: true }, data: { home: false } })
       await tx.communityFollow.upsert({
         where: {
           userId_provinceCode_communitySlug: {
@@ -189,6 +188,18 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
           provinceCode: province,
           communitySlug: community.slug,
         },
+      })
+
+      await tx.communityFollow.updateMany({
+        where: {
+          userId,
+          home: true,
+          NOT: {
+            provinceCode: province,
+            communitySlug: community.slug,
+          },
+        },
+        data: { home: false },
       })
     })
 

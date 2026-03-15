@@ -90,6 +90,12 @@ type WelcomeHomeConfirmation = {
   postalCode?: string | null
 }
 
+type PendingHomeChangeConfirmation = {
+  provinceCode: string
+  communitySlug: string
+  communityName: string
+}
+
 const populationFormatter = new Intl.NumberFormat('en-CA')
 const POSTAL_CODE_PLACEHOLDER = 'e.g. M5V-2T6'
 
@@ -241,6 +247,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [assistUnlocked, setAssistUnlocked] = useState(false)
   const [welcomeAutoSaving, setWelcomeAutoSaving] = useState(false)
   const [welcomeHomeConfirmation, setWelcomeHomeConfirmation] = useState<WelcomeHomeConfirmation | null>(null)
+  const [pendingHomeChangeConfirmation, setPendingHomeChangeConfirmation] = useState<PendingHomeChangeConfirmation | null>(null)
   const [postalOwnerId, setPostalOwnerId] = useState<string | null>(null)
   const [suggestionSavingKey, setSuggestionSavingKey] = useState<string | null>(null)
   const [selectedBrowserProvince, setSelectedBrowserProvince] = useState('')
@@ -1100,9 +1107,31 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     return follows.some((item) => item.province === selectedProvince && item.communitySlug === selectedCommunitySlug)
   }, [follows, selectedCommunitySlug, selectedProvince])
 
-  const additionalFollows = useMemo(() => follows.filter((item) => !item.home), [follows])
+  const normalizedFollows = useMemo(() => {
+    const homeKey = homeCommunity ? `${homeCommunity.province}:${homeCommunity.slug}` : null
+    const mapped = follows.map((follow) => ({
+      ...follow,
+      home: homeKey ? `${follow.province}:${follow.communitySlug}` === homeKey : false,
+    }))
 
-  const homeFollow = useMemo(() => follows.find((item) => item.home), [follows])
+    if (!homeKey || mapped.some((follow) => follow.home)) {
+      return mapped
+    }
+
+    return [
+      {
+        province: homeCommunity.province,
+        communitySlug: homeCommunity.slug,
+        home: true,
+        chamber: homeCommunity,
+      },
+      ...mapped,
+    ]
+  }, [follows, homeCommunity])
+
+  const additionalFollows = useMemo(() => normalizedFollows.filter((item) => !item.home), [normalizedFollows])
+
+  const homeFollow = useMemo(() => normalizedFollows.find((item) => item.home), [normalizedFollows])
 
   const orderedFollows = useMemo(() => (homeFollow ? [homeFollow, ...additionalFollows] : additionalFollows), [homeFollow, additionalFollows])
 
@@ -1121,13 +1150,65 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     ? provinces.find((province) => province.code === selectedBrowserProvince)?.name ?? selectedBrowserProvince.toUpperCase()
     : 'Canada'
   const visibleOrderedFollows = useMemo(() => {
-    if (!selectedBrowserProvince) return orderedFollows
-    return orderedFollows.filter((follow) => follow.province === selectedBrowserProvince)
-  }, [orderedFollows, selectedBrowserProvince])
+    const provinceFollows = selectedBrowserProvince
+      ? orderedFollows.filter((follow) => follow.province === selectedBrowserProvince)
+      : orderedFollows
+
+    if (!selectedBrowserProvince || !districtBrowser?.districts.length) {
+      return provinceFollows
+    }
+
+    const followMap = new Map(provinceFollows.map((follow) => [`${follow.province}:${follow.communitySlug}`, follow]))
+    const browserDrivenFollows = districtBrowser.districts
+      .filter((district) => district.provinceCode === selectedBrowserProvince)
+      .filter((district) => {
+        const districtKey = `${district.provinceCode}:${district.slug}`
+        const isHomeDistrict = homeCommunity?.province === district.provinceCode && homeCommunity?.slug === district.slug
+        const isFollowedDistrict = follows.some((follow) => follow.province === district.provinceCode && follow.communitySlug === district.slug)
+        return isHomeDistrict || isFollowedDistrict
+      })
+      .map((district) => {
+        const districtKey = `${district.provinceCode}:${district.slug}`
+        const existing = followMap.get(districtKey)
+        if (existing) {
+          return {
+            ...existing,
+            home: Boolean(homeCommunity?.province === district.provinceCode && homeCommunity?.slug === district.slug),
+          }
+        }
+        return {
+          province: district.provinceCode,
+          communitySlug: district.slug,
+          home: Boolean(homeCommunity?.province === district.provinceCode && homeCommunity?.slug === district.slug),
+          chamber: {
+            slug: district.slug,
+            province: district.provinceCode,
+            name: district.name,
+          },
+        } satisfies CommunityFollow
+      })
+
+    return browserDrivenFollows.sort((left, right) => {
+      if (left.home !== right.home) return left.home ? -1 : 1
+      const leftName = left.chamber?.name ?? formatCommunityDisplayName(left.communitySlug)
+      const rightName = right.chamber?.name ?? formatCommunityDisplayName(right.communitySlug)
+      return leftName.localeCompare(rightName)
+    })
+  }, [districtBrowser, follows, homeCommunity, orderedFollows, selectedBrowserProvince])
 
   const followButtonClass = 'border border-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
   const visitButtonClass = 'border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60'
   const locationButtonClass = 'inline-flex items-center justify-center border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white disabled:cursor-not-allowed disabled:opacity-60'
+
+  function requestHomeCommunityChange(provinceCode: string, communitySlug: string, communityName: string) {
+    setPendingHomeChangeConfirmation({ provinceCode, communitySlug, communityName })
+  }
+
+  async function confirmHomeCommunityChange() {
+    if (!pendingHomeChangeConfirmation) return
+    await setHomeCommunity(pendingHomeChangeConfirmation.provinceCode, pendingHomeChangeConfirmation.communitySlug, 'list')
+    setPendingHomeChangeConfirmation(null)
+  }
 
   const manageSection = (
     <section className="surface-card space-y-6 px-6 py-5 shadow-subtle">
@@ -1166,9 +1247,21 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                         <div className="text-lg font-semibold text-slate-900">{cityLabel}</div>
                       </div>
                     </div>
-                    <span className={`rounded-full px-2 py-1 text-xs font-semibold ${isHome ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
-                      {isHome ? 'Home' : 'Following'}
-                    </span>
+                    <div className="flex flex-col items-start gap-2 sm:items-end">
+                      <span className={`rounded-full px-2 py-1 text-xs font-semibold ${isHome ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {isHome ? 'Home' : 'Following'}
+                      </span>
+                      {!isHome ? (
+                        <button
+                          type="button"
+                          className="border border-emerald-300 bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => requestHomeCommunityChange(chamber.province, chamber.slug, cityLabel)}
+                          disabled={isUpdating}
+                        >
+                          {isUpdating ? 'Setting…' : 'Set as home'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
@@ -1186,16 +1279,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                     <Link className="border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-white" href={visitHref}>
                       Visit
                     </Link>
-                    {!isHome ? (
-                      <button
-                        type="button"
-                        className="border border-emerald-300 bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => setHomeCommunity(chamber.province, chamber.slug, 'list')}
-                        disabled={isUpdating}
-                      >
-                        {isUpdating ? 'Setting…' : 'Set as home'}
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       className="border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1989,6 +2072,46 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     )
   }
 
+  const homeChangeConfirmationOverlay = !pendingHomeChangeConfirmation ? null : (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-6 backdrop-blur-sm" aria-modal="true" role="dialog">
+      <div className="w-full max-w-2xl rounded-[28px] border border-white/15 bg-white shadow-[0_32px_120px_rgba(15,23,42,0.38)]">
+        <div className="border-b border-slate-200 px-6 py-5 sm:px-8">
+          <h2 className="text-2xl font-bold text-slate-950">Change home community?</h2>
+        </div>
+
+        <div className="space-y-5 px-6 py-6 sm:px-8">
+          <div className="space-y-3 text-sm leading-6 text-slate-700">
+            <p>
+              Setting your home community will change your membership status, and set your current home community to following. You will still receive relatively the same feeds, but priority is given to your home community.
+            </p>
+            <p>
+              Are you sure you wish to change your home community to <span className="font-semibold text-slate-900">{pendingHomeChangeConfirmation.communityName}</span>?
+            </p>
+          </div>
+
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => setPendingHomeChangeConfirmation(null)}
+              disabled={Boolean(managingFollow)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-full bg-[var(--cc-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-slate-400"
+              onClick={() => void confirmHomeCommunityChange()}
+              disabled={Boolean(managingFollow)}
+            >
+              {Boolean(managingFollow) ? 'Setting…' : 'Yes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <>
       <div className="border-b bg-white py-4 shadow-sm xl:hidden">
@@ -2006,6 +2129,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         {mainContent}
       </DashboardShell>
       {geoOverlay}
+      {homeChangeConfirmationOverlay}
     </>
   )
 }
