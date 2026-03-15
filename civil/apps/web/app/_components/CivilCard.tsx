@@ -204,6 +204,8 @@ export default function CivilCard({
   const resolvedSubtitleLines = subtitleLines ?? sizeStyles.subtitleLines
   const resolvedAlign = align ?? (details ? 'start' : 'center')
   const isInteractive = interactive ?? Boolean(href || titleHref || avatarHref)
+  const resolvedTitleHref = href ? undefined : titleHref
+  const resolvedAvatarHref = href ? undefined : avatarHref
   const overlayAvatarWidth = sizeStyles.avatarWidth ?? avatarSize ?? sizeStyles.avatar
   const overlayAvatarInitials = deriveCardInitials(avatarInitials ?? avatarAlt)
   const overlayAvatarFallbackSize = Math.max(16, Math.round((avatarSize ?? sizeStyles.avatar) / 1.3))
@@ -218,9 +220,9 @@ export default function CivilCard({
     className,
   )
 
-  const titleNode = titleHref ? (
+  const titleNode = resolvedTitleHref ? (
     <Link
-      href={titleHref}
+      href={resolvedTitleHref}
       className={clsx(
         shouldCenterOverlayIdentity
           ? 'block max-w-full text-center font-semibold leading-tight text-white hover:underline'
@@ -248,9 +250,9 @@ export default function CivilCard({
     </p>
   )
 
-  const centeredTitleNode = titleHref ? (
+  const centeredTitleNode = resolvedTitleHref ? (
     <Link
-      href={titleHref}
+      href={resolvedTitleHref}
       className={clsx(
         'block w-fit max-w-full text-center font-semibold leading-tight text-white hover:underline',
         sizeStyles.title,
@@ -315,9 +317,9 @@ export default function CivilCard({
       ) : null}
 
       {usesAvatarOverlay ? (
-        avatarHref && !href ? (
+        resolvedAvatarHref ? (
           <Link
-            href={avatarHref}
+            href={resolvedAvatarHref}
             aria-label={avatarAlt}
             className={clsx(
               'absolute inset-y-0 left-0 z-[2] flex items-center justify-center overflow-hidden text-slate-600',
@@ -378,7 +380,7 @@ export default function CivilCard({
               isVerified={isVerified}
               isBusiness={isBusiness}
               className="shrink-0"
-              href={avatarHref}
+              href={resolvedAvatarHref}
             />
           ) : null}
 

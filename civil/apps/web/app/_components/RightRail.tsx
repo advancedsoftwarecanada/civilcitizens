@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
+import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
+import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { formatUserDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
 import { pushToast } from './useToasts'
@@ -191,6 +193,60 @@ type WorkApplicationsRailResponse = {
   items?: WorkApplicationRailItem[]
 }
 
+type FamilyMemberRailItem = {
+  id: string
+  displayName: string
+  modeBand: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+  relationshipLabel: string
+  avatarUrl?: string | null
+  latestPostAt?: string | null
+  suspended: boolean
+}
+
+type ProfileFamilyRelationshipRailItem = {
+  id: string
+  handle: string
+  displayName: string
+  relationshipLabel: string
+  avatarUrl?: string | null
+  coverUrl?: string | null
+  latestPostAt?: string | null
+}
+
+type FamilyRailResponse = {
+  members?: FamilyMemberRailItem[]
+  profileRelationships?: ProfileFamilyRelationshipRailItem[]
+}
+
+type FamilyRailEntry =
+  | {
+      kind: 'member'
+      id: string
+      displayName: string
+      relationshipLabel: string
+      avatarUrl?: string | null
+      modeBand: FamilyMemberRailItem['modeBand']
+      latestPostAt?: string | null
+      suspended: boolean
+    }
+  | {
+      kind: 'profile'
+      id: string
+      handle: string
+      displayName: string
+      relationshipLabel: string
+      avatarUrl?: string | null
+      coverUrl?: string | null
+      latestPostAt?: string | null
+    }
+
+function formatLatestFamilyPostLabel(value?: string | null) {
+  if (!value) return 'No posts yet'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'No posts yet'
+  return `Latest post ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+}
+
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 
 export function RightRail({
@@ -229,6 +285,8 @@ export function RightRail({
   const [eventRsvps, setEventRsvps] = useState<EventSidebarRsvpItem[]>([])
   const [eventOrganizations, setEventOrganizations] = useState<EventSidebarOrganization[]>([])
   const [workApplications, setWorkApplications] = useState<WorkApplicationRailItem[]>([])
+  const [familyMembers, setFamilyMembers] = useState<FamilyMemberRailItem[]>([])
+  const [familyRelationships, setFamilyRelationships] = useState<ProfileFamilyRelationshipRailItem[]>([])
 
   const getOrganizationHref = useCallback(
     (org: { provinceCode: string | null; communitySlug: string | null; slug: string }) => {
@@ -248,6 +306,7 @@ export function RightRail({
   const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps)
   const shouldLoadWorkApplications = mode === 'work'
   const shouldLoadHomeRail = !hideSocialBlocks
+  const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
 
   const subscribedOrganizations = useMemo(
     () => organizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
@@ -307,6 +366,39 @@ export function RightRail({
     return [...owned, ...dedupedMemberships, ...followed]
   }, [ownedOrganizations, memberOrganizations, subscribedOrganizations])
 
+  const familyEntries = useMemo<FamilyRailEntry[]>(() => {
+    const memberEntries = familyMembers.map((member) => ({
+      kind: 'member' as const,
+      id: member.id,
+      displayName: member.displayName,
+      relationshipLabel: member.relationshipLabel,
+      avatarUrl: member.avatarUrl ?? null,
+      modeBand: member.modeBand,
+      latestPostAt: member.latestPostAt ?? null,
+      suspended: member.suspended,
+    }))
+
+    const relationshipEntries = familyRelationships.map((relationship) => ({
+      kind: 'profile' as const,
+      id: relationship.id,
+      handle: relationship.handle,
+      displayName: relationship.displayName,
+      relationshipLabel: relationship.relationshipLabel,
+      avatarUrl: relationship.avatarUrl ?? null,
+      coverUrl: relationship.coverUrl ?? null,
+      latestPostAt: relationship.latestPostAt ?? null,
+    }))
+
+    return [...memberEntries, ...relationshipEntries]
+      .sort((left, right) => {
+        const leftTime = left.latestPostAt ? new Date(left.latestPostAt).getTime() : 0
+        const rightTime = right.latestPostAt ? new Date(right.latestPostAt).getTime() : 0
+        if (rightTime !== leftTime) return rightTime - leftTime
+        return left.displayName.localeCompare(right.displayName)
+      })
+      .slice(0, 5)
+  }, [familyMembers, familyRelationships])
+
   const loadData = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
@@ -315,7 +407,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'family'
         promise: Promise<Response>
       }> = []
 
@@ -400,6 +492,16 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadFamilyRail) {
+        requests.push({
+          key: 'family',
+          promise: fetch(buildApiUrl('/family'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        })
+      }
+
       const results = await Promise.all(requests.map((entry) => entry.promise))
       const byKey = new Map(requests.map((entry, index) => [entry.key, results[index] as Response]))
 
@@ -412,6 +514,7 @@ export function RightRail({
       const connectionRequestsRes = byKey.get('connectionRequests')
       const eventsSidebarRes = byKey.get('eventsSidebar')
       const workApplicationsRes = byKey.get('workApplications')
+      const familyRes = byKey.get('family')
 
       if (
         homeRes?.status === 401 ||
@@ -422,7 +525,8 @@ export function RightRail({
         friendRequestsRes?.status === 401 ||
         connectionRequestsRes?.status === 401 ||
         eventsSidebarRes?.status === 401 ||
-        workApplicationsRes?.status === 401
+        workApplicationsRes?.status === 401 ||
+        familyRes?.status === 401
       ) {
         setStatus('unauthorized')
         return
@@ -526,12 +630,21 @@ export function RightRail({
         setWorkApplications([])
       }
 
+      if (familyRes?.ok) {
+        const payload = (await familyRes.json().catch(() => null)) as FamilyRailResponse | null
+        setFamilyMembers(Array.isArray(payload?.members) ? payload.members : [])
+        setFamilyRelationships(Array.isArray(payload?.profileRelationships) ? payload.profileRelationships : [])
+      } else {
+        setFamilyMembers([])
+        setFamilyRelationships([])
+      }
+
       setStatus('ready')
     } catch (err) {
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadFamilyRail])
 
   useEffect(() => {
     void loadData()
@@ -673,6 +786,38 @@ export function RightRail({
               )
             })}
           </ul>
+        </Block>
+      ) : null}
+
+      {!hideSocialBlocks && !isFamilyLockedSession && viewer?.accountType === 'user' && (hasFamilyProfilesAvailable(viewer) || familyEntries.length > 0) ? (
+        <Block title="Your Family" action={{ label: 'View all', href: viewer?.handle ? `/u/${viewer.handle}/family` : '/family' }}>
+          {familyEntries.length ? (
+            <ul className="space-y-3">
+              {familyEntries.map((entry) => {
+                const avatarSrc = entry.kind === 'member'
+                  ? entry.avatarUrl ?? buildFamilyAvatarDataUrl(entry.displayName, entry.modeBand)
+                  : entry.avatarUrl ?? null
+                const subtitle = `${entry.relationshipLabel} • ${formatLatestFamilyPostLabel(entry.latestPostAt)}`
+                return (
+                  <li key={`${entry.kind}:${entry.id}`}>
+                    <CivilCard
+                      href={entry.kind === 'profile' ? `/u/${entry.handle}` : undefined}
+                      size="md"
+                      name={entry.displayName}
+                      avatarAlt={entry.displayName}
+                      avatarInitials={entry.displayName}
+                      avatarSrc={avatarSrc}
+                      coverUrl={entry.kind === 'profile' ? entry.coverUrl ?? null : null}
+                      subtitle={subtitle}
+                      interactive={entry.kind === 'profile'}
+                    />
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No Family relationships yet.</p>
+          )}
         </Block>
       ) : null}
 

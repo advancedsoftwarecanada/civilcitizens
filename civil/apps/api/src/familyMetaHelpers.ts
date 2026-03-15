@@ -13,22 +13,52 @@ type CitySummaryType = {
 }
 
 export type ProfileFamilyRelationship =
+  | 'husband'
+  | 'wife'
+  | 'spouse'
+  | 'partner'
+  | 'common_law_partner'
+  | 'fiance'
+  | 'ex_husband'
+  | 'ex_wife'
+  | 'widowed_spouse'
   | 'mother'
   | 'father'
+  | 'parent'
+  | 'stepfather'
+  | 'stepmother'
+  | 'adoptive_father'
+  | 'adoptive_mother'
+  | 'foster_parent'
+  | 'son'
+  | 'daughter'
+  | 'child'
+  | 'stepson'
+  | 'stepdaughter'
+  | 'adopted_son'
+  | 'adopted_daughter'
+  | 'foster_child'
   | 'grandmother'
   | 'grandfather'
+  | 'grandparent'
+  | 'grandson'
+  | 'granddaughter'
+  | 'grandchild'
   | 'sister'
   | 'brother'
+  | 'sibling'
+  | 'half_brother'
+  | 'half_sister'
+  | 'step_brother'
+  | 'step_sister'
   | 'aunt'
   | 'uncle'
   | 'cousin'
   | 'second_cousin'
   | 'niece'
   | 'nephew'
-  | 'wife'
-  | 'husband'
-  | 'significant_other'
-  | 'partner'
+  | 'great_uncle'
+  | 'great_aunt'
   | 'mother_in_law'
   | 'father_in_law'
   | 'sister_in_law'
@@ -371,22 +401,52 @@ export function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): 
         if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
         const value = rawValue as Record<string, unknown>
         const familyType =
+          value.familyType === 'husband' ||
+          value.familyType === 'wife' ||
+          value.familyType === 'spouse' ||
+          value.familyType === 'partner' ||
+          value.familyType === 'common_law_partner' ||
+          value.familyType === 'fiance' ||
+          value.familyType === 'ex_husband' ||
+          value.familyType === 'ex_wife' ||
+          value.familyType === 'widowed_spouse' ||
           value.familyType === 'mother' ||
           value.familyType === 'father' ||
+          value.familyType === 'parent' ||
+          value.familyType === 'stepfather' ||
+          value.familyType === 'stepmother' ||
+          value.familyType === 'adoptive_father' ||
+          value.familyType === 'adoptive_mother' ||
+          value.familyType === 'foster_parent' ||
+          value.familyType === 'son' ||
+          value.familyType === 'daughter' ||
+          value.familyType === 'child' ||
+          value.familyType === 'stepson' ||
+          value.familyType === 'stepdaughter' ||
+          value.familyType === 'adopted_son' ||
+          value.familyType === 'adopted_daughter' ||
+          value.familyType === 'foster_child' ||
           value.familyType === 'grandmother' ||
           value.familyType === 'grandfather' ||
+          value.familyType === 'grandparent' ||
+          value.familyType === 'grandson' ||
+          value.familyType === 'granddaughter' ||
+          value.familyType === 'grandchild' ||
           value.familyType === 'sister' ||
           value.familyType === 'brother' ||
+          value.familyType === 'sibling' ||
+          value.familyType === 'half_brother' ||
+          value.familyType === 'half_sister' ||
+          value.familyType === 'step_brother' ||
+          value.familyType === 'step_sister' ||
           value.familyType === 'aunt' ||
           value.familyType === 'uncle' ||
           value.familyType === 'cousin' ||
           value.familyType === 'second_cousin' ||
           value.familyType === 'niece' ||
           value.familyType === 'nephew' ||
-          value.familyType === 'wife' ||
-          value.familyType === 'husband' ||
-          value.familyType === 'significant_other' ||
-          value.familyType === 'partner' ||
+          value.familyType === 'great_uncle' ||
+          value.familyType === 'great_aunt' ||
           value.familyType === 'mother_in_law' ||
           value.familyType === 'father_in_law' ||
           value.familyType === 'sister_in_law' ||

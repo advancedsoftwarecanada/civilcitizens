@@ -406,6 +406,32 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           }
         }
 
+        let profileFamilyRelationship: {
+          familyType: string
+          relationshipLabel: string
+        } | null = null
+
+        if (authContext?.actor === 'user' && viewerId && viewerId !== user.id) {
+          try {
+            const viewerUser = await prisma.user.findUnique({
+              where: { id: viewerId },
+              select: { communityMeta: true },
+            })
+            const storedRelationship = deps
+              .getStoredProfileFamilyRelationships(viewerUser?.communityMeta)
+              .find((entry: { relatedUserId: string }) => entry.relatedUserId === user.id)
+
+            if (storedRelationship) {
+              profileFamilyRelationship = {
+                familyType: storedRelationship.familyType,
+                relationshipLabel: deps.profileFamilyRelationshipLabels[storedRelationship.familyType] ?? storedRelationship.familyType,
+              }
+            }
+          } catch (error) {
+            // Ignore
+          }
+        }
+
         const sortMode = sort ?? 'new'
 
         const where: Prisma.PostWhereInput = {
@@ -549,7 +575,10 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
 
         return {
           user,
-          relationship,
+          relationship: {
+            ...relationship,
+            profileFamilyRelationship,
+          },
           items: posts.map((post: (typeof posts)[number]) =>
             deps.formatPost(post, {
               viewerId,

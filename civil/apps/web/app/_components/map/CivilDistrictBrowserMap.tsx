@@ -16,7 +16,7 @@ type CivilDistrictBrowserMapProps = {
   isSelectedDistrictHome: boolean
   isFollowPending: boolean
   onSelectDistrict: (districtCode: number) => void
-  onFollowSelectedDistrict: () => void
+  onToggleSelectedDistrictFollow: () => void
 }
 
 function collectBounds(browser: ElectoralDistrictBrowserResponse) {
@@ -142,7 +142,7 @@ function buildPopupContent(args: {
   isHome: boolean
   isFollowPending: boolean
   visitHref: string
-  onFollow: () => void
+  onToggleFollow: () => void
 }) {
   const root = document.createElement('div')
   root.style.minWidth = '168px'
@@ -239,18 +239,22 @@ function buildPopupContent(args: {
   follow.style.padding = '5px 9px'
   follow.style.fontSize = '11px'
   follow.style.fontWeight = '700'
-  follow.disabled = args.isHome || args.isFollowing || args.isFollowPending
+  follow.disabled = args.isHome || args.isFollowPending
   if (follow.disabled) {
     follow.style.border = '1px solid #e2e8f0'
     follow.style.color = '#94a3b8'
     follow.style.background = '#f8fafc'
+  } else if (args.isFollowing) {
+    follow.style.border = '1px solid #dc2626'
+    follow.style.color = '#dc2626'
+    follow.style.background = '#fef2f2'
   } else {
     follow.style.border = '1px solid #0f172a'
     follow.style.color = '#0f172a'
     follow.style.background = 'transparent'
   }
-  follow.textContent = args.isHome ? 'Home' : args.isFollowing ? 'Following' : args.isFollowPending ? 'Following…' : 'Follow'
-  follow.addEventListener('click', args.onFollow)
+  follow.textContent = args.isHome ? 'Home' : args.isFollowPending ? (args.isFollowing ? 'Unfollowing…' : 'Following…') : args.isFollowing ? 'Unfollow' : 'Follow'
+  follow.addEventListener('click', args.onToggleFollow)
   actions.appendChild(follow)
 
   root.appendChild(actions)
@@ -268,7 +272,7 @@ export function CivilDistrictBrowserMap({
   isSelectedDistrictHome,
   isFollowPending,
   onSelectDistrict,
-  onFollowSelectedDistrict,
+  onToggleSelectedDistrictFollow,
 }: CivilDistrictBrowserMapProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -277,7 +281,7 @@ export function CivilDistrictBrowserMap({
   const popupRef = useRef<any>(null)
   const popupDismissedRef = useRef(false)
   const onSelectDistrictRef = useRef(onSelectDistrict)
-  const onFollowSelectedDistrictRef = useRef(onFollowSelectedDistrict)
+  const onToggleSelectedDistrictFollowRef = useRef(onToggleSelectedDistrictFollow)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const selectionStateRef = useRef({
     selectedDistrictCode,
@@ -293,8 +297,8 @@ export function CivilDistrictBrowserMap({
   }, [onSelectDistrict])
 
   useEffect(() => {
-    onFollowSelectedDistrictRef.current = onFollowSelectedDistrict
-  }, [onFollowSelectedDistrict])
+    onToggleSelectedDistrictFollowRef.current = onToggleSelectedDistrictFollow
+  }, [onToggleSelectedDistrictFollow])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -366,7 +370,7 @@ export function CivilDistrictBrowserMap({
           isHome: isSelectedDistrictHome,
           isFollowPending,
           visitHref: `/${resolvedDistrict.provinceCode.toLowerCase()}/${resolvedDistrict.slug.toLowerCase()}`,
-          onFollow: () => onFollowSelectedDistrictRef.current(),
+          onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
         }),
       )
       .addTo(map)
@@ -550,7 +554,7 @@ export function CivilDistrictBrowserMap({
                 isHome: nextSelection.isSelectedDistrictHome,
                 isFollowPending: nextSelection.isFollowPending,
                 visitHref: `/${resolvedDistrict.provinceCode.toLowerCase()}/${resolvedDistrict.slug.toLowerCase()}`,
-                onFollow: () => onFollowSelectedDistrictRef.current(),
+                onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
               }),
             )
             .addTo(map)
