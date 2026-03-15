@@ -71,7 +71,7 @@ function buildDistrictFillOpacity(code: number) {
 }
 
 function buildFillColorExpression(selectedCode: number | null, districtStatusByCode: Record<number, DistrictVisualStatus>) {
-  const { homeCodes, followingCodes, nearbyCodes } = splitStatusCodes(districtStatusByCode)
+  const { homeCodes, followingCodes } = splitStatusCodes(districtStatusByCode)
   return [
     'case',
     ['==', ['get', 'code'], selectedCode ?? -1],
@@ -81,8 +81,6 @@ function buildFillColorExpression(selectedCode: number | null, districtStatusByC
       '#86efac',
       ['in', ['get', 'code'], ['literal', followingCodes]],
       '#93c5fd',
-      ['in', ['get', 'code'], ['literal', nearbyCodes]],
-      '#fdba74',
       '#d1d5db',
     ],
     [
@@ -91,8 +89,6 @@ function buildFillColorExpression(selectedCode: number | null, districtStatusByC
       '#bbf7d0',
       ['in', ['get', 'code'], ['literal', followingCodes]],
       '#bfdbfe',
-      ['in', ['get', 'code'], ['literal', nearbyCodes]],
-      '#fed7aa',
       '#e5e7eb',
     ],
   ]
@@ -108,7 +104,7 @@ function buildFillOpacityExpression(selectedCode: number | null) {
 }
 
 function buildLineColorExpression(selectedCode: number | null, districtStatusByCode: Record<number, DistrictVisualStatus>) {
-  const { homeCodes, followingCodes, nearbyCodes } = splitStatusCodes(districtStatusByCode)
+  const { homeCodes, followingCodes } = splitStatusCodes(districtStatusByCode)
   return [
     'case',
     ['==', ['get', 'code'], selectedCode ?? -1],
@@ -118,8 +114,6 @@ function buildLineColorExpression(selectedCode: number | null, districtStatusByC
       '#16a34a',
       ['in', ['get', 'code'], ['literal', followingCodes]],
       '#2563eb',
-      ['in', ['get', 'code'], ['literal', nearbyCodes]],
-      '#ea580c',
       '#475569',
     ],
     [
@@ -128,8 +122,6 @@ function buildLineColorExpression(selectedCode: number | null, districtStatusByC
       '#22c55e',
       ['in', ['get', 'code'], ['literal', followingCodes]],
       '#3b82f6',
-      ['in', ['get', 'code'], ['literal', nearbyCodes]],
-      '#f97316',
       '#94a3b8',
     ],
   ]

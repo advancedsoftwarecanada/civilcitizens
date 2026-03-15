@@ -479,7 +479,7 @@ export default function MobileDock() {
 
   const morePanelContent = useMemo(() => {
     if (pathname === '/home') {
-      return <RightRail showOrganizations showRsvps sticky={false} />
+      return <RightRail showOrganizations showRsvps />
     }
     const isFriendsDirectoryRoute =
       pathname?.startsWith('/friends') || Boolean(pathname?.match(/^\/u\/[^/]+\/friends(?:\/|$)/))
@@ -491,35 +491,35 @@ export default function MobileDock() {
             active="friends"
             visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
           />
-          <RightRail hideCommunities showPendingFriendRequests sticky={false} />
+          <RightRail hideCommunities showPendingFriendRequests />
         </div>
       )
     }
     if (pathname?.startsWith('/network')) {
       return pathname === '/network'
-        ? <RightRail mode="network" showRsvps sticky={false} />
-        : <RightRail mode="network" sticky={false} />
+        ? <RightRail mode="network" showRsvps />
+        : <RightRail mode="network" />
     }
     if (pathname?.startsWith('/events')) {
-      return <RightRail mode="events" showOrganizations sticky={false} />
+      return <RightRail mode="events" showOrganizations />
     }
     if (pathname?.startsWith('/work')) {
-      return <RightRail mode="work" organizationLinkTarget="chat" sticky={false} />
+      return <RightRail mode="work" organizationLinkTarget="chat" />
     }
     if (pathname?.startsWith('/market')) {
-      return <RightRail mode="default" hideContacts hideCommunities sticky={false} />
+      return <RightRail mode="default" hideContacts hideCommunities />
     }
     if (pathname?.startsWith('/channels')) {
-      return <RightRail mode="organizations" organizationLinkTarget="chat" sticky={false} />
+      return <RightRail mode="organizations" organizationLinkTarget="chat" />
     }
     if (pathname === '/organizations') {
-      return <RightRail showOrganizations hideContacts hideCommunities sticky={false} />
+      return <RightRail showOrganizations hideContacts hideCommunities />
     }
     if (pathname?.startsWith('/organizations')) {
       return isOrganizationsDirectory ? (
-        <RightRail mode="organizationsDirectory" sticky={false} />
+        <RightRail mode="organizationsDirectory" />
       ) : (
-        <RightRail mode="organizations" sticky={false} />
+        <RightRail mode="organizations" />
       )
     }
     if (userRelationshipRoute) {
@@ -533,12 +533,11 @@ export default function MobileDock() {
             <RightRail
               hideContacts
               hideCommunities={userRelationshipRoute.kind === 'friends'}
-              sticky={false}
             />
           </div>
         )
       }
-      return <RightRail hideContacts sticky={false} />
+      return <RightRail hideContacts />
     }
     if (orgRoute) {
       return (
@@ -554,12 +553,12 @@ export default function MobileDock() {
       )
     }
     if (pathname?.startsWith('/communities')) {
-      return <RightRail mode="communitiesFeed" sticky={false} />
+      return <RightRail mode="communitiesFeed" />
     }
     if (communityRoute) {
       return <CommunityRightRailClient province={communityRoute.province} municipality={communityRoute.municipality} />
     }
-    return <RightRail sticky={false} />
+    return <RightRail />
   }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute, userRelationshipRoute])
 
   if (!hydrated || !hasSession) {
