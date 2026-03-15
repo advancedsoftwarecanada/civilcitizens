@@ -3,6 +3,8 @@
 import { useEffect } from 'react'
 
 function sanitizePlaceholder(element: HTMLInputElement | HTMLTextAreaElement) {
+  if (element.hasAttribute('data-preserve-placeholder')) return
+
   const placeholder = element.getAttribute('placeholder')?.trim()
   if (!placeholder) return
 
