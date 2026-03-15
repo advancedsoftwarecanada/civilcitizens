@@ -114,146 +114,11 @@ import {
   type CivilAiPostDataItem,
 } from './civilAiSources.js'
 import { createAuthViewerHelpers } from './authViewer.js'
-type DailyCount = { date: string; count: number }
-type JobAnalyticsKind = 'job_added' | 'applicant_submitted' | 'applications_viewed' | 'applicant_hired'
-
-const METRIC_TABLES = {
-  users: { table: '"User"', column: '"createdAt"' },
-  posts: { table: '"Post"', column: '"createdAt"' },
-  comments: { table: '"Comment"', column: '"createdAt"' },
-  reactions: { table: '"PostReaction"', column: '"createdAt"' },
-} as const
-
-type DateRange = { start: Date; end: Date }
-
-async function queryDailyCounts(kind: keyof typeof METRIC_TABLES, range: DateRange): Promise<DailyCount[]> {
-  const config = METRIC_TABLES[kind]
-  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
-    select date_trunc('day', ${Prisma.raw(config.column)}) as date, count(*)::bigint as count
-    from ${Prisma.raw(config.table)}
-    where ${Prisma.raw(config.column)} >= ${range.start} and ${Prisma.raw(config.column)} < ${range.end}
-    group by 1
-    order by 1 asc
-  `
-  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
-}
-
-async function queryFollowSeries(range: DateRange): Promise<DailyCount[]> {
-  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
-    select date_trunc('day', created_at) as date, count(*)::bigint as count
-    from (
-      select "createdAt" as created_at
-      from "CommunityFollow"
-      where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
-      union all
-      select "createdAt" as created_at
-      from "BusinessFollow"
-      where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
-    ) follows
-    group by 1
-    order by 1 asc
-  `
-  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
-}
-
-async function queryPageViewSeries(range: DateRange): Promise<DailyCount[]> {
-  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
-    select date_trunc('day', "createdAt") as date, count(*)::bigint as count
-    from "PageView"
-    where "createdAt" >= ${range.start} and "createdAt" < ${range.end}
-    group by 1
-    order by 1 asc
-  `
-  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
-}
-
-async function queryJobAnalyticsSeries(kind: JobAnalyticsKind, range: DateRange): Promise<DailyCount[]> {
-  const rows = await prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
-    select date_trunc('day', "createdAt") as date, count(*)::bigint as count
-    from "JobAnalyticsEvent"
-    where "kind" = ${kind}::"JobAnalyticsEventKind"
-      and "createdAt" >= ${range.start}
-      and "createdAt" < ${range.end}
-    group by 1
-    order by 1 asc
-  `
-  return rows.map((row: { date: Date; count: bigint }) => ({ date: row.date.toISOString(), count: Number(row.count) || 0 }))
-}
-
-async function trackJobAnalyticsEvent(args: {
-  kind: JobAnalyticsKind
-  businessId: string
-  jobPostingId?: string | null
-  jobApplicationId?: string | null
-  actorUserId?: string | null
-  createdAt?: Date
-}) {
-  await prisma.$executeRaw`
-    INSERT INTO "JobAnalyticsEvent" (
-      "id", "kind", "businessId", "jobPostingId", "jobApplicationId", "actorUserId", "createdAt"
-    )
-    VALUES (
-      ${randomUUID()},
-      ${args.kind}::"JobAnalyticsEventKind",
-      ${args.businessId},
-      ${args.jobPostingId ?? null},
-      ${args.jobApplicationId ?? null},
-      ${args.actorUserId ?? null},
-      ${args.createdAt ?? new Date()}
-    )
-  `
-}
-
-function startOfUtcDay(date: Date) {
-  const d = new Date(date)
-  d.setUTCHours(0, 0, 0, 0)
-  return d
-}
-
 const TrackViewInput = z.object({
   path: z.string().min(1),
   postId: z.string().optional(),
   referrer: z.string().optional(),
 })
-
-function parseDateInput(value?: string | null, fallbackDays = 30): { start: Date; end: Date } {
-  const now = new Date()
-  const end = startOfUtcDay(now)
-  end.setUTCDate(end.getUTCDate() + 1)
-
-  let start = startOfUtcDay(new Date(now.getTime() - (fallbackDays - 1) * 24 * 60 * 60 * 1000))
-  if (value) {
-    const candidate = new Date(value)
-    if (!Number.isNaN(candidate.getTime())) {
-      start = startOfUtcDay(candidate)
-    }
-  }
-  return { start, end }
-}
-
-function parseRange(start?: string | null, end?: string | null): DateRange {
-  const today = startOfUtcDay(new Date())
-  const defaultStart = startOfUtcDay(new Date(today.getTime() - 29 * 24 * 60 * 60 * 1000))
-  let rangeStart = defaultStart
-  let rangeEnd = startOfUtcDay(new Date(today.getTime() + 24 * 60 * 60 * 1000))
-
-  if (start) {
-    const s = new Date(start)
-    if (!Number.isNaN(s.getTime())) rangeStart = startOfUtcDay(s)
-  }
-  if (end) {
-    const e = new Date(end)
-    if (!Number.isNaN(e.getTime())) {
-      const endDay = startOfUtcDay(e)
-      endDay.setUTCDate(endDay.getUTCDate() + 1)
-      rangeEnd = endDay
-    }
-  }
-  if (rangeEnd <= rangeStart) {
-    rangeEnd = startOfUtcDay(new Date(rangeStart.getTime() + 24 * 60 * 60 * 1000))
-  }
-  return { start: rangeStart, end: rangeEnd }
-}
 
 let contentAiScanTablesReady: Promise<void> | null = null
 const CIVIL_AI_JOB_TIMEOUT_MS = Math.max(
@@ -499,6 +364,54 @@ import {
   validatePushEnvironment,
   type PushPayloadType,
 } from './pushSender.js'
+import {
+  parseRange,
+  queryDailyCounts,
+  queryFollowSeries,
+  queryJobAnalyticsSeries,
+  queryPageViewSeries,
+  startOfUtcDay,
+  trackJobAnalyticsEvent,
+} from './analyticsHelpers.js'
+import {
+  buildFamilyParentThreadId,
+  buildParentFamilyThreadId,
+  findPendingFamilyFriendRequest,
+  getFamilyMessageThreadIdsForMember,
+  getFamilyParentConversation,
+  getLegacyFamilyMemberPermissionSettings,
+  getLegacyFamilyMemberStoredProfileMedia,
+  getLegacyFamilyMemberStoredUsername,
+  getStoredFamilyFriendRequests,
+  getStoredFamilyFriendships,
+  getStoredFamilyMessageThreads,
+  getStoredFamilyParentConversations,
+  getStoredProfileFamilyRelationships,
+  hasAcceptedFamilyFriendship,
+  hasFamilyMessageThreadForMember,
+  isParentFamilyThreadId,
+  hasStoredProfileFamilyRelationshipWithUser,
+  parseCommunityMeta,
+  parseParentFamilyThreadId,
+  upsertFamilyFriendRequest,
+  upsertFamilyFriendship,
+  upsertFamilyMessageThread,
+  upsertFamilyParentConversation,
+  upsertProfileFamilyRelationship,
+  writeLegacyFamilyMemberPermissionSettings,
+  writeLegacyFamilyMemberProfileMedia,
+  writeLegacyFamilyMemberUsername,
+  writeStoredFamilyFriendRequests,
+  writeStoredFamilyFriendships,
+  writeStoredFamilyMessageThreads,
+  writeStoredFamilyParentConversations,
+  writeStoredProfileFamilyRelationships,
+} from './familyMetaHelpers.js'
+import type {
+  CommunityMetaPayload,
+  FamilyFriendshipRecord,
+  FamilyParentConversationRecord,
+} from './familyMetaHelpers.js'
 import { createCivilAiPlanningHelpers } from './civilAiPlanning.js'
 import { createCivilAiExecutionHelpers } from './civilAiExecution.js'
 import {
@@ -514,6 +427,17 @@ import {
   PROFILE_INVITE_NOTIFICATION_TYPES,
   createNotificationHelpers,
 } from './notificationHelpers.js'
+import { createFamilyConversationAccessHelpers } from './familyConversationAccessHelpers.js'
+import { FAMILY_FEED_POST_TYPE, createFamilyFeedHelpers } from './familyFeedHelpers.js'
+import {
+  FAMILY_MEMBER_USERNAME_MAX_LENGTH,
+  FAMILY_MEMBER_USERNAME_MIN_LENGTH,
+  createFamilyIdentityHelpers,
+} from './familyIdentityHelpers.js'
+import { createFamilyCallHelpers } from './familyCallHelpers.js'
+import { createMessageFormattingHelpers } from './messageFormattingHelpers.js'
+import { createFamilyProfileHelpers } from './familyProfileHelpers.js'
+import { createSocialGraphHelpers } from './socialGraphHelpers.js'
 import { createSearchHelpers } from './searchHelpers.js'
 import { registerAdminAiDebugRoutes } from './routes/adminAiDebug.js'
 import { registerAdminAnalyticsDetailRoutes } from './routes/adminAnalyticsDetail.js'
@@ -796,592 +720,8 @@ async function recordUserPostImpressions(userId: string, postIds: string[]) {
 
 type CitySummaryType = z.infer<typeof CitySummarySchema>
 
-type ProfileFamilyRelationship =
-  | 'mother'
-  | 'father'
-  | 'grandmother'
-  | 'grandfather'
-  | 'sister'
-  | 'brother'
-  | 'aunt'
-  | 'uncle'
-  | 'cousin'
-  | 'second_cousin'
-  | 'niece'
-  | 'nephew'
-  | 'wife'
-  | 'husband'
-  | 'significant_other'
-  | 'partner'
-  | 'mother_in_law'
-  | 'father_in_law'
-  | 'sister_in_law'
-  | 'brother_in_law'
-  | 'daughter_in_law'
-  | 'son_in_law'
-  | 'other'
-
-type ProfileFamilyRelationshipDirection = 'outbound' | 'inbound'
-
-type CommunityMetaPayload = {
-  nearbyCommunities?: CitySummaryType[]
-  computedAt?: string
-  dateOfBirth?: string
-  countryOfBirth?: string
-  shareDateOfBirth?: boolean
-  shareCountryOfBirth?: boolean
-  civicStatus?: 'citizen' | 'permanent_resident' | 'work_permit' | 'study_permit' | 'unspecified'
-  workAuthorization?: 'authorized' | 'not_authorized' | 'unspecified'
-  verificationMethod?: 'self_declaration'
-  statusDeclaredAt?: string
-  statusUpdatedAt?: string
-  reference?: {
-    provinceCode?: string | null
-    communitySlug?: string | null
-    cityName?: string | null
-  } | null
-  familyMode?: {
-    enabledAt?: string
-    affirmedProfileTruthAt?: string
-    acceptedChildSafetyInfoAt?: string
-  } | null
-  familyMemberSettings?: Record<
-    string,
-    {
-      allowChildOwnMediaEdits?: boolean
-      allowChildOwnUsernameEdits?: boolean
-      allowChildAudioCalls?: boolean
-      allowChildVideoCalls?: boolean
-      notifyParentOnMediaChanges?: boolean
-      username?: string | null
-      avatarUrl?: string | null
-      coverUrl?: string | null
-    }
-  > | null
-  familyFriendRequests?: Array<{
-    id: string
-    requesterParentId: string
-    requesterMemberId: string
-    requesterDisplayName: string
-    requesterUsername: string
-    requesterAvatarUrl?: string | null
-    requesterCoverUrl?: string | null
-    requesterParentHandle?: string | null
-    requesterParentName?: string | null
-    requesterParentAvatarUrl?: string | null
-    requesterParentCoverUrl?: string | null
-    targetParentId: string
-    targetMemberId: string
-    targetDisplayName: string
-    targetUsername: string
-    targetAvatarUrl?: string | null
-    targetCoverUrl?: string | null
-    status: 'pending' | 'accepted' | 'rejected'
-    createdAt: string
-    respondedAt?: string | null
-  }> | null
-  familyFriendships?: Array<{
-    id: string
-    memberId: string
-    peerMemberId: string
-    peerParentId: string
-    peerDisplayName: string
-    peerUsername: string
-    peerAvatarUrl?: string | null
-    peerCoverUrl?: string | null
-    createdAt: string
-  }> | null
-  familyMessageThreads?: Array<{
-    memberId: string
-    threadId: string
-    peerUserId: string
-    createdAt: string
-    updatedAt: string
-  }> | null
-  familyParentConversations?: Array<{
-    memberId: string
-    parentId: string
-    createdAt: string
-    updatedAt: string
-    childLastReadAt?: string | null
-    parentLastReadAt?: string | null
-    messages: Array<{
-      id: string
-      sender: 'child' | 'parent'
-      body: string
-      createdAt: string
-      updatedAt: string
-    }>
-  }> | null
-  profileFamilyRelationships?: Array<{
-    relatedUserId: string
-    relatedHandle: string
-    relatedName?: string | null
-    familyType: ProfileFamilyRelationship
-    direction: ProfileFamilyRelationshipDirection
-    createdAt: string
-    updatedAt?: string | null
-  }> | null
-}
-
-type FamilyModeBand = 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
 type FamilyRelationship = 'son' | 'daughter' | 'child' | 'stepson' | 'stepdaughter' | 'foster_child' | 'ward' | 'other'
 type FamilyFriendRequestStatus = 'pending' | 'accepted' | 'rejected'
-
-type FamilyFriendRequestRecord = NonNullable<CommunityMetaPayload['familyFriendRequests']>[number]
-type FamilyFriendshipRecord = NonNullable<CommunityMetaPayload['familyFriendships']>[number]
-type FamilyMessageThreadRecord = NonNullable<CommunityMetaPayload['familyMessageThreads']>[number]
-type FamilyParentConversationRecord = NonNullable<CommunityMetaPayload['familyParentConversations']>[number]
-type ProfileFamilyRelationshipRecord = NonNullable<CommunityMetaPayload['profileFamilyRelationships']>[number]
-
-const FAMILY_MEMBER_USERNAME_MIN_LENGTH = 6
-const FAMILY_MEMBER_USERNAME_MAX_LENGTH = 20
-const FAMILY_MEMBER_USERNAME_PATTERN = /^[A-Za-z0-9]{6,20}$/
-
-type AccountModerationState = {
-  status: 'SUSPENDED'
-  suspendedAt?: string
-  suspendedByUserId?: string | null
-  suspensionReason?: string | null
-  sourceReportId?: string | null
-}
-
-function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): CommunityMetaPayload | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const payload = value as Record<string, unknown>
-  const nearby = Array.isArray(payload.nearbyCommunities)
-    ? (payload.nearbyCommunities as CitySummaryType[])
-    : undefined
-  const reference =
-    payload.reference && typeof payload.reference === 'object' && !Array.isArray(payload.reference)
-      ? (payload.reference as { provinceCode?: string | null; communitySlug?: string | null; cityName?: string | null })
-      : null
-  const computedAt = typeof payload.computedAt === 'string' ? payload.computedAt : undefined
-  const dateOfBirth = typeof payload.dateOfBirth === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(payload.dateOfBirth) ? payload.dateOfBirth : undefined
-  const countryOfBirth = typeof payload.countryOfBirth === 'string' && payload.countryOfBirth.trim() ? payload.countryOfBirth.trim() : undefined
-  const shareDateOfBirth = typeof payload.shareDateOfBirth === 'boolean' ? payload.shareDateOfBirth : undefined
-  const shareCountryOfBirth = typeof payload.shareCountryOfBirth === 'boolean' ? payload.shareCountryOfBirth : undefined
-  const civicStatus =
-    payload.civicStatus === 'citizen' ||
-    payload.civicStatus === 'permanent_resident' ||
-    payload.civicStatus === 'work_permit' ||
-    payload.civicStatus === 'study_permit' ||
-    payload.civicStatus === 'unspecified'
-      ? payload.civicStatus
-      : undefined
-  const workAuthorization =
-    payload.workAuthorization === 'authorized' ||
-    payload.workAuthorization === 'not_authorized' ||
-    payload.workAuthorization === 'unspecified'
-      ? payload.workAuthorization
-      : undefined
-  const verificationMethod = payload.verificationMethod === 'self_declaration' ? 'self_declaration' : undefined
-  const statusDeclaredAt = typeof payload.statusDeclaredAt === 'string' ? payload.statusDeclaredAt : undefined
-  const statusUpdatedAt = typeof payload.statusUpdatedAt === 'string' ? payload.statusUpdatedAt : undefined
-  const familyModeValue = payload.familyMode && typeof payload.familyMode === 'object' && !Array.isArray(payload.familyMode)
-    ? (payload.familyMode as Record<string, unknown>)
-    : null
-  const familyMode = familyModeValue
-    ? {
-        enabledAt: typeof familyModeValue.enabledAt === 'string' ? familyModeValue.enabledAt : undefined,
-        affirmedProfileTruthAt:
-          typeof familyModeValue.affirmedProfileTruthAt === 'string' ? familyModeValue.affirmedProfileTruthAt : undefined,
-        acceptedChildSafetyInfoAt:
-          typeof familyModeValue.acceptedChildSafetyInfoAt === 'string' ? familyModeValue.acceptedChildSafetyInfoAt : undefined,
-      }
-    : null
-  const familyMemberSettingsValue =
-    payload.familyMemberSettings && typeof payload.familyMemberSettings === 'object' && !Array.isArray(payload.familyMemberSettings)
-      ? (payload.familyMemberSettings as Record<string, unknown>)
-      : null
-  const familyMemberSettings = familyMemberSettingsValue
-    ? Object.fromEntries(
-        Object.entries(familyMemberSettingsValue).flatMap(([memberId, rawValue]) => {
-          if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
-          const value = rawValue as Record<string, unknown>
-          return [
-            [
-              memberId,
-              {
-                allowChildOwnMediaEdits:
-                  typeof value.allowChildOwnMediaEdits === 'boolean' ? value.allowChildOwnMediaEdits : undefined,
-                allowChildOwnUsernameEdits:
-                  typeof value.allowChildOwnUsernameEdits === 'boolean' ? value.allowChildOwnUsernameEdits : undefined,
-                allowChildAudioCalls:
-                  typeof value.allowChildAudioCalls === 'boolean' ? value.allowChildAudioCalls : undefined,
-                allowChildVideoCalls:
-                  typeof value.allowChildVideoCalls === 'boolean' ? value.allowChildVideoCalls : undefined,
-                notifyParentOnMediaChanges:
-                  typeof value.notifyParentOnMediaChanges === 'boolean' ? value.notifyParentOnMediaChanges : undefined,
-                username:
-                  typeof value.username === 'string' && value.username.trim() ? value.username.trim() : null,
-                avatarUrl:
-                  typeof value.avatarUrl === 'string' && value.avatarUrl.trim() ? value.avatarUrl.trim() : null,
-                coverUrl:
-                  typeof value.coverUrl === 'string' && value.coverUrl.trim() ? value.coverUrl.trim() : null,
-              },
-            ],
-          ]
-        }),
-      )
-    : null
-  const familyFriendRequests = Array.isArray(payload.familyFriendRequests)
-    ? payload.familyFriendRequests.flatMap((rawValue) => {
-        if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
-        const value = rawValue as Record<string, unknown>
-        const status =
-          value.status === 'accepted' || value.status === 'rejected' || value.status === 'pending'
-            ? value.status
-            : 'pending'
-        if (
-          typeof value.id !== 'string' ||
-          typeof value.requesterParentId !== 'string' ||
-          typeof value.requesterMemberId !== 'string' ||
-          typeof value.requesterDisplayName !== 'string' ||
-          typeof value.requesterUsername !== 'string' ||
-          typeof value.targetParentId !== 'string' ||
-          typeof value.targetMemberId !== 'string' ||
-          typeof value.targetDisplayName !== 'string' ||
-          typeof value.targetUsername !== 'string' ||
-          typeof value.createdAt !== 'string'
-        ) {
-          return []
-        }
-        return [{
-          id: value.id,
-          requesterParentId: value.requesterParentId,
-          requesterMemberId: value.requesterMemberId,
-          requesterDisplayName: value.requesterDisplayName,
-          requesterUsername: value.requesterUsername,
-          requesterAvatarUrl: typeof value.requesterAvatarUrl === 'string' ? value.requesterAvatarUrl : null,
-          requesterCoverUrl: typeof value.requesterCoverUrl === 'string' ? value.requesterCoverUrl : null,
-          requesterParentHandle: typeof value.requesterParentHandle === 'string' ? value.requesterParentHandle : null,
-          requesterParentName: typeof value.requesterParentName === 'string' ? value.requesterParentName : null,
-          requesterParentAvatarUrl: typeof value.requesterParentAvatarUrl === 'string' ? value.requesterParentAvatarUrl : null,
-          requesterParentCoverUrl: typeof value.requesterParentCoverUrl === 'string' ? value.requesterParentCoverUrl : null,
-          targetParentId: value.targetParentId,
-          targetMemberId: value.targetMemberId,
-          targetDisplayName: value.targetDisplayName,
-          targetUsername: value.targetUsername,
-          targetAvatarUrl: typeof value.targetAvatarUrl === 'string' ? value.targetAvatarUrl : null,
-          targetCoverUrl: typeof value.targetCoverUrl === 'string' ? value.targetCoverUrl : null,
-          status,
-          createdAt: value.createdAt,
-          respondedAt: typeof value.respondedAt === 'string' ? value.respondedAt : null,
-        } satisfies FamilyFriendRequestRecord]
-      })
-    : null
-  const familyFriendships = Array.isArray(payload.familyFriendships)
-    ? payload.familyFriendships.flatMap((rawValue) => {
-        if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
-        const value = rawValue as Record<string, unknown>
-        if (
-          typeof value.id !== 'string' ||
-          typeof value.memberId !== 'string' ||
-          typeof value.peerMemberId !== 'string' ||
-          typeof value.peerParentId !== 'string' ||
-          typeof value.peerDisplayName !== 'string' ||
-          typeof value.peerUsername !== 'string' ||
-          typeof value.createdAt !== 'string'
-        ) {
-          return []
-        }
-        return [{
-          id: value.id,
-          memberId: value.memberId,
-          peerMemberId: value.peerMemberId,
-          peerParentId: value.peerParentId,
-          peerDisplayName: value.peerDisplayName,
-          peerUsername: value.peerUsername,
-          peerAvatarUrl: typeof value.peerAvatarUrl === 'string' ? value.peerAvatarUrl : null,
-          peerCoverUrl: typeof value.peerCoverUrl === 'string' ? value.peerCoverUrl : null,
-          createdAt: value.createdAt,
-        } satisfies FamilyFriendshipRecord]
-      })
-    : null
-  const familyMessageThreads = Array.isArray(payload.familyMessageThreads)
-    ? payload.familyMessageThreads.flatMap((rawValue) => {
-        if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
-        const value = rawValue as Record<string, unknown>
-        if (
-          typeof value.memberId !== 'string' ||
-          typeof value.threadId !== 'string' ||
-          typeof value.peerUserId !== 'string' ||
-          typeof value.createdAt !== 'string' ||
-          typeof value.updatedAt !== 'string'
-        ) {
-          return []
-        }
-        return [{
-          memberId: value.memberId,
-          threadId: value.threadId,
-          peerUserId: value.peerUserId,
-          createdAt: value.createdAt,
-          updatedAt: value.updatedAt,
-        } satisfies FamilyMessageThreadRecord]
-      })
-    : null
-  const familyParentConversations = Array.isArray(payload.familyParentConversations)
-    ? payload.familyParentConversations.flatMap((rawValue) => {
-        if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
-        const value = rawValue as Record<string, unknown>
-        if (
-          typeof value.memberId !== 'string' ||
-          typeof value.parentId !== 'string' ||
-          typeof value.createdAt !== 'string' ||
-          typeof value.updatedAt !== 'string'
-        ) {
-          return []
-        }
-        const messages = Array.isArray(value.messages)
-          ? value.messages.flatMap((rawMessage) => {
-              if (!rawMessage || typeof rawMessage !== 'object' || Array.isArray(rawMessage)) return []
-              const message = rawMessage as Record<string, unknown>
-              if (
-                typeof message.id !== 'string' ||
-                (message.sender !== 'child' && message.sender !== 'parent') ||
-                typeof message.body !== 'string' ||
-                typeof message.createdAt !== 'string' ||
-                typeof message.updatedAt !== 'string'
-              ) {
-                return []
-              }
-              return [{
-                id: message.id,
-                sender: message.sender,
-                body: message.body,
-                createdAt: message.createdAt,
-                updatedAt: message.updatedAt,
-              } satisfies FamilyParentConversationRecord['messages'][number]]
-            })
-          : []
-        return [{
-          memberId: value.memberId,
-          parentId: value.parentId,
-          createdAt: value.createdAt,
-          updatedAt: value.updatedAt,
-          childLastReadAt: typeof value.childLastReadAt === 'string' ? value.childLastReadAt : null,
-          parentLastReadAt: typeof value.parentLastReadAt === 'string' ? value.parentLastReadAt : null,
-          messages,
-        } satisfies FamilyParentConversationRecord]
-      })
-    : null
-  const profileFamilyRelationships = Array.isArray(payload.profileFamilyRelationships)
-    ? payload.profileFamilyRelationships.flatMap((rawValue) => {
-        if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) return []
-        const value = rawValue as Record<string, unknown>
-        const familyType =
-          value.familyType === 'mother' ||
-          value.familyType === 'father' ||
-          value.familyType === 'grandmother' ||
-          value.familyType === 'grandfather' ||
-          value.familyType === 'sister' ||
-          value.familyType === 'brother' ||
-          value.familyType === 'aunt' ||
-          value.familyType === 'uncle' ||
-          value.familyType === 'cousin' ||
-          value.familyType === 'second_cousin' ||
-          value.familyType === 'niece' ||
-          value.familyType === 'nephew' ||
-          value.familyType === 'wife' ||
-          value.familyType === 'husband' ||
-          value.familyType === 'significant_other' ||
-          value.familyType === 'partner' ||
-          value.familyType === 'mother_in_law' ||
-          value.familyType === 'father_in_law' ||
-          value.familyType === 'sister_in_law' ||
-          value.familyType === 'brother_in_law' ||
-          value.familyType === 'daughter_in_law' ||
-          value.familyType === 'son_in_law' ||
-          value.familyType === 'other'
-            ? value.familyType
-            : null
-        const direction = value.direction === 'outbound' || value.direction === 'inbound' ? value.direction : null
-        if (
-          typeof value.relatedUserId !== 'string' ||
-          typeof value.relatedHandle !== 'string' ||
-          typeof value.createdAt !== 'string' ||
-          !familyType ||
-          !direction
-        ) {
-          return []
-        }
-        return [{
-          relatedUserId: value.relatedUserId,
-          relatedHandle: value.relatedHandle,
-          relatedName: typeof value.relatedName === 'string' ? value.relatedName : null,
-          familyType,
-          direction,
-          createdAt: value.createdAt,
-          updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : null,
-        } satisfies ProfileFamilyRelationshipRecord]
-      })
-    : null
-  return {
-    nearbyCommunities: nearby,
-    computedAt,
-    dateOfBirth,
-    countryOfBirth,
-    shareDateOfBirth,
-    shareCountryOfBirth,
-    civicStatus,
-    workAuthorization,
-    verificationMethod,
-    statusDeclaredAt,
-    statusUpdatedAt,
-    familyMode,
-    familyMemberSettings,
-    familyFriendRequests,
-    familyFriendships,
-    familyMessageThreads,
-    familyParentConversations,
-    profileFamilyRelationships,
-    reference,
-  }
-}
-
-function getLegacyFamilyMemberPermissionSettings(
-  value: Prisma.JsonValue | null | undefined,
-  memberId: string,
-) {
-  const settings = parseCommunityMeta(value)?.familyMemberSettings?.[memberId]
-  return {
-    allowChildOwnMediaEdits: Boolean(settings?.allowChildOwnMediaEdits),
-    allowChildOwnUsernameEdits: settings?.allowChildOwnUsernameEdits == null ? true : Boolean(settings.allowChildOwnUsernameEdits),
-    allowChildAudioCalls: settings?.allowChildAudioCalls == null ? true : Boolean(settings.allowChildAudioCalls),
-    allowChildVideoCalls: settings?.allowChildVideoCalls == null ? true : Boolean(settings.allowChildVideoCalls),
-    notifyParentOnMediaChanges: Boolean(settings?.notifyParentOnMediaChanges),
-  }
-}
-
-function getLegacyFamilyMemberStoredUsername(
-  value: Prisma.JsonValue | null | undefined,
-  memberId: string,
-) {
-  const settings = parseCommunityMeta(value)?.familyMemberSettings?.[memberId]
-  return typeof settings?.username === 'string' && settings.username.trim() ? settings.username.trim() : null
-}
-
-function getLegacyFamilyMemberStoredProfileMedia(
-  value: Prisma.JsonValue | null | undefined,
-  memberId: string,
-) {
-  const settings = parseCommunityMeta(value)?.familyMemberSettings?.[memberId]
-  return {
-    avatarUrl: typeof settings?.avatarUrl === 'string' ? settings.avatarUrl : null,
-    coverUrl: typeof settings?.coverUrl === 'string' ? settings.coverUrl : null,
-  }
-}
-
-function writeLegacyFamilyMemberPermissionSettings(
-  baseMeta: Record<string, unknown>,
-  memberId: string,
-  settings: {
-    allowChildOwnMediaEdits: boolean
-    allowChildOwnUsernameEdits: boolean
-    allowChildAudioCalls: boolean
-    allowChildVideoCalls: boolean
-    notifyParentOnMediaChanges: boolean
-  },
-) {
-  const existingValue =
-    baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
-      ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
-      : {}
-
-  const existingSettings =
-    existingValue[memberId] && typeof existingValue[memberId] === 'object' && !Array.isArray(existingValue[memberId])
-      ? { ...(existingValue[memberId] as Record<string, unknown>) }
-      : {}
-
-  existingValue[memberId] = {
-    ...existingSettings,
-    allowChildOwnMediaEdits: settings.allowChildOwnMediaEdits,
-    allowChildOwnUsernameEdits: settings.allowChildOwnUsernameEdits,
-    allowChildAudioCalls: settings.allowChildAudioCalls,
-    allowChildVideoCalls: settings.allowChildVideoCalls,
-    notifyParentOnMediaChanges: settings.notifyParentOnMediaChanges,
-  }
-
-  baseMeta.familyMemberSettings = existingValue
-}
-
-function writeLegacyFamilyMemberUsername(
-  baseMeta: Record<string, unknown>,
-  memberId: string,
-  username: string,
-) {
-  const existingValue =
-    baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
-      ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
-      : {}
-
-  const existingSettings =
-    existingValue[memberId] && typeof existingValue[memberId] === 'object' && !Array.isArray(existingValue[memberId])
-      ? { ...(existingValue[memberId] as Record<string, unknown>) }
-      : {}
-
-  existingValue[memberId] = {
-    ...existingSettings,
-    username,
-  }
-
-  baseMeta.familyMemberSettings = existingValue
-}
-
-function writeLegacyFamilyMemberProfileMedia(
-  baseMeta: Record<string, unknown>,
-  memberId: string,
-  media: {
-    avatarUrl?: string | null
-    coverUrl?: string | null
-  },
-) {
-  const existingValue =
-    baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
-      ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
-      : {}
-
-  const existingSettings =
-    existingValue[memberId] && typeof existingValue[memberId] === 'object' && !Array.isArray(existingValue[memberId])
-      ? { ...(existingValue[memberId] as Record<string, unknown>) }
-      : {}
-
-  existingValue[memberId] = {
-    ...existingSettings,
-    ...(media.avatarUrl !== undefined ? { avatarUrl: media.avatarUrl } : {}),
-    ...(media.coverUrl !== undefined ? { coverUrl: media.coverUrl } : {}),
-  }
-
-  baseMeta.familyMemberSettings = existingValue
-}
-
-function getStoredFamilyFriendRequests(value: Prisma.JsonValue | null | undefined): FamilyFriendRequestRecord[] {
-  return parseCommunityMeta(value)?.familyFriendRequests ?? []
-}
-
-function getStoredFamilyFriendships(value: Prisma.JsonValue | null | undefined): FamilyFriendshipRecord[] {
-  return parseCommunityMeta(value)?.familyFriendships ?? []
-}
-
-function getStoredFamilyMessageThreads(value: Prisma.JsonValue | null | undefined): FamilyMessageThreadRecord[] {
-  return parseCommunityMeta(value)?.familyMessageThreads ?? []
-}
-
-function getStoredFamilyParentConversations(value: Prisma.JsonValue | null | undefined): FamilyParentConversationRecord[] {
-  return parseCommunityMeta(value)?.familyParentConversations ?? []
-}
-
-function getStoredProfileFamilyRelationships(value: Prisma.JsonValue | null | undefined): ProfileFamilyRelationshipRecord[] {
-  return parseCommunityMeta(value)?.profileFamilyRelationships ?? []
-}
-
-function hasStoredProfileFamilyRelationshipWithUser(
-  value: Prisma.JsonValue | null | undefined,
-  relatedUserId: string,
-) {
-  return getStoredProfileFamilyRelationships(value).some((entry) => entry.relatedUserId === relatedUserId)
-}
 
 async function canViewerAccessFamilyAudiencePost(args: { viewerId?: string | null; authorId: string }) {
   const viewerId = args.viewerId?.trim()
@@ -1397,63 +737,6 @@ async function canViewerAccessFamilyAudiencePost(args: { viewerId?: string | nul
     hasStoredProfileFamilyRelationshipWithUser(viewerUser?.communityMeta, args.authorId) ||
     hasStoredProfileFamilyRelationshipWithUser(authorUser?.communityMeta, viewerId)
   )
-}
-
-function writeStoredFamilyFriendRequests(baseMeta: Record<string, unknown>, requests: FamilyFriendRequestRecord[]) {
-  baseMeta.familyFriendRequests = requests as unknown as Prisma.InputJsonValue
-}
-
-function writeStoredFamilyFriendships(baseMeta: Record<string, unknown>, friendships: FamilyFriendshipRecord[]) {
-  baseMeta.familyFriendships = friendships as unknown as Prisma.InputJsonValue
-}
-
-function writeStoredFamilyMessageThreads(baseMeta: Record<string, unknown>, threads: FamilyMessageThreadRecord[]) {
-  baseMeta.familyMessageThreads = threads as unknown as Prisma.InputJsonValue
-}
-
-function writeStoredFamilyParentConversations(baseMeta: Record<string, unknown>, conversations: FamilyParentConversationRecord[]) {
-  baseMeta.familyParentConversations = conversations as unknown as Prisma.InputJsonValue
-}
-
-function writeStoredProfileFamilyRelationships(baseMeta: Record<string, unknown>, relationships: ProfileFamilyRelationshipRecord[]) {
-  baseMeta.profileFamilyRelationships = relationships as unknown as Prisma.InputJsonValue
-}
-
-function upsertFamilyFriendRequest(requests: FamilyFriendRequestRecord[], nextRequest: FamilyFriendRequestRecord) {
-  const remaining = requests.filter((request) => request.id !== nextRequest.id)
-  return [nextRequest, ...remaining].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-}
-
-function upsertFamilyFriendship(friendships: FamilyFriendshipRecord[], nextFriendship: FamilyFriendshipRecord) {
-  const remaining = friendships.filter((friendship) => friendship.peerMemberId !== nextFriendship.peerMemberId || friendship.memberId !== nextFriendship.memberId)
-  return [nextFriendship, ...remaining].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-}
-
-function upsertFamilyMessageThread(threads: FamilyMessageThreadRecord[], nextThread: FamilyMessageThreadRecord) {
-  const remaining = threads.filter((thread) => !(thread.memberId === nextThread.memberId && thread.threadId === nextThread.threadId))
-  return [nextThread, ...remaining].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-}
-
-function upsertFamilyParentConversation(
-  conversations: FamilyParentConversationRecord[],
-  nextConversation: FamilyParentConversationRecord,
-) {
-  const remaining = conversations.filter(
-    (conversation) => !(conversation.memberId === nextConversation.memberId && conversation.parentId === nextConversation.parentId),
-  )
-  return [nextConversation, ...remaining].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-}
-
-function upsertProfileFamilyRelationship(
-  relationships: ProfileFamilyRelationshipRecord[],
-  nextRelationship: ProfileFamilyRelationshipRecord,
-) {
-  const remaining = relationships.filter((relationship) => relationship.relatedUserId !== nextRelationship.relatedUserId)
-  return [nextRelationship, ...remaining].sort((left, right) => {
-    const leftKey = left.updatedAt ?? left.createdAt
-    const rightKey = right.updatedAt ?? right.createdAt
-    return rightKey.localeCompare(leftKey)
-  })
 }
 
 function formatFamilyFriendUser(entry: FamilyFriendshipRecord) {
@@ -1478,312 +761,25 @@ function formatFamilyChildFriendship(entry: FamilyFriendshipRecord) {
   }
 }
 
-function findPendingFamilyFriendRequest(
-  requests: FamilyFriendRequestRecord[],
-  requesterMemberId: string,
-  targetMemberId: string,
-) {
-  return requests.find(
-    (request) =>
-      request.status === 'pending' &&
-      ((request.requesterMemberId === requesterMemberId && request.targetMemberId === targetMemberId) ||
-        (request.requesterMemberId === targetMemberId && request.targetMemberId === requesterMemberId)),
-  )
+function normalizeFamilyMemberUsernameCandidate(value: string) {
+  return value.trim()
 }
 
-function hasAcceptedFamilyFriendship(
-  friendships: FamilyFriendshipRecord[],
-  memberId: string,
-  peerMemberId: string,
-) {
-  return friendships.some((friendship) => friendship.memberId === memberId && friendship.peerMemberId === peerMemberId)
+function buildDefaultFamilyMemberUsernameBase(firstName: string, lastName: string) {
+  const base = buildHandleBase(firstName, lastName).slice(0, FAMILY_MEMBER_USERNAME_MAX_LENGTH)
+  if (base.length >= FAMILY_MEMBER_USERNAME_MIN_LENGTH) return base
+  return `${base}${'friend'.slice(0, Math.max(0, FAMILY_MEMBER_USERNAME_MIN_LENGTH - base.length))}`.slice(0, FAMILY_MEMBER_USERNAME_MAX_LENGTH)
 }
 
-function getFamilyMessageThreadIdsForMember(
-  value: Prisma.JsonValue | null | undefined,
-  memberId: string,
-) {
-  return getStoredFamilyMessageThreads(value)
-    .filter((thread) => thread.memberId === memberId)
-    .map((thread) => thread.threadId)
-}
-
-function hasFamilyMessageThreadForMember(
-  value: Prisma.JsonValue | null | undefined,
-  memberId: string,
-  threadId: string,
-) {
-  return getStoredFamilyMessageThreads(value).some((thread) => thread.memberId === memberId && thread.threadId === threadId)
-}
-
-function buildFamilyParentThreadId(parentId: string) {
-  return `family-parent-${parentId}`
-}
-
-function isFamilyParentThreadId(threadId: string) {
-  return threadId.startsWith('family-parent-')
-}
-
-function buildParentFamilyThreadId(memberId: string) {
-  return `family-member-${memberId}`
-}
-
-function isParentFamilyThreadId(threadId: string) {
-  return threadId.startsWith('family-member-')
-}
-
-function parseParentFamilyThreadId(threadId: string) {
-  if (!isParentFamilyThreadId(threadId)) return null
-  const memberId = threadId.slice('family-member-'.length).trim()
-  return memberId || null
-}
-
-function getFamilyParentConversation(
-  value: Prisma.JsonValue | null | undefined,
-  memberId: string,
-  parentId: string,
-) {
-  return getStoredFamilyParentConversations(value).find(
-    (conversation) => conversation.memberId === memberId && conversation.parentId === parentId,
-  )
-}
-
-async function storeFamilyParentConversationMessage(args: {
-  parentId: string
-  memberId: string
-  sender: 'child' | 'parent'
-  body: string
-  timestamp?: Date
-}) {
-  const parent = await prisma.user.findUnique({
-    where: { id: args.parentId },
-    select: { communityMeta: true },
-  })
-  const baseMeta = readBaseCommunityMeta(parent?.communityMeta ?? null)
-  const conversations = getStoredFamilyParentConversations(parent?.communityMeta)
-  const existing = getFamilyParentConversation(parent?.communityMeta, args.memberId, args.parentId)
-  const now = args.timestamp ?? new Date()
-  const isoTimestamp = now.toISOString()
-  const nextConversation: FamilyParentConversationRecord = {
-    memberId: args.memberId,
-    parentId: args.parentId,
-    createdAt: existing?.createdAt ?? isoTimestamp,
-    updatedAt: isoTimestamp,
-    childLastReadAt: args.sender === 'child' ? isoTimestamp : (existing?.childLastReadAt ?? null),
-    parentLastReadAt: args.sender === 'parent' ? isoTimestamp : (existing?.parentLastReadAt ?? null),
-    messages: [
-      ...(existing?.messages ?? []),
-      {
-        id: randomUUID(),
-        sender: args.sender,
-        body: args.body,
-        createdAt: isoTimestamp,
-        updatedAt: isoTimestamp,
-      },
-    ],
-  }
-
-  writeStoredFamilyParentConversations(
-    baseMeta,
-    upsertFamilyParentConversation(conversations, nextConversation),
-  )
-
-  await prisma.user.update({
-    where: { id: args.parentId },
-    data: {
-      communityMeta: baseMeta as Prisma.InputJsonValue,
-    },
-  })
-
-  return nextConversation
-}
-
-async function markFamilyParentConversationRead(args: {
-  parentId: string
-  memberId: string
-  actor: 'child' | 'parent'
-  readAt?: Date
-}) {
-  const parent = await prisma.user.findUnique({
-    where: { id: args.parentId },
-    select: { communityMeta: true },
-  })
-  const existing = getFamilyParentConversation(parent?.communityMeta, args.memberId, args.parentId)
-  if (!existing) return null
-  const baseMeta = readBaseCommunityMeta(parent?.communityMeta ?? null)
-  const conversations = getStoredFamilyParentConversations(parent?.communityMeta)
-  const isoTimestamp = (args.readAt ?? new Date()).toISOString()
-  const nextConversation: FamilyParentConversationRecord = {
-    ...existing,
-    updatedAt: existing.updatedAt,
-    childLastReadAt: args.actor === 'child' ? isoTimestamp : existing.childLastReadAt ?? null,
-    parentLastReadAt: args.actor === 'parent' ? isoTimestamp : existing.parentLastReadAt ?? null,
-  }
-
-  writeStoredFamilyParentConversations(
-    baseMeta,
-    upsertFamilyParentConversation(conversations, nextConversation),
-  )
-
-  await prisma.user.update({
-    where: { id: args.parentId },
-    data: {
-      communityMeta: baseMeta as Prisma.InputJsonValue,
-    },
-  })
-
-  return nextConversation
-}
-
-async function storeFamilyMessageThreadForMember(args: {
-  parentId: string
-  memberId: string
-  threadId: string
-  peerUserId: string
-  timestamp?: Date
-}) {
-  const parent = await prisma.user.findUnique({
-    where: { id: args.parentId },
-    select: { communityMeta: true },
-  })
-  const baseMeta = readBaseCommunityMeta(parent?.communityMeta ?? null)
-  const currentThreads = getStoredFamilyMessageThreads(parent?.communityMeta)
-  const isoTimestamp = (args.timestamp ?? new Date()).toISOString()
-  const existing = currentThreads.find((thread) => thread.memberId === args.memberId && thread.threadId === args.threadId)
-
-  writeStoredFamilyMessageThreads(
-    baseMeta,
-    upsertFamilyMessageThread(currentThreads, {
-      memberId: args.memberId,
-      threadId: args.threadId,
-      peerUserId: args.peerUserId,
-      createdAt: existing?.createdAt ?? isoTimestamp,
-      updatedAt: isoTimestamp,
-    }),
-  )
-
-  await prisma.user.update({
-    where: { id: args.parentId },
-    data: {
-      communityMeta: baseMeta as Prisma.InputJsonValue,
-    },
-  })
-}
-
-function familyMemberCanAccessMessageThread(member: FamilyAuthMember, threadId: string) {
-  if (threadId === buildFamilyParentThreadId(member.parentId)) {
-    return true
-  }
-  return hasFamilyMessageThreadForMember(member.parent.communityMeta, member.id, threadId)
-}
-
-function parseProfileNameParts(name: string | null | undefined) {
-  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
-  return {
-    firstName: parts[0] ?? '',
-    lastName: parts.slice(1).join(' '),
-  }
-}
-
-function isParentProfileEligibleForFamilyMode(user: { name?: string | null; communityMeta?: Prisma.JsonValue | null | undefined }) {
-  const nameParts = parseProfileNameParts(user.name)
-  const meta = parseCommunityMeta(user.communityMeta ?? null)
-  return {
-    firstName: Boolean(nameParts.firstName.trim()),
-    lastName: Boolean(nameParts.lastName.trim()),
-    dateOfBirth: Boolean(meta?.dateOfBirth),
-    countryOfBirth: Boolean(meta?.countryOfBirth),
-  }
-}
-
-function calculateAgeFromDateOfBirth(dateOfBirth: Date, now = new Date()) {
-  let age = now.getUTCFullYear() - dateOfBirth.getUTCFullYear()
-  const monthDelta = now.getUTCMonth() - dateOfBirth.getUTCMonth()
-  const dayDelta = now.getUTCDate() - dateOfBirth.getUTCDate()
-  if (monthDelta < 0 || (monthDelta === 0 && dayDelta < 0)) {
-    age -= 1
-  }
-  return age
-}
-
-function getFamilyModeBandFromAge(age: number): FamilyModeBand {
-  if (age <= 8) return 'EARLY_CHILDHOOD'
-  if (age <= 12) return 'JUNIOR'
-  if (age <= 15) return 'TEEN'
-  if (age <= 17) return 'YOUTH'
-  return 'ADULT'
-}
-
-function getFamilyModeBandLabel(band: FamilyModeBand) {
-  if (band === 'EARLY_CHILDHOOD') return 'Early Childhood Mode (5 to 8)'
-  if (band === 'JUNIOR') return 'Junior Mode (9 to 12)'
-  if (band === 'TEEN') return 'Teen Mode (13 to 15)'
-  if (band === 'YOUTH') return 'Youth Mode (16 to 17)'
-  return 'Adult Mode (18+)'
-}
-
-function getFamilyRelationshipLabel(value: FamilyRelationship) {
-  if (value === 'son') return 'Son'
-  if (value === 'daughter') return 'Daughter'
-  if (value === 'child') return 'Child'
-  if (value === 'stepson') return 'Stepson'
-  if (value === 'stepdaughter') return 'Stepdaughter'
-  if (value === 'foster_child') return 'Foster Child'
-  if (value === 'ward') return 'Ward'
-  return 'Other'
-}
-
-function normalizeFamilyMemberSummary(member: {
-  id: string
-  firstName: string
-  lastName: string
-  dateOfBirth: Date
-  relationship: FamilyRelationship
-  friendCode: string
-  username?: string | null
-  avatarUrl?: string | null
-  coverUrl?: string | null
-  allowChildOwnMediaEdits?: boolean
-  allowChildOwnUsernameEdits?: boolean
-  allowChildAudioCalls?: boolean
-  allowChildVideoCalls?: boolean
-  notifyParentOnMediaChanges?: boolean
-  suspendedAt: Date | null
-  suspendedById: string | null
-  suspensionNote: string | null
-  createdAt: Date
-  updatedAt: Date
-}) {
-  const age = calculateAgeFromDateOfBirth(member.dateOfBirth)
-  const modeBand = getFamilyModeBandFromAge(age)
-  return {
-    id: member.id,
-    firstName: member.firstName,
-    lastName: member.lastName,
-    relationship: member.relationship,
-    relationshipLabel: getFamilyRelationshipLabel(member.relationship),
-    displayName: `${member.firstName} ${member.lastName}`.trim(),
-    dateOfBirth: member.dateOfBirth.toISOString().slice(0, 10),
-    age,
-    modeBand,
-    modeLabel: getFamilyModeBandLabel(modeBand),
-    friendCode: member.friendCode,
-    username: normalizeFamilyMemberUsernameCandidate(member.username ?? '') || buildDefaultFamilyMemberUsernameBase(member.firstName, member.lastName),
-    avatarUrl: normalizeMediaUrl(member.avatarUrl ?? null),
-    coverUrl: normalizeMediaUrl(member.coverUrl ?? null),
-    allowChildOwnMediaEdits: Boolean(member.allowChildOwnMediaEdits),
-    allowChildOwnUsernameEdits: member.allowChildOwnUsernameEdits == null ? true : Boolean(member.allowChildOwnUsernameEdits),
-    allowChildAudioCalls: member.allowChildAudioCalls == null ? true : Boolean(member.allowChildAudioCalls),
-    allowChildVideoCalls: member.allowChildVideoCalls == null ? true : Boolean(member.allowChildVideoCalls),
-    notifyParentOnMediaChanges: Boolean(member.notifyParentOnMediaChanges),
-    suspended: Boolean(member.suspendedAt),
-    suspendedAt: member.suspendedAt ? member.suspendedAt.toISOString() : null,
-    suspendedById: member.suspendedById,
-    suspensionNote: member.suspensionNote,
-    createdAt: member.createdAt.toISOString(),
-    updatedAt: member.updatedAt.toISOString(),
-  }
-}
+const {
+  isParentProfileEligibleForFamilyMode,
+  normalizeFamilyMemberSummary,
+} = createFamilyProfileHelpers({
+  buildDefaultFamilyMemberUsernameBase,
+  normalizeFamilyMemberUsernameCandidate,
+  normalizeMediaUrl,
+  parseCommunityMeta,
+})
 
 async function loadFamilyMemberSummaryForParent(memberId: string, parentId: string) {
   try {
@@ -1967,668 +963,30 @@ async function updateFamilyMemberSummaryForParent(args: {
   }
 }
 
-type FamilyFeedPostRecord = {
-  id: string
-  familyMemberId: string
-  parentId: string
-  body: string
-  images: Prisma.JsonValue | null
-  createdAt: Date
-  updatedAt: Date
-}
-
-const FAMILY_FEED_POST_TYPE = 'family'
-
-function buildFamilyFeedPostTitle(memberId: string) {
-  return `family-feed:${memberId}`
-}
-
-function buildLegacyFamilyFeedMirrorKey(args: {
-  memberId: string
-  body: string
-  createdAt: Date
-  images: Prisma.JsonValue | null
-}) {
-  return JSON.stringify({
-    memberId: args.memberId,
-    body: args.body,
-    createdAt: args.createdAt.toISOString(),
-    images: normalizeFamilyFeedImages(args.images),
-  })
-}
-
-async function loadLatestFamilyPostAtByMember(parentId: string, memberIds: string[]) {
-  const latestByMember = new Map<string, string>()
-  if (!memberIds.length) return latestByMember
-
-  const rows = await Promise.all(memberIds.map(async (memberId) => {
-    const [postRow, legacyRow] = await Promise.all([
-      prisma.post.findFirst({
-        where: {
-          authorId: parentId,
-          type: FAMILY_FEED_POST_TYPE,
-          title: buildFamilyFeedPostTitle(memberId),
-        },
-        orderBy: [{ createdAt: 'desc' }],
-        select: { createdAt: true },
-      }),
-      (async () => {
-        try {
-          return await prisma.familyFeedPost.findFirst({
-            where: {
-              parentId,
-              familyMemberId: memberId,
-            },
-            orderBy: [{ createdAt: 'desc' }],
-            select: { createdAt: true },
-          })
-        } catch (error) {
-          if (!isSchemaOutOfDateError(error)) throw error
-          return null
-        }
-      })(),
-    ])
-
-    const timestamps = [postRow?.createdAt, legacyRow?.createdAt]
-      .filter((value): value is Date => value instanceof Date)
-      .map((value) => value.getTime())
-    if (!timestamps.length) return [memberId, null] as const
-
-    return [memberId, new Date(Math.max(...timestamps)).toISOString()] as const
-  }))
-
-  for (const [memberId, latestPostAt] of rows) {
-    if (latestPostAt) latestByMember.set(memberId, latestPostAt)
-  }
-
-  return latestByMember
-}
-
-async function loadLatestPublicPostAtByUsers(userIds: string[]) {
-  const latestByUser = new Map<string, string>()
-  if (!userIds.length) return latestByUser
-
-  const rows = await Promise.all(userIds.map(async (userId) => {
-    let latestDate: Date | null = null
-    try {
-      const row = await prisma.post.findFirst({
-        where: {
-          authorId: userId,
-          publishedAt: { not: null },
-          visibility: 'public',
-        },
-        orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
-        select: {
-          publishedAt: true,
-          createdAt: true,
-        },
-      })
-      latestDate = row?.publishedAt ?? row?.createdAt ?? null
-    } catch (error) {
-      if (!isSchemaOutOfDateError(error)) throw error
-      const fallbackRow = await prisma.post.findFirst({
-        where: {
-          authorId: userId,
-        },
-        orderBy: [{ createdAt: 'desc' }],
-        select: {
-          createdAt: true,
-        },
-      })
-      latestDate = fallbackRow?.createdAt ?? null
-    }
-
-    return [userId, latestDate ? latestDate.toISOString() : null] as const
-  }))
-
-  for (const [userId, latestPostAt] of rows) {
-    if (latestPostAt) latestByUser.set(userId, latestPostAt)
-  }
-
-  return latestByUser
-}
-
-async function loadProfileFamilyRelationshipsForRail(value: Prisma.JsonValue | null | undefined) {
-  try {
-    const relationships = getStoredProfileFamilyRelationships(value)
-    if (!relationships.length) return []
-
-    const dedupedRelationships = Array.from(new Map(relationships.map((entry) => [entry.relatedUserId, entry])).values())
-    const relatedUserIds = dedupedRelationships.map((entry) => entry.relatedUserId)
-    const [relatedUsers, latestPostAtByUser]: [
-      Array<{ id: string; handle: string; name: string | null; avatarUrl: string | null; coverUrl: string | null }>,
-      Map<string, string>,
-    ] = await Promise.all([
-      prisma.user.findMany({
-        where: { id: { in: relatedUserIds } },
-        select: {
-          id: true,
-          handle: true,
-          name: true,
-          avatarUrl: true,
-          coverUrl: true,
-        },
-      }),
-      loadLatestPublicPostAtByUsers(relatedUserIds),
-    ])
-
-    const usersById = new Map(relatedUsers.map((user: typeof relatedUsers[number]) => [user.id, user]))
-
-    return dedupedRelationships.flatMap((relationship) => {
-      const user = usersById.get(relationship.relatedUserId)
-      if (!user) return []
-
-      return [{
-        id: user.id,
-        handle: user.handle,
-        displayName: user.name?.trim() || relationship.relatedName?.trim() || user.handle,
-        relationshipLabel: PROFILE_FAMILY_RELATIONSHIP_LABELS[relationship.familyType],
-        avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
-        coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
-        latestPostAt: latestPostAtByUser.get(user.id) ?? null,
-      }]
-    })
-  } catch (error) {
-    console.error('profile_family_relationship_rail_load_failed', error)
-    return []
-  }
-}
-
-async function syncLegacyParentFamilyFeedPosts(parentId: string) {
-  try {
-    const [legacyRows, mirroredRows]: [
-      Array<{
-        familyMemberId: string
-        body: string
-        images: Prisma.JsonValue | null
-        createdAt: Date
-        updatedAt: Date
-      }>,
-      Array<{
-        title: string
-        body: string
-        images: Prisma.JsonValue | null
-        createdAt: Date
-      }>,
-    ] = await Promise.all([
-      prisma.familyFeedPost.findMany({
-        where: { parentId },
-        orderBy: [{ createdAt: 'desc' }],
-        take: 80,
-        select: {
-          familyMemberId: true,
-          body: true,
-          images: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      }),
-      prisma.post.findMany({
-        where: {
-          authorId: parentId,
-          type: FAMILY_FEED_POST_TYPE,
-        },
-        orderBy: [{ createdAt: 'desc' }],
-        take: 200,
-        select: {
-          title: true,
-          body: true,
-          images: true,
-          createdAt: true,
-        },
-      }),
-    ])
-
-    if (!legacyRows.length) return
-
-    const mirroredKeys = new Set(
-      mirroredRows
-        .filter((row) => row.title.startsWith('family-feed:'))
-        .map((row) => buildLegacyFamilyFeedMirrorKey({
-          memberId: row.title.slice('family-feed:'.length),
-          body: row.body,
-          createdAt: row.createdAt,
-          images: row.images,
-        })),
-    )
-
-    const missingRows = legacyRows.filter((row) => !mirroredKeys.has(buildLegacyFamilyFeedMirrorKey({
-      memberId: row.familyMemberId,
-      body: row.body,
-      createdAt: row.createdAt,
-      images: row.images,
-    })))
-
-    if (!missingRows.length) return
-
-    await prisma.$transaction(
-      missingRows.map((row) =>
-        prisma.post.create({
-          data: {
-            authorId: parentId,
-            body: row.body,
-            images: normalizeFamilyFeedImages(row.images).length ? (normalizeFamilyFeedImages(row.images) as any) : undefined,
-            type: FAMILY_FEED_POST_TYPE,
-            title: buildFamilyFeedPostTitle(row.familyMemberId),
-            audience: 'family',
-            visibility: 'public',
-            jurisdiction: 'self',
-            createdAt: row.createdAt,
-            updatedAt: row.updatedAt,
-          },
-        }),
-      ),
-    )
-  } catch (error) {
-    if (!isSchemaOutOfDateError(error)) throw error
-  }
-}
-
-function normalizeFamilyFeedImages(images: Prisma.JsonValue | null): string[] {
-  if (!Array.isArray(images)) return []
-  return images.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-}
-
-function formatChildFamilyFeedPost(
-  post: Pick<FamilyFeedPostRecord, 'id' | 'familyMemberId' | 'body' | 'images' | 'createdAt' | 'updatedAt'>,
-  member: ReturnType<typeof normalizeFamilyMemberSummary>,
- ) {
-  return {
-    id: post.id,
-    familyMemberId: post.familyMemberId,
-    body: post.body,
-    images: normalizeFamilyFeedImages(post.images),
-    createdAt: post.createdAt.toISOString(),
-    updatedAt: post.updatedAt.toISOString(),
-    author: {
-      id: member.id,
-      handle: member.username,
-      name: member.displayName,
-      avatarUrl: member.avatarUrl,
-      coverUrl: member.coverUrl,
-      badgeLabel: member.relationshipLabel,
-    },
-    target: {
-      id: member.id,
-      name: member.displayName,
-      relationshipLabel: member.relationshipLabel,
-      modeBand: member.modeBand,
-      modeLabel: member.modeLabel,
-    },
-  }
-}
-
-function formatParentFamilyFeedPost(
-  post: {
-    id: string
-    familyMemberId: string
-    body: string
-    images: Prisma.JsonValue | null
-    createdAt: Date
-    updatedAt: Date
-  },
-  member: ReturnType<typeof normalizeFamilyMemberSummary>,
-  author: {
-    id: string
-    handle: string
-    name: string | null
-    avatarUrl: string | null
-    coverUrl: string | null
-  },
-) {
-  const authorName = author.name?.trim() || author.handle || 'Parent'
-
-  return {
-    id: post.id,
-    familyMemberId: post.familyMemberId,
-    body: post.body,
-    images: normalizeFamilyFeedImages(post.images),
-    createdAt: post.createdAt.toISOString(),
-    updatedAt: post.updatedAt.toISOString(),
-    author: {
-      id: author.id,
-      handle: author.handle,
-      name: authorName,
-      avatarUrl: normalizeMediaUrl(author.avatarUrl ?? null),
-      coverUrl: normalizeMediaUrl(author.coverUrl ?? null),
-      badgeLabel: 'Parent',
-    },
-    target: {
-      id: member.id,
-      name: member.displayName,
-      relationshipLabel: member.relationshipLabel,
-      modeBand: member.modeBand,
-      modeLabel: member.modeLabel,
-    },
-  }
-}
+const {
+  buildFamilyFeedPostTitle,
+  buildFamilyProfileRelationshipPayload,
+  buildLegacyFamilyFeedMirrorKey,
+  formatChildFamilyFeedPost,
+  formatParentFamilyFeedPost,
+  loadLatestFamilyPostAtByMember,
+  loadProfileFamilyRelationshipsForRail,
+  normalizeFamilyFeedImages,
+  normalizeFamilyMemberDraftEditorRecord,
+  normalizeFamilyMemberDraftSummary,
+  syncLegacyParentFamilyFeedPosts,
+} = createFamilyFeedHelpers({
+  getStoredProfileFamilyRelationships,
+  isSchemaOutOfDateError,
+  normalizeMediaUrl,
+  profileFamilyRelationshipLabels: PROFILE_FAMILY_RELATIONSHIP_LABELS as Record<string, string>,
+})
 
 async function resolveFamilyFeedTargetMember(
   authContext: ViewerAuthContext,
   requestedMemberId?: string | null,
 ) {
-  if (authContext.actor === 'family_member') {
-    return authContext.member
-  }
-
-  const memberId = requestedMemberId?.trim()
-  if (!memberId) return null
-  return loadFamilyMemberAuthViewerById(memberId, authContext.userId)
-}
-
-async function resolveFamilyProfileAccess(
-  authContext: ViewerAuthContext | null,
-  targetMember: FamilyAuthMember,
-): Promise<'self' | 'family' | 'friend' | null> {
-  if (!authContext) return null
-
-  if (authContext.actor === 'user') {
-    if (authContext.userId === targetMember.parentId) return 'family'
-
-    const directParentFriendship = await prisma.friendship.findFirst({
-      where: {
-        status: FriendshipStatus.ACCEPTED,
-        OR: [
-          { requesterId: authContext.userId, addresseeId: targetMember.parentId },
-          { requesterId: targetMember.parentId, addresseeId: authContext.userId },
-        ],
-      },
-      select: { id: true },
-    })
-    if (directParentFriendship) return 'friend'
-
-    const [viewerMembers, viewerUser] = await Promise.all([
-      loadNormalizedFamilyMembersForParent(authContext.userId),
-      prisma.user.findUnique({ where: { id: authContext.userId }, select: { communityMeta: true } }),
-    ])
-    const viewerFriendships = getStoredFamilyFriendships(viewerUser?.communityMeta)
-    const targetFriendships = getStoredFamilyFriendships(targetMember.parent.communityMeta)
-
-    const hasDirectStoredParentLink =
-      viewerFriendships.some(
-        (friendship) => friendship.peerMemberId === targetMember.id && friendship.peerParentId === targetMember.parentId,
-      ) ||
-      targetFriendships.some(
-        (friendship) => friendship.memberId === targetMember.id && friendship.peerParentId === authContext.userId,
-      )
-
-    if (hasDirectStoredParentLink) return 'friend'
-    if (viewerMembers.length === 0) return null
-
-    const hasFriendAccess = viewerMembers.some((member: ReturnType<typeof normalizeFamilyMemberSummary>) => {
-      return (
-        hasAcceptedFamilyFriendship(viewerFriendships, member.id, targetMember.id) ||
-        hasAcceptedFamilyFriendship(targetFriendships, targetMember.id, member.id)
-      )
-    })
-
-    return hasFriendAccess ? 'friend' : null
-  }
-
-  if (authContext.member.id === targetMember.id) return 'self'
-  if (authContext.member.parentId === targetMember.parentId) return 'family'
-
-  const viewerFriendships = getStoredFamilyFriendships(authContext.member.parent.communityMeta)
-  if (hasAcceptedFamilyFriendship(viewerFriendships, authContext.member.id, targetMember.id)) {
-    return 'friend'
-  }
-
-  return null
-}
-
-async function resolveReadableFamilyFeedTargetMember(
-  authContext: ViewerAuthContext,
-  requestedMemberId?: string | null,
-) {
-  const memberId = requestedMemberId?.trim()
-  if (authContext.actor === 'family_member') {
-    if (!memberId || memberId === authContext.member.id) return authContext.member
-    const targetMember = await loadFamilyMemberAuthViewerById(memberId)
-    if (!targetMember) return null
-    return (await resolveFamilyProfileAccess(authContext, targetMember)) ? targetMember : null
-  }
-
-  if (!memberId) return null
-  const targetMember = await loadFamilyMemberAuthViewerById(memberId)
-  if (!targetMember) return null
-  return (await resolveFamilyProfileAccess(authContext, targetMember)) ? targetMember : null
-}
-
-function buildFamilyProfileRelationshipPayload(
-  authContext: ViewerAuthContext | null,
-  access: 'self' | 'family' | 'friend' | null,
-) {
-  const friendshipStatus =
-    authContext?.actor === 'family_member'
-      ? access === 'self'
-        ? 'self'
-        : access === 'friend'
-          ? 'friends'
-          : 'none'
-      : 'none'
-
-  return {
-    friendshipStatus,
-    friendshipId: undefined,
-    friendshipSince: null,
-    connectionStatus: friendshipStatus === 'self' ? 'self' : 'none',
-    connectionId: undefined,
-    connectionSince: null,
-  }
-}
-
-function normalizeFamilyMemberDraftSummary(draft: { id: string; createdAt: Date; updatedAt: Date }) {
-  return {
-    id: draft.id,
-    createdAt: draft.createdAt.toISOString(),
-    updatedAt: draft.updatedAt.toISOString(),
-  }
-}
-
-function normalizeFamilyMemberDraftEditorRecord(draft: {
-  id: string
-  firstName: string | null
-  lastName: string | null
-  dateOfBirth: Date | null
-  relationship: FamilyRelationship | null
-  createdAt: Date
-  updatedAt: Date
-}) {
-  return {
-    id: draft.id,
-    kind: 'draft' as const,
-    firstName: draft.firstName ?? '',
-    lastName: draft.lastName ?? '',
-    relationship: draft.relationship ?? 'son',
-    dateOfBirth: draft.dateOfBirth ? draft.dateOfBirth.toISOString().slice(0, 10) : '',
-    friendCode: null,
-    avatarUrl: null,
-    coverUrl: null,
-    allowChildOwnMediaEdits: false,
-    notifyParentOnMediaChanges: false,
-    createdAt: draft.createdAt.toISOString(),
-    updatedAt: draft.updatedAt.toISOString(),
-  }
-}
-
-function parseFamilyMemberDateOfBirth(rawDateOfBirth: string) {
-  const dateOfBirth = new Date(`${rawDateOfBirth}T00:00:00.000Z`)
-  if (Number.isNaN(dateOfBirth.getTime())) return { error: 'family_member_invalid_dob' as const }
-
-  const age = calculateAgeFromDateOfBirth(dateOfBirth)
-  if (age < 5) return { error: 'family_member_too_young' as const }
-  if (age > 120) return { error: 'family_member_invalid_age' as const }
-
-  return { dateOfBirth, age }
-}
-
-function buildFamilySuspensionMessage(displayName: string) {
-  return `${displayName} has been suspended in Family Mode until a parent or guardian restores the account.`
-}
-
-function buildFamilyFriendCode() {
-  return `${randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()}-${randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()}-${randomUUID().replace(/-/g, '').slice(0, 2).toUpperCase()}`
-}
-
-function normalizeFamilyMemberUsernameCandidate(value: string) {
-  return value.trim()
-}
-
-function normalizeFamilyMemberUsernameLookup(value: string) {
-  return normalizeFamilyMemberUsernameCandidate(value).toLowerCase()
-}
-
-function isValidFamilyMemberUsername(value: string) {
-  return FAMILY_MEMBER_USERNAME_PATTERN.test(normalizeFamilyMemberUsernameCandidate(value))
-}
-
-function buildDefaultFamilyMemberUsernameBase(firstName: string, lastName: string) {
-  const base = buildHandleBase(firstName, lastName).slice(0, FAMILY_MEMBER_USERNAME_MAX_LENGTH)
-  if (base.length >= FAMILY_MEMBER_USERNAME_MIN_LENGTH) return base
-  return `${base}${'friend'.slice(0, Math.max(0, FAMILY_MEMBER_USERNAME_MIN_LENGTH - base.length))}`.slice(0, FAMILY_MEMBER_USERNAME_MAX_LENGTH)
-}
-
-function applyFamilyMemberUsernameSuffix(base: string, attempt: number) {
-  if (attempt === 0) return base
-  const suffix = String(attempt + 1)
-  const trimmedBase = base.slice(0, Math.max(FAMILY_MEMBER_USERNAME_MIN_LENGTH, FAMILY_MEMBER_USERNAME_MAX_LENGTH - suffix.length))
-  return `${trimmedBase}${suffix}`.slice(0, FAMILY_MEMBER_USERNAME_MAX_LENGTH)
-}
-
-async function isFamilyMemberUsernameTaken(
-  username: string,
-  options?: {
-    excludeMemberId?: string | null
-  },
-) {
-  const normalizedLookup = normalizeFamilyMemberUsernameLookup(username)
-
-  const existingUser = await prisma.user.findFirst({
-    where: {
-      handle: {
-        equals: normalizedLookup,
-        mode: 'insensitive',
-      },
-    },
-    select: { id: true },
-  })
-  if (existingUser) return true
-
-  try {
-    const existingMember = await prisma.familyMember.findFirst({
-      where: {
-        username: {
-          equals: normalizeFamilyMemberUsernameCandidate(username),
-          mode: 'insensitive',
-        },
-        ...(options?.excludeMemberId ? { NOT: { id: options.excludeMemberId } } : {}),
-      },
-      select: { id: true },
-    })
-    return Boolean(existingMember)
-  } catch (error) {
-    if (!isFamilyMemberTableMissing(error)) throw error
-
-    const users = await prisma.user.findMany({
-      select: {
-        communityMeta: true,
-      },
-    })
-
-    return users.some((user: { communityMeta: Prisma.JsonValue | null }) => {
-      const settings = parseCommunityMeta(user.communityMeta ?? null)?.familyMemberSettings
-      if (!settings) return false
-      return Object.entries(settings).some(([memberId, value]) => {
-        if (options?.excludeMemberId && memberId === options.excludeMemberId) return false
-        return normalizeFamilyMemberUsernameLookup(value?.username ?? '') === normalizedLookup
-      })
-    })
-  }
-}
-
-async function generateUniqueFamilyMemberUsername(firstName: string, lastName: string) {
-  const base = buildDefaultFamilyMemberUsernameBase(firstName, lastName)
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const candidate = applyFamilyMemberUsernameSuffix(base, attempt)
-    if (!(await isFamilyMemberUsernameTaken(candidate))) {
-      return candidate
-    }
-  }
-  throw new Error('family_username_generation_failed')
-}
-
-async function findFamilyMemberByInviteCode(inviteCode: string) {
-  const normalizedInviteCode = inviteCode.trim().toUpperCase()
-  if (!normalizedInviteCode) return null
-  const member = await prisma.familyMember.findFirst({
-    where: { friendCode: normalizedInviteCode },
-    select: { id: true, parentId: true },
-  })
-  if (!member) return null
-  return loadFamilyMemberAuthViewerById(member.id, member.parentId)
-}
-
-async function findFamilyMemberByUsername(username: string) {
-  const normalizedLookup = normalizeFamilyMemberUsernameLookup(username)
-  if (!normalizedLookup) return null
-
-  try {
-    const member = await prisma.familyMember.findFirst({
-      where: {
-        username: {
-          equals: username.trim(),
-          mode: 'insensitive',
-        },
-      },
-      select: { id: true, parentId: true },
-    })
-    if (member) {
-      return loadFamilyMemberAuthViewerById(member.id, member.parentId)
-    }
-  } catch (error) {
-    if (!isFamilyMemberTableMissing(error)) throw error
-  }
-
-  const members = await prisma.familyMember.findMany({
-    select: {
-      id: true,
-      parentId: true,
-      firstName: true,
-      lastName: true,
-      friendCode: true,
-      parent: {
-        select: {
-          communityMeta: true,
-        },
-      },
-    },
-  })
-
-  for (const member of members) {
-    const candidate =
-      getLegacyFamilyMemberStoredUsername(member.parent.communityMeta, member.id) ??
-      buildDefaultFamilyMemberUsernameBase(member.firstName, member.lastName)
-    if (normalizeFamilyMemberUsernameLookup(candidate) === normalizedLookup) {
-      return loadFamilyMemberAuthViewerById(member.id, member.parentId)
-    }
-  }
-
-  return null
-}
-
-async function generateUniqueFamilyFriendCode() {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const candidate = buildFamilyFriendCode()
-    let existing: { id: string } | null = null
-    try {
-      existing = await prisma.familyMember.findUnique({ where: { friendCode: candidate }, select: { id: true } })
-    } catch (error) {
-      if (!isFamilyMemberTableMissing(error)) throw error
-      return candidate
-    }
-    if (!existing) return candidate
-  }
-  throw new Error('family_friend_code_generation_failed')
+  return resolveFamilyConversationFeedTargetMember(authContext, requestedMemberId)
 }
 
 type AuthJwtPayload = {
@@ -2649,6 +1007,23 @@ const {
   getLegacyFamilyMemberStoredUsername,
   isFamilyMemberTableMissing,
   normalizeFamilyMemberSummary,
+  parseCommunityMeta,
+})
+
+const {
+  buildFamilySuspensionMessage,
+  findFamilyMemberByInviteCode,
+  findFamilyMemberByUsername,
+  generateUniqueFamilyFriendCode,
+  generateUniqueFamilyMemberUsername,
+  isFamilyMemberUsernameTaken,
+  isValidFamilyMemberUsername,
+  normalizeFamilyMemberUsernameLookup,
+  parseFamilyMemberDateOfBirth,
+} = createFamilyIdentityHelpers({
+  getLegacyFamilyMemberStoredUsername,
+  isFamilyMemberTableMissing,
+  loadFamilyMemberAuthViewerById,
   parseCommunityMeta,
 })
 
@@ -3030,7 +1405,8 @@ const {
   loadActiveAuthUserById,
   loadActiveNativePushTargets,
   loadFamilyMemberAuthViewerById,
-  normalizeAttachmentList,
+  normalizeAttachmentList: (value) =>
+    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [],
   notificationSelect: NOTIFICATION_SELECT,
   pushAdminSecret: PUSH_ADMIN_SECRET,
   pushDeliveryUrl: PUSH_DELIVERY_URL,
@@ -3281,153 +1657,20 @@ async function loadAcceptedFriendIds(userId: string): Promise<string[]> {
   return [...result]
 }
 
-type ConnectionStatusValue = 'PENDING' | 'ACCEPTED' | 'REJECTED'
-
-type ConnectionRow = {
-  id: string
-  requesterId: string
-  addresseeId: string
-  status: ConnectionStatusValue
-  requestedAt: Date
-  respondedAt: Date | null
-}
-
-function isConnectionTableMissingError(err: unknown): boolean {
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    if (err.code === 'P2021' || err.code === 'P2010') return true
-  }
-  const message = typeof (err as any)?.message === 'string' ? (err as any).message : ''
-  return /"Connection"|ConnectionStatus|relation .*Connection.* does not exist/i.test(message)
-}
-
-async function findConnectionBetween(userId: string, targetUserId: string): Promise<ConnectionRow | null> {
-  try {
-    const rows = await prisma.$queryRaw<ConnectionRow[]>`
-      SELECT "id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt"
-      FROM "Connection"
-      WHERE ("requesterId" = ${userId} AND "addresseeId" = ${targetUserId})
-         OR ("requesterId" = ${targetUserId} AND "addresseeId" = ${userId})
-      LIMIT 1
-    `
-    return rows[0] ?? null
-  } catch (error) {
-    if (isConnectionTableMissingError(error)) return null
-    throw error
-  }
-}
-
-async function findConnectionById(id: string): Promise<ConnectionRow | null> {
-  try {
-    const rows = await prisma.$queryRaw<ConnectionRow[]>`
-      SELECT "id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt"
-      FROM "Connection"
-      WHERE "id" = ${id}
-      LIMIT 1
-    `
-    return rows[0] ?? null
-  } catch (error) {
-    if (isConnectionTableMissingError(error)) return null
-    throw error
-  }
-}
-
-async function createOrRefreshConnectionRequest(requesterId: string, addresseeId: string): Promise<void> {
-  if (!requesterId || !addresseeId || requesterId === addresseeId) return
-
-  try {
-    const existing = await findConnectionBetween(requesterId, addresseeId)
-    if (existing) {
-      if (existing.status === 'ACCEPTED' || existing.status === 'PENDING') {
-        return
-      }
-
-      const now = new Date()
-      await prisma.$executeRaw`
-        UPDATE "Connection"
-        SET "requesterId" = ${requesterId},
-            "addresseeId" = ${addresseeId},
-            "status" = 'PENDING',
-            "requestedAt" = ${now},
-            "respondedAt" = NULL
-        WHERE "id" = ${existing.id}
-      `
-
-      await notifyConnectionRequest(existing.id, requesterId, addresseeId)
-      return
-    }
-
-    const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-    const now = new Date()
-    await prisma.$executeRaw`
-      INSERT INTO "Connection" ("id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt")
-      VALUES (${id}, ${requesterId}, ${addresseeId}, 'PENDING', ${now}, NULL)
-    `
-
-    await notifyConnectionRequest(id, requesterId, addresseeId)
-  } catch (error) {
-    if (isConnectionTableMissingError(error)) return
-    throw error
-  }
-}
-
-async function loadAcceptedConnectionIds(userId: string): Promise<string[]> {
-  try {
-    const rows = await prisma.$queryRaw<Array<{ requesterId: string; addresseeId: string }>>`
-      SELECT "requesterId", "addresseeId"
-      FROM "Connection"
-      WHERE "status" = 'ACCEPTED'
-        AND ("requesterId" = ${userId} OR "addresseeId" = ${userId})
-    `
-    const ids = new Set<string>()
-    for (const row of rows) {
-      ids.add(row.requesterId === userId ? row.addresseeId : row.requesterId)
-    }
-    return [...ids]
-  } catch (error) {
-    if (isConnectionTableMissingError(error)) return []
-    throw error
-  }
-}
-
-function formatFriendRequest(friendship: FriendshipWithUsers, viewerId: string) {
-  const direction = friendship.requesterId === viewerId ? 'outgoing' : 'incoming'
-  const counterpart = direction === 'outgoing' ? friendship.addressee : friendship.requester
-  return {
-    id: friendship.id,
-    status: friendship.status,
-    direction,
-    requestedAt: friendship.requestedAt,
-    respondedAt: friendship.respondedAt ?? null,
-    user: formatFriendUser(counterpart),
-  }
-}
-
-function formatFriendship(friendship: FriendshipWithUsers, viewerId: string) {
-  const counterpart = friendship.requesterId === viewerId ? friendship.addressee : friendship.requester
-  return {
-    id: friendship.id,
-    status: friendship.status,
-    since: friendship.respondedAt ?? friendship.requestedAt,
-    user: formatFriendUser(counterpart),
-  }
-}
-
-const FAMILY_SPONSOR_FRIENDSHIP_PREFIX = 'family-sponsor:'
-
-function buildFamilySponsorFriendshipId(memberId: string) {
-  return `${FAMILY_SPONSOR_FRIENDSHIP_PREFIX}${memberId}`
-}
-
-function formatFamilySponsorFriendship(member: FamilyAuthMember) {
-  return {
-    id: buildFamilySponsorFriendshipId(member.id),
-    status: FriendshipStatus.ACCEPTED,
-    since: member.createdAt,
-    locked: true,
-    specialKind: 'family_sponsor' as const,
-    user: formatFriendUser(member.parent),
-  }
-}
+const {
+  buildFamilySponsorFriendshipId,
+  createOrRefreshConnectionRequest,
+  findConnectionBetween,
+  findConnectionById,
+  formatFamilySponsorFriendship,
+  formatFriendRequest,
+  formatFriendship,
+  isConnectionTableMissingError,
+  loadAcceptedConnectionIds,
+} = createSocialGraphHelpers({
+  formatFriendUser,
+  notifyConnectionRequest,
+})
 
 const MESSAGE_SELECT = {
   id: true,
@@ -3508,81 +1751,26 @@ type MessageCallSystemMeta = {
   actorName: string | null
 }
 
-function normalizeAttachmentList(value: Prisma.JsonValue | null | undefined): string[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((entry): entry is string => typeof entry === 'string')
-}
-
-function extractMessageSystemMeta(value: Prisma.JsonValue | null | undefined): MessageCallSystemMeta | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const typed = value as Record<string, unknown>
-  if (typed.kind !== 'call_ended') return null
-  const reason = typed.reason
-  const mode = typed.mode
-  const callId = typed.callId
-  const callbackThreadId = typed.callbackThreadId
-  if ((reason !== 'hangup' && reason !== 'no_answer') || (mode !== 'audio' && mode !== 'video')) return null
-  if (typeof callId !== 'string' || !callId.trim()) return null
-  if (typeof callbackThreadId !== 'string' || !callbackThreadId.trim()) return null
-  return {
-    kind: 'call_ended',
-    reason,
-    mode,
-    callId,
-    callbackThreadId,
-    callbackLabel: 'Call Back',
-    actorUserId: typeof typed.actorUserId === 'string' && typed.actorUserId.trim() ? typed.actorUserId : null,
-    actorName: typeof typed.actorName === 'string' && typed.actorName.trim() ? typed.actorName : null,
-  }
-}
-
-function formatMessage(record: MessageRecord, viewerId: string) {
-  return {
-    id: record.id,
-    threadId: record.threadId,
-    body: record.body ?? null,
-    attachments: normalizeAttachmentList(record.attachments),
-    systemMeta: extractMessageSystemMeta(record.attachments),
-    messageType: record.messageType,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    deletedAt: record.deletedAt ?? null,
-    senderId: record.senderId,
-    sender: formatFriendUser(record.sender),
-    isMine: record.senderId === viewerId,
-  }
-}
-
-function formatThreadParticipant(participant: ThreadParticipantRecord, viewerId: string) {
-  return {
-    userId: participant.userId,
-    role: participant.role,
-    joinedAt: participant.joinedAt,
-    lastReadAt: participant.lastReadAt ?? null,
-    mutedUntil: participant.mutedUntil ?? null,
-    lastActivityAt: participant.lastActivityAt,
-    user: formatFriendUser(participant.user),
-    isViewer: participant.userId === viewerId,
-  }
-}
-
-function formatFamilyMemberThreadUser(member: FamilyAuthMember) {
-  const normalizedMember = normalizeFamilyMemberSummary(member)
-  return formatNormalizedFamilyMemberThreadUser(normalizedMember)
-}
-
-function formatNormalizedFamilyMemberThreadUser(member: ReturnType<typeof normalizeFamilyMemberSummary>) {
-  const username = member.username?.trim() || `family-${member.id.slice(0, 8)}`
-  return {
-    id: `family-member:${member.id}`,
-    handle: username,
-    name: member.displayName,
-    avatarUrl: normalizeMediaUrl(member.avatarUrl ?? null),
-    coverUrl: normalizeMediaUrl(member.coverUrl ?? null),
-    isPremium: false,
-    isVerified: false,
-  }
-}
+const {
+  extractMessageSystemMeta,
+  fetchFamilyParentConversationMessages,
+  fetchParentFamilyConversationMessages,
+  formatFamilyMemberThreadUser,
+  formatFamilyParentConversationMessage,
+  formatMessage,
+  formatNormalizedFamilyMemberThreadUser,
+  formatParentFamilyConversationMessage,
+  formatThreadParticipant,
+  buildFamilyParentConversationThread,
+  buildParentFamilyConversationThread,
+  normalizeAttachmentList,
+} = createMessageFormattingHelpers({
+  buildFamilyParentThreadId,
+  buildParentFamilyThreadId,
+  formatFriendUser,
+  normalizeFamilyMemberSummary,
+  normalizeMediaUrl,
+})
 
 async function loadNormalizedFamilyMembersForParent(parentId: string) {
   try {
@@ -3647,207 +1835,6 @@ async function loadNormalizedFamilyMembersForParent(parentId: string) {
   }
 }
 
-function formatParentFamilyConversationMessage(
-  conversation: FamilyParentConversationRecord,
-  member: ReturnType<typeof normalizeFamilyMemberSummary>,
-  parent: FriendUser,
-) {
-  const threadId = buildParentFamilyThreadId(member.id)
-  return conversation.messages.map((message) => ({
-    id: message.id,
-    threadId,
-    body: message.body,
-    attachments: [],
-    systemMeta: null,
-    messageType: 'text',
-    createdAt: new Date(message.createdAt),
-    updatedAt: new Date(message.updatedAt),
-    deletedAt: null,
-    senderId: message.sender === 'child' ? `family-member:${member.id}` : parent.id,
-    sender: message.sender === 'child' ? formatNormalizedFamilyMemberThreadUser(member) : formatFriendUser(parent),
-    isMine: message.sender === 'parent',
-  }))
-}
-
-function buildParentFamilyConversationThread(args: {
-  parent: FriendUser
-  member: ReturnType<typeof normalizeFamilyMemberSummary>
-  conversation: FamilyParentConversationRecord | null
-}) {
-  const createdAt = new Date(args.conversation?.createdAt ?? args.member.createdAt)
-  const updatedAt = new Date(args.conversation?.updatedAt ?? args.member.updatedAt)
-  const messages = args.conversation ? formatParentFamilyConversationMessage(args.conversation, args.member, args.parent) : []
-  const lastMessage = messages.at(-1) ?? null
-  const unreadCount = args.conversation
-    ? args.conversation.messages.filter((message) => {
-        if (message.sender !== 'child') return false
-        if (!args.conversation?.parentLastReadAt) return true
-        return message.createdAt > args.conversation.parentLastReadAt
-      }).length
-    : 0
-
-  return {
-    id: buildParentFamilyThreadId(args.member.id),
-    type: 'direct',
-    contextType: null,
-    contextId: null,
-    inboxSection: 'family' as const,
-    createdAt,
-    updatedAt,
-    lastMessageAt: lastMessage?.createdAt ?? createdAt,
-    lastMessage,
-    unreadCount,
-    unread: unreadCount > 0,
-    activeCall: null,
-    participants: [
-      {
-        userId: args.parent.id,
-        role: 'member',
-        joinedAt: createdAt,
-        lastReadAt: args.conversation?.parentLastReadAt ? new Date(args.conversation.parentLastReadAt) : null,
-        mutedUntil: null,
-        lastActivityAt: updatedAt,
-        user: formatFriendUser(args.parent),
-        isViewer: true,
-      },
-      {
-        userId: `family-member:${args.member.id}`,
-        role: 'member',
-        joinedAt: createdAt,
-        lastReadAt: args.conversation?.childLastReadAt ? new Date(args.conversation.childLastReadAt) : null,
-        mutedUntil: null,
-        lastActivityAt: updatedAt,
-        user: formatNormalizedFamilyMemberThreadUser(args.member),
-        isViewer: false,
-      },
-    ],
-  }
-}
-
-function fetchParentFamilyConversationMessages(
-  member: ReturnType<typeof normalizeFamilyMemberSummary>,
-  parent: FriendUser,
-  conversation: FamilyParentConversationRecord | null,
-  limit: number,
-  cursor?: string,
-) {
-  const rows = conversation ? formatParentFamilyConversationMessage(conversation, member, parent) : []
-  const descending = [...rows].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-  const startIndex = cursor ? descending.findIndex((message) => message.id === cursor) + 1 : 0
-  const paged = descending.slice(Math.max(0, startIndex), Math.max(0, startIndex) + limit + 1)
-
-  let nextCursor: string | undefined
-  if (paged.length > limit) {
-    const next = paged.pop()!
-    nextCursor = next.id
-  }
-
-  return {
-    rows: paged.reverse(),
-    nextCursor,
-  }
-}
-
-function formatFamilyParentConversationMessage(
-  conversation: FamilyParentConversationRecord,
-  member: FamilyAuthMember,
-) {
-  const threadId = buildFamilyParentThreadId(member.parentId)
-  return conversation.messages.map((message) => ({
-    id: message.id,
-    threadId,
-    body: message.body,
-    attachments: [],
-    systemMeta: null,
-    messageType: 'text',
-    createdAt: new Date(message.createdAt),
-    updatedAt: new Date(message.updatedAt),
-    deletedAt: null,
-    senderId: message.sender === 'child' ? `family-member:${member.id}` : member.parentId,
-    sender: message.sender === 'child' ? formatFamilyMemberThreadUser(member) : formatFriendUser(member.parent),
-    isMine: message.sender === 'child',
-  }))
-}
-
-function buildFamilyParentConversationThread(
-  member: FamilyAuthMember,
-  conversation: FamilyParentConversationRecord | null,
-) {
-  const threadId = buildFamilyParentThreadId(member.parentId)
-  const createdAt = new Date(conversation?.createdAt ?? member.createdAt.toISOString())
-  const updatedAt = new Date(conversation?.updatedAt ?? conversation?.createdAt ?? member.updatedAt.toISOString())
-  const messages = conversation ? formatFamilyParentConversationMessage(conversation, member) : []
-  const lastMessage = messages.at(-1) ?? null
-  const unreadCount = conversation
-    ? conversation.messages.filter((message) => {
-        if (message.sender !== 'parent') return false
-        if (!conversation.childLastReadAt) return true
-        return message.createdAt > conversation.childLastReadAt
-      }).length
-    : 0
-
-  return {
-    id: threadId,
-    type: 'direct',
-    title: member.parent.name,
-    imageUrl: normalizeMediaUrl(member.parent.avatarUrl ?? null),
-    contextType: null,
-    contextId: null,
-    inboxSection: 'friends' as const,
-    createdAt,
-    updatedAt,
-    lastMessageAt: lastMessage?.createdAt ?? createdAt,
-    lastMessage,
-    unreadCount,
-    unread: unreadCount > 0,
-    activeCall: null,
-    participants: [
-      {
-        userId: `family-member:${member.id}`,
-        role: 'member',
-        joinedAt: createdAt,
-        lastReadAt: conversation?.childLastReadAt ? new Date(conversation.childLastReadAt) : null,
-        mutedUntil: null,
-        lastActivityAt: updatedAt,
-        user: formatFamilyMemberThreadUser(member),
-        isViewer: true,
-      },
-      {
-        userId: member.parentId,
-        role: 'member',
-        joinedAt: createdAt,
-        lastReadAt: conversation?.parentLastReadAt ? new Date(conversation.parentLastReadAt) : null,
-        mutedUntil: null,
-        lastActivityAt: updatedAt,
-        user: formatFriendUser(member.parent),
-        isViewer: false,
-      },
-    ],
-  }
-}
-
-function fetchFamilyParentConversationMessages(
-  member: FamilyAuthMember,
-  conversation: FamilyParentConversationRecord | null,
-  limit: number,
-  cursor?: string,
-) {
-  const rows = conversation ? formatFamilyParentConversationMessage(conversation, member) : []
-  const descending = [...rows].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-  const startIndex = cursor ? descending.findIndex((message) => message.id === cursor) + 1 : 0
-  const paged = descending.slice(Math.max(0, startIndex), Math.max(0, startIndex) + limit + 1)
-
-  let nextCursor: string | undefined
-  if (paged.length > limit) {
-    const next = paged.pop()!
-    nextCursor = next.id
-  }
-
-  return {
-    rows: paged.reverse(),
-    nextCursor,
-  }
-}
 
 async function loadParentFamilyConversationContext(parentId: string, memberId: string) {
   const [parent, memberRecord] = await Promise.all([
@@ -4081,160 +2068,20 @@ async function loadFriendIdSet(userId: string): Promise<Set<string>> {
   return new Set(ids)
 }
 
-type FamilyCallRecord = {
-  id: string
-  memberId: string
-  parentId: string
-  roomId: string
-  mode: 'audio' | 'video'
-  status: 'ringing' | 'active' | 'ended'
-  initiatorActor: 'parent' | 'child'
-  createdAt: string
-  updatedAt: string
-  startedAt: string | null
-  lastJoinedAt: string | null
-  endedAt: string | null
-}
-
-const FAMILY_CALL_KEY_PREFIX = 'family:call:'
-const FAMILY_CALL_MEMBER_KEY_PREFIX = 'family:call:member:'
-const FAMILY_CALL_TTL_MS = 1000 * 60 * 60 * 12
-
-function buildFamilyCallKey(callId: string) {
-  return `${FAMILY_CALL_KEY_PREFIX}${callId}`
-}
-
-function buildFamilyCallMemberKey(memberId: string) {
-  return `${FAMILY_CALL_MEMBER_KEY_PREFIX}${memberId}`
-}
-
-function isFamilyCallRecord(value: unknown): value is FamilyCallRecord {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const record = value as Record<string, unknown>
-  return (
-    typeof record.id === 'string' &&
-    typeof record.memberId === 'string' &&
-    typeof record.parentId === 'string' &&
-    typeof record.roomId === 'string' &&
-    (record.mode === 'audio' || record.mode === 'video') &&
-    (record.status === 'ringing' || record.status === 'active' || record.status === 'ended') &&
-    (record.initiatorActor === 'parent' || record.initiatorActor === 'child') &&
-    typeof record.createdAt === 'string' &&
-    typeof record.updatedAt === 'string'
-  )
-}
-
-async function loadFamilyCallRecord(callId: string) {
-  const raw = await redis.get(buildFamilyCallKey(callId))
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return isFamilyCallRecord(parsed) ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-async function writeFamilyCallRecord(record: FamilyCallRecord) {
-  await redis.set(buildFamilyCallKey(record.id), JSON.stringify(record), 'PX', FAMILY_CALL_TTL_MS)
-  if (record.status === 'ended') {
-    const memberKey = buildFamilyCallMemberKey(record.memberId)
-    const current = await redis.get(memberKey)
-    if (current === record.id) {
-      await redis.del(memberKey)
-    }
-    return
-  }
-  await redis.set(buildFamilyCallMemberKey(record.memberId), record.id, 'PX', FAMILY_CALL_TTL_MS)
-}
-
-async function loadFamilyCallForMember(memberId: string) {
-  const callId = await redis.get(buildFamilyCallMemberKey(memberId))
-  if (!callId) return null
-  const record = await loadFamilyCallRecord(callId)
-  if (!record || record.status === 'ended') {
-    await redis.del(buildFamilyCallMemberKey(memberId))
-    return null
-  }
-  return record
-}
-
-function buildFamilyRtcUserId(memberId: string) {
-  return `family-member:${memberId}`
-}
-
-function formatFamilyCallParticipantUser(user: { id: string; handle: string; name: string | null; avatarUrl: string | null; coverUrl?: string | null; premiumStatus?: PremiumStatus | null }) {
-  return {
-    id: user.id,
-    handle: user.handle,
-    name: user.name,
-    avatarUrl: normalizeMediaUrl(user.avatarUrl ?? null),
-    coverUrl: normalizeMediaUrl(user.coverUrl ?? null),
-    isPremium: isPremium(user.premiumStatus ?? null),
-    isVerified: false,
-  }
-}
-
-function formatFamilyCallSummary(args: {
-  call: FamilyCallRecord
-  member: FamilyAuthMember
-  viewerRole: 'parent' | 'child'
-}) {
-  const memberSummary = normalizeFamilyMemberSummary(args.member)
-  const parentUser = formatFriendUser(args.member.parent)
-  const childUser = formatNormalizedFamilyMemberThreadUser(memberSummary)
-  const initiator = args.call.initiatorActor === 'parent' ? parentUser : childUser
-  const counterpart = args.viewerRole === 'parent' ? childUser : parentUser
-  const viewerRtcUserId = args.viewerRole === 'parent' ? args.member.parentId : buildFamilyRtcUserId(args.member.id)
-  return {
-    member: {
-      id: memberSummary.id,
-      displayName: memberSummary.displayName,
-      username: memberSummary.username,
-      avatarUrl: memberSummary.avatarUrl,
-      relationshipLabel: memberSummary.relationshipLabel,
-      modeBand: memberSummary.modeBand,
-      modeLabel: memberSummary.modeLabel,
-    },
-    parent: parentUser,
-    viewerRole: args.viewerRole,
-    counterpart,
-    call: {
-      id: args.call.id,
-      memberId: args.call.memberId,
-      parentId: args.call.parentId,
-      roomId: args.call.roomId,
-      mode: args.call.mode,
-      status: args.call.status,
-      createdAt: args.call.createdAt,
-      updatedAt: args.call.updatedAt,
-      startedAt: args.call.startedAt,
-      lastJoinedAt: args.call.lastJoinedAt,
-      endedAt: args.call.endedAt,
-      initiatorActor: args.call.initiatorActor,
-      initiator,
-      isInitiator: (args.call.initiatorActor === 'parent' && args.viewerRole === 'parent') ||
-        (args.call.initiatorActor === 'child' && args.viewerRole === 'child'),
-      viewerRtcUserId,
-    },
-  }
-}
-
-async function loadFamilyCallContext(authContext: ViewerAuthContext, memberId: string) {
-  const targetMember =
-    authContext.actor === 'family_member'
-      ? authContext.member.id === memberId
-        ? authContext.member
-        : null
-      : await loadFamilyMemberAuthViewerById(memberId, authContext.userId)
-
-  if (!targetMember) return null
-
-  return {
-    member: targetMember,
-    viewerRole: authContext.actor === 'family_member' ? 'child' as const : 'parent' as const,
-  }
-}
+const {
+  buildFamilyRtcUserId,
+  formatFamilyCallSummary,
+  loadFamilyCallContext,
+  loadFamilyCallForMember,
+  loadFamilyCallRecord,
+  writeFamilyCallRecord,
+} = createFamilyCallHelpers({
+  formatFriendUser,
+  formatNormalizedFamilyMemberThreadUser,
+  loadFamilyMemberAuthViewerById,
+  normalizeFamilyMemberSummary,
+  redis,
+})
 
 async function loadThreadForUser(threadId: string, userId: string) {
   return prisma.messageThread.findFirst({
@@ -5297,6 +3144,31 @@ const {
   scoreSearchTextMatch,
   stripHtmlToPlainText,
   truncatePreviewText,
+})
+
+const {
+  familyMemberCanAccessMessageThread,
+  markFamilyParentConversationRead,
+  resolveFamilyFeedTargetMember: resolveFamilyConversationFeedTargetMember,
+  resolveFamilyProfileAccess,
+  resolveReadableFamilyFeedTargetMember,
+  storeFamilyMessageThreadForMember,
+  storeFamilyParentConversationMessage,
+} = createFamilyConversationAccessHelpers({
+  buildFamilyParentThreadId,
+  getFamilyParentConversation,
+  getStoredFamilyFriendships,
+  getStoredFamilyMessageThreads,
+  getStoredFamilyParentConversations,
+  hasAcceptedFamilyFriendship,
+  hasFamilyMessageThreadForMember,
+  loadFamilyMemberAuthViewerById,
+  loadNormalizedFamilyMembersForParent,
+  readBaseCommunityMeta,
+  upsertFamilyMessageThread,
+  upsertFamilyParentConversation,
+  writeStoredFamilyMessageThreads,
+  writeStoredFamilyParentConversations,
 })
 
 async function loadAuthenticatedUser(req: FastifyRequest) {
