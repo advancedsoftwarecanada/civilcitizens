@@ -95,7 +95,7 @@ function buildFillColorExpression(selectedCode: number | null, districtStatusByC
       '#fed7aa',
       '#e5e7eb',
     ],
-  ] as const
+  ]
 }
 
 function buildFillOpacityExpression(selectedCode: number | null) {
@@ -104,7 +104,7 @@ function buildFillOpacityExpression(selectedCode: number | null) {
     ['==', ['get', 'code'], selectedCode ?? -1],
     1,
     ['coalesce', ['get', 'fillOpacity'], 0.5],
-  ] as const
+  ]
 }
 
 function buildLineColorExpression(selectedCode: number | null, districtStatusByCode: Record<number, DistrictVisualStatus>) {
@@ -132,7 +132,7 @@ function buildLineColorExpression(selectedCode: number | null, districtStatusByC
       '#f97316',
       '#94a3b8',
     ],
-  ] as const
+  ]
 }
 
 function buildLineWidthExpression(selectedCode: number | null) {
@@ -141,7 +141,7 @@ function buildLineWidthExpression(selectedCode: number | null) {
     ['==', ['get', 'code'], selectedCode ?? -1],
     2.5,
     1.5,
-  ] as const
+  ]
 }
 
 function buildPopupContent(args: {
@@ -161,7 +161,7 @@ function buildPopupContent(args: {
   root.style.color = '#0f172a'
   root.style.boxShadow = '0 16px 36px rgba(15, 23, 42, 0.18)'
   root.style.backdropFilter = 'blur(6px)'
-  root.style.webkitBackdropFilter = 'blur(6px)'
+  root.style.setProperty('-webkit-backdrop-filter', 'blur(6px)')
 
   const headingRow = document.createElement('div')
   headingRow.style.display = 'flex'
@@ -466,8 +466,8 @@ export function CivilDistrictBrowserMap({
           type: 'fill',
           source: 'civil-district-browser',
           paint: {
-            'fill-color': buildFillColorExpression(selectedCode, initialSelection.districtStatusByCode),
-            'fill-opacity': buildFillOpacityExpression(selectedCode),
+            'fill-color': buildFillColorExpression(selectedCode, initialSelection.districtStatusByCode) as any,
+            'fill-opacity': buildFillOpacityExpression(selectedCode) as any,
           },
         })
 
@@ -476,8 +476,8 @@ export function CivilDistrictBrowserMap({
           type: 'line',
           source: 'civil-district-browser',
           paint: {
-            'line-color': buildLineColorExpression(selectedCode, initialSelection.districtStatusByCode),
-            'line-width': buildLineWidthExpression(selectedCode),
+            'line-color': buildLineColorExpression(selectedCode, initialSelection.districtStatusByCode) as any,
+            'line-width': buildLineWidthExpression(selectedCode) as any,
           },
         })
 
