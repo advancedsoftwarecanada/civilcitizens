@@ -149,19 +149,24 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           {kind === 'friends' ? (
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Quick search..."
-              data-preserve-placeholder
-              aria-label="Quick search friends"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              className="w-full max-w-sm rounded-full border border-slate-200 bg-white px-5 py-3 text-base font-semibold text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-[var(--cc-primary)]"
-            />
+            <div className="relative w-full max-w-sm">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                aria-label="Quick search friends"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                className="w-full rounded-full border border-slate-200 bg-white px-5 py-3 text-base font-semibold text-slate-900 shadow-sm outline-none transition focus:border-[var(--cc-primary)]"
+              />
+              {!searchQuery ? (
+                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center px-5 text-base font-semibold text-slate-400">
+                  Quick search...
+                </span>
+              ) : null}
+            </div>
           ) : (
             <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
           )}
