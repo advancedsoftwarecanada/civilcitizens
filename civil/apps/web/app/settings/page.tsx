@@ -611,7 +611,7 @@ export default function SettingsPage() {
     <DashboardShell
       className="bg-slate-50"
       mainClassName="space-y-6"
-      rightRail={<RightRail showOrganizations showRsvps sticky={false} />}
+      rightRail={<RightRail showOrganizations showRsvps />}
     >
       <SettingsPanelSection
         id="notifications"

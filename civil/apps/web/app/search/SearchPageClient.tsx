@@ -68,6 +68,14 @@ function SearchSection({ title, count, children }: { title: string; count: numbe
   return sectionCard(title, count, children)
 }
 
+type SearchSectionConfig = {
+  key: Exclude<SearchType, 'all'>
+  title: string
+  count: number
+  emptyMessage: ReactNode
+  content: ReactNode
+}
+
 export default function SearchPageClient({ initialQuery = '', initialType = 'all' }: SearchPageClientProps) {
   const router = useRouter()
   const [query, setQuery] = useState(initialQuery)
@@ -164,17 +172,13 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
       setError(null)
 
       try {
-        const params = new URLSearchParams({ q: trimmed, type: searchType })
-        if (searchType === 'all') {
-          params.set('peopleLimit', String(ALL_SECTION_LIMIT))
-          params.set('communityLimit', String(ALL_SECTION_LIMIT))
-          params.set('organizationLimit', String(ALL_SECTION_LIMIT))
-          params.set('eventLimit', String(ALL_SECTION_LIMIT))
-          params.set('marketLimit', String(ALL_SECTION_LIMIT))
-          params.set('postLimit', String(ALL_SECTION_LIMIT))
-        } else {
-          params.set('limit', String(PAGE_LIMIT))
-        }
+        const params = new URLSearchParams({ q: trimmed, type: 'all' })
+        params.set('peopleLimit', String(searchType === 'people' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
+        params.set('communityLimit', String(searchType === 'communities' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
+        params.set('organizationLimit', String(searchType === 'organizations' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
+        params.set('eventLimit', String(searchType === 'events' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
+        params.set('marketLimit', String(searchType === 'market' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
+        params.set('postLimit', String(searchType === 'posts' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
 
         const response = await fetch(buildApiUrl(`/search?${params.toString()}`), {
           headers: { authorization: `Bearer ${token}` },
@@ -493,6 +497,59 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">{message}</div>
   )
 
+  const searchSections: SearchSectionConfig[] = [
+    {
+      key: 'market',
+      title: 'Market',
+      count: marketResults.length,
+      emptyMessage: <>No marketplace listings found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: marketResults.length > 0 ? renderMarketList(marketResults) : renderEmptyState(<>No marketplace listings found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
+      key: 'people',
+      title: 'People',
+      count: peopleResults.length,
+      emptyMessage: <>No people found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: peopleResults.length > 0 ? renderPeopleList(peopleResults) : renderEmptyState(<>No people found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
+      key: 'communities',
+      title: 'Communities',
+      count: communityResults.length,
+      emptyMessage: <>No communities found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: communityResults.length > 0 ? renderCommunityList(communityResults) : renderEmptyState(<>No communities found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
+      key: 'organizations',
+      title: 'Organizations',
+      count: organizationResults.length,
+      emptyMessage: <>No organizations found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: organizationResults.length > 0 ? renderOrganizationList(organizationResults) : renderEmptyState(<>No organizations found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
+      key: 'events',
+      title: 'Events',
+      count: eventResults.length,
+      emptyMessage: <>No events found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: eventResults.length > 0 ? renderEventList(eventResults) : renderEmptyState(<>No events found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
+      key: 'posts',
+      title: 'Posts',
+      count: postResults.length,
+      emptyMessage: <>No community posts found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: postResults.length > 0 ? renderPostList(postResults) : renderEmptyState(<>No community posts found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+  ]
+
+  const orderedSearchSections =
+    searchType === 'all'
+      ? searchSections
+      : [
+          ...searchSections.filter((section) => section.key === searchType),
+          ...searchSections.filter((section) => section.key !== searchType),
+        ]
+
   const renderResults = () => {
     if (!trimmedActiveQuery) {
       return renderEmptyState('Start typing to search Civil.')
@@ -507,37 +564,13 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
       return <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-6 text-sm text-rose-700">{error}</div>
     }
 
-    if (searchType === 'people') {
-      return peopleResults.length > 0 ? renderPeopleList(peopleResults) : renderEmptyState(<>No people found for <span className="font-semibold">{trimmedActiveQuery}</span> yet.</>)
-    }
-    if (searchType === 'communities') {
-      return communityResults.length > 0 ? renderCommunityList(communityResults) : renderEmptyState(<>No communities found for <span className="font-semibold">{trimmedActiveQuery}</span> yet.</>)
-    }
-    if (searchType === 'organizations') {
-      return organizationResults.length > 0 ? renderOrganizationList(organizationResults) : renderEmptyState(<>No organizations found for <span className="font-semibold">{trimmedActiveQuery}</span> yet.</>)
-    }
-    if (searchType === 'events') {
-      return eventResults.length > 0 ? renderEventList(eventResults) : renderEmptyState(<>No events found for <span className="font-semibold">{trimmedActiveQuery}</span> yet.</>)
-    }
-    if (searchType === 'market') {
-      return marketResults.length > 0 ? renderMarketList(marketResults) : renderEmptyState(<>No marketplace listings found for <span className="font-semibold">{trimmedActiveQuery}</span> yet.</>)
-    }
-    if (searchType === 'posts') {
-      return postResults.length > 0 ? renderPostList(postResults) : renderEmptyState(<>No community posts found for <span className="font-semibold">{trimmedActiveQuery}</span> yet.</>)
-    }
-
-    if (totalResults === 0) {
-      return renderEmptyState(<>No Civil results found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>)
-    }
-
     return (
       <div className="space-y-4">
-        {peopleResults.length > 0 ? <SearchSection title="People" count={peopleResults.length}>{renderPeopleList(peopleResults)}</SearchSection> : null}
-        {communityResults.length > 0 ? <SearchSection title="Communities" count={communityResults.length}>{renderCommunityList(communityResults)}</SearchSection> : null}
-        {organizationResults.length > 0 ? <SearchSection title="Organizations" count={organizationResults.length}>{renderOrganizationList(organizationResults)}</SearchSection> : null}
-        {eventResults.length > 0 ? <SearchSection title="Events" count={eventResults.length}>{renderEventList(eventResults)}</SearchSection> : null}
-        {marketResults.length > 0 ? <SearchSection title="Market" count={marketResults.length}>{renderMarketList(marketResults)}</SearchSection> : null}
-        {postResults.length > 0 ? <SearchSection title="Posts" count={postResults.length}>{renderPostList(postResults)}</SearchSection> : null}
+        {orderedSearchSections.map((section) => (
+          <SearchSection key={section.key} title={section.title} count={section.count}>
+            {section.content}
+          </SearchSection>
+        ))}
       </div>
     )
   }
@@ -591,7 +624,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder={searchPlaceholder}
-                  className="w-full rounded-full border border-slate-200 bg-white/80 py-2.5 pl-11 pr-12 text-sm text-slate-800 shadow-inner focus:border-[var(--cc-primary)] focus:outline-none"
+                  className="w-full rounded-full border border-slate-200 bg-white py-2.5 pl-11 pr-12 text-sm text-slate-800 shadow-inner focus:border-[var(--cc-primary)] focus:outline-none"
                 />
                 {query ? (
                   <button

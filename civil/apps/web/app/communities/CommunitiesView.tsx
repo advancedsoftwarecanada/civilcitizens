@@ -509,7 +509,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           setSelectedProvince(nextHome.province)
           setSelectedCommunitySlug(nextHome.slug)
           setSelectedBrowserProvince(nextHome.province)
-          await loadCitiesForProvince(nextHome.province, nextHome.slug)
+          if (isWelcomeMode) {
+            await loadCitiesForProvince(nextHome.province, nextHome.slug)
+          }
         } else if (!isWelcomeMode) {
           router.replace('/welcome')
           return
@@ -639,7 +641,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       }
       setGeoSelected(match)
       setSelectedProvince(match.province)
-      if (!isWelcomeMode) {
+      if (isWelcomeMode) {
         await loadCitiesForProvince(match.province, match.communitySlug, match.city?.slug ?? null)
       }
       setSelectedCommunitySlug(match.communitySlug)
@@ -967,7 +969,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         setViewerStoreMe(updatedViewer)
       }
 
-      if (!options?.skipCityLoad) {
+      if (isWelcomeMode && !options?.skipCityLoad) {
         await loadCitiesForProvince(provinceCode, communitySlug, selectedCitySlug)
       }
       if (isWelcomeMode) {
@@ -1684,7 +1686,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   )
 
   const communitiesRightRail = isWelcomeMode ? null : (
-    <div className="sticky top-8 space-y-4">
+    <div className="space-y-4">
       <section className="surface-card space-y-4 p-5 shadow-subtle">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Community Lens</p>

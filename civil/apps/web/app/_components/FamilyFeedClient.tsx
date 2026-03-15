@@ -410,7 +410,7 @@ export default function FamilyFeedClient({
   }, [canSubmit, composerText, effectiveMemberId, photos, readyImages])
 
   return (
-    <DashboardShell rightRail={rightRail ?? <RightRail sticky={false} />} mainClassName="min-w-0 space-y-6">
+    <DashboardShell rightRail={rightRail ?? <RightRail />} mainClassName="min-w-0 space-y-6">
       {headerContent ? <div>{headerContent}</div> : null}
 
       {!readOnly ? (
