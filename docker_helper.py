@@ -329,6 +329,18 @@ def command_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> No
     run_compose(compose_cmd, ["--profile", "infra", "up", "-d"], overrides)
 
 
+def command_shadow_infra_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(
+        compose_cmd,
+        ["--profile", "shadow-infra", "up", "-d", "postgres-gis-shadow"],
+        overrides,
+    )
+
+
+def command_shadow_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["rm", "-sf", "postgres-gis-shadow"], overrides)
+
+
 def command_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
     run_compose(
         compose_cmd,
@@ -371,6 +383,8 @@ def parse_args(default_command: Optional[str]) -> argparse.Namespace:
             "build",
             "up",
             "infra-up",
+            "shadow-infra-up",
+            "shadow-down",
             "down",
             "down-all",
             "status",
@@ -460,13 +474,17 @@ def run_helper(
     if env_label:
         overrides.setdefault("CIVIL_ENV_LABEL", env_label)
 
-    ensure_prisma_env(overrides)
+    prisma_env_commands = {"deploy", "build", "up", "infra-up", "rebuild", "rebuild-all"}
+    if args.command in prisma_env_commands:
+        ensure_prisma_env(overrides)
 
     command_map = {
         "deploy": command_deploy,
         "build": lambda c, o: command_build(c, o, no_cache=False),
         "up": command_up,
         "infra-up": command_infra_up,
+        "shadow-infra-up": command_shadow_infra_up,
+        "shadow-down": command_shadow_down,
         "down": command_down,
         "down-all": command_down_all,
         "status": command_status,

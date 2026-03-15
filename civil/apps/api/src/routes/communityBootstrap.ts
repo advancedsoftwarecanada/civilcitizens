@@ -42,6 +42,15 @@ type CommunityBootstrapRoutesDeps = {
 }
 
 export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: CommunityBootstrapRoutesDeps) {
+  deps.registerCommunityRoute('get', '/communities/provinces', async (_req: FastifyRequest, reply: FastifyReply) => {
+    const items = await prisma.province.findMany({
+      orderBy: [{ name: 'asc' }],
+      select: { code: true, name: true },
+    })
+
+    return reply.send({ items })
+  })
+
   deps.registerCommunityRoute(
     'get',
     '/communities/:province/:community/posts',

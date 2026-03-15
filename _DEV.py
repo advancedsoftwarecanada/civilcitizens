@@ -394,10 +394,10 @@ def start() -> int:
     for k, v in file_env.items():
         env.setdefault(k, v)
 
-    # Force Cybertron shared dev infra targets.
-    # WARNING: this DATABASE_URL points at the persistent local dev database.
-    # Do not aim destructive test suites at this target.
-    env["DATABASE_URL"] = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
+    # Default to the shared Cybertron dev database, but allow DATABASE_URL to be
+    # overridden for staged cutovers such as shadow PostGIS validation.
+    default_database_url = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
+    env["DATABASE_URL"] = os.environ.get("DATABASE_URL", file_env.get("DATABASE_URL", default_database_url))
     env["REDIS_URL"] = f"redis://localhost:{CYBERTRON_REDIS_PORT}"
     env.setdefault("JWT_SECRET", "dev_secret")
     env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
@@ -571,10 +571,15 @@ def logs(lines: int) -> int:
 
 def doctor() -> int:
     file_env = _load_env_file(REPO_ROOT / ".env.dev")
+    shadow_postgres_port = int(os.environ.get("POSTGRES_GIS_HOST_PORT", file_env.get("POSTGRES_GIS_HOST_PORT", "5743")))
 
     database_url = os.environ.get(
         "DATABASE_URL",
         file_env.get("DATABASE_URL", f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"),
+    )
+    shadow_database_url = file_env.get(
+        "SHADOW_DATABASE_URL",
+        f"postgresql://postgres:postgres@localhost:{shadow_postgres_port}/civil",
     )
     redis_url = os.environ.get("REDIS_URL", file_env.get("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}"))
     api_base = os.environ.get("NEXT_PUBLIC_API_BASE", file_env.get("NEXT_PUBLIC_API_BASE", "/api"))
@@ -603,6 +608,7 @@ def doctor() -> int:
     print(f"- CIVIL_WEB_PORT={WEB_PORT}")
     print(f"- CIVIL_API_PORT={API_PORT}")
     print(f"- CYBERTRON_POSTGRES_PORT={CYBERTRON_POSTGRES_PORT}")
+    print(f"- POSTGRES_GIS_HOST_PORT={shadow_postgres_port}")
     print(f"- CYBERTRON_REDIS_PORT={CYBERTRON_REDIS_PORT}")
     print(f"- CYBERTRON_MINIO_PORT={CYBERTRON_MINIO_PORT}")
     print(f"- CIVIL_PUBLIC_HOST={public_host}")
@@ -620,6 +626,7 @@ def doctor() -> int:
         test_database_url = None
 
     print(f"- DATABASE_URL={database_url}")
+    print(f"- RECOMMENDED_SHADOW_DATABASE_URL={shadow_database_url}")
     if test_database_url:
         print(f"- RECOMMENDED_TEST_DATABASE_URL={test_database_url}")
     print(f"- REDIS_URL={redis_url}")
@@ -634,6 +641,7 @@ def doctor() -> int:
     print(f"- localhost:{WEB_PORT} open={_port_open('127.0.0.1', WEB_PORT)} (web)")
     print(f"- localhost:{API_PORT} open={_port_open('127.0.0.1', API_PORT)} (api)")
     print(f"- localhost:{CYBERTRON_POSTGRES_PORT} open={_port_open('127.0.0.1', CYBERTRON_POSTGRES_PORT)} (postgres)")
+    print(f"- localhost:{shadow_postgres_port} open={_port_open('127.0.0.1', shadow_postgres_port)} (postgres-gis-shadow)")
     print(f"- localhost:{CYBERTRON_REDIS_PORT} open={_port_open('127.0.0.1', CYBERTRON_REDIS_PORT)} (redis)")
     print(f"- localhost:{CYBERTRON_MINIO_PORT} open={_port_open('127.0.0.1', CYBERTRON_MINIO_PORT)} (minio)")
     print(f"- localhost:{MEETING_RTC_PORT} open={_port_open('127.0.0.1', MEETING_RTC_PORT)} (meeting-rtc)")

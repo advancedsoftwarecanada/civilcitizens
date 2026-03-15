@@ -1,11 +1,18 @@
 "use client"
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent } from 'react'
-import type { CommunityGeoMatch, CommunityGeolocateResponse, CitySummary, PostalLookupResponse } from '@civil/shared'
+import type {
+  CommunityGeoMatch,
+  CommunityGeolocateResponse,
+  CitySummary,
+  ElectoralDistrictContextResponse,
+  PostalLookupResponse,
+} from '@civil/shared'
 import { HiMiniStar } from 'react-icons/hi2'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import Sidebar from '../_components/Sidebar'
+import { CivilDistrictMap } from '../_components/map/CivilDistrictMap'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
@@ -17,6 +24,8 @@ import { ensureViewerMe } from '../_lib/viewerMe'
 import {
   GEOLOCATION_POSTAL_SENTINEL,
   formatStoredPostalCode,
+  isGeolocationPostalSentinel,
+  normalizePostalCodeForLookup,
   readStoredPostalCode,
   writeStoredPostalCode,
 } from '../_lib/postalRequirement'
@@ -74,7 +83,14 @@ type CommunitiesDashboardResponse = {
   suggestions?: CitySummary[]
 }
 
+type WelcomeHomeConfirmation = {
+  match: CommunityGeoMatch
+  reason: 'auto' | 'suggestion' | 'postal'
+  postalCode?: string | null
+}
+
 const populationFormatter = new Intl.NumberFormat('en-CA')
+const POSTAL_CODE_PLACEHOLDER = 'e.g. M5V-2T6'
 
 const wallpaperBackground: CSSProperties = {
   backgroundImage: "url('/canadawallpapercivil.jpg')",
@@ -121,6 +137,24 @@ function getErrorMessage(error: unknown): string | undefined {
   if (typeof error === 'string') return error
   if (error instanceof Error) return error.message
   return undefined
+}
+
+function canUseMapStyle(styleUrl: string | null | undefined) {
+  if (!styleUrl) return false
+  if (typeof window === 'undefined') return true
+
+  const pageProtocol = window.location.protocol
+  const resolved = (() => {
+    try {
+      return new URL(styleUrl, window.location.href)
+    } catch {
+      return null
+    }
+  })()
+
+  if (!resolved) return false
+  if (pageProtocol === 'https:' && resolved.protocol === 'http:') return false
+  return true
 }
 
 async function safeJson<T>(res: Response): Promise<T | null> {
@@ -170,9 +204,13 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [postalMatches, setPostalMatches] = useState<CommunityGeoMatch[]>([])
   const [postalFsa, setPostalFsa] = useState<PostalLookupResponse['fsa'] | null>(null)
   const [postalNormalized, setPostalNormalized] = useState<string | null>(null)
+  const [districtPreview, setDistrictPreview] = useState<ElectoralDistrictContextResponse | null>(null)
+  const [districtBusy, setDistrictBusy] = useState(false)
+  const [districtError, setDistrictError] = useState<string | null>(null)
   const [welcomePickerView, setWelcomePickerView] = useState<'options' | 'manual' | 'assist'>(() => (mode === 'welcome' ? 'options' : 'manual'))
   const [assistUnlocked, setAssistUnlocked] = useState(false)
   const [welcomeAutoSaving, setWelcomeAutoSaving] = useState(false)
+  const [welcomeHomeConfirmation, setWelcomeHomeConfirmation] = useState<WelcomeHomeConfirmation | null>(null)
   const [postalOwnerId, setPostalOwnerId] = useState<string | null>(null)
   const [suggestionSavingKey, setSuggestionSavingKey] = useState<string | null>(null)
 
@@ -324,6 +362,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       const resolvedPostal = data.postalCode || normalized
       setPostalNormalized(resolvedPostal)
       latestPostalSelectionRef.current = resolvedPostal
+      await loadDistrictPreview({ postalCode: resolvedPostal })
       const primaryMatch = matches[0]
       if (primaryMatch) {
         await applyGeolocationMatch(primaryMatch, 'postal', { postalCode: resolvedPostal })
@@ -492,6 +531,45 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     }
   }
 
+  async function loadDistrictPreview(args: { postalCode?: string | null; lat?: number; lng?: number }) {
+    const token = localStorage.getItem('token')
+    if (!token) return
+    if (!args.postalCode && !(Number.isFinite(args.lat) && Number.isFinite(args.lng))) {
+      setDistrictPreview(null)
+      setDistrictError(null)
+      return
+    }
+
+    setDistrictBusy(true)
+    setDistrictError(null)
+    try {
+      const res = await fetch(buildApiUrl('/geography/district-context'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(args),
+      })
+      const data = await jsonOrThrow<ElectoralDistrictContextResponse>(res)
+      setDistrictPreview(data)
+      if (!data.district) {
+        setDistrictError('We found your location, but could not match an electoral district yet.')
+      }
+    } catch (error) {
+      console.error('Failed loading district preview', error)
+      setDistrictPreview(null)
+      const message = getErrorMessage(error)
+      setDistrictError(
+        message === 'postgis_not_enabled'
+          ? 'The map database is not ready yet. Recreate the PostGIS database container and apply the latest migrations.'
+          : 'Unable to load your district map right now.',
+      )
+    } finally {
+      setDistrictBusy(false)
+    }
+  }
+
   async function applyGeolocationMatch(
     match: CommunityGeoMatch,
     reason: 'auto' | 'suggestion' | 'postal',
@@ -539,7 +617,12 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         }
       }
       if (isWelcomeMode) {
-        await setHomeCommunity(match.province, match.communitySlug, 'welcome', { skipCityLoad: true })
+        setWelcomeHomeConfirmation({
+          match,
+          reason,
+          postalCode: options?.postalCode ?? latestPostalSelectionRef.current ?? postalNormalized ?? postalFsa?.code ?? null,
+        })
+        return
       }
     } catch (error) {
       console.error('Failed applying geolocation match', error)
@@ -560,6 +643,16 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   function handleSuggestionSelect(match: CommunityGeoMatch) {
     if (isWelcomeMode && welcomeAutoSaving) return
     void applyGeolocationMatch(match, 'suggestion')
+  }
+
+  async function confirmWelcomeHomeCommunity() {
+    if (!welcomeHomeConfirmation) return
+    await setHomeCommunity(welcomeHomeConfirmation.match.province, welcomeHomeConfirmation.match.communitySlug, 'welcome', { skipCityLoad: true })
+  }
+
+  function resetWelcomeHomeConfirmation() {
+    if (welcomeAutoSaving) return
+    setWelcomeHomeConfirmation(null)
   }
 
   function handleAutoDetect() {
@@ -585,6 +678,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     setGeoAlternatives([])
     setGeoDetected(null)
     setGeoSelected(null)
+    setDistrictPreview(null)
+    setDistrictError(null)
     setShowGeoOverlay(true)
 
     navigator.geolocation.getCurrentPosition(
@@ -604,6 +699,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           const primary = data.primary ?? null
           const alternatives = Array.isArray(data.alternatives) ? data.alternatives : []
           setGeoAlternatives(alternatives)
+          await loadDistrictPreview({ lat: latitude, lng: longitude })
           if (primary) {
             await applyGeolocationMatch(primary, 'auto')
           } else {
@@ -675,6 +771,13 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }
 
   type HomeSetSource = 'picker' | 'list' | 'welcome'
+
+  useEffect(() => {
+    if (!isWelcomeMode) return
+    const lookupPostalCode = normalizePostalCodeForLookup(postalNormalized)
+    if (!lookupPostalCode || isGeolocationPostalSentinel(lookupPostalCode)) return
+    void loadDistrictPreview({ postalCode: lookupPostalCode })
+  }, [isWelcomeMode, postalNormalized])
 
   async function setHomeCommunity(
     provinceCode: string,
@@ -1148,7 +1251,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                       autoComplete="postal-code"
                       maxLength={7}
                       className="flex-1 rounded-md border border-[var(--cc-border)] px-3 py-2 text-lg tracking-[0.3em] focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
-                      placeholder="e.g. M5V-2T6"
+                      placeholder={POSTAL_CODE_PLACEHOLDER}
+                      suppressHydrationWarning
                       value={postalCodeInput}
                       onChange={handlePostalInputChange}
                       disabled={isLocked}
@@ -1172,6 +1276,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                             setPostalError(null)
                             setPostalFsa(null)
                             setPostalNormalized(null)
+                            setDistrictPreview(null)
+                            setDistrictError(null)
+                            setWelcomeHomeConfirmation(null)
                           }}
                           disabled={isLocked}
                         >
@@ -1369,6 +1476,40 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               </div>
             </div>
           ) : null}
+
+          {isWelcome && (districtBusy || districtPreview || districtError) ? (
+            <div className="rounded-2xl border border-[var(--cc-border)] bg-white/85 p-4 shadow-subtle">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">Your electoral district</div>
+                  <p className="text-xs text-gray-500">
+                    Civil centers the map on your current location and highlights the district boundary returned by the backend spatial query.
+                  </p>
+                </div>
+                {districtBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading map…</span> : null}
+              </div>
+
+              {districtPreview?.district && canUseMapStyle(districtPreview.styleUrl) ? (
+                <div className="mt-4 space-y-4">
+                  <CivilDistrictMap context={districtPreview} />
+                  <div className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
+                    <div className="font-semibold text-slate-900">{districtPreview.district.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-4 text-xs text-slate-500">
+                      <span>Source: {districtPreview.resolvedFrom === 'postal_code' ? 'postal code' : 'coordinates'}</span>
+                      <span>Match: {districtPreview.district.matchMethod === 'contains' ? 'district contains point' : 'nearest district fallback'}</span>
+                      {districtPreview.postalCode ? <span>Postal: {districtPreview.postalCode}</span> : null}
+                    </div>
+                  </div>
+                </div>
+              ) : districtPreview?.district ? (
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                  District data loaded, but the map preview is disabled because the configured tile server is using insecure HTTP on an HTTPS page.
+                </div>
+              ) : null}
+
+              {districtError ? <div className="mt-3 text-xs text-red-500">{districtError}</div> : null}
+            </div>
+          ) : null}
         </div>
       </section>
     )
@@ -1401,6 +1542,55 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       )
 
   if (mode === 'welcome') {
+    const welcomeConfirmationOverlay = !welcomeHomeConfirmation ? null : (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-6 backdrop-blur-sm" aria-modal="true" role="dialog">
+        <div className="w-full max-w-3xl rounded-[28px] border border-white/15 bg-white shadow-[0_32px_120px_rgba(15,23,42,0.38)]">
+          <div className="border-b border-slate-200 px-6 py-5 sm:px-8">
+            <h2 className="text-2xl font-bold text-slate-950">
+              Your Home Community Is: <span className="text-slate-900">{formatMatchCityLabel(welcomeHomeConfirmation.match)}</span>
+            </h2>
+          </div>
+
+          <div className="space-y-5 px-6 py-6 sm:px-8">
+            {districtPreview?.district && canUseMapStyle(districtPreview.styleUrl) ? (
+              <div>
+                <CivilDistrictMap context={districtPreview} />
+              </div>
+            ) : districtPreview?.district ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                The district map is available in the database, but the tile server is not configured for secure browser use yet. Confirm the community name above, or switch communities.
+              </div>
+            ) : districtBusy ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">Loading district map…</div>
+            ) : (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                We matched your community, but the district map is not ready yet. Confirm only if the community name above looks correct.
+              </div>
+            )}
+
+            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="rounded-full border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={resetWelcomeHomeConfirmation}
+                disabled={welcomeAutoSaving}
+              >
+                Choose another community
+              </button>
+              <button
+                type="button"
+                className="rounded-full bg-[var(--cc-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-slate-400"
+                onClick={() => void confirmWelcomeHomeCommunity()}
+                disabled={welcomeAutoSaving}
+              >
+                {welcomeAutoSaving ? 'Saving…' : 'Confirm home community'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+
     const setupOverlay = !welcomeAutoSaving ? null : (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm">
         <div className="rounded-2xl border border-gray-200 bg-white px-6 py-5 shadow-lg">
@@ -1423,11 +1613,12 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         <div className="absolute inset-0 bg-slate-950/45" aria-hidden />
         <div className="relative mx-auto w-full max-w-4xl px-4 py-10">
           <div className="mb-6 flex justify-center">
-            <Image src="/logo-white.svg" alt="Civil Citizens" width={160} height={44} className="h-auto w-[160px]" priority />
+            <img src="/logo-white.svg" alt="Civil Citizens" width={160} height={44} className="w-[160px]" />
           </div>
           {renderPickerSection('welcome')}
         </div>
         {geoOverlay}
+        {welcomeConfirmationOverlay}
         {setupOverlay}
       </div>
     )

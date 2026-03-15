@@ -464,6 +464,7 @@ import { registerBillingWebhookRoutes } from './routes/billingWebhook.js'
 import { registerJobRoutes } from './routes/jobs.js'
 import { registerAnalyticsNotificationRoutes } from './routes/analyticsNotifications.js'
 import { registerCommunityBootstrapRoutes } from './routes/communityBootstrap.js'
+import { registerGeographyRoutes } from './routes/geography.js'
 import { registerOrgChannelRoutes } from './routes/orgChannels.js'
 import { registerOrganizationCollectionRoutes } from './routes/organizationCollections.js'
 import { registerOrganizationCoreRoutes } from './routes/organizationCore.js'
@@ -5009,6 +5010,8 @@ registerCommunityBootstrapRoutes(app, {
   parseCommunityMeta,
   registerCommunityRoute,
 })
+
+registerGeographyRoutes(app)
 
 // Basic auth hook (placeholder)
 app.addHook('preHandler', async (req: FastifyRequest, reply: FastifyReply) => {

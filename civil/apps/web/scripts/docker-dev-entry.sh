@@ -40,6 +40,15 @@ exec runuser -u node -- env \
   CIVIL_WEB_PORT="${CIVIL_WEB_PORT:-3001}" \
   sh -lc '
     cd /workspace/civil
-    test -x apps/web/node_modules/.bin/next || pnpm install --frozen-lockfile
+    install_stamp=".docker-home/.pnpm-install.stamp"
+    set -- $( { cksum pnpm-lock.yaml package.json apps/web/package.json 2>/dev/null || true; } | cksum )
+    manifest_fingerprint="$1:$2"
+    current_fingerprint="$(cat "$install_stamp" 2>/dev/null || true)"
+
+    if [ ! -x apps/web/node_modules/.bin/next ] || [ "$manifest_fingerprint" != "$current_fingerprint" ]; then
+      pnpm install --frozen-lockfile
+      printf "%s\n" "$manifest_fingerprint" > "$install_stamp"
+    fi
+
     exec pnpm --filter @civil/web dev
   '

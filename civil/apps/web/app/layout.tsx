@@ -1,4 +1,5 @@
 import './globals.css'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { ReactNode, Suspense } from 'react'
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
