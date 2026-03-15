@@ -7,14 +7,20 @@ import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
 import { FaUserTie } from 'react-icons/fa'
 import {
+  HiOutlineCamera,
   HiOutlineCalendarDays,
   HiOutlineChatBubbleOvalLeft,
   HiOutlineChevronDown,
+  HiOutlineDocumentText,
+  HiOutlinePencilSquare,
   HiOutlinePhone,
+  HiOutlinePhoto,
   HiOutlineUserPlus,
   HiOutlineUsers,
   HiOutlineVideoCamera,
   HiOutlineBuildingLibrary,
+  HiOutlineBriefcase,
+  HiOutlineMap,
 } from 'react-icons/hi2'
 import CivilCard from '../../_components/CivilCard'
 import CivilComposerLauncher from '../../_components/CivilComposerLauncher'
@@ -788,31 +794,37 @@ export default function UserPostsPage({ params }: PageProps) {
           label: 'Posts',
           value: formatCount(postCount),
           href: null,
+          icon: <HiOutlineDocumentText className="h-5 w-5" aria-hidden="true" />,
         },
         {
           label: 'Experience entries',
           value: formatCount(experienceCount),
           href: null,
+          icon: <HiOutlineBriefcase className="h-5 w-5" aria-hidden="true" />,
         },
         {
           label: 'Friends',
           value: formatCount(friendCount),
           href: `/u/${encodeURIComponent(profile.handle)}/friends`,
+          icon: <HiOutlineUsers className="h-5 w-5" aria-hidden="true" />,
         },
         {
           label: 'Communities',
           value: formatCount(communityCount),
           href: `/u/${encodeURIComponent(profile.handle)}/communities`,
+          icon: <HiOutlineMap className="h-5 w-5" aria-hidden="true" />,
         },
         {
           label: 'Organizations',
           value: formatCount(organizationCount),
           href: `/u/${encodeURIComponent(profile.handle)}/organizations`,
+          icon: <HiOutlineBuildingLibrary className="h-5 w-5" aria-hidden="true" />,
         },
         {
           label: 'Business connections',
           value: formatCount(connectionCount),
           href: `/u/${encodeURIComponent(profile.handle)}/connections`,
+          icon: <FaUserTie className="h-4 w-4" aria-hidden="true" />,
         },
       ]
     : []
@@ -2400,18 +2412,21 @@ export default function UserPostsPage({ params }: PageProps) {
                 href={editAvatarHref}
                 className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
               >
+                <HiOutlineCamera className="mr-2 h-4 w-4" aria-hidden="true" />
                 Profile photo
               </Link>
               <Link
                 href={editCoverHref}
                 className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
               >
+                <HiOutlinePhoto className="mr-2 h-4 w-4" aria-hidden="true" />
                 Cover photo
               </Link>
               <a
                 href="/profile/edit"
                 className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
               >
+                <HiOutlinePencilSquare className="mr-2 h-4 w-4" aria-hidden="true" />
                 Edit profile
               </a>
             </div>
@@ -2453,7 +2468,7 @@ export default function UserPostsPage({ params }: PageProps) {
                               : 'border border-slate-200 text-slate-600',
                           )}
                         >
-                          {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 object-contain" style={{ width: 'auto', height: 'auto' }} aria-hidden="true" /> : null}
+                          {pill.iconSrc ? <img src={pill.iconSrc} alt="" className="h-4 w-4 shrink-0 object-contain" aria-hidden="true" /> : null}
                           {pill.label}
                         </span>
                       ))}
@@ -2509,9 +2524,14 @@ export default function UserPostsPage({ params }: PageProps) {
 
                     const content = (
                       <>
-                        <span className={clsx('min-h-[2.75rem] text-[13px] font-medium leading-5 tracking-normal', card.href ? 'text-slate-500 transition group-hover:text-slate-700' : 'text-slate-500')}>
-                          {card.label}
-                        </span>
+                        <div className="flex items-start justify-between gap-3">
+                          <span className={clsx('min-h-[2.75rem] text-[13px] font-medium leading-5 tracking-normal', card.href ? 'text-slate-500 transition group-hover:text-slate-700' : 'text-slate-500')}>
+                            {card.label}
+                          </span>
+                          <span className={clsx('inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500', card.href ? 'transition group-hover:border-slate-300 group-hover:text-slate-700' : '')}>
+                            {card.icon}
+                          </span>
+                        </div>
                         <span className="mt-auto pt-4 text-[2.25rem] font-bold leading-none tracking-tight text-slate-950">{card.value}</span>
                       </>
                     )

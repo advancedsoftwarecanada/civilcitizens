@@ -1,8 +1,11 @@
 "use client"
 
+import clsx from 'clsx'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { HiOutlineChatBubbleOvalLeft, HiOutlineChevronDown, HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
 import CivilCard from '../../../_components/CivilCard'
 import { buildApiUrl } from '../../../_lib/api'
 import { redirectToAuthModal } from '../../../_lib/authModal'
@@ -23,6 +26,12 @@ type ProfileRelationshipCardProps = {
   since?: string | null
   subtitle?: string | null
   interactive?: boolean
+}
+
+type MessageMenuPosition = {
+  top: number
+  left: number
+  width: number
 }
 
 function formatSinceLabel(value?: string | null) {
@@ -55,12 +64,69 @@ export default function ProfileRelationshipCard({
   const router = useRouter()
   const [messageLoading, setMessageLoading] = useState(false)
   const [callMode, setCallMode] = useState<'audio' | 'video' | null>(null)
+  const [messageMenuOpen, setMessageMenuOpen] = useState(false)
+  const [messageMenuPosition, setMessageMenuPosition] = useState<MessageMenuPosition | null>(null)
+  const messageMenuRef = useRef<HTMLDivElement | null>(null)
+  const messageButtonRef = useRef<HTMLButtonElement | null>(null)
 
   const displayName = formatUserDisplayName(name, handle) || handle || 'Citizen'
   const profileHref = handle ? `/u/${handle}` : undefined
   const sinceLabel = formatSinceLabel(since)
   const secondarySubtitle = subtitle?.trim() || (handle ? `@${handle}` : null)
   const canContact = Boolean(userId && handle)
+
+  const actionButtonClassName = 'inline-flex items-center justify-center rounded-full border border-white/35 bg-white/12 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60'
+  const primaryActionButtonClassName = 'inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60'
+  const dropdownItemClassName = 'inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60'
+  const dropdownPrimaryItemClassName = 'inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60'
+
+  useEffect(() => {
+    if (!messageMenuOpen) return
+
+    const updateMenuPosition = () => {
+      const trigger = messageButtonRef.current
+      if (!trigger || typeof window === 'undefined') return
+
+      const rect = trigger.getBoundingClientRect()
+      const viewportWidth = window.innerWidth
+      const desiredWidth = Math.max(rect.width, 240)
+      const maxLeft = Math.max(12, viewportWidth - desiredWidth - 12)
+      const left = Math.min(Math.max(12, rect.left), maxLeft)
+
+      setMessageMenuPosition({
+        top: rect.bottom + 8,
+        left,
+        width: desiredWidth,
+      })
+    }
+
+    updateMenuPosition()
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (messageButtonRef.current?.contains(target)) return
+      if (messageMenuRef.current?.contains(target)) return
+      setMessageMenuOpen(false)
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMessageMenuOpen(false)
+      }
+    }
+
+    window.addEventListener('resize', updateMenuPosition)
+    window.addEventListener('scroll', updateMenuPosition, true)
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('resize', updateMenuPosition)
+      window.removeEventListener('scroll', updateMenuPosition, true)
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [messageMenuOpen])
 
   async function ensureDirectThread() {
     const token = getStoredToken()
@@ -99,6 +165,7 @@ export default function ProfileRelationshipCard({
 
   async function handleStartMessage() {
     if (!canContact || messageLoading || callMode) return
+    setMessageMenuOpen(false)
     setMessageLoading(true)
     try {
       const threadId = await ensureDirectThread()
@@ -111,6 +178,7 @@ export default function ProfileRelationshipCard({
 
   async function handleStartCall(mode: 'audio' | 'video') {
     if (!canContact || messageLoading || callMode) return
+    setMessageMenuOpen(false)
     setCallMode(mode)
     try {
       const threadId = await ensureDirectThread()
@@ -147,72 +215,111 @@ export default function ProfileRelationshipCard({
     }
   }
 
-  return (
-    <CivilCard
-      size="lg"
-      align="start"
-      name={displayName}
-      avatarAlt={displayName}
-      avatarInitials={displayName}
-      avatarSrc={avatarUrl ?? null}
-      avatarHref={profileHref}
-      titleHref={profileHref}
-      coverUrl={coverUrl ?? null}
-      subtitle={secondarySubtitle}
-      titleSuffix={<ContextPill>{contextLabel}</ContextPill>}
-      interactive={interactive && Boolean(profileHref)}
-      details={
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {relationshipLabel ? <ContextPill>{relationshipLabel}</ContextPill> : null}
-            {sinceLabel ? <ContextPill>{sinceLabel}</ContextPill> : null}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {profileHref ? (
-              <Link
-                href={profileHref}
-                className="inline-flex items-center justify-center rounded-full border border-white/35 bg-white/12 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+  const messageMenu =
+    messageMenuOpen && messageMenuPosition && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            ref={messageMenuRef}
+            className="fixed z-[120] overflow-hidden rounded-[1.4rem] border border-slate-200 bg-white p-2 shadow-[0_20px_45px_rgba(15,23,42,0.2)]"
+            style={{
+              top: messageMenuPosition.top,
+              left: messageMenuPosition.left,
+              width: messageMenuPosition.width,
+            }}
+          >
+            <div className="grid gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void handleStartMessage()
+                }}
+                disabled={messageLoading || Boolean(callMode)}
+                className={dropdownPrimaryItemClassName}
               >
-                View Profile
-              </Link>
-            ) : null}
-            {canContact ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleStartMessage()
-                  }}
-                  disabled={messageLoading || Boolean(callMode)}
-                  className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
+                {messageLoading ? 'Opening...' : 'Send Message'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleStartCall('audio')
+                }}
+                disabled={messageLoading || Boolean(callMode)}
+                className={dropdownItemClassName}
+              >
+                <HiOutlinePhone className="h-4 w-4" aria-hidden="true" />
+                {callMode === 'audio' ? 'Calling...' : 'Audio Call'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleStartCall('video')
+                }}
+                disabled={messageLoading || Boolean(callMode)}
+                className={dropdownItemClassName}
+              >
+                <HiOutlineVideoCamera className="h-4 w-4" aria-hidden="true" />
+                {callMode === 'video' ? 'Starting video...' : 'Video Call'}
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null
+
+  return (
+    <>
+      <CivilCard
+        size="lg"
+        align="start"
+        name={displayName}
+        avatarAlt={displayName}
+        avatarInitials={displayName}
+        avatarSrc={avatarUrl ?? null}
+        avatarHref={profileHref}
+        titleHref={profileHref}
+        coverUrl={coverUrl ?? null}
+        subtitle={secondarySubtitle}
+        titleSuffix={<ContextPill>{contextLabel}</ContextPill>}
+        interactive={interactive && Boolean(profileHref)}
+        details={
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {relationshipLabel ? <ContextPill>{relationshipLabel}</ContextPill> : null}
+              {sinceLabel ? <ContextPill>{sinceLabel}</ContextPill> : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {profileHref ? (
+                <Link
+                  href={profileHref}
+                  className={clsx(actionButtonClassName, 'w-full sm:w-auto')}
                 >
-                  {messageLoading ? 'Opening...' : 'Send Message'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleStartCall('audio')
-                  }}
-                  disabled={messageLoading || Boolean(callMode)}
-                  className="inline-flex items-center justify-center rounded-full border border-white/35 bg-white/12 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {callMode === 'audio' ? 'Calling...' : 'Audio Call'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void handleStartCall('video')
-                  }}
-                  disabled={messageLoading || Boolean(callMode)}
-                  className="inline-flex items-center justify-center rounded-full border border-white/35 bg-white/12 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {callMode === 'video' ? 'Starting video...' : 'Video Call'}
-                </button>
-              </>
-            ) : null}
+                  View Profile
+                </Link>
+              ) : null}
+              {canContact ? (
+                <div className="w-full sm:w-auto">
+                  <button
+                    ref={messageButtonRef}
+                    type="button"
+                    onClick={() => {
+                      setMessageMenuOpen((current) => !current)
+                    }}
+                    disabled={messageLoading || Boolean(callMode)}
+                    aria-expanded={messageMenuOpen}
+                    className={clsx(primaryActionButtonClassName, 'w-full gap-2 sm:w-auto')}
+                  >
+                    <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
+                    Message
+                    <HiOutlineChevronDown className={clsx('h-4 w-4 transition', messageMenuOpen && 'rotate-180')} aria-hidden="true" />
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-      }
-    />
+        }
+      />
+      {messageMenu}
+    </>
   )
 }
