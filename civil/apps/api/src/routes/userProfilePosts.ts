@@ -1,7 +1,16 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { ConnectionStatus, FriendshipStatus, Prisma } from '@prisma/client'
-import { CursorQuery, HandleParam, JurisdictionEnum, PostSortEnum, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
+import {
+  CursorQuery,
+  HandleParam,
+  JurisdictionEnum,
+  PostSortEnum,
+  findCommunity,
+  getProvinceDisplayName,
+  normalizeProvinceCode,
+  slugifyCommunityName,
+} from '@civil/shared'
 import { z } from 'zod'
 
 type UserProfilePostDeps = Record<string, any>
@@ -136,8 +145,14 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
         let communitiesCount = 0
         let organizationsCount = 0
         let connectionsCount = 0
+        let homeChamber: {
+          provinceCode: string
+          provinceName: string
+          chamberSlug: string
+          chamberName: string
+        } | null = null
         try {
-          const [friends, communities, organizations, connections] = await Promise.all([
+          const [friends, communities, organizations, connections, homeFollow] = await Promise.all([
             prisma.friendship.count({
               where: {
                 status: FriendshipStatus.ACCEPTED,
@@ -160,11 +175,21 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
                 OR: [{ requesterId: userRecord.id }, { addresseeId: userRecord.id }],
               },
             }),
+            prisma.communityFollow.findFirst({ where: { userId: userRecord.id, home: true } }),
           ])
           friendsCount = friends
           communitiesCount = communities
           organizationsCount = organizations
           connectionsCount = connections
+          if (homeFollow) {
+            const community = findCommunity(homeFollow.provinceCode, homeFollow.communitySlug)
+            homeChamber = {
+              provinceCode: homeFollow.provinceCode,
+              provinceName: getProvinceDisplayName(homeFollow.provinceCode as any),
+              chamberSlug: homeFollow.communitySlug,
+              chamberName: community?.name ?? homeFollow.communitySlug,
+            }
+          }
         } catch (error) {
           // Ignore
         }
@@ -267,6 +292,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           communityCount: communitiesCount,
           organizationCount: organizationsCount,
           connectionCount: connectionsCount,
+          homeChamber,
         }
 
         const query = CursorQuery.extend({
