@@ -4657,6 +4657,7 @@ function scoreFeedCandidate(args: {
   impression?: { lastSeenAt: Date; impressionCount: number }
   hasReaction: boolean
   hasCommented: boolean
+  lastViewedAt?: Date | null
   nowMs: number
 }): number {
   const ageMs = Math.max(0, args.nowMs - args.post.createdAt.getTime())
@@ -4678,8 +4679,11 @@ function scoreFeedCandidate(args: {
 
   const seen = Boolean(args.impression)
   const impressionCount = Math.max(0, args.impression?.impressionCount ?? 0)
-  const unseenBoost = seen ? 0 : args.scope === 'all' ? 220 : 320
-  const seenPenalty = impressionCount * (args.scope === 'all' ? 42 : 30)
+  const unseenBoost = seen ? 0 : args.scope === 'all' ? 260 : 360
+  const seenPenalty =
+    impressionCount * (args.scope === 'all' ? 78 : 62) +
+    (seen ? (args.scope === 'all' ? 120 : 90) : 0) +
+    (impressionCount >= 3 ? (args.scope === 'all' ? 160 : 120) : 0)
   const maturityPenalty = args.scope === 'all'
     ? Math.max(0, ageHours - 72) * 0.28 + Math.max(0, activityAgeHours - 36) * 0.35
     : Math.max(0, ageHours - 120) * 0.14
@@ -4703,10 +4707,11 @@ function scoreFeedCandidate(args: {
   let interactionBoost = 0
   if (args.hasReaction) interactionBoost += 55
   if (args.hasCommented) interactionBoost += 70
-  if (args.impression) {
-    const seenAgeHours = Math.max(0, args.nowMs - args.impression.lastSeenAt.getTime()) / (1000 * 60 * 60)
-    if (seenAgeHours <= 72) interactionBoost += 35
-  }
+
+  const seenAgeHours = args.impression
+    ? Math.max(0, args.nowMs - args.impression.lastSeenAt.getTime()) / (1000 * 60 * 60)
+    : null
+  const rediscoveryBoost = seenAgeHours !== null && seenAgeHours >= 96 ? Math.min(80, (seenAgeHours - 96) * 0.6) : 0
 
   const isViewerPost = Boolean(args.context && args.post.authorId === args.context.viewerId)
   // Keep freshly published viewer posts visible on reload instead of only through the optimistic client insert.
@@ -4717,9 +4722,16 @@ function scoreFeedCandidate(args: {
         ? Math.exp(-ageHours / 24) * 180
         : 0
 
-  const seenRecencyRecovery = args.impression
-    ? Math.max(0, 36 - Math.max(0, args.nowMs - args.impression.lastSeenAt.getTime()) / (1000 * 60 * 60)) * (args.scope === 'all' ? 5 : 3)
+  const lastViewedAtMs = args.lastViewedAt?.getTime() ?? null
+  const isNewSinceLastView = lastViewedAtMs !== null && activityAtMs > lastViewedAtMs
+  const hoursSinceLastViewed = lastViewedAtMs !== null ? Math.max(0, args.nowMs - lastViewedAtMs) / (1000 * 60 * 60) : null
+  const freshSinceLastViewBoost = isNewSinceLastView
+    ? args.scope === 'all'
+      ? 420 + Math.max(0, 48 - ageHours) * 9
+      : 520 + Math.max(0, 72 - ageHours) * 10
     : 0
+  const staleSeenSuppression = seen && ageHours >= 24 ? Math.min(220, Math.max(0, ageHours - 24) * 4) : 0
+  const dormantFeedFreshnessBoost = !seen && hoursSinceLastViewed !== null && hoursSinceLastViewed >= 6 ? Math.min(120, hoursSinceLastViewed * 6) : 0
 
   return (
     unseenBoost +
@@ -4729,9 +4741,12 @@ function scoreFeedCandidate(args: {
     geoBoost +
     freshCommunityBoost +
     interactionBoost +
+    rediscoveryBoost +
     viewerAuthorBoost +
-    seenRecencyRecovery -
+    freshSinceLastViewBoost +
+    dormantFeedFreshnessBoost -
     seenPenalty -
+    staleSeenSuppression -
     maturityPenalty
   )
 }
@@ -4859,6 +4874,7 @@ async function rankFeedPosts(args: {
   sortMode: 'new' | 'hot'
   cursor?: string
   context: ViewerFeedContext | null
+  lastViewedAt?: Date | null
   limit: number
 }) {
   const rankCursor = parseFeedRankCursor(args.cursor)
@@ -4901,6 +4917,7 @@ async function rankFeedPosts(args: {
       impression: impressionMap.get(post.id),
       hasReaction: interactionSignals.reactedPostIds.has(post.id),
       hasCommented: interactionSignals.commentedPostIds.has(post.id),
+      lastViewedAt: args.lastViewedAt ?? null,
       nowMs,
     })
     const hotPreferenceBoost =
