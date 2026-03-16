@@ -4,6 +4,13 @@ import { Prisma } from '@prisma/client'
 
 type OrganizationCoreDeps = Record<string, any>
 
+function resolveOrganizationCommunitySlug(deps: OrganizationCoreDeps, province: string, municipalityRaw: string) {
+  const communitySlug = municipalityRaw.trim().toLowerCase()
+  if (!communitySlug) return null
+  const community = deps.findCommunity(province, communitySlug)
+  return community?.slug ?? communitySlug
+}
+
 export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: OrganizationCoreDeps) {
   app.get('/communities/:province/:municipality/orgs', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
@@ -152,15 +159,12 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
 
-      const communitySlug = params.data.municipality.trim().toLowerCase()
-      if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
-
-      const community = deps.findCommunity(province, communitySlug)
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const slug = params.data.slug.trim().toLowerCase()
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug },
         select: {
           id: true,
           ownerId: true,
@@ -336,15 +340,12 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const communitySlug = params.data.municipality.trim().toLowerCase()
-      if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
-
-      const community = deps.findCommunity(province, communitySlug)
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const slug = params.data.slug.trim().toLowerCase()
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug, status: 'ACTIVE', moderationStatus: deps.ModerationStatus.VISIBLE },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug, status: 'ACTIVE', moderationStatus: deps.ModerationStatus.VISIBLE },
         select: { id: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -370,15 +371,12 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const communitySlug = params.data.municipality.trim().toLowerCase()
-      if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
-
-      const community = deps.findCommunity(province, communitySlug)
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const slug = params.data.slug.trim().toLowerCase()
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug },
         select: { id: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -400,15 +398,12 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const communitySlug = params.data.municipality.trim().toLowerCase()
-      if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
-
-      const community = deps.findCommunity(province, communitySlug)
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const slug = params.data.slug.trim().toLowerCase()
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug },
         select: { id: true, ownerId: true, name: true, metadata: true, moderationStatus: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })

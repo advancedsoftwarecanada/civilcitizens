@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import DashboardShell from '../_components/DashboardShell'
@@ -123,55 +123,6 @@ function buildCalendarGrid(month: Date) {
   return weeks
 }
 
-function toDateInputValue(date: Date) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
-}
-
-function startOfWeek(date: Date) {
-  const result = new Date(date)
-  const day = result.getDay()
-  result.setHours(0, 0, 0, 0)
-  result.setDate(result.getDate() - day)
-  return result
-}
-
-function endOfWeek(date: Date) {
-  const result = startOfWeek(date)
-  result.setDate(result.getDate() + 6)
-  result.setHours(23, 59, 59, 999)
-  return result
-}
-
-function endOfDay(date: Date) {
-  const result = new Date(date)
-  result.setHours(23, 59, 59, 999)
-  return result
-}
-
-function buildPresetRange(preset: 'today' | 'this_week' | 'this_month' | 'next_30_days') {
-  const now = new Date()
-  const start = new Date(now)
-  start.setHours(0, 0, 0, 0)
-
-  if (preset === 'today') {
-    return { start: toDateInputValue(start), end: toDateInputValue(endOfDay(start)) }
-  }
-  if (preset === 'this_week') {
-    const weekStart = startOfWeek(now)
-    const weekEnd = endOfWeek(now)
-    return { start: toDateInputValue(weekStart), end: toDateInputValue(weekEnd) }
-  }
-  if (preset === 'this_month') {
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    return { start: toDateInputValue(monthStart), end: toDateInputValue(endOfDay(monthEnd)) }
-  }
-
-  const end = new Date(start)
-  end.setDate(end.getDate() + 30)
-  return { start: toDateInputValue(start), end: toDateInputValue(endOfDay(end)) }
-}
-
 function getEventOrganizationHref(event: EventFeedItem): string | null {
   if (!event.organization.provinceCode || !event.organization.communitySlug) return null
   return `/com/${encodeURIComponent(event.organization.provinceCode.toLowerCase())}/${encodeURIComponent(event.organization.communitySlug)}/orgs/${encodeURIComponent(event.organization.slug)}/events`
@@ -189,14 +140,13 @@ export default function EventsPageClient() {
   const [items, setItems] = useState<EventFeedItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [displayMode, setDisplayMode] = useState<'calendar' | 'list'>('list')
-  const [startDate, setStartDate] = useState<string>('')
-  const [endDate, setEndDate] = useState<string>('')
   const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>([])
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
   const [categoryDraftSelection, setCategoryDraftSelection] = useState<EventCategory[]>([])
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => startOfMonth(new Date()))
   const [selectedDayKey, setSelectedDayKey] = useState<string>(() => toLocalDayKey(new Date().toISOString()))
+  const [activeDayKey, setActiveDayKey] = useState<string | null>(null)
+  const eventsListRef = useRef<HTMLElement | null>(null)
 
   const token = useMemo(() => {
     if (typeof window === 'undefined') return null
@@ -238,14 +188,7 @@ export default function EventsPageClient() {
     void load()
   }, [load])
 
-  useEffect(() => {
-    setStartDate('')
-    setEndDate('')
-  }, [])
-
   const filteredItems = useMemo(() => {
-    const startBoundary = startDate ? new Date(`${startDate}T00:00:00`) : null
-    const endBoundary = endDate ? new Date(`${endDate}T23:59:59.999`) : null
     const now = new Date()
 
     return items.filter((event) => {
@@ -253,12 +196,10 @@ export default function EventsPageClient() {
       const category = event.category ?? DEFAULT_EVENT_CATEGORY
 
       if (selectedCategories.length > 0 && !selectedCategories.includes(category)) return false
-      if (!startBoundary && !endBoundary && mineFilter !== 'going' && startsAt < now) return false
-      if (startBoundary && startsAt < startBoundary) return false
-      if (endBoundary && startsAt > endBoundary) return false
+      if (mineFilter !== 'going' && startsAt < now) return false
       return true
     })
-  }, [endDate, items, mineFilter, selectedCategories, startDate])
+  }, [items, mineFilter, selectedCategories])
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, EventFeedItem[]>()
@@ -276,111 +217,156 @@ export default function EventsPageClient() {
   }, [filteredItems])
 
   const calendarWeeks = useMemo(() => buildCalendarGrid(calendarMonth), [calendarMonth])
-  const selectedDayEvents = useMemo(() => eventsByDay.get(selectedDayKey) ?? [], [eventsByDay, selectedDayKey])
+  const activeDayEvents = useMemo(() => (activeDayKey ? eventsByDay.get(activeDayKey) ?? [] : []), [activeDayKey, eventsByDay])
+  const displayItems = useMemo(() => (activeDayKey ? activeDayEvents : filteredItems), [activeDayEvents, activeDayKey, filteredItems])
   const monthLabel = useMemo(
     () => calendarMonth.toLocaleString(undefined, { month: 'long', year: 'numeric' }),
     [calendarMonth],
   )
+  const activeDayLabel = useMemo(() => {
+    if (!activeDayKey) return null
+    const [year, month, day] = activeDayKey.split('-').map((value) => Number(value))
+    if (!year || !month || !day) return activeDayKey
+    return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    })
+  }, [activeDayKey])
   const categoryLabel = useMemo(() => {
     if (selectedCategories.length === 0) return 'All'
     if (selectedCategories.length === 1) return selectedCategories[0]
     return `${selectedCategories.length} selected`
   }, [selectedCategories])
 
+  const handleDaySelect = useCallback((key: string) => {
+    setSelectedDayKey(key)
+    setActiveDayKey(key)
+    requestAnimationFrame(() => {
+      eventsListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [])
+
   return (
-    <DashboardShell rightRail={<RightRail mode="events" showOrganizations />} showMobileRightRail mainClassName="space-y-5 pb-12">
+    <DashboardShell rightRail={<RightRail mode="events" />} showMobileRightRail mainClassName="space-y-5 pb-12">
       <div className="space-y-5">
-        <h1 className="text-3xl font-semibold tracking-tight text-slate-900">{mineFilter === 'going' ? 'Your RSVPs' : 'Events'}</h1>
-
         <section className="surface-card space-y-3 p-4 shadow-subtle">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              {(displayMode === 'list'
-                ? [
-                    { key: 'today', label: 'Today' },
-                    { key: 'this_week', label: 'This week' },
-                    { key: 'this_month', label: 'This month' },
-                    { key: 'next_30_days', label: 'Next 30 days' },
-                  ]
-                : [
-                    { key: 'today', label: 'Today' },
-                    { key: 'this_week', label: 'This week' },
-                    { key: 'this_month', label: 'This month' },
-                  ]
-              ).map((preset) => (
-                <button
-                  key={preset.key}
-                  type="button"
-                  onClick={() => {
-                    const { start, end } = buildPresetRange(preset.key as 'today' | 'this_week' | 'this_month' | 'next_30_days')
-                    setStartDate(start)
-                    setEndDate(end)
-                  }}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
+          <div className="grid gap-1 text-xs text-slate-600">
+            Categories
+            <button
+              type="button"
+              onClick={() => {
+                setCategoryDraftSelection(selectedCategories)
+                setCategoryModalOpen(true)
+              }}
+              className="inline-flex h-10 items-center justify-between rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <span>{categoryLabel}</span>
+              <span className="text-slate-400">▾</span>
+            </button>
+          </div>
+        </section>
 
-            <div className="inline-flex overflow-hidden rounded-full border border-slate-200 bg-white">
+        <section className="surface-card space-y-4 p-4 shadow-subtle">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setDisplayMode('calendar')}
-                className={
-                  displayMode === 'calendar'
-                    ? 'px-4 py-2 text-xs font-semibold text-[var(--cc-primary)]'
-                    : 'px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50'
-                }
+                onClick={() => setCalendarMonth((prev) => addMonths(prev, -1))}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                Calendar
+                Prev
               </button>
               <button
                 type="button"
-                onClick={() => setDisplayMode('list')}
-                className={
-                  displayMode === 'list'
-                    ? 'px-4 py-2 text-xs font-semibold text-[var(--cc-primary)]'
-                    : 'px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50'
-                }
+                onClick={() => setCalendarMonth((prev) => addMonths(prev, 1))}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                List
+                Next
               </button>
             </div>
+            <p className="text-sm font-semibold text-slate-900">{monthLabel}</p>
+            <button
+              type="button"
+              onClick={() => setCalendarMonth(startOfMonth(new Date()))}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              This month
+            </button>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2fr]">
-            <label className="grid gap-1 text-xs text-slate-600">
-              Start date
-              <input
-                type="date"
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-              />
-            </label>
-            <label className="grid gap-1 text-xs text-slate-600">
-              End date
-              <input
-                type="date"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-              />
-            </label>
-            <div className="grid gap-1 text-xs text-slate-600">
-              Categories
-              <button
-                type="button"
-                onClick={() => {
-                  setCategoryDraftSelection(selectedCategories)
-                  setCategoryModalOpen(true)
-                }}
-                className="inline-flex h-10 items-center justify-between rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                <span>{categoryLabel}</span>
-                <span className="text-slate-400">▾</span>
-              </button>
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((label) => (
+                <div key={label} className="px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {label}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7">
+              {calendarWeeks.flat().map((day) => {
+                const inMonth = day.getMonth() === calendarMonth.getMonth()
+                const key = `${day.getFullYear()}-${pad2(day.getMonth() + 1)}-${pad2(day.getDate())}`
+                const dayEvents = eventsByDay.get(key) ?? []
+                const isSelected = key === selectedDayKey
+                const isWeekend = day.getDay() === 0 || day.getDay() === 6
+                const today = new Date()
+                const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+                const startOfDay = new Date(day.getFullYear(), day.getMonth(), day.getDate())
+                const isPastDay = startOfDay.getTime() < startOfToday.getTime()
+                const isToday = startOfDay.getTime() === startOfToday.getTime()
+                const isDimmedCell = !inMonth || isPastDay
+                const startOfCurrentWeek = new Date(startOfToday)
+                startOfCurrentWeek.setDate(startOfToday.getDate() - startOfToday.getDay())
+                const endOfCurrentWeek = new Date(startOfCurrentWeek)
+                endOfCurrentWeek.setDate(startOfCurrentWeek.getDate() + 6)
+                endOfCurrentWeek.setHours(23, 59, 59, 999)
+                const isCurrentWeek = startOfDay.getTime() >= startOfCurrentWeek.getTime() && startOfDay.getTime() <= endOfCurrentWeek.getTime()
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => handleDaySelect(key)}
+                    className={
+                      'min-h-24 border-b border-r border-slate-100 px-2 py-2 text-center transition-colors hover:bg-slate-50' +
+                      (isDimmedCell ? ' bg-slate-50' : isWeekend ? ' bg-sky-50/70' : ' bg-white') +
+                      (isCurrentWeek && !isToday ? ' shadow-[inset_0_0_0_9999px_rgba(34,197,94,0.1)]' : '') +
+                      (isToday ? ' !bg-red-600 !text-white hover:!bg-red-600' : '') +
+                      (isSelected ? (isToday ? ' shadow-[inset_0_0_0_1px_rgba(255,255,255,0.45)]' : ' bg-rose-100 shadow-[inset_0_0_0_1px_rgba(244,63,94,0.35)]') : '')
+                    }
+                  >
+                    <div className="flex min-h-20 flex-col items-center justify-center gap-1">
+                      <span
+                        className={
+                          'relative inline-flex h-11 w-11 items-center justify-center rounded-full border text-xl font-semibold leading-none ' +
+                          (inMonth
+                            ? ' text-slate-900'
+                            : ' text-slate-400') +
+                          (isDimmedCell && !isToday ? ' border-slate-300' : ' border-black') +
+                          (isToday ? ' bg-white text-slate-900' : '') +
+                          (isSelected ? ' border-[var(--cc-primary)] bg-[var(--cc-primary)]/8' : ' bg-white') +
+                          (isPastDay && !isToday ? ' opacity-70' : '')
+                        }
+                      >
+                        <span>{day.getDate()}</span>
+                        {isPastDay ? <span aria-hidden="true" className="absolute inset-x-1 top-1/2 h-px -translate-y-1/2 rotate-[-18deg] bg-slate-500" /> : null}
+                      </span>
+                      <span
+                        className={
+                          'inline-flex min-w-16 items-center justify-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ' +
+                          (dayEvents.length > 0
+                            ? 'border-rose-300 bg-white text-rose-600 shadow-sm'
+                            : 'border-slate-200 bg-white/80 text-slate-400')
+                        }
+                      >
+                        {dayEvents.length} {dayEvents.length === 1 ? 'Event' : 'Events'}
+                      </span>
+                    </div>
+
+                  </button>
+                )
+              })}
             </div>
           </div>
         </section>
@@ -388,17 +374,40 @@ export default function EventsPageClient() {
         {loading ? <p className="text-sm text-slate-500">Loading events…</p> : null}
         {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 
-        {!loading && !error && filteredItems.length === 0 ? (
+        <section ref={eventsListRef} className="space-y-3">
+          {activeDayKey ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-subtle">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{activeDayLabel ?? 'Selected day'}</p>
+                <p className="text-sm text-slate-600">
+                  {displayItems.length === 1 ? '1 event on this day' : `${displayItems.length} events on this day`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveDayKey(null)}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Clear day filter
+              </button>
+            </div>
+          ) : null}
+
+        {!loading && !error && displayItems.length === 0 ? (
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-subtle">
             <p className="text-sm text-slate-600">
-              {mineFilter === 'going' ? 'No upcoming RSVP events found for these filters.' : 'No events found for these filters.'}
+              {activeDayKey
+                ? 'No events found for the selected day with these filters.'
+                : mineFilter === 'going'
+                  ? 'No upcoming RSVP events found for these filters.'
+                  : 'No events found for these filters.'}
             </p>
           </section>
         ) : null}
 
-        {!loading && !error && filteredItems.length > 0 && displayMode === 'list' ? (
+        {!loading && !error && displayItems.length > 0 ? (
           <ul className="space-y-6">
-            {filteredItems.map((event) => {
+            {displayItems.map((event) => {
               const detailHref = getEventDetailHref(event)
               const organizationHref = getEventOrganizationHref(event)
 
@@ -462,148 +471,7 @@ export default function EventsPageClient() {
             })}
           </ul>
         ) : null}
-
-        {!loading && !error && filteredItems.length > 0 && displayMode === 'calendar' ? (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCalendarMonth((prev) => addMonths(prev, -1))}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Prev
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCalendarMonth((prev) => addMonths(prev, 1))}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Next
-                </button>
-              </div>
-              <p className="text-sm font-semibold text-slate-900">{monthLabel}</p>
-              <button
-                type="button"
-                onClick={() => setCalendarMonth(startOfMonth(new Date()))}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                This month
-              </button>
-            </div>
-
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((label) => (
-                  <div key={label} className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                    {label}
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7">
-                {calendarWeeks.flat().map((day) => {
-                  const inMonth = day.getMonth() === calendarMonth.getMonth()
-                  const key = `${day.getFullYear()}-${pad2(day.getMonth() + 1)}-${pad2(day.getDate())}`
-                  const dayEvents = eventsByDay.get(key) ?? []
-                  const isSelected = key === selectedDayKey
-
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setSelectedDayKey(key)}
-                      className={
-                        'min-h-24 border-b border-r border-slate-100 px-3 py-2 text-left transition-colors hover:bg-slate-50' +
-                        (isSelected ? ' bg-slate-50' : '')
-                      }
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className={inMonth ? 'text-xs font-semibold text-slate-900' : 'text-xs font-semibold text-slate-400'}>{day.getDate()}</p>
-                        {dayEvents.length ? (
-                          <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">{dayEvents.length}</span>
-                        ) : null}
-                      </div>
-
-                      {dayEvents.length ? (
-                        <div className="mt-2 space-y-1">
-                          {dayEvents.slice(0, 2).map((event) => (
-                            <p key={event.id} className="truncate text-[11px] font-semibold text-slate-700">
-                              {new Date(event.startsAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · {event.title}
-                            </p>
-                          ))}
-                          {dayEvents.length > 2 ? <p className="text-[11px] text-slate-500">+{dayEvents.length - 2} more</p> : null}
-                        </div>
-                      ) : null}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              {!selectedDayEvents.length ? <p className="text-sm text-slate-500">No events on this day.</p> : null}
-              {selectedDayEvents.length ? (
-                <ul className="space-y-3">
-                  {selectedDayEvents.map((event) => {
-                    const detailHref = getEventDetailHref(event)
-                    const organizationHref = getEventOrganizationHref(event)
-                    const startsDateBadge = formatEventDateBadge(event.startsAt)
-                    const startsTimeBadge = formatEventTimeBadge(event.startsAt)
-                    const descriptionPreview = truncateDescription(event.description)
-                    return (
-                      <li key={`${event.organization.id}:${event.id}`}>
-                        <article
-                          className="group cursor-pointer rounded-2xl bg-white p-3 transition hover:bg-slate-50/70"
-                          role="link"
-                          tabIndex={0}
-                          onClick={() => router.push(detailHref)}
-                          onKeyDown={(eventKey) => {
-                            if (eventKey.key === 'Enter' || eventKey.key === ' ') {
-                              eventKey.preventDefault()
-                              router.push(detailHref)
-                            }
-                          }}
-                        >
-                          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                            <div className="w-full sm:w-60 sm:flex-none">
-                              <Link href={detailHref} className="block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                                <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32">
-                                  {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
-                                </div>
-                              </Link>
-
-                              {organizationHref ? (
-                                <Link href={organizationHref} className="mt-3 block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                                  <div className="relative overflow-hidden rounded-xl border border-slate-200 px-3 py-2">
-                                    <div className="absolute inset-0 bg-slate-50" />
-                                    <div className="relative z-[1] flex items-center gap-2">
-                                      <VerifiedAvatar src={event.organization.logoUrl} alt={event.organization.name} initials={event.organization.name} size={24} />
-                                      <p className="truncate text-sm font-semibold text-slate-700">{event.organization.name}</p>
-                                    </div>
-                                  </div>
-                                </Link>
-                              ) : null}
-                            </div>
-                            <div className="min-w-0 space-y-1.5">
-                              <Link href={detailHref} className="text-xl font-semibold tracking-tight text-slate-900 transition group-hover:text-[var(--cc-primary)] hover:underline">
-                                {event.title}
-                              </Link>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">{startsDateBadge}</span>
-                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700">{startsTimeBadge}</span>
-                              </div>
-                              {descriptionPreview ? <p className="text-sm text-slate-600">{descriptionPreview}</p> : null}
-                            </div>
-                          </div>
-                        </article>
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        </section>
 
         {categoryModalOpen ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
