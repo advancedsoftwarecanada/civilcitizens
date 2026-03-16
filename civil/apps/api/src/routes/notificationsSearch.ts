@@ -46,6 +46,7 @@ type NotificationsSearchDeps = {
   clearUserRealtimeOnline: (userId: string, connectionId: string) => Promise<void>
   formatFriendUser: (user: any) => any
   formatNotification: (record: any) => any
+  loadNotificationActor: (record: any) => Promise<any | null>
   markUserRealtimeOnline: (userId: string, connectionId: string) => Promise<void>
   normalizeSearchTerm: (value: string) => string
   resolveStreamUserId: (req: FastifyRequest) => Promise<string | null>
@@ -89,9 +90,7 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         }),
       ])
 
-      const actorIds = Array.from(new Set(rows.map((row: any) => row.actorId).filter((id: any): id is string => Boolean(id))))
-      const actors = actorIds.length ? await prisma.user.findMany({ where: { id: { in: actorIds } } }) : []
-      const actorMap = new Map(actors.map((actor: any) => [actor.id, deps.formatFriendUser(actor)]))
+      const actors = await Promise.all(rows.map((row: any) => deps.loadNotificationActor(row)))
 
       let nextCursor: string | undefined
       if (rows.length > limit) {
@@ -100,9 +99,9 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       }
 
       return reply.send({
-        items: rows.map((record: any) => ({
+        items: rows.map((record: any, index: number) => ({
           ...deps.formatNotification(record),
-          actor: record.actorId ? actorMap.get(record.actorId) ?? null : null,
+          actor: actors[index] ?? null,
         })),
         nextCursor,
         unreadCount,

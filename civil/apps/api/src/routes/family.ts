@@ -1253,6 +1253,9 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         payload: {
           memberId: updatedMember.id,
           childDisplayName: `${updatedMember.firstName} ${updatedMember.lastName}`.trim(),
+          childUsername: updatedMember.username ?? username,
+          childAvatarUrl: updatedMember.avatarUrl ?? null,
+          childCoverUrl: updatedMember.coverUrl ?? null,
           username,
           url: '/settings/family/settings',
           sourceUrl: '/settings/family/settings',
@@ -1338,7 +1341,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         data: body.data.category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
         select: {
           id: true, parentId: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
-          avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, notifyParentOnMediaChanges: true,
+          username: true, avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, notifyParentOnMediaChanges: true,
           suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
         },
       })
@@ -1351,6 +1354,9 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
           payload: {
             memberId: updatedMember.id,
             childDisplayName: `${updatedMember.firstName} ${updatedMember.lastName}`.trim(),
+            childUsername: updatedMember.username ?? null,
+            childAvatarUrl: updatedMember.avatarUrl ?? null,
+            childCoverUrl: updatedMember.coverUrl ?? null,
             category: body.data.category,
             url: `/settings/family/edit?id=${encodeURIComponent(updatedMember.id)}`,
             sourceUrl: `/settings/family/edit?id=${encodeURIComponent(updatedMember.id)}`,

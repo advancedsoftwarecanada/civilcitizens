@@ -47,12 +47,18 @@ export function NotificationCard({
   const profileHref = notification.actor?.handle ? `/u/${notification.actor.handle}` : null
   const addFamilyHref = profileHref ? `${profileHref}?addFamily=1` : null
   const reciprocalCompleted = notification.payload?.reciprocalCompleted === true
-  const actorName = notification.actor ? getActorDisplayName(notification) : null
-  const initials = actorName ?? 'C'
+  const payloadActorName = typeof notification.payload?.childDisplayName === 'string' ? notification.payload.childDisplayName.trim() : ''
+  const hasActorIdentity = Boolean(notification.actor || payloadActorName)
+  const actorName = getActorDisplayName(notification)
+  const initials = actorName || 'C'
   const message = getNotificationMessage(notification)
   const targetUrl = getNotificationTargetUrl(notification)
   const openLabel = getNotificationOpenLabel(notification)
-  const actorCoverUrl = notification.actor?.coverUrl ?? null
+  const actorAvatarUrl = typeof notification.payload?.childAvatarUrl === 'string' && notification.payload.childAvatarUrl.trim()
+    ? notification.payload.childAvatarUrl
+    : null
+  const actorCoverUrl = notification.actor?.coverUrl ?? (typeof notification.payload?.childCoverUrl === 'string' && notification.payload.childCoverUrl.trim() ? notification.payload.childCoverUrl : null)
+  const resolvedActorAvatarUrl = notification.actor?.avatarUrl ?? actorAvatarUrl
   const hasActorCover = Boolean(actorCoverUrl)
   const [familyConfirmOpen, setFamilyConfirmOpen] = useState(false)
   const [selectedReciprocalRelationship, setSelectedReciprocalRelationship] = useState<ProfileFamilyRelationshipValue | null>(null)
@@ -117,14 +123,14 @@ export function NotificationCard({
           {actorCoverUrl ? <img src={actorCoverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
           <div className={clsx('absolute inset-0', hasActorCover ? 'bg-slate-900/50' : 'bg-transparent')} />
           <div className="relative z-[1] flex items-start gap-3">
-            {notification.actor ? (
+            {notification.actor || resolvedActorAvatarUrl || payloadActorName ? (
               <VerifiedAvatar
-                src={notification.actor.avatarUrl ?? null}
-                alt={notification.actor.name ?? notification.actor.handle ?? 'Civil citizen'}
+                src={resolvedActorAvatarUrl}
+                alt={actorName || notification.actor?.handle || 'Civil citizen'}
                 initials={initials}
                 size={44}
-                isVerified={Boolean(notification.actor.isVerified)}
-                isBusiness={Boolean(notification.actor.isPremium)}
+                isVerified={Boolean(notification.actor?.isVerified)}
+                isBusiness={Boolean(notification.actor?.isPremium)}
                 className="shrink-0"
                 href={profileHref ?? undefined}
               />
@@ -134,7 +140,7 @@ export function NotificationCard({
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <span className={clsx('h-2 w-2 rounded-full', notification.unread ? 'bg-[var(--cc-primary)]' : hasActorCover ? 'bg-white/60' : 'bg-slate-300')} aria-hidden="true" />
-                {actorName ? (
+                {hasActorIdentity ? (
                   <div className="flex flex-wrap items-baseline gap-1 text-sm">
                     {profileHref ? (
                       <Link
