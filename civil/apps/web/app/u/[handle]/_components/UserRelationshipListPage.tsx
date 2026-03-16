@@ -51,7 +51,7 @@ type FamilyListItem = {
   interactive?: boolean
 }
 
-type RelationshipKind = 'friends' | 'family' | 'connections' | 'communities' | 'organizations'
+type RelationshipKind = 'friends' | 'family' | 'contacts' | 'connections' | 'communities' | 'organizations'
 type ContactView = 'all' | 'family' | 'friends' | 'connections'
 
 type ContactListItem = {
@@ -136,9 +136,9 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
     connections: [],
   })
   const [searchQuery, setSearchQuery] = useState('')
-  const [activeContactView, setActiveContactView] = useState<ContactView>(kind === 'family' ? 'family' : kind === 'connections' ? 'connections' : 'friends')
+  const [activeContactView, setActiveContactView] = useState<ContactView>(kind === 'contacts' ? 'all' : kind === 'family' ? 'family' : kind === 'connections' ? 'connections' : 'friends')
 
-  const isContactKind = kind === 'friends' || kind === 'family' || kind === 'connections'
+  const isContactKind = kind === 'friends' || kind === 'family' || kind === 'contacts' || kind === 'connections'
 
   useEffect(() => {
     const run = async () => {
@@ -248,14 +248,15 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
 
   useEffect(() => {
     const fallback = kind === 'family' ? 'family' : kind === 'connections' ? 'connections' : 'friends'
+    const resolvedFallback = kind === 'contacts' ? 'all' : fallback
 
     if (typeof window === 'undefined') {
-      setActiveContactView(fallback)
+      setActiveContactView(resolvedFallback)
       return
     }
 
     const syncFromHash = () => {
-      setActiveContactView(resolveContactViewFromHash(window.location.hash, fallback))
+      setActiveContactView(resolveContactViewFromHash(window.location.hash, resolvedFallback))
     }
 
     syncFromHash()
@@ -274,6 +275,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
 
   const emptyText = useMemo(() => {
     if (isContactKind && searchQuery.trim()) return `No ${contactViewLabels[activeContactView].toLowerCase()} match your search.`
+    if (kind === 'contacts') return 'No contacts yet.'
     if (kind === 'family') return 'No family contacts yet.'
     if (kind === 'friends') return 'No friends yet.'
     if (kind === 'connections') return 'No business connections yet.'
@@ -287,7 +289,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
       {isContactKind ? (
         <MessagesNavBlock
           visibleItems={hasFamilyProfilesAvailable(viewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
-          footerAction={viewer?.handle ? { label: 'All Contacts', href: `/u/${viewer.handle}/family#all` } : undefined}
+          footerAction={viewer?.handle ? { label: 'My Contacts', href: `/u/${viewer.handle}/contacts` } : undefined}
         />
       ) : null}
       <RightRail hideContacts hideCommunities={kind === 'friends'} />

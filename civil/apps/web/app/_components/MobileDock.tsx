@@ -69,7 +69,7 @@ type NavButtonKey = (typeof DEFAULT_NAV_BUTTONS)[number]['key']
 
 type UserRelationshipRoute = {
   handle: string
-  kind: 'friends' | 'connections' | 'communities' | 'organizations'
+  kind: 'friends' | 'contacts' | 'connections' | 'communities' | 'organizations'
 }
 
 function toPathLabel(slug: string) {
@@ -126,7 +126,7 @@ function getUserRelationshipRouteFromPathname(pathname: string | null | undefine
   const handle = parts[1]
   const kind = parts[2]
   if (!handle) return null
-  if (kind === 'friends' || kind === 'connections' || kind === 'communities' || kind === 'organizations') {
+  if (kind === 'friends' || kind === 'contacts' || kind === 'connections' || kind === 'communities' || kind === 'organizations') {
     return { handle, kind }
   }
   return null
@@ -529,16 +529,17 @@ export default function MobileDock() {
       )
     }
     if (userRelationshipRoute) {
-      if (userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'connections') {
+      if (userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'contacts' || userRelationshipRoute.kind === 'connections') {
         return (
           <div className="space-y-4">
             <MessagesNavBlock
-              active={userRelationshipRoute.kind === 'friends' ? 'friends' : 'network'}
+              active={userRelationshipRoute.kind === 'connections' ? 'network' : 'friends'}
               visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+              footerAction={effectiveViewer?.handle ? { label: 'My Contacts', href: `/u/${effectiveViewer.handle}/contacts` } : undefined}
             />
             <RightRail
               hideContacts
-              hideCommunities={userRelationshipRoute.kind === 'friends'}
+              hideCommunities={userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'contacts'}
             />
           </div>
         )

@@ -3224,6 +3224,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     : activeInboxSection === 'groups'
       ? messagesNavUnreadCounts.groups
       : messagesNavUnreadCounts.friends
+  const contactsHref = me?.handle ? `/u/${encodeURIComponent(me.handle)}/contacts` : '/friends'
 
   const threadsFooter = threadCursor ? (
     <button
@@ -3247,6 +3248,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           }}
           unreadCounts={messagesNavUnreadCounts}
           visibleItems={isFamilySession ? ['friends', 'groups'] : showFamilyInbox ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+          footerAction={!isFamilySession && me?.handle ? { label: 'My Contacts', href: contactsHref } : undefined}
           className="border border-slate-200/90 bg-slate-50/70"
         />
         <div className="grid grid-cols-2 gap-2">
