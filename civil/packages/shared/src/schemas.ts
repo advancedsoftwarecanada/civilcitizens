@@ -147,13 +147,6 @@ export const CreatePostInput = z
           path: ['title'],
         })
       }
-      if (data.mediaUrl || (data.images && data.images.length > 0)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Poll posts cannot include images',
-          path: ['mediaUrl'],
-        })
-      }
       if (data.sharedPostId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -178,11 +171,12 @@ export const CreatePostInput = z
       }
     } else {
       const bodyLength = (data.body ?? '').length
+      const hasImages = Boolean(data.mediaUrl || (data.images && data.images.length > 0))
       const isSharedPost = typeof data.sharedPostId === 'string' && data.sharedPostId.trim().length > 0
-      if (!isSharedPost && bodyLength < 1) {
+      if (!isSharedPost && !hasImages && bodyLength < 1) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Posts must include some text',
+          message: 'Posts must include text or images',
           path: ['body'],
         })
       }

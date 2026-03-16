@@ -4,6 +4,7 @@ import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } f
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
 import type { Jurisdiction, PollResultsVisibility, ReactionType } from '@civil/shared'
+import { LuImagePlus, LuVideo } from 'react-icons/lu'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
 import { pushToast } from './useToasts'
@@ -17,7 +18,6 @@ const POST_TYPE_CHOICES: Array<{ type: PostType; label: string; icon: string }> 
   { type: 'post', label: 'Post', icon: '📝' },
   { type: 'article', label: 'Article', icon: '📄' },
   { type: 'poll', label: 'Poll', icon: '📊' },
-  { type: 'photo', label: 'Photos', icon: '📷' },
 ]
 
 export type ApiPost = {
@@ -250,6 +250,10 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const MAX_IMAGE_DIMENSION = 8000
 const MAX_IMAGE_MEGA_PIXELS = 40
 
+function normalizeComposerPostType(postType: PostType): PostType {
+  return postType === 'photo' ? 'post' : postType
+}
+
 const readImageDimensions = async (file: File): Promise<{ width: number; height: number } | null> => {
   try {
     const objectUrl = URL.createObjectURL(file)
@@ -295,7 +299,7 @@ export default function PostComposer({
   hideAudience = false,
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [postType, setPostType] = useState<PostType>(defaultPostType)
+  const [postType, setPostType] = useState<PostType>(() => normalizeComposerPostType(defaultPostType))
   const [draft, setDraft] = useState('')
   const [articleTitle, setArticleTitle] = useState('')
   const [articleBody, setArticleBody] = useState('<p></p>')
@@ -314,9 +318,24 @@ export default function PostComposer({
       provinceName: option.provinceName ?? option.provinceCode?.toUpperCase(),
     }))
   }, [communityOptions])
+  const selectableCommunityOptions = useMemo(() => {
+    if (!communityTarget) return normalizedCommunityOptions
+    const targetKey = buildCommunityKey(communityTarget)
+    if (normalizedCommunityOptions.some((option) => buildCommunityKey(option) === targetKey)) {
+      return normalizedCommunityOptions
+    }
+    return [
+      {
+        ...communityTarget,
+        communityName: communityTarget.communityName ?? communityTarget.communitySlug,
+        provinceName: communityTarget.provinceName ?? communityTarget.provinceCode?.toUpperCase(),
+      },
+      ...normalizedCommunityOptions,
+    ]
+  }, [communityTarget, normalizedCommunityOptions])
 
   const [audienceSelection, setAudienceSelection] = useState(() =>
-    deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions, businessTarget),
+    deriveInitialAudienceSelection(communityTarget, defaultAudience, selectableCommunityOptions, businessTarget),
   )
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
@@ -324,6 +343,16 @@ export default function PostComposer({
     () => pollOptions.map((option) => option.trim()).filter((option) => option.length > 0),
     [pollOptions],
   )
+  const readyPhotoUrls = useMemo(
+    () => photos.map((photo) => photo.mediaUrl).filter((value): value is string => Boolean(value)),
+    [photos],
+  )
+  const hasPhotoUploadsInFlight = useMemo(
+    () => photos.some((photo) => photo.status === 'uploading' || photo.status === 'processing'),
+    [photos],
+  )
+  const hasPhotoUploadErrors = useMemo(() => photos.some((photo) => photo.status === 'error'), [photos])
+  const photosReady = photos.length === 0 || readyPhotoUrls.length === photos.length
 
   const selectedOrganizationOption = useMemo(() => {
     if (businessTarget?.businessId) return null
@@ -340,43 +369,47 @@ export default function PostComposer({
     return null
   }, [businessTarget, selectedOrganizationOption])
 
-  const audienceLocked = Boolean((communityTarget && !businessTarget?.businessId) || businessTarget?.businessId)
+  const audienceLocked = Boolean(businessTarget?.businessId)
   const isPromptSelected = audienceSelection === COMMUNITY_PROMPT_VALUE
   const audienceBlocked = !communityTarget && isPromptSelected
   const activeCommunity = useMemo(() => {
     if (activeBusinessTarget?.businessId) return null
-    if (communityTarget) return communityTarget
     if (!audienceSelection.startsWith(COMMUNITY_PREFIX) || isPromptSelected) return null
     const key = audienceSelection.slice(COMMUNITY_PREFIX.length)
-    return normalizedCommunityOptions.find((option) => buildCommunityKey(option) === key) ?? null
-  }, [activeBusinessTarget, audienceSelection, communityTarget, isPromptSelected, normalizedCommunityOptions])
+    return selectableCommunityOptions.find((option) => buildCommunityKey(option) === key) ?? null
+  }, [activeBusinessTarget, audienceSelection, isPromptSelected, selectableCommunityOptions])
 
   useEffect(() => {
     if (businessTarget?.businessId) {
       setAudienceSelection(BUSINESS_VALUE)
       return
     }
-    if (communityTarget) {
-      setAudienceSelection(buildCommunityValue(communityTarget))
-      return
-    }
     setAudienceSelection((prev) => {
+      if (communityTarget) {
+        const targetValue = buildCommunityValue(communityTarget)
+        if (prev === COMMUNITY_PROMPT_VALUE || !prev.startsWith(COMMUNITY_PREFIX)) {
+          return targetValue
+        }
+      }
       if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience !== 'community') {
         if (defaultAudience === 'family') return FAMILY_VALUE
         return defaultAudience === 'network' ? NETWORK_VALUE : FRIENDS_VALUE
       }
-      if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience === 'community' && normalizedCommunityOptions.length === 1) {
-        const firstOption = normalizedCommunityOptions[0]
+      if (prev === COMMUNITY_PROMPT_VALUE && defaultAudience === 'community' && selectableCommunityOptions.length === 1) {
+        const firstOption = selectableCommunityOptions[0]
         if (firstOption) {
           return buildCommunityValue(firstOption)
         }
       }
       if (prev.startsWith(COMMUNITY_PREFIX) && prev !== COMMUNITY_PROMPT_VALUE) {
         const key = prev.slice(COMMUNITY_PREFIX.length)
-        const match = normalizedCommunityOptions.some((option) => buildCommunityKey(option) === key)
+        const match = selectableCommunityOptions.some((option) => buildCommunityKey(option) === key)
         if (!match) {
-          if (defaultAudience === 'community' && normalizedCommunityOptions.length === 1) {
-            const firstOption = normalizedCommunityOptions[0]
+          if (communityTarget) {
+            return buildCommunityValue(communityTarget)
+          }
+          if (defaultAudience === 'community' && selectableCommunityOptions.length === 1) {
+            const firstOption = selectableCommunityOptions[0]
             if (firstOption) {
               return buildCommunityValue(firstOption)
             }
@@ -390,7 +423,7 @@ export default function PostComposer({
       }
       return prev
     })
-  }, [allowFamilyAudience, businessTarget, communityTarget, defaultAudience, normalizedCommunityOptions])
+  }, [allowFamilyAudience, businessTarget, communityTarget, defaultAudience, selectableCommunityOptions])
 
   const startPhotoUpload = useCallback(async (id: string, file: File) => {
     setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
@@ -540,11 +573,6 @@ export default function PostComposer({
   }, [])
 
   const canSubmit = useMemo(() => {
-    if (postType === 'photo') {
-      const captionOk = draft.trim().length <= MAX_POST_LENGTH
-      const photosOk = photos.length > 0 && photos.every((p) => p.status === 'ready')
-      return photosOk && captionOk && !submitting
-    }
     if (postType === 'poll') {
       const questionLength = draft.trim().length
       const uniqueOptionCount = new Set(normalizedPollOptions.map((option) => option.toLowerCase())).size
@@ -554,18 +582,19 @@ export default function PostComposer({
         normalizedPollOptions.length >= MIN_POLL_OPTIONS &&
         normalizedPollOptions.length <= MAX_POLL_OPTIONS &&
         normalizedPollOptions.length === uniqueOptionCount &&
+        photosReady &&
         !submitting
       )
     }
     if (postType === 'post') {
       const trimmed = draft.trim()
-      return trimmed.length > 0 && trimmed.length <= MAX_POST_LENGTH && !submitting
+      return (trimmed.length > 0 || readyPhotoUrls.length > 0) && trimmed.length <= MAX_POST_LENGTH && photosReady && !submitting
     }
 
     const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
     const bodyOk = articleBodyPlain.length >= MIN_ARTICLE_BODY_LENGTH
-    return titleOk && bodyOk && !submitting
-  }, [articleBodyPlain, articleTitle, draft, normalizedPollOptions, photos, postType, submitting])
+    return titleOk && bodyOk && photosReady && !submitting
+  }, [articleBodyPlain, articleTitle, draft, normalizedPollOptions, photosReady, postType, readyPhotoUrls.length, submitting])
 
   const resetComposer = useCallback(() => {
     setDraft('')
@@ -573,14 +602,14 @@ export default function PostComposer({
     setArticleBody('<p></p>')
     setPollOptions(createInitialPollOptions())
     setPollResultsVisibility('after_vote')
-    setPostType(defaultPostType)
-    setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, normalizedCommunityOptions, businessTarget))
+    setPostType(normalizeComposerPostType(defaultPostType))
+    setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, selectableCommunityOptions, businessTarget))
     setVisibility('public')
     setShowBusinessAuthor(false)
     setError(null)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
-  }, [businessTarget, communityTarget, defaultAudience, defaultPostType, normalizedCommunityOptions, photos])
+  }, [businessTarget, communityTarget, defaultAudience, defaultPostType, photos, selectableCommunityOptions])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -600,11 +629,6 @@ export default function PostComposer({
 
     try {
       const payload: Record<string, unknown> = (() => {
-        if (postType === 'photo') {
-          const mediaUrl = photos[0]?.mediaUrl
-          const images = photos.map((p) => p.mediaUrl).filter(Boolean)
-          return { type: 'photo', body: draft.trim(), mediaUrl, images }
-        }
         if (postType === 'poll') {
           return {
             type: 'poll',
@@ -621,7 +645,12 @@ export default function PostComposer({
         return { type: 'article', title: articleTitle.trim(), body: articleBody }
       })()
 
-      const targetCommunity = communityTarget ?? activeCommunity
+      if (readyPhotoUrls.length > 0) {
+        payload.mediaUrl = readyPhotoUrls[0]
+        payload.images = readyPhotoUrls
+      }
+
+      const targetCommunity = activeCommunity
       if (targetCommunity) {
         payload.communityProvince = targetCommunity.provinceCode
         payload.communitySlug = targetCommunity.communitySlug
@@ -681,7 +710,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, normalizedPollOptions, onPostCreated, photos, pollResultsVisibility, postType, resetComposer, showBusinessAuthor, submitting, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyPhotoUrls, resetComposer, showBusinessAuthor, submitting, visibility])
 
   const composerAuthorName = useMemo(() => {
     if (!me) return 'You'
@@ -801,7 +830,6 @@ export default function PostComposer({
       >
         {!hideAudience ? (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Audience</span>
             <select
               className={clsx(
                 'w-full rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none',
@@ -841,23 +869,18 @@ export default function PostComposer({
                     </optgroup>
                   ) : null}
 
-                  {normalizedCommunityOptions.length || communityTarget || (!communityTarget && isPromptSelected) ? (
+                  {selectableCommunityOptions.length || (!communityTarget && isPromptSelected) ? (
                     <optgroup label="Communities">
                       {!communityTarget && isPromptSelected ? (
                         <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
                           Select a community
                         </option>
                       ) : null}
-                      {communityTarget ? (
-                        <option value={buildCommunityValue(communityTarget)}>{formatCommunityLabel(communityTarget)}</option>
-                      ) : null}
-                      {!communityTarget
-                        ? normalizedCommunityOptions.map((option) => (
-                            <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
-                              {formatCommunityLabel(option)}
-                            </option>
-                          ))
-                        : null}
+                      {selectableCommunityOptions.map((option) => (
+                        <option key={buildCommunityKey(option)} value={buildCommunityValue(option)}>
+                          {formatCommunityLabel(option)}
+                        </option>
+                      ))}
                     </optgroup>
                   ) : null}
 
@@ -878,16 +901,6 @@ export default function PostComposer({
             ) : null}
             {!businessTarget?.businessId && isPromptSelected ? (
               <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
-            ) : null}
-            {activeBusinessTarget?.businessId ? (
-              <p className="text-xs text-slate-500">Posting to {activeBusinessTarget.businessName ?? 'this organization'}</p>
-            ) : audienceSelection === FAMILY_VALUE ? (
-              <p className="text-xs text-slate-500">Posting to your Family circle</p>
-            ) : null}
-            {activeCommunity && !audienceLocked && !isPromptSelected ? (
-              <p className="text-xs text-slate-500">
-                Posting to {activeCommunity.communityName ?? activeCommunity.communitySlug}
-              </p>
             ) : null}
           </div>
         ) : null}
@@ -970,7 +983,6 @@ export default function PostComposer({
           </div>
         ) : null}
         <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Type</span>
           <div
             className={clsx(
               'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500',
@@ -1162,101 +1174,86 @@ export default function PostComposer({
               <p className="text-xs text-slate-500">Votes can be changed until you end the poll.</p>
             </div>
           </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <p className="text-sm text-slate-600">Add photos and an optional caption.</p>
-              <div className="flex flex-wrap items-center gap-3">
+        ) : null}
+
+        {photos.length > 0 ? (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {photos.map((photo) => (
+              <div
+                key={photo.id}
+                className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
+              >
+                <img
+                  src={photo.mediaUrl ?? photo.previewUrl}
+                  alt="Post upload"
+                  className="h-full w-full object-cover"
+                />
+                {photo.status === 'uploading' || photo.status === 'processing' ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold text-white">
+                    {photo.status === 'uploading' ? 'Uploading...' : 'Processing...'}
+                  </div>
+                ) : null}
+                {photo.status === 'error' ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-red-500/80 p-2 text-center text-xs font-semibold text-white">
+                    {photo.error ?? 'Error'}
+                  </div>
+                ) : null}
                 <button
                   type="button"
-                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={submitting}
+                  className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
+                  onClick={() => {
+                    URL.revokeObjectURL(photo.previewUrl)
+                    setPhotos((prev) => prev.filter((p) => p.id !== photo.id))
+                  }}
                 >
-                  {photos.length > 0 ? 'Add more photos' : 'Upload photos'}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-4 w-4"
+                  >
+                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                  </svg>
                 </button>
               </div>
-
-              {photos.length > 0 ? (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {photos.map((photo) => (
-                    <div
-                      key={photo.id}
-                      className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
-                    >
-                      <img
-                        src={photo.mediaUrl ?? photo.previewUrl}
-                        alt="Post upload"
-                        className="h-full w-full object-cover"
-                      />
-                      {photo.status === 'uploading' || photo.status === 'processing' ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold text-white">
-                          {photo.status === 'uploading' ? 'Uploading...' : 'Processing...'}
-                        </div>
-                      ) : null}
-                      {photo.status === 'error' ? (
-                        <div className="absolute inset-0 flex items-center justify-center bg-red-500/80 p-2 text-center text-xs font-semibold text-white">
-                          {photo.error ?? 'Error'}
-                        </div>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
-                        onClick={() => {
-                          URL.revokeObjectURL(photo.previewUrl)
-                          setPhotos((prev) => prev.filter((p) => p.id !== photo.id))
-                        }}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                          className="h-4 w-4"
-                        >
-                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                        </svg>
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={ACCEPTED_IMAGE_TYPES}
-                className="hidden"
-                multiple
-                onChange={handlePhotoFile}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-600" htmlFor="photo-caption">
-                Caption (optional)
-              </label>
-              <textarea
-                id="photo-caption"
-                className="mt-1 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
-                placeholder="Share something"
-                rows={3}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                maxLength={MAX_POST_LENGTH}
-                disabled={submitting}
-              />
-              <div className="flex items-center justify-end text-xs text-slate-500">
-                <span>
-                  {draft.trim().length}/{MAX_POST_LENGTH}
-                </span>
-              </div>
-            </div>
-            {photos.some((p) => p.status === 'error') ? (
-              <p className="text-xs text-red-600">Some photos failed to upload.</p>
-            ) : null}
+            ))}
           </div>
-        )}
+        ) : null}
 
-        <div className="flex items-center justify-end">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          className="hidden"
+          multiple
+          onChange={handlePhotoFile}
+        />
+
+        {hasPhotoUploadErrors ? <p className="text-xs text-red-600">Some photos failed to upload.</p> : null}
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={submitting}
+            >
+              <LuImagePlus className="h-4 w-4" />
+              {photos.length > 0 ? 'Add Photos' : 'Add Photos'}
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-400"
+              disabled
+              aria-disabled="true"
+            >
+              <LuVideo className="h-4 w-4" />
+              Video
+            </button>
+            {hasPhotoUploadsInFlight ? <span className="text-xs text-slate-500">Finishing uploads…</span> : null}
+          </div>
+
           <button
             className="rounded-full bg-[var(--cc-primary)] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-slate-400"
             onClick={submitPost}

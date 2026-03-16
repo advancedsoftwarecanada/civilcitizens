@@ -23,7 +23,8 @@ Commands:
   _DEV.py stop          # stop detached
   _DEV.py status        # show status
     _DEV.py doctor        # show resolved ports/env + connectivity
-    _DEV.py preflight     # run production-like builds before shipping
+    _DEV.py staging       # run pre-deploy staging checks (env, connectivity, builds)
+    _DEV.py preflight     # alias for staging
   _DEV.py logs [N]      # tail logs (default 100)
 
 Managed processes:
@@ -224,6 +225,57 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return env
 
 
+def _build_dev_env() -> dict[str, str]:
+    env = os.environ.copy()
+
+    nvm_node20 = Path.home() / ".nvm/versions/node/v20.19.6/bin"
+    if nvm_node20.exists():
+        env["PATH"] = f"{nvm_node20}:{env.get('PATH','')}"
+
+    file_env = _load_env_file(REPO_ROOT / ".env.dev")
+    for k, v in file_env.items():
+        env.setdefault(k, v)
+
+    default_database_url = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
+    env["DATABASE_URL"] = os.environ.get("DATABASE_URL", file_env.get("DATABASE_URL", default_database_url))
+    env["REDIS_URL"] = os.environ.get("REDIS_URL", file_env.get("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}"))
+    env.setdefault("JWT_SECRET", "dev_secret")
+    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
+    env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
+    env.setdefault("NEXT_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}")
+    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
+    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
+    env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
+    env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
+    env.setdefault("MEETING_RTC_SERVICE_URL", f"http://127.0.0.1:{MEETING_RTC_PORT}")
+    env.setdefault("MEETING_RTC_SERVICE_SECRET", "dev_meeting_rtc_secret")
+    env.setdefault("MEETING_RTC_REQUEST_TIMEOUT_MS", "8000")
+    env.setdefault("MEETING_RTC_WS_URL", f"wss://{env['CIVIL_PUBLIC_HOST']}/rtc/v1/ws")
+    env.setdefault("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
+    env.setdefault("MEETING_RTC_ICE_SERVERS_JSON", '[{"urls":["stun:stun.l.google.com:19302"]}]')
+    env.setdefault("CIVIL_AI_SERVERS_FILE", str(AI_SERVERS_FILE))
+    env.setdefault("CIVIL_AI_INSTRUCTIONS_FILE", str(AI_INSTRUCTIONS_FILE))
+    env.setdefault("CIVIL_WEB_PORT", str(WEB_PORT))
+    env.setdefault("CIVIL_API_PORT", str(API_PORT))
+    env.setdefault("PORT", str(API_PORT))
+    return env
+
+
+def _write_host_prisma_env(database_url: str) -> None:
+    db_env_path = CIVIL_DIR / "packages" / "db" / ".env"
+    try:
+        db_env_path.parent.mkdir(parents=True, exist_ok=True)
+        db_env_path.write_text(f"DATABASE_URL={database_url}\n", encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"unable to write Prisma env file at {db_env_path}: {exc}") from exc
+
+
+def _run_check(label: str, cmd: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+    printable = " ".join(cmd)
+    print(f"→ {label}: {printable}")
+    subprocess.run(cmd, cwd=str(cwd), env=env, check=True)
+
+
 def _spawn_detached(cmd: list[str], *, cwd: Path, pid_file: Path, log_file: Path, env: dict[str, str]) -> None:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     with log_file.open("ab", buffering=0) as out:
@@ -384,38 +436,7 @@ def start() -> int:
         print("❌ pnpm not found on PATH.")
         return 2
 
-    # Prefer nvm node 20 bin if present (avoids pnpm shim issues)
-    env = os.environ.copy()
-    nvm_node20 = Path.home() / ".nvm/versions/node/v20.19.6/bin"
-    if nvm_node20.exists():
-        env["PATH"] = f"{nvm_node20}:{env.get('PATH','')}"
-
-    # Merge .env.dev as defaults, but let explicit env vars win.
-    file_env = _load_env_file(REPO_ROOT / ".env.dev")
-    for k, v in file_env.items():
-        env.setdefault(k, v)
-
-    # Default to the shared Cybertron dev database, but allow DATABASE_URL to be
-    # overridden for staged cutovers such as shadow PostGIS validation.
-    default_database_url = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
-    env["DATABASE_URL"] = os.environ.get("DATABASE_URL", file_env.get("DATABASE_URL", default_database_url))
-    env["REDIS_URL"] = f"redis://localhost:{CYBERTRON_REDIS_PORT}"
-    env.setdefault("JWT_SECRET", "dev_secret")
-    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
-    env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
-    env.setdefault("NEXT_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}")
-    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
-    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
-    env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
-    env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
-    env.setdefault("MEETING_RTC_SERVICE_URL", f"http://127.0.0.1:{MEETING_RTC_PORT}")
-    env.setdefault("MEETING_RTC_SERVICE_SECRET", "dev_meeting_rtc_secret")
-    env.setdefault("MEETING_RTC_REQUEST_TIMEOUT_MS", "8000")
-    env.setdefault("MEETING_RTC_WS_URL", f"wss://{env['CIVIL_PUBLIC_HOST']}/rtc/v1/ws")
-    env.setdefault("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
-    env.setdefault("MEETING_RTC_ICE_SERVERS_JSON", '[{"urls":["stun:stun.l.google.com:19302"]}]')
-    env.setdefault("CIVIL_AI_SERVERS_FILE", str(AI_SERVERS_FILE))
-    env.setdefault("CIVIL_AI_INSTRUCTIONS_FILE", str(AI_INSTRUCTIONS_FILE))
+    env = _build_dev_env()
 
     # Ensure CybertronDev infra is up (postgres/redis/nginx/minio)
     try:
@@ -674,65 +695,51 @@ def doctor() -> int:
     return 0
 
 
-def preflight() -> int:
+def staging() -> int:
     pnpm = shutil.which("pnpm")
     if not pnpm:
         print("❌ pnpm not found on PATH.")
         return 2
 
-    env = os.environ.copy()
-    nvm_node20 = Path.home() / ".nvm/versions/node/v20.19.6/bin"
-    if nvm_node20.exists():
-        env["PATH"] = f"{nvm_node20}:{env.get('PATH','')}"
+    env = _build_dev_env()
 
-    file_env = _load_env_file(REPO_ROOT / ".env.dev")
-    for k, v in file_env.items():
-        env.setdefault(k, v)
+    print("== Staging checks ==")
+    print("This validates the DEV environment against the build steps most likely to fail during PROD deploys.")
+    print()
 
-    default_database_url = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
-    env["DATABASE_URL"] = os.environ.get("DATABASE_URL", file_env.get("DATABASE_URL", default_database_url))
-    env.setdefault("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}")
-    env.setdefault("JWT_SECRET", "dev_secret")
-    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
-    env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
-    env.setdefault("NEXT_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}")
-    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
-    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
-    env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
-    env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
-    env.setdefault("MEETING_RTC_SERVICE_URL", f"http://127.0.0.1:{MEETING_RTC_PORT}")
-    env.setdefault("MEETING_RTC_SERVICE_SECRET", "dev_meeting_rtc_secret")
-    env.setdefault("MEETING_RTC_REQUEST_TIMEOUT_MS", "8000")
-    env.setdefault("MEETING_RTC_WS_URL", f"wss://{env['CIVIL_PUBLIC_HOST']}/rtc/v1/ws")
-    env.setdefault("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
-    env.setdefault("MEETING_RTC_ICE_SERVERS_JSON", '[{"urls":["stun:stun.l.google.com:19302"]}]')
-    env.setdefault("CIVIL_AI_SERVERS_FILE", str(AI_SERVERS_FILE))
-    env.setdefault("CIVIL_AI_INSTRUCTIONS_FILE", str(AI_INSTRUCTIONS_FILE))
+    doctor_result = doctor()
+    if doctor_result != 0:
+        return doctor_result
 
-    steps = [
-        ("@civil/shared build", [pnpm, "--filter", "@civil/shared", "build"]),
-        ("@civil/ui build", [pnpm, "--filter", "@civil/ui", "build"]),
-        ("@civil/db generate", [pnpm, "--filter", "@civil/db", "generate"]),
-        ("@civil/db build", [pnpm, "--filter", "@civil/db", "build"]),
-        ("@civil/api build", [pnpm, "--filter", "@civil/api", "build"]),
-        ("@civil/web build", [pnpm, "--filter", "@civil/web", "build"]),
-        ("@civil/worker build", [pnpm, "--filter", "@civil/worker", "build"]),
-    ]
+    try:
+        _write_host_prisma_env(env["DATABASE_URL"])
+        print(f"- Wrote host Prisma env: {CIVIL_DIR / 'packages' / 'db' / '.env'}")
 
-    print("🔎 Running preflight checks (production-like TypeScript/build validation)…")
-    print("   This catches the same class of errors that usually surface during _PROD.py.")
+        _run_check("Build @civil/db", [pnpm, "--filter", "@civil/db", "build"], cwd=CIVIL_DIR, env=env)
+        _run_check("Generate Prisma client", [pnpm, "--filter", "@civil/db", "generate"], cwd=CIVIL_DIR, env=env)
+        _run_check("Build @civil/shared", [pnpm, "--filter", "@civil/shared", "build"], cwd=CIVIL_DIR, env=env)
+        _run_check("Build @civil/ui", [pnpm, "--filter", "@civil/ui", "build"], cwd=CIVIL_DIR, env=env)
+        _run_check("Build @civil/api", [pnpm, "--filter", "@civil/api", "build"], cwd=CIVIL_DIR, env=env)
+        _run_check("Build @civil/worker", [pnpm, "--filter", "@civil/worker", "build"], cwd=CIVIL_DIR, env=env)
+        _run_check("Build @civil/web", [pnpm, "--filter", "@civil/web", "build"], cwd=CIVIL_DIR, env=env)
+        _run_check("Check web assets", [pnpm, "--filter", "@civil/web", "smoke:assets"], cwd=CIVIL_DIR, env=env)
+    except subprocess.CalledProcessError as exc:
+        print()
+        print(f"❌ staging failed on command with exit code {exc.returncode}")
+        return exc.returncode or 1
+    except Exception as exc:
+        print()
+        print(f"❌ staging failed: {exc}")
+        return 1
 
-    for label, cmd in steps:
-        print(f"▶ {label}")
-        try:
-            subprocess.run(cmd, cwd=str(CIVIL_DIR), env=env, check=True)
-        except subprocess.CalledProcessError as exc:
-            print(f"❌ Preflight failed during {label} (exit code {exc.returncode}).")
-            return exc.returncode or 1
-
-    print("✅ Preflight passed")
-    print("   Safe to ship from a compile/type-check perspective.")
+    print()
+    print("✅ staging passed")
+    print("This branch is in better shape for a PROD deploy because the app packages built successfully on DEV first.")
     return 0
+
+
+def preflight() -> int:
+    return staging()
 
 
 def _usage() -> str:
@@ -742,8 +749,9 @@ def _usage() -> str:
         "  _DEV.py start         # start detached\n"
         "  _DEV.py stop          # stop detached\n"
         "  _DEV.py status        # show status\n"
-        "  _DEV.py doctor        # show resolved ports/env + connectivity\n"
-        "  _DEV.py preflight     # run production-like builds before shipping\n"
+    "  _DEV.py doctor        # show resolved ports/env + connectivity\n"
+    "  _DEV.py staging       # run pre-deploy staging checks (env, connectivity, builds)\n"
+    "  _DEV.py preflight     # alias for staging\n"
         "  _DEV.py logs [N]      # tail logs (default 100)\n"
     )
 
@@ -767,6 +775,10 @@ def main(argv: list[str]) -> int:
         return doctor()
     if cmd == "preflight":
         return preflight()
+    if cmd in ("staging", "preflight"):
+        return staging()
+    if cmd == "staging":
+        return staging()
     if cmd == "logs":
         n = 100
         if len(argv) > 2:
