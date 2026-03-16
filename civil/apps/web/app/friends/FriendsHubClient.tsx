@@ -5,20 +5,16 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { HiOutlineChevronDown, HiOutlinePhone, HiOutlineVideoCamera } from 'react-icons/hi2'
-import CivilComposerLauncher from '../_components/CivilComposerLauncher'
 import Block from '../_components/Block'
 import FamilyRailBlock, { type SharedFamilyRailEntry } from '../_components/FamilyRailBlock'
 import FeedPageClient from '../_components/FeedPageClient'
 import FamilyFeedClient from '../_components/FamilyFeedClient'
 import FriendsRightRail from '../_components/FriendsRightRail'
 import MessagesNavBlock from '../_components/MessagesNavBlock'
-import Modal from '../_components/Modal'
-import PostComposer, { ApiPost, type PostType } from '../_components/PostComposer'
-import PostFeedItem from '../_components/PostFeedItem'
 import { RightRail } from '../_components/RightRail'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
-import { hasFamilyProfilesAvailable, type MeResponse } from '../_lib/me'
+import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { buildFamilyAvatarDataUrl, buildFamilyCoverDataUrl } from '../_lib/familyIdentity'
 import { buildApiUrl } from '../_lib/api'
@@ -199,7 +195,7 @@ function ParentFamilyFeedView() {
       setProfileRelationships(nextRelationships)
       setSelectedMemberId((current) => {
         if (current && nextMembers.some((member) => member.id === current)) return current
-        return nextMembers.find((member) => !member.suspended)?.id ?? nextMembers[0]?.id ?? ''
+        return ''
       })
     } catch (error) {
       console.error('Failed to load family members for Family feed', error)
@@ -258,12 +254,11 @@ function ParentFamilyFeedView() {
   )
 
   if (!selectedMember) {
-    return profileRelationships.length > 0 ? <AdultFamilyCircleFeed rightRail={rightRail} viewer={viewer} /> : (
+    return (
       <FamilyFeedClient
-        readOnly
         title=""
         description=""
-        emptyState="No Family feed selected yet."
+        emptyState="No Family posts yet."
         rightRail={rightRail}
       />
     )
@@ -280,121 +275,6 @@ function ParentFamilyFeedView() {
       emptyState={`No Family updates for ${selectedMember.displayName} yet.`}
       rightRail={rightRail}
     />
-  )
-}
-
-function AdultFamilyCircleFeed({
-  rightRail,
-  viewer,
-}: {
-  rightRail: React.ReactNode
-  viewer: MeResponse | null
-}) {
-  const [posts, setPosts] = useState<ApiPost[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [composerOpen, setComposerOpen] = useState(false)
-  const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
-
-  const loadPosts = useCallback(async () => {
-    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
-    if (!token) {
-      redirectToAuthModal('login')
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-    try {
-      const response = await fetch(buildApiUrl('/family/feed/posts'), {
-        headers: { authorization: `Bearer ${token}` },
-        cache: 'no-store',
-      })
-      if (response.status === 401) {
-        setError('Unable to load Family posts right now.')
-        setPosts([])
-        return
-      }
-      const payload = (await response.json().catch(() => null)) as { items?: ApiPost[] } | null
-      if (!response.ok) {
-        throw new Error('family_circle_load_failed')
-      }
-      setPosts(Array.isArray(payload?.items) ? payload.items : [])
-    } catch (loadError) {
-      console.error('Failed to load adult family circle feed', loadError)
-      setError('Unable to load Family posts right now.')
-      setPosts([])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void loadPosts()
-  }, [loadPosts])
-
-  const openComposer = useCallback((type: PostType = 'post') => {
-    setComposerDefaultType(type)
-    setComposerOpen(true)
-  }, [])
-
-  const displayName = formatDisplayName(viewer?.name ?? null) || viewer?.handle || 'there'
-
-  return (
-    <DashboardShell rightRail={rightRail} mainClassName="space-y-6">
-      <CivilComposerLauncher
-        coverUrl={viewer?.coverUrl ?? null}
-        avatarSrc={viewer?.avatarUrl ?? null}
-        avatarAlt={displayName}
-        avatarInitials={displayName}
-        avatarHref={viewer?.handle ? `/u/${viewer.handle}` : undefined}
-        prompt={`What's on your mind, ${displayName.split(' ')[0] ?? 'there'}?`}
-        actions={[
-          { type: 'post', label: 'Post', icon: '📝' },
-          { type: 'article', label: 'Article', icon: '📄' },
-          { type: 'poll', label: 'Poll', icon: '📊' },
-          { type: 'photo', label: 'Photos', icon: '📷' },
-        ]}
-        onPrimaryClick={() => openComposer('post')}
-        onActionClick={(type) => openComposer(type as PostType)}
-      />
-
-      <Modal
-        open={composerOpen}
-        onClose={() => setComposerOpen(false)}
-        title="Share something new"
-        key={composerDefaultType}
-        maxWidthClassName="max-w-3xl"
-        closeOnBackdrop={false}
-        closeOnEscape={false}
-      >
-        <PostComposer
-          me={viewer ?? null}
-          defaultPostType={composerDefaultType}
-          defaultAudience="family"
-          allowFamilyAudience
-          onPostCreated={(post) => {
-            setPosts((current) => [post, ...current.filter((entry) => entry.id !== post.id)])
-            setComposerOpen(false)
-          }}
-          variant="plain"
-        />
-      </Modal>
-
-      <section className="space-y-4">
-        {error ? (
-          <section className="surface-card border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</section>
-        ) : loading ? (
-          <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">Loading Family posts…</section>
-        ) : posts.length === 0 ? (
-          <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">No Family posts yet.</section>
-        ) : (
-          posts.map((post) => (
-            <PostFeedItem key={post.id} post={post} viewerId={viewer?.id ?? null} viewer={viewer ?? null} />
-          ))
-        )}
-      </section>
-    </DashboardShell>
   )
 }
 

@@ -1,10 +1,61 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { SupportRequestStatus } from '@prisma/client'
 import { prisma } from '@civil/db'
+import { z } from 'zod'
 
 type SupportRouteDeps = Record<string, any>
 
 export function registerSupportRoutes(app: FastifyInstance, deps: SupportRouteDeps) {
+  app.post('/support/install-invite-request', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = z.object({
+      email: z.string().trim().email().max(320),
+      source: z.string().trim().max(120).optional(),
+    }).safeParse(req.body ?? {})
+    if (!body.success) return reply.code(400).send({ error: 'Please enter a valid email address.' })
+
+    const normalizedEmail = body.data.email.trim().toLowerCase()
+    const subject = `Android invitation request: ${normalizedEmail}`
+    const existing = await prisma.supportRequest.findFirst({
+      where: {
+        subject,
+        status: SupportRequestStatus.OPEN,
+      },
+      select: { id: true },
+    })
+
+    if (existing) {
+      return reply.code(200).send({ ok: true, duplicate: true, message: 'An invitation request for that email is already open.' })
+    }
+
+    const adminUsers = await prisma.user.findMany({
+      select: { id: true, email: true },
+      orderBy: [{ createdAt: 'asc' }],
+      take: 200,
+    })
+    const adminUser = adminUsers.find((candidate: { email?: string | null }) => deps.isSuperAdminEmail(candidate.email))
+    if (!adminUser) return reply.code(503).send({ error: 'support_unavailable' })
+
+    const requestBody = [
+      'Public Android install invitation request.',
+      `Email: ${normalizedEmail}`,
+      `Source: ${body.data.source?.trim() || 'install_android_page'}`,
+      'Action: Add this email address to the Android testing invite list.',
+    ].join('\n')
+
+    const created = await prisma.supportRequest.create({
+      data: {
+        requesterUserId: adminUser.id,
+        type: 'CUSTOMER_SERVICE',
+        subject,
+        body: requestBody,
+        status: SupportRequestStatus.OPEN,
+      },
+      select: { id: true },
+    })
+
+    return reply.code(201).send({ ok: true, requestId: created.id, message: 'Your invitation request has been sent to the admin inbox.' })
+  })
+
   app.get('/support/overview', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const requesterUserId = (await deps.resolveUserId(req)) ?? undefined
