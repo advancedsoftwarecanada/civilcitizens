@@ -87,92 +87,45 @@ export function createAuthViewerHelpers(deps: CreateAuthViewerHelpersDeps) {
   }
 
   async function loadFamilyMemberAuthViewerById(memberId: string, parentId?: string | null) {
-    let member: FamilyMemberAuthViewerRecord | null = null
-
-    try {
-      member = await prisma.familyMember.findUnique({
-        where: { id: memberId },
-        select: {
-          id: true,
-          parentId: true,
-          firstName: true,
-          lastName: true,
-          dateOfBirth: true,
-          relationship: true,
-          friendCode: true,
-          username: true,
-          avatarUrl: true,
-          coverUrl: true,
-          allowChildOwnMediaEdits: true,
-          allowChildOwnUsernameEdits: true,
-          allowChildAudioCalls: true,
-          allowChildVideoCalls: true,
-          notifyParentOnMediaChanges: true,
-          suspendedAt: true,
-          suspendedById: true,
-          suspensionNote: true,
-          createdAt: true,
-          updatedAt: true,
-          parent: {
-            select: {
-              id: true,
-              email: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              coverUrl: true,
-              communityMeta: true,
-              premiumStatus: true,
-              premiumSince: true,
-              premiumRenewsAt: true,
-            },
+    const member = await prisma.familyMember.findUnique({
+      where: { id: memberId },
+      select: {
+        id: true,
+        parentId: true,
+        firstName: true,
+        lastName: true,
+        dateOfBirth: true,
+        relationship: true,
+        friendCode: true,
+        username: true,
+        avatarUrl: true,
+        coverUrl: true,
+        allowChildOwnMediaEdits: true,
+        allowChildOwnUsernameEdits: true,
+        allowChildAudioCalls: true,
+        allowChildVideoCalls: true,
+        notifyParentOnMediaChanges: true,
+        suspendedAt: true,
+        suspendedById: true,
+        suspensionNote: true,
+        createdAt: true,
+        updatedAt: true,
+        parent: {
+          select: {
+            id: true,
+            email: true,
+            handle: true,
+            name: true,
+            avatarUrl: true,
+            coverUrl: true,
+            communityMeta: true,
+            premiumStatus: true,
+            premiumSince: true,
+            premiumRenewsAt: true,
           },
         },
-      })
-    } catch (error) {
-      if (!deps.isFamilyMemberTableMissing(error)) throw error
-
-      const legacyMember = await prisma.familyMember.findUnique({
-        where: { id: memberId },
-        select: {
-          id: true,
-          parentId: true,
-          firstName: true,
-          lastName: true,
-          dateOfBirth: true,
-          relationship: true,
-          friendCode: true,
-          suspendedAt: true,
-          suspendedById: true,
-          suspensionNote: true,
-          createdAt: true,
-          updatedAt: true,
-          parent: {
-            select: {
-              id: true,
-              email: true,
-              handle: true,
-              name: true,
-              avatarUrl: true,
-              coverUrl: true,
-              communityMeta: true,
-              premiumStatus: true,
-              premiumSince: true,
-              premiumRenewsAt: true,
-            },
-          },
-        },
-      })
-
-      member = legacyMember
-        ? {
-            ...legacyMember,
-            username: deps.getLegacyFamilyMemberStoredUsername(legacyMember.parent.communityMeta, legacyMember.id),
-            ...deps.getLegacyFamilyMemberStoredProfileMedia(legacyMember.parent.communityMeta, legacyMember.id),
-            ...deps.getLegacyFamilyMemberPermissionSettings(legacyMember.parent.communityMeta, legacyMember.id),
-          }
-        : null
-    }
+      },
+    })
 
     if (!member) return null
     if (parentId && member.parentId !== parentId) return null
