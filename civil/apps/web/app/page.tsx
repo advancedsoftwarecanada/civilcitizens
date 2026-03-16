@@ -99,7 +99,7 @@ export default function Home() {
                     />
                   </a>
                   <a
-                    href="/install/android/pwa"
+                    href="/install/android"
                     aria-label="Get the Civil Citizens Android app"
                     className="flex justify-center transition hover:opacity-90"
                   >

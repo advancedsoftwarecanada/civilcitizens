@@ -499,12 +499,6 @@ export default function FamilyFeedClient({
   const loadFeed = useCallback(async () => {
     if (!viewerHydrated || !familyViewHydrated) return
 
-    if (viewer?.accountType !== 'family_member' && !effectiveMemberId) {
-      setPosts([])
-      setLoading(false)
-      return
-    }
-
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
