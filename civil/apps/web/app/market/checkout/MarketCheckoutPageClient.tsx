@@ -359,7 +359,7 @@ export default function MarketCheckoutPageClient() {
   }, [currency, needsShipping, rememberShippingAddress, router, sellerId, shippingAddress])
 
   return (
-    <DashboardShell rightRail={<div aria-hidden="true" />}>
+    <DashboardShell rightRail={<div aria-hidden="true" />} registerRightRail={false}>
       <div className="space-y-6 pb-24">
         <div className="flex items-center justify-between gap-4">
           <div>

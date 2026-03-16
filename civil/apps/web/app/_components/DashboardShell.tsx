@@ -1,10 +1,14 @@
-import type { ReactNode } from 'react'
+"use client"
+
+import { useEffect, useId, type ReactNode } from 'react'
 import clsx from 'clsx'
+import { useRightRailRegistry } from './RightRailRegistry'
 
 export type DashboardShellProps = {
   children: ReactNode
   rightRail?: ReactNode
   showMobileRightRail?: boolean
+  registerRightRail?: boolean
   className?: string
   containerClassName?: string
   gridClassName?: string
@@ -18,6 +22,7 @@ export default function DashboardShell({
   children,
   rightRail,
   showMobileRightRail = false,
+  registerRightRail: shouldRegisterRightRail = true,
   className,
   containerClassName,
   gridClassName,
@@ -26,6 +31,26 @@ export default function DashboardShell({
   rightRailClassName,
   rightRailTopClassName = 'pt-4 md:pt-8',
 }: DashboardShellProps) {
+  const registryId = useId()
+  const { registerRightRail: registerRailEntry, unregisterRightRail } = useRightRailRegistry()
+
+  useEffect(() => {
+    if (!rightRail || !shouldRegisterRightRail) {
+      unregisterRightRail(registryId)
+      return
+    }
+
+    registerRailEntry({
+      id: registryId,
+      content: rightRail,
+      showMobileInline: showMobileRightRail,
+    })
+
+    return () => {
+      unregisterRightRail(registryId)
+    }
+  }, [registerRailEntry, registryId, rightRail, shouldRegisterRightRail, showMobileRightRail, unregisterRightRail])
+
   const gridTemplate = rightRail
     ? 'grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px] 2xl:gap-10'
     : 'grid gap-5 grid-cols-1'

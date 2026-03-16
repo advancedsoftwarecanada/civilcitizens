@@ -1,29 +1,40 @@
 'use client'
 
-import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
+import { LuMessageCircle } from 'react-icons/lu'
+import type { ReactionType } from '@civil/shared'
 import CivilPost from './CivilPost'
+import CivilPostActions from './CivilPostActions'
+import CivilPostComments from './CivilPostComments'
 import CivilComposerShell from './CivilComposerShell'
 import CivilComposerLauncher from './CivilComposerLauncher'
 import DashboardShell from './DashboardShell'
 import Modal from './Modal'
+import PostReactionBar from './PostReactionBar'
 import { RightRail } from './RightRail'
 import VerifiedAvatar from './VerifiedAvatar'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
 import { useViewerStore } from '../_lib/viewerStore'
+import type { ApiPost } from './PostComposer'
 import { pushToast } from './useToasts'
 
 type FamilyFeedPost = {
   id: string
+  seoSlug?: string | null
   body: string
   images: string[]
   createdAt: string
   updatedAt: string
+  counts?: ApiPost['counts']
+  reactions?: ApiPost['reactions']
+  recentComments?: ApiPost['recentComments']
+  viewer?: ApiPost['viewer']
   author: {
     id: string
-    handle: string
+    handle?: string | null
     name: string
     avatarUrl?: string | null
     coverUrl?: string | null
@@ -57,6 +68,10 @@ const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/h
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const MAX_IMAGE_DIMENSION = 8000
 const MAX_IMAGE_MEGA_PIXELS = 40
+const FEED_COMMENT_PREVIEW_LIMIT = 3
+const FEED_COMMENT_BUFFER_LIMIT = 20
+
+type FeedComment = NonNullable<ApiPost['recentComments']>[number]
 
 const pickPhotoVariantUrl = (variants?: Record<string, { url?: string | null } | null>) => {
   if (!variants) return null
@@ -100,6 +115,335 @@ function formatFamilyFeedDate(isoString: string) {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function mergeRecentCommentList(current: FeedComment[], comment: FeedComment, removeIds: string[] = []) {
+  return [comment, ...current.filter((item) => item.id !== comment.id && !removeIds.includes(item.id))].slice(0, FEED_COMMENT_BUFFER_LIMIT)
+}
+
+function mergeFamilyFeedPostUpdate(post: FamilyFeedPost, updated: Partial<ApiPost>): FamilyFeedPost {
+  const incomingRecentComments = updated.recentComments
+  return {
+    ...post,
+    body: typeof updated.body === 'string' ? updated.body : post.body,
+    images: Array.isArray(updated.images) ? updated.images.filter((value): value is string => typeof value === 'string') : post.images,
+    createdAt: typeof updated.createdAt === 'string' ? updated.createdAt : post.createdAt,
+    updatedAt: typeof updated.updatedAt === 'string' ? updated.updatedAt : post.updatedAt,
+    seoSlug: updated.seoSlug === undefined ? post.seoSlug : updated.seoSlug,
+    counts: updated.counts === undefined ? post.counts : updated.counts,
+    reactions: updated.reactions === undefined ? post.reactions : updated.reactions,
+    viewer: updated.viewer === undefined ? post.viewer : updated.viewer,
+    recentComments:
+      Array.isArray(incomingRecentComments) && incomingRecentComments.length === 0 && (post.recentComments?.length ?? 0) > 0
+        ? post.recentComments
+        : Array.isArray(incomingRecentComments)
+          ? incomingRecentComments
+          : post.recentComments,
+  }
+}
+
+type FamilyFeedPostCardProps = {
+  post: FamilyFeedPost
+  memberId?: string | null
+  viewer: ReturnType<typeof useViewerStore.getState>['me']
+}
+
+function FamilyFeedPostCard({ post, memberId, viewer }: FamilyFeedPostCardProps) {
+  const [currentPost, setCurrentPost] = useState(post)
+  const [pending, setPending] = useState(false)
+  const [inlineComment, setInlineComment] = useState('')
+  const [inlineSubmitting, setInlineSubmitting] = useState(false)
+  const [activeReplyParentId, setActiveReplyParentId] = useState<string | null>(null)
+  const [replyDraft, setReplyDraft] = useState('')
+  const [clientRecentComments, setClientRecentComments] = useState<FeedComment[]>([])
+  const [hideInlineCommentComposer, setHideInlineCommentComposer] = useState(false)
+  const [localCommentCount, setLocalCommentCount] = useState(post.counts?.commentCount ?? 0)
+
+  const viewerId = viewer?.accountType === 'family_member' ? null : viewer?.id ?? null
+  const effectiveViewer = viewer?.accountType === 'family_member'
+    ? null
+    : viewer
+      ? {
+          id: viewer.id,
+          handle: viewer.handle,
+          name: viewer.name,
+          avatarUrl: viewer.avatarUrl,
+          isPremium: viewer.isPremium,
+          isVerified: viewer.isVerified,
+        }
+      : null
+  const serverRecentComments = useMemo(() => (currentPost.recentComments ?? []) as FeedComment[], [currentPost.recentComments])
+  const recentComments = useMemo(() => {
+    const merged = new Map<string, FeedComment>()
+    for (const comment of clientRecentComments) {
+      merged.set(comment.id, comment)
+    }
+    for (const comment of serverRecentComments) {
+      if (!merged.has(comment.id)) {
+        merged.set(comment.id, comment)
+      }
+    }
+    return Array.from(merged.values())
+  }, [clientRecentComments, serverRecentComments])
+  const previewComments = useMemo(() => {
+    const deduped = new Map<string, FeedComment>()
+    for (const comment of recentComments) {
+      if (!deduped.has(comment.id)) {
+        deduped.set(comment.id, comment)
+      }
+    }
+
+    return Array.from(deduped.values())
+      .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+      .slice(0, FEED_COMMENT_PREVIEW_LIMIT)
+  }, [recentComments])
+  const postHref = useMemo(() => {
+    const searchParams = memberId ? `?memberId=${encodeURIComponent(memberId)}` : ''
+    return `/family${searchParams}#family-post-${encodeURIComponent(currentPost.id)}`
+  }, [currentPost.id, memberId])
+
+  useEffect(() => {
+    setCurrentPost(post)
+    setClientRecentComments([])
+    setHideInlineCommentComposer(false)
+    setInlineComment('')
+    setReplyDraft('')
+    setActiveReplyParentId(null)
+    setLocalCommentCount(post.counts?.commentCount ?? 0)
+  }, [post])
+
+  const handleReact = useCallback(async (reaction: ReactionType | null) => {
+    if (pending || !viewerId) return
+
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setPending(true)
+    try {
+      const res = await fetch(buildApiUrl('/posts/react'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ postId: currentPost.id, reaction }),
+      })
+
+      if (!res.ok) {
+        pushToast('Unable to update your reaction right now.', 'error')
+        return
+      }
+
+      const data = (await res.json().catch(() => null)) as { post?: ApiPost } | null
+      if (data?.post) {
+        setCurrentPost((previous) => mergeFamilyFeedPostUpdate(previous, data.post as Partial<ApiPost>))
+      }
+    } catch (error) {
+      console.error('Unable to react to family feed post', error)
+      pushToast('Unable to update your reaction right now.', 'error')
+    } finally {
+      setPending(false)
+    }
+  }, [currentPost.id, pending, viewerId])
+
+  const submitComment = useCallback(async ({ body, parentId }: { body: string; parentId?: string | null }) => {
+    const trimmedBody = body.trim()
+    if (!trimmedBody || inlineSubmitting) return false
+
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return false
+    }
+    if (!viewerId) return false
+
+    setInlineSubmitting(true)
+    const optimisticCommentId = `optimistic-${currentPost.id}-${Date.now()}`
+
+    if (parentId) {
+      setReplyDraft('')
+      setActiveReplyParentId(null)
+    } else {
+      setInlineComment('')
+      setHideInlineCommentComposer(true)
+    }
+
+    const optimisticComment: FeedComment = {
+      id: optimisticCommentId,
+      postId: currentPost.id,
+      parentId: parentId ?? null,
+      body: trimmedBody,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      score: 0,
+      optimistic: true,
+      localPreview: true,
+      author: {
+        id: viewerId,
+        handle: effectiveViewer?.handle ?? 'you',
+        name: effectiveViewer?.name ?? 'You',
+        avatarUrl: effectiveViewer?.avatarUrl ?? null,
+        isPremium: Boolean(effectiveViewer?.isPremium),
+        isVerified: Boolean(effectiveViewer?.isVerified),
+      },
+    }
+    setClientRecentComments((current) => mergeRecentCommentList(current, optimisticComment))
+    setLocalCommentCount((current) => current + 1)
+
+    try {
+      const res = await fetch(buildApiUrl('/comments'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          postId: currentPost.id,
+          body: trimmedBody,
+          parentId: parentId ?? undefined,
+        }),
+      })
+
+      if (!res.ok) {
+        pushToast('Unable to add comment right now.', 'error')
+        return false
+      }
+
+      const payload = await res.json().catch(() => null)
+      const newComment = payload?.comment ?? null
+      const updatedPost = payload?.post ?? null
+      let nextRecentComments = recentComments
+
+      if (newComment) {
+        const localPreviewComment: FeedComment = {
+          ...newComment,
+          localPreview: true,
+        }
+        setClientRecentComments((current) => {
+          nextRecentComments = mergeRecentCommentList(current, localPreviewComment, [optimisticCommentId])
+          return nextRecentComments
+        })
+      }
+
+      if (updatedPost) {
+        const incomingCommentCount = (updatedPost as Partial<ApiPost>).counts?.commentCount
+        setCurrentPost((previous) => {
+          const merged = mergeFamilyFeedPostUpdate(previous, updatedPost as Partial<ApiPost>)
+          return {
+            ...merged,
+            recentComments: Array.isArray((updatedPost as Partial<ApiPost>).recentComments) && (updatedPost as Partial<ApiPost>).recentComments!.length > 0
+              ? (updatedPost as Partial<ApiPost>).recentComments
+              : nextRecentComments,
+          }
+        })
+        if (typeof incomingCommentCount === 'number') {
+          setLocalCommentCount(incomingCommentCount)
+        }
+      }
+
+      return true
+    } catch (error) {
+      console.error('Unable to comment on family feed post', error)
+      setClientRecentComments((current) => current.filter((item) => item.id !== optimisticCommentId))
+      setLocalCommentCount((current) => Math.max(0, current - 1))
+      if (parentId) {
+        setReplyDraft(trimmedBody)
+        setActiveReplyParentId(parentId)
+      } else {
+        setInlineComment(trimmedBody)
+        setHideInlineCommentComposer(false)
+      }
+      pushToast('Unable to add comment right now.', 'error')
+      return false
+    } finally {
+      setInlineSubmitting(false)
+    }
+  }, [currentPost.id, effectiveViewer, inlineSubmitting, recentComments, viewerId])
+
+  const handleInlineCommentSubmit = useCallback(async (event: FormEvent) => {
+    event.preventDefault()
+    const ok = await submitComment({ body: inlineComment, parentId: null })
+    if (ok) {
+      setInlineComment('')
+    }
+  }, [inlineComment, submitComment])
+
+  return (
+    <div id={`family-post-${currentPost.id}`}>
+      <CivilPost
+        name={currentPost.author.name}
+        subtitle={formatFamilyFeedDate(currentPost.createdAt)}
+        profileHref={currentPost.author.handle ? `/u/${encodeURIComponent(currentPost.author.handle)}` : undefined}
+        details={
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
+            <span className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85">
+              {currentPost.author.badgeLabel}
+            </span>
+            <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
+              {currentPost.images.length ? 'Photo' : 'Update'}
+            </span>
+          </div>
+        }
+        avatarAlt={currentPost.author.name}
+        avatarInitials={currentPost.author.name}
+        avatarSrc={currentPost.author.avatarUrl ?? undefined}
+        coverUrl={currentPost.author.coverUrl ?? undefined}
+        body={currentPost.body || undefined}
+        images={currentPost.images}
+      >
+        <CivilPostActions
+          leading={
+            <PostReactionBar
+              className="w-full justify-center sm:w-auto sm:justify-start"
+              reactions={currentPost.reactions}
+              viewerReaction={currentPost.viewer?.reaction ?? null}
+              disabled={pending || !viewerId}
+              onReact={(reaction) => handleReact(reaction)}
+            />
+          }
+          actions={[
+            {
+              key: 'comments',
+              label: String(localCommentCount),
+              icon: LuMessageCircle,
+              href: postHref,
+              ariaLabel: 'Jump to comments',
+            },
+          ]}
+        />
+
+        <CivilPostComments
+          comments={previewComments}
+          postHref={postHref}
+          viewerId={viewerId}
+          activeReplyParentId={activeReplyParentId}
+          replyDraft={replyDraft}
+          inlineComment={inlineComment}
+          inlineSubmitting={inlineSubmitting}
+          hideInlineCommentComposer={hideInlineCommentComposer}
+          onRequireAuth={() => redirectToAuthModal('login')}
+          onToggleReply={(commentId) => {
+            setActiveReplyParentId((previous) => (previous === commentId ? null : commentId))
+            setReplyDraft('')
+          }}
+          onReplyDraftChange={setReplyDraft}
+          onReplySubmit={async (commentId) => {
+            const ok = await submitComment({ body: replyDraft, parentId: commentId })
+            if (ok) {
+              setReplyDraft('')
+              setActiveReplyParentId(null)
+            }
+            return ok
+          }}
+          onInlineCommentChange={setInlineComment}
+          onInlineCommentSubmit={handleInlineCommentSubmit}
+        />
+      </CivilPost>
+    </div>
+  )
 }
 
 type FamilyFeedClientProps = {
@@ -508,27 +852,7 @@ export default function FamilyFeedClient({
           </section>
         ) : (
           posts.map((post) => (
-            <CivilPost
-              key={post.id}
-              name={post.author.name}
-              subtitle={formatFamilyFeedDate(post.createdAt)}
-              details={
-                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-white/85">
-                  <span className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85">
-                    {post.author.badgeLabel}
-                  </span>
-                  <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
-                    {post.images.length ? 'Photo' : 'Update'}
-                  </span>
-                </div>
-              }
-              avatarAlt={post.author.name}
-              avatarInitials={post.author.name}
-              avatarSrc={post.author.avatarUrl ?? undefined}
-              coverUrl={post.author.coverUrl ?? undefined}
-              body={post.body || undefined}
-              images={post.images}
-            />
+            <FamilyFeedPostCard key={post.id} post={post} memberId={effectiveMemberId} viewer={viewer} />
           ))
         )}
       </div>

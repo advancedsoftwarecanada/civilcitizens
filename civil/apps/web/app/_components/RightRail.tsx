@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
-import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { formatUserDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
@@ -12,6 +11,7 @@ import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
 import CivilCard from './CivilCard'
+import FamilyRailBlock, { type SharedFamilyRailEntry } from './FamilyRailBlock'
 
 type RightRailData = {
   userHandle?: string
@@ -218,34 +218,7 @@ type FamilyRailResponse = {
   profileRelationships?: ProfileFamilyRelationshipRailItem[]
 }
 
-type FamilyRailEntry =
-  | {
-      kind: 'member'
-      id: string
-      displayName: string
-      relationshipLabel: string
-      avatarUrl?: string | null
-      modeBand: FamilyMemberRailItem['modeBand']
-      latestPostAt?: string | null
-      suspended: boolean
-    }
-  | {
-      kind: 'profile'
-      id: string
-      handle: string
-      displayName: string
-      relationshipLabel: string
-      avatarUrl?: string | null
-      coverUrl?: string | null
-      latestPostAt?: string | null
-    }
-
-function formatLatestFamilyPostLabel(value?: string | null) {
-  if (!value) return 'No posts yet'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return 'No posts yet'
-  return `Latest post ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-}
+type FamilyRailEntry = SharedFamilyRailEntry
 
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 
@@ -792,35 +765,7 @@ export function RightRail({
       ) : null}
 
       {!hideFamilyBlock && !hideSocialBlocks && !isFamilyLockedSession && viewer?.accountType === 'user' && (hasFamilyProfilesAvailable(viewer) || familyEntries.length > 0) ? (
-        <Block title="Your Family" action={{ label: 'View all', href: viewer?.handle ? `/u/${viewer.handle}/family` : '/family' }}>
-          {familyEntries.length ? (
-            <ul className="space-y-3">
-              {familyEntries.map((entry) => {
-                const avatarSrc = entry.kind === 'member'
-                  ? entry.avatarUrl ?? buildFamilyAvatarDataUrl(entry.displayName, entry.modeBand)
-                  : entry.avatarUrl ?? null
-                const subtitle = `${entry.relationshipLabel} • ${formatLatestFamilyPostLabel(entry.latestPostAt)}`
-                return (
-                  <li key={`${entry.kind}:${entry.id}`}>
-                    <CivilCard
-                      href={entry.kind === 'profile' ? `/u/${entry.handle}` : undefined}
-                      size="md"
-                      name={entry.displayName}
-                      avatarAlt={entry.displayName}
-                      avatarInitials={entry.displayName}
-                      avatarSrc={avatarSrc}
-                      coverUrl={entry.kind === 'profile' ? entry.coverUrl ?? null : null}
-                      subtitle={subtitle}
-                      interactive={entry.kind === 'profile'}
-                    />
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">No Family relationships yet.</p>
-          )}
-        </Block>
+        <FamilyRailBlock entries={familyEntries} viewAllHref={viewer?.handle ? `/u/${viewer.handle}/family` : '/family'} />
       ) : null}
 
       {mode === 'organizationsDirectory' ? (

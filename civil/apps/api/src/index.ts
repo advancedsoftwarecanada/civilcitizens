@@ -1666,6 +1666,54 @@ async function loadAcceptedFriendIds(userId: string): Promise<string[]> {
   return [...result]
 }
 
+async function loadAcceptedProfileFamilyRelationshipIds(userId: string): Promise<string[]> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { communityMeta: true },
+  })
+
+  const relatedUserIds = new Set(
+    getStoredProfileFamilyRelationships(user?.communityMeta)
+      .map((entry) => (typeof entry.relatedUserId === 'string' ? entry.relatedUserId.trim() : ''))
+      .filter((value): value is string => Boolean(value && value !== userId)),
+  )
+
+  try {
+    const notifications = await prisma.notification.findMany({
+      where: {
+        OR: [{ userId }, { actorId: userId }],
+        type: { in: ['profile_family_invite', 'profile_family_invite_response'] },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 100,
+      select: {
+        userId: true,
+        actorId: true,
+        payload: true,
+      },
+    })
+
+    for (const notification of notifications) {
+      const payload =
+        notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+          ? (notification.payload as Record<string, unknown>)
+          : null
+      if (!payload) continue
+
+      const status = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : ''
+      if (status !== 'accepted') continue
+
+      const relatedUserId = notification.userId === userId ? notification.actorId : notification.userId
+      if (!relatedUserId || relatedUserId === userId) continue
+      relatedUserIds.add(relatedUserId)
+    }
+  } catch (error) {
+    console.error('accepted_profile_family_relationship_ids_load_failed', error)
+  }
+
+  return [...relatedUserIds]
+}
+
 const {
   buildFamilySponsorFriendshipId,
   createOrRefreshConnectionRequest,
@@ -4421,6 +4469,7 @@ type FeedCategory = 'friends' | 'network' | 'community' | 'organizations' | 'eve
 type ViewerFeedContext = {
   viewerId: string
   friendIds: Set<string>
+  familyRelatedUserIds: Set<string>
   connectionIds: Set<string>
   followedBusinessIds: Set<string>
   memberBusinessIds: Set<string>
@@ -4522,9 +4571,10 @@ function buildFeedRankCursor(offset: number, seed: number): string {
 }
 
 async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContext> {
-  const [friendIds, connectionIds, communityFollows, businessFollows, businessMemberships, ownedBusinesses, userRecord] =
+  const [friendIds, familyRelatedUserIds, connectionIds, communityFollows, businessFollows, businessMemberships, ownedBusinesses, userRecord] =
     await Promise.all([
       loadAcceptedFriendIds(viewerId),
+      loadAcceptedProfileFamilyRelationshipIds(viewerId),
       loadAcceptedConnectionIds(viewerId),
       prisma.communityFollow.findMany({
         where: { userId: viewerId },
@@ -4587,6 +4637,7 @@ async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContex
   return {
     viewerId,
     friendIds: new Set(friendIds),
+    familyRelatedUserIds: new Set(familyRelatedUserIds),
     connectionIds: new Set(connectionIds),
     followedBusinessIds: new Set(businessFollows.map((row) => row.businessId)),
     memberBusinessIds: new Set([...businessMemberships.map((row) => row.businessId), ...ownedBusinesses.map((row) => row.id)]),
@@ -4618,7 +4669,9 @@ function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friend
   if (normalizedType.includes('market')) return 'marketplace'
 
   if (context) {
-    if (context.friendIds.has(post.authorId) || post.authorId === context.viewerId) return 'friends'
+    if (context.friendIds.has(post.authorId) || context.familyRelatedUserIds.has(post.authorId) || post.authorId === context.viewerId) {
+      return 'friends'
+    }
     if (context.connectionIds.has(post.authorId)) return 'network'
     if (post.businessId && (context.followedBusinessIds.has(post.businessId) || context.memberBusinessIds.has(post.businessId))) {
       return 'organizations'
@@ -5612,6 +5665,7 @@ registerFamilyRoutes(app, {
   resolveFamilyFeedTargetMember,
   resolveReadableFamilyFeedTargetMember,
   sanitizePlainText,
+  syncLegacyParentFamilyFeedPosts,
   updateFamilyMemberSummaryForParent,
   upsertFamilyFriendRequest,
   withSchemaGuard,
