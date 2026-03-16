@@ -1032,6 +1032,27 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     if (scope !== 'organizations' || !selectedOrganizationId) return null
     return postableOrganizations.find((org) => org.id === selectedOrganizationId) ?? null
   }, [postableOrganizations, scope, selectedOrganizationId])
+  const composerCommunityTarget = useMemo<CommunityTarget | null>(() => {
+    if (scope !== 'communities' || !province || !community) return null
+
+    const normalizedProvinceCode = normalizeProvinceCode(province)
+    const normalizedProvince = normalizedProvinceCode ?? province.toUpperCase()
+    const normalizedCommunitySlug = community.trim().toLowerCase()
+    const matchedOption = communityOptions.find(
+      (option) => option.provinceCode.toUpperCase() === normalizedProvince && option.communitySlug.toLowerCase() === normalizedCommunitySlug,
+    )
+
+    if (matchedOption) {
+      return matchedOption
+    }
+
+    return {
+      provinceCode: normalizedProvince,
+      communitySlug: normalizedCommunitySlug,
+      communityName: title,
+      provinceName: (normalizedProvinceCode ? getProvinceDisplayName(normalizedProvinceCode) : null) ?? normalizedProvince,
+    }
+  }, [community, communityOptions, province, scope, title])
   const composerCoverUrl = useMemo(
     () => (scope === 'organizations' ? selectedOrganization?.coverUrl ?? me?.coverUrl ?? null : me?.coverUrl ?? null),
     [me?.coverUrl, scope, selectedOrganization?.coverUrl],
@@ -1075,7 +1096,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     { type: 'post', label: 'Post', icon: '📝' },
     { type: 'article', label: 'Article', icon: '📄' },
     { type: 'poll', label: 'Poll', icon: '📊' },
-    { type: 'photo', label: 'Photos', icon: '📷' },
   ]
 
   const renderSupplementalActivityCard = (item: SupplementalActivityItem) => {
@@ -1364,6 +1384,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
               setComposerOpen(false)
             }}
             variant="plain"
+            communityTarget={composerCommunityTarget}
             communityOptions={communityOptions}
             defaultAudience={composerDefaultAudience}
             hideAudience={scope === 'friends' || scope === 'network'}

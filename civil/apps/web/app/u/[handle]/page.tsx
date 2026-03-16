@@ -2632,7 +2632,6 @@ export default function UserPostsPage({ params }: PageProps) {
                 { type: 'post', label: 'Post', icon: '📝' },
                 { type: 'article', label: 'Article', icon: '📄' },
                 { type: 'poll', label: 'Poll', icon: '📊' },
-                { type: 'photo', label: 'Photos', icon: '📷' },
               ]}
               onPrimaryClick={() => openComposer('post')}
               onActionClick={(type) => openComposer(type as PostType)}
