@@ -23,6 +23,7 @@ Commands:
   _DEV.py stop          # stop detached
   _DEV.py status        # show status
     _DEV.py doctor        # show resolved ports/env + connectivity
+    _DEV.py preflight     # run production-like builds before shipping
   _DEV.py logs [N]      # tail logs (default 100)
 
 Managed processes:
@@ -673,6 +674,67 @@ def doctor() -> int:
     return 0
 
 
+def preflight() -> int:
+    pnpm = shutil.which("pnpm")
+    if not pnpm:
+        print("❌ pnpm not found on PATH.")
+        return 2
+
+    env = os.environ.copy()
+    nvm_node20 = Path.home() / ".nvm/versions/node/v20.19.6/bin"
+    if nvm_node20.exists():
+        env["PATH"] = f"{nvm_node20}:{env.get('PATH','')}"
+
+    file_env = _load_env_file(REPO_ROOT / ".env.dev")
+    for k, v in file_env.items():
+        env.setdefault(k, v)
+
+    default_database_url = f"postgresql://postgres:postgres@localhost:{CYBERTRON_POSTGRES_PORT}/civil"
+    env["DATABASE_URL"] = os.environ.get("DATABASE_URL", file_env.get("DATABASE_URL", default_database_url))
+    env.setdefault("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}")
+    env.setdefault("JWT_SECRET", "dev_secret")
+    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
+    env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
+    env.setdefault("NEXT_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}")
+    env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
+    env.setdefault("MEDIA_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
+    env.setdefault("MEDIA_S3_ENDPOINT", f"http://127.0.0.1:{CYBERTRON_MINIO_PORT}")
+    env.setdefault("CIVIL_NEXT_DIST_DIR", "/tmp/civil-next-dev")
+    env.setdefault("MEETING_RTC_SERVICE_URL", f"http://127.0.0.1:{MEETING_RTC_PORT}")
+    env.setdefault("MEETING_RTC_SERVICE_SECRET", "dev_meeting_rtc_secret")
+    env.setdefault("MEETING_RTC_REQUEST_TIMEOUT_MS", "8000")
+    env.setdefault("MEETING_RTC_WS_URL", f"wss://{env['CIVIL_PUBLIC_HOST']}/rtc/v1/ws")
+    env.setdefault("MEETING_RTC_SESSION_TTL_SECONDS", "1800")
+    env.setdefault("MEETING_RTC_ICE_SERVERS_JSON", '[{"urls":["stun:stun.l.google.com:19302"]}]')
+    env.setdefault("CIVIL_AI_SERVERS_FILE", str(AI_SERVERS_FILE))
+    env.setdefault("CIVIL_AI_INSTRUCTIONS_FILE", str(AI_INSTRUCTIONS_FILE))
+
+    steps = [
+        ("@civil/shared build", [pnpm, "--filter", "@civil/shared", "build"]),
+        ("@civil/ui build", [pnpm, "--filter", "@civil/ui", "build"]),
+        ("@civil/db generate", [pnpm, "--filter", "@civil/db", "generate"]),
+        ("@civil/db build", [pnpm, "--filter", "@civil/db", "build"]),
+        ("@civil/api build", [pnpm, "--filter", "@civil/api", "build"]),
+        ("@civil/web build", [pnpm, "--filter", "@civil/web", "build"]),
+        ("@civil/worker build", [pnpm, "--filter", "@civil/worker", "build"]),
+    ]
+
+    print("🔎 Running preflight checks (production-like TypeScript/build validation)…")
+    print("   This catches the same class of errors that usually surface during _PROD.py.")
+
+    for label, cmd in steps:
+        print(f"▶ {label}")
+        try:
+            subprocess.run(cmd, cwd=str(CIVIL_DIR), env=env, check=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"❌ Preflight failed during {label} (exit code {exc.returncode}).")
+            return exc.returncode or 1
+
+    print("✅ Preflight passed")
+    print("   Safe to ship from a compile/type-check perspective.")
+    return 0
+
+
 def _usage() -> str:
     return (
         "Usage:\n"
@@ -681,6 +743,7 @@ def _usage() -> str:
         "  _DEV.py stop          # stop detached\n"
         "  _DEV.py status        # show status\n"
         "  _DEV.py doctor        # show resolved ports/env + connectivity\n"
+        "  _DEV.py preflight     # run production-like builds before shipping\n"
         "  _DEV.py logs [N]      # tail logs (default 100)\n"
     )
 
@@ -702,6 +765,8 @@ def main(argv: list[str]) -> int:
         return status()
     if cmd == "doctor":
         return doctor()
+    if cmd == "preflight":
+        return preflight()
     if cmd == "logs":
         n = 100
         if len(argv) > 2:
