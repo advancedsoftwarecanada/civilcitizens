@@ -207,6 +207,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
 
         if (includeFriends) {
           const allowedAuthorIds = new Set<string>([viewerId, ...viewerFeedContext.friendIds])
+          const familyAuthorIds = Array.from(viewerFeedContext.familyRelatedUserIds ?? []).filter((authorId) => authorId !== viewerId)
           if (allowedAuthorIds.size) {
             accessibleFilters.push({
               OR: [
@@ -224,6 +225,17 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
                         type: deps.FAMILY_FEED_POST_TYPE,
                         audience: 'family',
                       } as Prisma.PostWhereInput,
+                      ...(familyAuthorIds.length
+                        ? [
+                            {
+                              authorId: { in: familyAuthorIds },
+                              audience: 'family',
+                              type: { not: deps.FAMILY_FEED_POST_TYPE },
+                              communitySlug: null,
+                              businessId: null,
+                            } as Prisma.PostWhereInput,
+                          ]
+                        : []),
                     ]
                   : []),
                 {
