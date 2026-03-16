@@ -36,7 +36,13 @@ export const CANADIAN_PROVINCE_OPTIONS = [
   { code: 'YT', label: 'Yukon' },
 ] as const
 
-const PROVINCE_CODE_SET = new Set(CANADIAN_PROVINCE_OPTIONS.map((option) => option.code))
+type CanadianProvinceCode = (typeof CANADIAN_PROVINCE_OPTIONS)[number]['code']
+
+const PROVINCE_CODE_SET = new Set<CanadianProvinceCode>(CANADIAN_PROVINCE_OPTIONS.map((option) => option.code))
+
+function isCanadianProvinceCode(value: string): value is CanadianProvinceCode {
+  return PROVINCE_CODE_SET.has(value as CanadianProvinceCode)
+}
 
 export function createEmptyCanadianAddress(): CanadianAddress {
   return {
@@ -79,7 +85,7 @@ export function normalizeCanadianProvince(value?: string | null): string {
   const upper = String(value ?? '')
     .trim()
     .toUpperCase()
-  if (PROVINCE_CODE_SET.has(upper)) return upper
+  if (isCanadianProvinceCode(upper)) return upper
   const match = CANADIAN_PROVINCE_OPTIONS.find((option) => option.label.toUpperCase() === upper)
   return match?.code ?? upper
 }
