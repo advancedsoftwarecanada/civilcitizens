@@ -6,6 +6,13 @@ import { Prisma } from '@prisma/client'
 
 type OrganizationGovernanceEventsDeps = Record<string, any>
 
+function resolveOrganizationCommunitySlug(deps: OrganizationGovernanceEventsDeps, province: string, municipalityRaw: string) {
+  const communitySlug = municipalityRaw.trim().toLowerCase()
+  if (!communitySlug) return null
+  const community = deps.findCommunity(province, communitySlug)
+  return community?.slug ?? communitySlug
+}
+
 export function registerOrganizationGovernanceEventsRoutes(
   app: FastifyInstance,
   deps: OrganizationGovernanceEventsDeps,
@@ -20,11 +27,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -99,11 +106,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -162,11 +169,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -276,7 +283,7 @@ export function registerOrganizationGovernanceEventsRoutes(
               actorUserId,
               hostOrganizationId: org.id,
               hostProvinceCode: province,
-              hostCommunitySlug: community.slug,
+              hostCommunitySlug: resolvedCommunitySlug,
               hostOrganizationSlug: hostSlug,
               eventId: next.id,
               eventTitle: next.title,
@@ -295,7 +302,7 @@ export function registerOrganizationGovernanceEventsRoutes(
                 actorUserId,
                 hostOrganizationId: org.id,
                 hostProvinceCode: province,
-                hostCommunitySlug: community.slug,
+                hostCommunitySlug: resolvedCommunitySlug,
                 hostOrganizationSlug: hostSlug,
                 targetOrganizationId: invite.organizationId,
                 eventId: next.id,
@@ -331,11 +338,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -426,7 +433,7 @@ export function registerOrganizationGovernanceEventsRoutes(
           authorUserId: actorUserId,
           businessId: org.id,
           provinceCode: province,
-          communitySlug: community.slug,
+          communitySlug: resolvedCommunitySlug,
           organizationSlug: hostSlug,
           event: {
             id: next.id,
@@ -453,7 +460,7 @@ export function registerOrganizationGovernanceEventsRoutes(
               actorUserId,
               hostOrganizationId: org.id,
               hostProvinceCode: province,
-              hostCommunitySlug: community.slug,
+              hostCommunitySlug: resolvedCommunitySlug,
               hostOrganizationSlug: hostSlug,
               eventId: next.id,
               eventTitle: next.title,
@@ -472,7 +479,7 @@ export function registerOrganizationGovernanceEventsRoutes(
                 actorUserId,
                 hostOrganizationId: org.id,
                 hostProvinceCode: province,
-                hostCommunitySlug: community.slug,
+                hostCommunitySlug: resolvedCommunitySlug,
                 hostOrganizationSlug: hostSlug,
                 targetOrganizationId: invite.organizationId,
                 eventId: next.id,
@@ -511,11 +518,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -570,11 +577,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -799,11 +806,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true, status: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
@@ -913,11 +920,11 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase(), status: 'ACTIVE' },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase(), status: 'ACTIVE' },
         select: { id: true, ownerId: true, metadata: true, name: true, slug: true, provinceCode: true, communitySlug: true, logoUrl: true, coverUrl: true, isVerified: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })

@@ -16,3 +16,6 @@ prisma/generated
 
 # Secrets
 civil/secrets/
+
+# Generated dummy seed assets
+apps/web/public/dummy/

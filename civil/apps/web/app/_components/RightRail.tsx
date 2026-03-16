@@ -341,6 +341,14 @@ export function RightRail({
     return [...owned, ...dedupedMemberships, ...followed]
   }, [ownedOrganizations, memberOrganizations, subscribedOrganizations])
 
+  const manageCreateEventHref = useMemo(() => {
+    const org = eventOrganizations[0]
+    if (org?.provinceCode && org.communitySlug) {
+      return `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}/events/manage/create`
+    }
+    return '/organizations/manager'
+  }, [eventOrganizations])
+
   const familyEntries = useMemo<FamilyRailEntry[]>(() => {
     const memberEntries = familyMembers.map((member) => ({
       kind: 'member' as const,
@@ -987,8 +995,15 @@ export function RightRail({
 
       {mode === 'events' ? (
         <>
+          <Link
+            href={manageCreateEventHref}
+            className="inline-flex w-full items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
+          >
+            Create Event
+          </Link>
+
           {eventRsvps.length ? (
-            <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
+            <Block title="Your Events" action={{ label: 'View all', href: '/events?mine=going' }}>
               <ul className="space-y-3">
                 {eventRsvps.map((entry) => {
                   const href =
@@ -1012,7 +1027,7 @@ export function RightRail({
           ) : null}
 
           {eventOrganizations.length ? (
-            <Block title="Events from your organization" action={{ label: 'View all', href: '/organizations/manager' }}>
+            <Block title="Events from your organizations" action={{ label: 'View all', href: '/organizations/manager' }}>
               <ul className="space-y-3">
                 {eventOrganizations.map((org) => {
                   const href =

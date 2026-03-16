@@ -61,9 +61,6 @@ export default function DashboardShell({
         <div className={clsx('min-h-0 min-w-0', gridTemplate, gridClassName)}>
           <main className={clsx('min-h-0 min-w-0', mainTopClassName, mainClassName)}>
             {children}
-            {rightRail && showMobileRightRail ? (
-              <aside className={clsx('min-w-0 pt-4 xl:hidden', rightRailClassName)}>{rightRail}</aside>
-            ) : null}
           </main>
           {rightRail ? (
             <aside className={clsx('min-h-0 min-w-0 hidden xl:block', rightRailTopClassName, rightRailClassName)}>{rightRail}</aside>

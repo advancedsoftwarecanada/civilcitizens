@@ -225,7 +225,7 @@ export default function EventDetailPageClient({
       : null
 
   return (
-    <DashboardShell rightRail={<RightRail mode="events" showOrganizations />} showMobileRightRail>
+    <DashboardShell rightRail={<RightRail mode="events" />} showMobileRightRail>
       <div className="space-y-5 pb-12">
         {loading ? <p className="text-sm text-slate-500">Loading event…</p> : null}
         {error ? <p className="text-sm text-rose-600">{error}</p> : null}

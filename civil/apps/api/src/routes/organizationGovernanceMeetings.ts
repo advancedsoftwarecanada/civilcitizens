@@ -6,6 +6,13 @@ import { Prisma } from '@prisma/client'
 
 type OrganizationGovernanceMeetingsDeps = Record<string, any>
 
+function resolveOrganizationCommunitySlug(deps: OrganizationGovernanceMeetingsDeps, province: string, municipalityRaw: string) {
+  const communitySlug = municipalityRaw.trim().toLowerCase()
+  if (!communitySlug) return null
+  const community = deps.findCommunity(province, communitySlug)
+  return community?.slug ?? communitySlug
+}
+
 type OrganizationMeetingRow = {
   id: string
   business_id: string
@@ -57,11 +64,11 @@ export function registerOrganizationGovernanceMeetingsRoutes(
 
       const province = deps.normalizeProvinceCode(params.data.province)
       if (!province) return reply.code(404).send({ error: 'province_not_found' })
-      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
-      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+      const resolvedCommunitySlug = resolveOrganizationCommunitySlug(deps, province, params.data.municipality)
+      if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const org = await prisma.business.findFirst({
-        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase() },
         select: { id: true, ownerId: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
