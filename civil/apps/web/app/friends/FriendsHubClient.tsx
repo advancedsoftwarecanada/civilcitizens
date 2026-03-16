@@ -54,6 +54,20 @@ type FamilyResponse = {
   profileRelationships?: ProfileFamilyRelationshipSummary[]
 }
 
+type PublicFamilyProfileEntry = {
+  id: string
+  handle: string
+  name: string | null
+  avatarUrl: string | null
+  coverUrl: string | null
+  relationshipLabel: string
+}
+
+type PublicFamilyPageResponse = {
+  immediateFamily?: PublicFamilyProfileEntry[]
+  extendedFamily?: PublicFamilyProfileEntry[]
+}
+
 type FriendListEntry = {
   id: string
   status: string
@@ -142,7 +156,7 @@ function ParentFamilyRightRail({
   }, [entries])
 
   return (
-    <Block title="Family" action={{ label: 'View all', href: '/settings/guardian' }}>
+    <Block title="Your Family" action={{ label: 'View all', href: '/settings/guardian' }}>
       {loading ? (
         <ul className="space-y-2">
           {Array.from({ length: 4 }).map((_, index) => (
@@ -166,7 +180,6 @@ function ParentFamilyRightRail({
             const avatarSrc = entry.kind === 'member'
               ? entry.avatarUrl ?? buildFamilyAvatarDataUrl(entry.displayName, entry.modeBand)
               : entry.avatarUrl ?? null
-            const subtitle = `${entry.relationshipLabel} • ${formatLatestFamilyPostLabel(entry.latestPostAt)}`
             const card = (
               <CivilCard
                 size="md"
@@ -175,7 +188,6 @@ function ParentFamilyRightRail({
                 avatarInitials={entry.displayName}
                 avatarSrc={avatarSrc}
                 coverUrl={entry.coverUrl ?? null}
-                subtitle={subtitle}
                 href={entry.kind === 'profile' ? `/u/${entry.handle}` : undefined}
                 interactive={entry.kind === 'profile'}
               />
@@ -228,7 +240,42 @@ function ParentFamilyFeedView() {
         throw new Error('family_members_load_failed')
       }
       const nextMembers = payload.members
-      const nextRelationships = Array.isArray(payload?.profileRelationships) ? payload.profileRelationships : []
+      let nextRelationships = Array.isArray(payload?.profileRelationships) ? payload.profileRelationships : []
+
+      if (nextRelationships.length === 0 && viewer?.handle) {
+        try {
+          const publicFamilyResponse = await fetch(buildApiUrl(`/users/${encodeURIComponent(viewer.handle)}/family`), {
+            cache: 'no-store',
+          })
+          if (publicFamilyResponse.ok) {
+            const publicPayload = (await publicFamilyResponse.json().catch(() => null)) as PublicFamilyPageResponse | null
+            const combinedPublicEntries = [
+              ...(Array.isArray(publicPayload?.immediateFamily) ? publicPayload.immediateFamily : []),
+              ...(Array.isArray(publicPayload?.extendedFamily) ? publicPayload.extendedFamily : []),
+            ]
+
+            nextRelationships = Array.from(
+              new Map(
+                combinedPublicEntries.map((entry) => [
+                  entry.id,
+                  {
+                    id: entry.id,
+                    handle: entry.handle,
+                    displayName: entry.name?.trim() || entry.handle,
+                    relationshipLabel: entry.relationshipLabel,
+                    avatarUrl: entry.avatarUrl ?? null,
+                    coverUrl: entry.coverUrl ?? null,
+                    latestPostAt: null,
+                  } satisfies ProfileFamilyRelationshipSummary,
+                ]),
+              ).values(),
+            )
+          }
+        } catch (fallbackError) {
+          console.error('Failed to load public family fallback for Family page', fallbackError)
+        }
+      }
+
       setMembers(nextMembers)
       setProfileRelationships(nextRelationships)
       setSelectedMemberId((current) => {
@@ -244,7 +291,7 @@ function ParentFamilyFeedView() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [viewer?.handle])
 
   useEffect(() => {
     void loadFamilyMembers()
@@ -287,7 +334,7 @@ function ParentFamilyFeedView() {
         loading={loading}
         onSelectMember={setSelectedMemberId}
       />
-      <RightRail hideContacts hideCommunities />
+      <RightRail hideContacts hideCommunities hideFamilyBlock />
     </div>
   )
 

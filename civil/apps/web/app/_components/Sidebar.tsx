@@ -83,8 +83,8 @@ export function getSidebarNavItems(
       return [
         homeItem,
         messagesItem,
-        friendsItem,
         { key: 'family', label: 'Family', href: '/family', icon: FaHouseUser },
+        friendsItem,
         ...PRIMARY_NAV.slice(3),
       ]
     }
