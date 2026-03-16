@@ -441,6 +441,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
           sortMode,
           cursor,
           context: viewerFeedContext,
+          lastViewedAt,
           limit,
         })
         items = ranked.items
