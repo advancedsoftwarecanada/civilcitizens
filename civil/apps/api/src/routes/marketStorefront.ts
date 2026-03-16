@@ -401,6 +401,122 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
     }),
   )
 
+  app.get('/market/account/shipping-addresses', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const buyerId = (await deps.resolveUserId(req)) ?? undefined
+      if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const user = await prisma.user.findUnique({
+        where: { id: buyerId },
+        select: { communityMeta: true },
+      })
+      if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+      const items = deps.readMarketShippingAddresses(user.communityMeta)
+      return reply.send({ items })
+    }),
+  )
+
+  app.post('/market/account/shipping-addresses', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const buyerId = (await deps.resolveUserId(req)) ?? undefined
+      if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const body = deps.MarketShippingAddressBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const user = await prisma.user.findUnique({
+        where: { id: buyerId },
+        select: { communityMeta: true },
+      })
+      if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+      const nowIso = new Date().toISOString()
+      const existing = deps.readMarketShippingAddresses(user.communityMeta)
+      const addressId = body.data.id?.trim() || randomUUID()
+      const nextItem = {
+        id: addressId,
+        label: body.data.label?.trim() || null,
+        name: body.data.name.trim(),
+        line1: body.data.line1.trim(),
+        line2: body.data.line2?.trim() || null,
+        city: body.data.city.trim(),
+        province: body.data.province.trim().toUpperCase(),
+        postalCode: body.data.postalCode.trim().toUpperCase(),
+        country: body.data.country.trim().toUpperCase() || 'CA',
+        latitude: typeof body.data.latitude === 'number' ? body.data.latitude : null,
+        longitude: typeof body.data.longitude === 'number' ? body.data.longitude : null,
+        isDefault: Boolean(body.data.isDefault),
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      }
+
+      let replaced = false
+      const nextItems = existing
+        .map((entry: any) => {
+          if (entry.id !== addressId) return entry
+          replaced = true
+          return {
+            ...entry,
+            ...nextItem,
+            createdAt: entry.createdAt || nowIso,
+            updatedAt: nowIso,
+          }
+        })
+        .slice(0, 9)
+
+      if (!replaced) nextItems.push(nextItem)
+
+      const shouldDefault = nextItem.isDefault || nextItems.length === 1 || !nextItems.some((entry: any) => entry.isDefault && entry.id !== addressId)
+      const normalizedItems = nextItems.map((entry: any) => ({
+        ...entry,
+        isDefault: shouldDefault ? entry.id === addressId : Boolean(entry.isDefault) && entry.id !== addressId,
+      }))
+
+      await prisma.user.update({
+        where: { id: buyerId },
+        data: { communityMeta: deps.mergeMarketShippingAddressesIntoCommunityMeta(user.communityMeta, normalizedItems) },
+      })
+
+      return reply.code(replaced ? 200 : 201).send({
+        item: normalizedItems.find((entry: any) => entry.id === addressId) ?? null,
+        items: normalizedItems,
+      })
+    }),
+  )
+
+  app.delete('/market/account/shipping-addresses/:addressId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const buyerId = (await deps.resolveUserId(req)) ?? undefined
+      if (!buyerId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.MarketShippingAddressParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const user = await prisma.user.findUnique({
+        where: { id: buyerId },
+        select: { communityMeta: true },
+      })
+      if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+      const existing = deps.readMarketShippingAddresses(user.communityMeta)
+      const nextItems = existing.filter((entry: any) => entry.id !== params.data.addressId)
+      if (nextItems.length === existing.length) return reply.code(404).send({ error: 'shipping_address_not_found' })
+
+      const normalizedItems = nextItems.map((entry: any, index: number) => ({
+        ...entry,
+        isDefault: nextItems.some((candidate: any) => candidate.isDefault) ? entry.isDefault : index === 0,
+      }))
+
+      await prisma.user.update({
+        where: { id: buyerId },
+        data: { communityMeta: deps.mergeMarketShippingAddressesIntoCommunityMeta(user.communityMeta, normalizedItems) },
+      })
+
+      return reply.send({ ok: true, items: normalizedItems })
+    }),
+  )
+
   app.post('/market/checkout', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const buyerId = (await deps.resolveUserId(req)) ?? undefined

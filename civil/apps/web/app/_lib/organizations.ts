@@ -1,4 +1,5 @@
 import { buildApiUrl, parseApiResponse } from './api'
+import type { CanadianAddress } from './canadianAddresses'
 
 export type CommunityOrganization = {
   id: string
@@ -21,6 +22,7 @@ export type CommunityOrganization = {
   phone?: string | null
   websiteUrl?: string | null
   address?: string | null
+  addressDetails?: CanadianAddress | null
   schedule?: string | null
   status: 'DRAFT' | 'ACTIVE' | 'SUSPENDED' | 'CANCELED'
   isVerified: boolean

@@ -5,6 +5,14 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
+import {
+  addressToCheckoutShipping,
+  normalizeCanadianAddress,
+  readStoredMarketShippingAddress,
+  type CanadianAddress,
+  type SavedShippingAddress,
+  writeStoredMarketShippingAddress,
+} from '../../_lib/canadianAddresses'
 import { readMarketCart, writeMarketCart, type MarketCartItem } from '../_lib/cart'
 
 type Product = {
@@ -33,18 +41,6 @@ type CartLine = {
   product: Product
   organization: Organization
 }
-
-type ShippingAddress = {
-  name?: string
-  line1?: string
-  line2?: string | null
-  city?: string
-  province?: string
-  postalCode?: string
-  country?: string
-}
-
-const MARKET_SHIPPING_ADDRESS_KEY = 'civil_market_shipping_address'
 
 function formatMoney(cents: number, currency: string) {
   try {
@@ -119,29 +115,40 @@ export default function MarketCheckoutPageClient() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({ country: 'CA' })
+  const [shippingAddress, setShippingAddress] = useState<CanadianAddress>({ country: 'CA' })
   const [rememberShippingAddress, setRememberShippingAddress] = useState(true)
 
   const [placingOrder, setPlacingOrder] = useState(false)
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    try {
-      const raw = window.localStorage.getItem(MARKET_SHIPPING_ADDRESS_KEY)
-      if (!raw) return
-      const parsed = JSON.parse(raw) as ShippingAddress | null
-      if (!parsed || typeof parsed !== 'object') return
-      setShippingAddress({
-        name: typeof parsed.name === 'string' ? parsed.name : '',
-        line1: typeof parsed.line1 === 'string' ? parsed.line1 : '',
-        line2: typeof parsed.line2 === 'string' ? parsed.line2 : '',
-        city: typeof parsed.city === 'string' ? parsed.city : '',
-        province: typeof parsed.province === 'string' ? parsed.province : '',
-        postalCode: typeof parsed.postalCode === 'string' ? parsed.postalCode : '',
-        country: typeof parsed.country === 'string' && parsed.country.trim() ? parsed.country : 'CA',
-      })
-    } catch {
-      // ignore invalid persisted value
+    const fallback = readStoredMarketShippingAddress()
+    if (fallback) setShippingAddress(fallback)
+
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+    if (!token) return
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const response = await fetch(buildApiUrl('/market/account/shipping-addresses'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const parsed = await parseApiResponse<{ items?: SavedShippingAddress[] }>(response)
+        if (cancelled || !response.ok) return
+        const items = Array.isArray(parsed.json?.items) ? parsed.json.items : []
+        const defaultAddress = items.find((entry) => entry.isDefault) ?? items[0] ?? null
+        if (!defaultAddress) return
+        const normalized = normalizeCanadianAddress(defaultAddress)
+        setShippingAddress(normalized)
+        writeStoredMarketShippingAddress(defaultAddress)
+      } catch {
+        // fallback remains local storage
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
   }, [])
 
@@ -274,17 +281,7 @@ export default function MarketCheckoutPageClient() {
         return
       }
 
-      const shipping = needsShipping
-        ? {
-            name: shippingAddress.name?.trim() || undefined,
-            line1: shippingAddress.line1?.trim() || undefined,
-            line2: shippingAddress.line2?.trim() || undefined,
-            city: shippingAddress.city?.trim() || undefined,
-            province: shippingAddress.province?.trim() || undefined,
-            postalCode: shippingAddress.postalCode?.trim() || undefined,
-            country: (shippingAddress.country?.trim() || 'CA').toUpperCase(),
-          }
-        : null
+      const shipping = needsShipping ? addressToCheckoutShipping(shippingAddress) : null
 
       if (needsShipping) {
         if (!shipping?.line1 || !shipping?.city || !shipping?.province || !shipping?.postalCode || !shipping?.country) {
@@ -293,16 +290,7 @@ export default function MarketCheckoutPageClient() {
         }
 
         if (rememberShippingAddress && typeof window !== 'undefined') {
-          const toPersist: ShippingAddress = {
-            name: shipping.name ?? '',
-            line1: shipping.line1 ?? '',
-            line2: shipping.line2 ?? '',
-            city: shipping.city ?? '',
-            province: shipping.province ?? '',
-            postalCode: shipping.postalCode ?? '',
-            country: shipping.country ?? 'CA',
-          }
-          window.localStorage.setItem(MARKET_SHIPPING_ADDRESS_KEY, JSON.stringify(toPersist))
+          writeStoredMarketShippingAddress(shipping)
         }
       }
 

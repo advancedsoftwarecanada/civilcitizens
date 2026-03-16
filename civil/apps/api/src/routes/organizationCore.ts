@@ -423,6 +423,9 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       if (!membership) return reply.code(403).send({ error: 'forbidden' })
 
       const nextData: Prisma.BusinessUpdateInput = {}
+      let nextMetadata = org.metadata && typeof org.metadata === 'object' && !Array.isArray(org.metadata)
+        ? ({ ...(org.metadata as Record<string, unknown>) } as Record<string, unknown>)
+        : {}
       if ('name' in body.data && typeof body.data.name === 'string') {
         if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_rename' })
         const nextName = body.data.name.trim()
@@ -431,18 +434,20 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       if ('phone' in body.data) nextData.phone = body.data.phone ? body.data.phone : null
       if ('websiteUrl' in body.data) nextData.websiteUrl = body.data.websiteUrl ? body.data.websiteUrl : null
       if ('address' in body.data) nextData.address = body.data.address ? body.data.address : null
+      if ('addressDetails' in body.data) {
+        const normalizedAddress = body.data.addressDetails ? deps.normalizeStructuredAddressInput(body.data.addressDetails) : null
+        nextMetadata = deps.mergeOrganizationAddressDetailsIntoMetadata(nextMetadata, normalizedAddress) as Record<string, unknown>
+        nextData.address = normalizedAddress ? deps.formatStructuredAddress(normalizedAddress) : null
+      }
       if ('schedule' in body.data) nextData.schedule = body.data.schedule ? body.data.schedule : null
       if ('description' in body.data) nextData.description = body.data.description ? deps.sanitizePlainText(body.data.description).trim() || null : null
       if ('headline' in body.data) {
-        const currentMetadata = org.metadata && typeof org.metadata === 'object' && !Array.isArray(org.metadata)
-          ? ({ ...(org.metadata as Record<string, unknown>) } as Record<string, unknown>)
-          : {}
         const nextHeadline = body.data.headline?.trim() ?? ''
-        if (nextHeadline) currentMetadata.headline = nextHeadline.slice(0, 60)
-        else delete currentMetadata.headline
-        nextData.metadata = currentMetadata as Prisma.InputJsonValue
+        if (nextHeadline) nextMetadata.headline = nextHeadline.slice(0, 60)
+        else delete nextMetadata.headline
       }
       if ('isPublic' in body.data && typeof body.data.isPublic === 'boolean') nextData.status = body.data.isPublic ? 'ACTIVE' : 'DRAFT'
+      if ('headline' in body.data || 'addressDetails' in body.data) nextData.metadata = nextMetadata as Prisma.InputJsonValue
 
       if (body.data.logoMediaId) {
         const asset = await prisma.mediaAsset.findFirst({ where: { id: body.data.logoMediaId, ownerId: userId }, select: { id: true, category: true, status: true } })
