@@ -138,11 +138,8 @@ export function registerMessagesCoreRoutes(app: FastifyInstance, deps: MessageCo
       const query = MessageLinkPreviewQuery.safeParse(req.query ?? {})
       if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-      const normalizedPath = deps.normalizeMessageLinkPath(query.data.url)
-      if (!normalizedPath) return reply.send({ preview: null })
-
       try {
-        const preview = await deps.resolveMessageLinkPreview(normalizedPath, userId)
+        const preview = await deps.resolveLinkPreview(query.data.url, userId)
         return reply.send({ preview: preview ?? null })
       } catch (error) {
         req.log.warn({ err: error, userId: userId ?? null, url: query.data.url }, 'public_link_preview_failed')

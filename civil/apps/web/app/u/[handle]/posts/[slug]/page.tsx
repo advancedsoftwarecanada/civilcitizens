@@ -15,6 +15,8 @@ import CommentThread, { type ApiComment } from '../../../../_components/CommentT
 import CivilCard from '../../../../_components/CivilCard'
 import PostAuthorMiniCard from '../../../../_components/PostAuthorMiniCard'
 import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
+import LinkPreviewCard from '../../../../_components/LinkPreviewCard'
+import LinkifiedText from '../../../../_components/LinkifiedText'
 import ContentModerationMenu from '../../../../_components/ContentModerationMenu'
 import PostReactionBar from '../../../../_components/PostReactionBar'
 import PollCard from '../../../../_components/PollCard'
@@ -25,7 +27,7 @@ import { pushToast } from '../../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { buildApiUrl } from '../../../../_lib/api'
 import { buildPostShareTarget } from '../../../../_lib/shareTarget'
-import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
+import { linkifyUrlsInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
 import { getStoredToken } from '../../../../_lib/tokenStorage'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
@@ -292,6 +294,7 @@ export default function UserPostPage({ params }: PageProps) {
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
   const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
   const postArticleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post?.body), [post?.body])
+  const linkedArticleBody = useMemo(() => linkifyUrlsInHtml(postArticleBodyWithoutCivilLinks), [postArticleBodyWithoutCivilLinks])
 
   const handleReact = useCallback(
     async (reaction: ReactionType | null) => {
@@ -616,12 +619,14 @@ export default function UserPostPage({ params }: PageProps) {
                     <div className="mt-4 space-y-4">
                       {post.type === 'article' ? (
                         postArticleBodyWithoutCivilLinks ? (
-                          <div className="cc-article-rich-content" dangerouslySetInnerHTML={{ __html: postArticleBodyWithoutCivilLinks }} />
+                          <div className="cc-article-rich-content" dangerouslySetInnerHTML={{ __html: linkedArticleBody }} />
                         ) : null
                       ) : postBodyWithoutCivilLinks ? (
-                        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">{postBodyWithoutCivilLinks}</div>
+                        <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">
+                          <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" />
+                        </div>
                       ) : null}
-                      <CivilLinkPreviewList body={post.body} />
+                      {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} />}
                       {post.type === 'poll' && post.poll ? (
                         <PollCard
                           post={post}

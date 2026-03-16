@@ -7,9 +7,11 @@ import type { Jurisdiction, PollResultsVisibility, ReactionType } from '@civil/s
 import { LuImagePlus, LuVideo } from 'react-icons/lu'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
+import { extractHttpUrlsFromText } from '../_lib/civilLinks'
 import { pushToast } from './useToasts'
 import { formatDisplayName } from '../_lib/text'
 import CivilComposerShell from './CivilComposerShell'
+import LinkPreviewCard, { type LinkPreviewRecord } from './LinkPreviewCard'
 
 export type PostType = 'post' | 'article' | 'photo' | 'poll'
 export type PostVisibility = 'public' | 'members'
@@ -28,6 +30,7 @@ export type ApiPost = {
   body: string
   mediaUrl?: string | null
   images?: string[] | null
+  linkPreview?: LinkPreviewRecord | null
   createdAt: string
   updatedAt: string
   jurisdiction: Jurisdiction
@@ -309,6 +312,7 @@ export default function PostComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [composerLinkPreview, setComposerLinkPreview] = useState<{ sourceUrl: string; preview: LinkPreviewRecord | null } | null>(null)
   const [visibility, setVisibility] = useState<PostVisibility>('public')
   const [showBusinessAuthor, setShowBusinessAuthor] = useState(false)
   const normalizedCommunityOptions = useMemo(() => {
@@ -339,6 +343,11 @@ export default function PostComposer({
   )
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
+  const composerPreviewSource = useMemo(() => {
+    if (postType === 'article') return articleBodyPlain
+    return draft
+  }, [articleBodyPlain, draft, postType])
+  const firstComposerUrl = useMemo(() => extractHttpUrlsFromText(composerPreviewSource)[0] ?? null, [composerPreviewSource])
   const normalizedPollOptions = useMemo(
     () => pollOptions.map((option) => option.trim()).filter((option) => option.length > 0),
     [pollOptions],
@@ -424,6 +433,49 @@ export default function PostComposer({
       return prev
     })
   }, [allowFamilyAudience, businessTarget, communityTarget, defaultAudience, selectableCommunityOptions])
+
+  useEffect(() => {
+    if (!firstComposerUrl) {
+      setComposerLinkPreview(null)
+      return
+    }
+    if (composerLinkPreview?.sourceUrl === firstComposerUrl) return
+
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+          const headers = token ? { authorization: `Bearer ${token}` } : undefined
+          const response = await fetch(buildApiUrl(`/link-preview?url=${encodeURIComponent(firstComposerUrl)}`), {
+            headers,
+            cache: 'no-store',
+          })
+
+          if (!response.ok) {
+            if (!cancelled) {
+              setComposerLinkPreview({ sourceUrl: firstComposerUrl, preview: null })
+            }
+            return
+          }
+
+          const payload = (await response.json().catch(() => null)) as { preview?: LinkPreviewRecord | null } | null
+          if (!cancelled) {
+            setComposerLinkPreview({ sourceUrl: firstComposerUrl, preview: payload?.preview ?? null })
+          }
+        } catch {
+          if (!cancelled) {
+            setComposerLinkPreview({ sourceUrl: firstComposerUrl, preview: null })
+          }
+        }
+      })()
+    }, 350)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [composerLinkPreview?.sourceUrl, firstComposerUrl])
 
   const startPhotoUpload = useCallback(async (id: string, file: File) => {
     setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
@@ -607,6 +659,7 @@ export default function PostComposer({
     setVisibility('public')
     setShowBusinessAuthor(false)
     setError(null)
+    setComposerLinkPreview(null)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
   }, [businessTarget, communityTarget, defaultAudience, defaultPostType, photos, selectableCommunityOptions])
@@ -1175,6 +1228,8 @@ export default function PostComposer({
             </div>
           </div>
         ) : null}
+
+        {composerLinkPreview?.preview ? <LinkPreviewCard preview={composerLinkPreview.preview} /> : null}
 
         {photos.length > 0 ? (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">

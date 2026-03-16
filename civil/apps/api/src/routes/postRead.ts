@@ -6,6 +6,14 @@ import { z } from 'zod'
 
 type PostReadDeps = Record<string, any>
 
+const HTTP_URL_REGEX = /https?:\/\/[^\s<>"']+/gi
+
+function extractFirstPostUrl(value: string): string | null {
+  const matches = value.match(HTTP_URL_REGEX)
+  if (!matches?.length) return null
+  return matches[0] ?? null
+}
+
 async function loadPostDetailResponse(
   req: FastifyRequest,
   reply: FastifyReply,
@@ -28,6 +36,21 @@ async function loadPostDetailResponse(
   }
   if (post.business && post.business.moderationStatus !== ModerationStatus.VISIBLE) {
     return reply.code(404).send({ error: 'not found' })
+  }
+
+  if (!(post as any).linkPreview) {
+    const previewSource = post.type === 'article' ? deps.stripHtmlToPlainText(post.body) : post.body
+    const firstUrl = extractFirstPostUrl(previewSource)
+    if (firstUrl) {
+      const resolvedPreview = await deps.resolveLinkPreview(firstUrl, viewerId ?? null).catch(() => null)
+      if (resolvedPreview) {
+        await prisma.post.update({
+          where: { id: post.id },
+          data: { linkPreview: resolvedPreview as Prisma.InputJsonValue },
+        }).catch(() => null)
+        ;(post as any).linkPreview = resolvedPreview
+      }
+    }
   }
 
   if (post.visibility === 'members' && post.businessId) {
