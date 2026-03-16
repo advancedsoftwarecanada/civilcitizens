@@ -33,6 +33,8 @@ import PollCard from './PollCard'
 
 const FEED_COMMENT_PREVIEW_LIMIT = 3
 const FEED_COMMENT_BUFFER_LIMIT = 20
+const FEED_BODY_TRUNCATION_THRESHOLD = 520
+const FEED_BODY_MAX_HEIGHT_CLASSNAME = 'max-h-[14rem] overflow-hidden'
 
 type FeedComment = NonNullable<ApiPost['recentComments']>[number]
 
@@ -167,6 +169,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
       ]
     : []
   const sharedPostHref = post.sharedPost ? buildPostUrl(post.sharedPost) : null
+  const shouldClampFeedBody = bodyWithoutCivilLinks.trim().length > FEED_BODY_TRUNCATION_THRESHOLD
 
   useEffect(() => {
     setClientRecentComments([])
@@ -494,21 +497,54 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
             ) : null}
             {post.type === 'article' ? (
               articleBodyWithoutCivilLinks ? (
-                <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
-                  <div dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }} />
-                </Link>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
+                      <div
+                        className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}
+                        dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }}
+                      />
+                    </Link>
+                    {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
+                  </div>
+                  {shouldClampFeedBody ? (
+                    <Link href={postUrl} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
+                      Continue reading in thread
+                    </Link>
+                  ) : null}
+                </div>
               ) : null
             ) : post.type === 'photo' ? (
               bodyWithoutCivilLinks ? (
-                <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
-                  {bodyWithoutCivilLinks}
-                </Link>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Link href={postUrl} className={clsx('block whitespace-pre-wrap text-slate-800 hover:text-slate-900', shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
+                      {bodyWithoutCivilLinks}
+                    </Link>
+                    {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
+                  </div>
+                  {shouldClampFeedBody ? (
+                    <Link href={postUrl} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
+                      Continue reading in thread
+                    </Link>
+                  ) : null}
+                </div>
               ) : null
             ) : (
               bodyWithoutCivilLinks ? (
-                <Link href={postUrl} className="block whitespace-pre-wrap text-slate-800 hover:text-slate-900">
-                  {bodyWithoutCivilLinks}
-                </Link>
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Link href={postUrl} className={clsx('block whitespace-pre-wrap text-slate-800 hover:text-slate-900', shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
+                      {bodyWithoutCivilLinks}
+                    </Link>
+                    {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
+                  </div>
+                  {shouldClampFeedBody ? (
+                    <Link href={postUrl} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
+                      Continue reading in thread
+                    </Link>
+                  ) : null}
+                </div>
               ) : null
             )}
 

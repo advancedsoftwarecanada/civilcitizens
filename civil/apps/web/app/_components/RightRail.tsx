@@ -257,6 +257,7 @@ export function RightRail({
   hideContactsAndCommunities = false,
   hideContacts = false,
   hideCommunities = false,
+  hideFamilyBlock = false,
   showPendingFriendRequests = false,
   showPendingConnectionRequests = false,
 }: {
@@ -267,6 +268,7 @@ export function RightRail({
   hideContactsAndCommunities?: boolean
   hideContacts?: boolean
   hideCommunities?: boolean
+  hideFamilyBlock?: boolean
   showPendingFriendRequests?: boolean
   showPendingConnectionRequests?: boolean
 }) {
@@ -789,7 +791,7 @@ export function RightRail({
         </Block>
       ) : null}
 
-      {!hideSocialBlocks && !isFamilyLockedSession && viewer?.accountType === 'user' && (hasFamilyProfilesAvailable(viewer) || familyEntries.length > 0) ? (
+      {!hideFamilyBlock && !hideSocialBlocks && !isFamilyLockedSession && viewer?.accountType === 'user' && (hasFamilyProfilesAvailable(viewer) || familyEntries.length > 0) ? (
         <Block title="Your Family" action={{ label: 'View all', href: viewer?.handle ? `/u/${viewer.handle}/family` : '/family' }}>
           {familyEntries.length ? (
             <ul className="space-y-3">

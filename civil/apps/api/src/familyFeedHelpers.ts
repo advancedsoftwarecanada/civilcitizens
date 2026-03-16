@@ -152,8 +152,13 @@ export function createFamilyFeedHelpers(deps: CreateFamilyFeedHelpersDeps) {
       const relationships = deps.getStoredProfileFamilyRelationships(value)
       if (!relationships.length) return []
 
+      const validRelationships = relationships.filter(
+        (entry: ProfileFamilyRelationshipRecord) => typeof entry.relatedUserId === 'string' && entry.relatedUserId.trim().length > 0,
+      )
+      if (!validRelationships.length) return []
+
       const dedupedRelationships = Array.from(
-        new Map(relationships.map((entry: ProfileFamilyRelationshipRecord) => [entry.relatedUserId, entry])).values(),
+        new Map(validRelationships.map((entry: ProfileFamilyRelationshipRecord) => [entry.relatedUserId, entry])).values(),
       )
       const relatedUserIds = dedupedRelationships.map((entry: ProfileFamilyRelationshipRecord) => entry.relatedUserId)
       const [relatedUsers, latestPostAtByUser]: [
@@ -184,7 +189,7 @@ export function createFamilyFeedHelpers(deps: CreateFamilyFeedHelpersDeps) {
             id: user.id,
             handle: user.handle,
             displayName: user.name?.trim() || relationship.relatedName?.trim() || user.handle,
-            relationshipLabel: deps.profileFamilyRelationshipLabels[relationship.familyType],
+            relationshipLabel: deps.profileFamilyRelationshipLabels[relationship.familyType] ?? relationship.familyType,
             avatarUrl: deps.normalizeMediaUrl(user.avatarUrl ?? null),
             coverUrl: deps.normalizeMediaUrl(user.coverUrl ?? null),
             latestPostAt: latestPostAtByUser.get(user.id) ?? null,
