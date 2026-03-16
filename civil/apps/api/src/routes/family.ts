@@ -36,6 +36,68 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     }
   }
 
+  function normalizeFamilyFeedImages(images: Prisma.JsonValue | null | undefined) {
+    if (!Array.isArray(images)) return []
+    return images.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  }
+
+  function toFamilyBadgeLabel(value?: string | null, fallback = 'Family') {
+    const normalized = value?.trim()
+    if (!normalized) return fallback
+
+    return normalized
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+      .join(' ')
+  }
+
+  function formatAudienceFamilyFeedPost(
+    post: any,
+    log: FastifyRequest['log'],
+    options: {
+      badgeLabel: string
+      target: {
+        id: string
+        name: string
+        relationshipLabel: string
+        modeBand: 'EARLY_CHILDHOOD' | 'JUNIOR' | 'TEEN' | 'YOUTH' | 'ADULT'
+        modeLabel: string
+      }
+      viewerId?: string
+      viewerReaction?: unknown
+      viewerPollOptionId?: unknown
+      recentComments?: unknown[]
+    },
+  ) {
+    const formattedPost = safeFormatFamilyInteractivePost(post, log, {
+      viewerId: options.viewerId,
+      viewerReaction: options.viewerReaction,
+      viewerPollOptionId: options.viewerPollOptionId,
+      recentComments: options.recentComments,
+    })
+    const author = post?.author
+    const authorName = author?.name?.trim() || author?.handle || 'Family'
+
+    return {
+      ...(formattedPost ?? {}),
+      id: post.id,
+      body: post.body,
+      images: normalizeFamilyFeedImages(post.images),
+      createdAt: post.createdAt.toISOString(),
+      updatedAt: post.updatedAt.toISOString(),
+      author: {
+        id: author?.id ?? post.authorId,
+        handle: author?.handle ?? null,
+        name: authorName,
+        avatarUrl: author?.avatarUrl ?? null,
+        coverUrl: author?.coverUrl ?? null,
+        badgeLabel: options.badgeLabel,
+      },
+      target: options.target,
+    }
+  }
+
   async function loadAcceptedNotificationRelationshipMap(userId: string, excludedUserIds?: Set<string>) {
     try {
       const notifications = await prisma.notification.findMany({
@@ -81,6 +143,37 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     } catch (error) {
       console.error('accepted_family_notification_relationships_load_failed', error)
       return new Map<string, { relationship: string; createdAt: string }>()
+    }
+  }
+
+  async function loadReverseStoredProfileRelationships(userId: string, excludedUserIds?: Set<string>) {
+    try {
+      const rows = await prisma.$queryRaw<Array<{
+        id: string
+        handle: string
+        name: string | null
+        avatarUrl: string | null
+        coverUrl: string | null
+        familyType: string | null
+      }>>(Prisma.sql`
+        SELECT DISTINCT ON (u.id)
+          u.id,
+          u.handle,
+          u.name,
+          u."avatarUrl",
+          u."coverUrl",
+          rel.value->>'familyType' AS "familyType"
+        FROM "User" u
+        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(u."communityMeta"->'profileFamilyRelationships', '[]'::jsonb)) AS rel(value)
+        WHERE u.id <> ${userId}
+          AND rel.value->>'relatedUserId' = ${userId}
+        ORDER BY u.id, u.name ASC NULLS LAST, u.handle ASC
+      `)
+
+      return rows.filter((row) => !excludedUserIds?.has(row.id))
+    } catch (error) {
+      console.error('reverse_profile_family_relationships_load_failed', error)
+      return []
     }
   }
 
@@ -174,7 +267,10 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     ])
 
     const storedRelationshipIds = new Set<string>(profileRelationships.map((entry: { id: string }) => entry.id))
-    const notificationRelationshipMap = await loadAcceptedNotificationRelationshipMap(userId, storedRelationshipIds)
+    const [notificationRelationshipMap, reverseStoredRelationships] = await Promise.all([
+      loadAcceptedNotificationRelationshipMap(userId, storedRelationshipIds),
+      loadReverseStoredProfileRelationships(userId, storedRelationshipIds),
+    ])
 
     let notificationDerivedRelationships: Array<{
       id: string
@@ -222,7 +318,38 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       }
     }
 
-    const mergedProfileRelationships = [...profileRelationships, ...notificationDerivedRelationships].sort((left, right) => {
+    let reverseStoredRelationshipItems: Array<{
+      id: string
+      handle: string
+      displayName: string
+      relationshipLabel: string
+      avatarUrl: string | null
+      coverUrl: string | null
+      latestPostAt: string | null
+    }> = []
+
+    if (reverseStoredRelationships.length > 0) {
+      try {
+        const latestPostAtByUser = await deps.loadLatestPublicPostAtByUsers(reverseStoredRelationships.map((entry) => entry.id))
+        reverseStoredRelationshipItems = reverseStoredRelationships.map((relatedUser) => ({
+          id: relatedUser.id,
+          handle: relatedUser.handle,
+          displayName: relatedUser.name?.trim() || relatedUser.handle,
+          relationshipLabel: deps.profileFamilyRelationshipLabels[relatedUser.familyType ?? ''] ?? toFamilyBadgeLabel(relatedUser.familyType),
+          avatarUrl: deps.normalizeMediaUrl(relatedUser.avatarUrl ?? null),
+          coverUrl: deps.normalizeMediaUrl(relatedUser.coverUrl ?? null),
+          latestPostAt: latestPostAtByUser.get(relatedUser.id) ?? null,
+        }))
+      } catch (error) {
+        console.error('reverse_family_relationship_profiles_load_failed', error)
+      }
+    }
+
+    const mergedProfileRelationships = Array.from(
+      new Map(
+        [...profileRelationships, ...notificationDerivedRelationships, ...reverseStoredRelationshipItems].map((entry) => [entry.id, entry]),
+      ).values(),
+    ).sort((left, right) => {
       const leftTime = left.latestPostAt ? new Date(left.latestPostAt).getTime() : 0
       const rightTime = right.latestPostAt ? new Date(right.latestPostAt).getTime() : 0
       if (rightTime !== leftTime) return rightTime - leftTime
@@ -673,28 +800,105 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
     if (authContext.actor === 'user' && !query.data.memberId) {
-      const viewerUser = await prisma.user.findUnique({ where: { id: authContext.userId }, select: { communityMeta: true } })
+      const viewerUser = await prisma.user.findUnique({
+        where: { id: authContext.userId },
+        select: {
+          id: true,
+          name: true,
+          handle: true,
+          communityMeta: true,
+        },
+      })
       if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
 
-      const storedRelatedUserIds = deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry: any) => entry.relatedUserId).filter(Boolean)
-      const notificationRelatedUserIds = [...(await loadAcceptedNotificationRelationshipMap(authContext.userId)).keys()]
+      const storedRelationships = deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta)
+      const storedRelationshipLabels = new Map(
+        storedRelationships
+          .filter((entry: any) => typeof entry?.relatedUserId === 'string' && entry.relatedUserId.trim().length > 0)
+          .map((entry: any) => [entry.relatedUserId, toFamilyBadgeLabel(entry.familyType)]),
+      )
+      const storedRelatedUserIds = storedRelationships.map((entry: any) => entry.relatedUserId).filter(Boolean)
+      const reverseStoredRelationships = await loadReverseStoredProfileRelationships(authContext.userId)
+      const reverseStoredRelationshipTypes = new Map(reverseStoredRelationships.map((entry) => [entry.id, entry.familyType]))
+      const notificationRelationships = await loadAcceptedNotificationRelationshipMap(authContext.userId)
+      const notificationRelatedUserIds = [...notificationRelationships.keys()]
 
-      const relatedUserIds = Array.from(new Set([...storedRelatedUserIds, ...notificationRelatedUserIds]))
-      if (!relatedUserIds.length) return reply.send({ items: [] })
+      const relatedUserIds = Array.from(new Set([...storedRelatedUserIds, ...notificationRelatedUserIds, ...reverseStoredRelationships.map((entry) => entry.id)]))
 
+      await deps.syncLegacyParentFamilyFeedPosts(authContext.userId)
+
+      let members: any[] = []
+      try {
+        members = await prisma.familyMember.findMany({
+          where: { parentId: authContext.userId, suspendedAt: null },
+          orderBy: [{ createdAt: 'asc' }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            relationship: true,
+            friendCode: true,
+            username: true,
+            avatarUrl: true,
+            coverUrl: true,
+            allowChildOwnMediaEdits: true,
+            allowChildOwnUsernameEdits: true,
+            allowChildAudioCalls: true,
+            allowChildVideoCalls: true,
+            notifyParentOnMediaChanges: true,
+            suspendedAt: true,
+            suspendedById: true,
+            suspensionNote: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        })
+      } catch (error) {
+        if (!deps.isFamilyMemberTableMissing(error)) throw error
+      }
+
+      const normalizedMembers = members.map((member: any) => deps.normalizeFamilyMemberSummary(member))
+      const memberIds = normalizedMembers.map((member: any) => member.id)
       const authorIds = Array.from(new Set([authContext.userId, ...relatedUserIds]))
-      const posts = await prisma.post.findMany({
-        where: { authorId: { in: authorIds }, audience: 'family', type: { not: deps.FAMILY_FEED_POST_TYPE }, visibility: 'public' },
-        orderBy: [{ createdAt: 'desc' }],
-        take: 40,
-        include: deps.POST_INCLUDE,
-      })
+      const [audiencePosts, memberPosts] = await Promise.all([
+        prisma.post.findMany({
+          where: { authorId: { in: authorIds }, audience: 'family', type: { not: deps.FAMILY_FEED_POST_TYPE }, visibility: 'public' },
+          orderBy: [{ createdAt: 'desc' }],
+          take: 40,
+          include: deps.POST_INCLUDE,
+        }),
+        memberIds.length
+          ? prisma.post.findMany({
+              where: {
+                authorId: authContext.userId,
+                type: deps.FAMILY_FEED_POST_TYPE,
+                title: { in: memberIds.map((memberId: string) => deps.buildFamilyFeedPostTitle(memberId)) },
+              },
+              orderBy: [{ createdAt: 'desc' }],
+              take: 40,
+              include: deps.POST_INCLUDE,
+            })
+          : Promise.resolve([]),
+      ])
+
+      const allPosts = [...audiencePosts, ...memberPosts]
+      if (!allPosts.length) return reply.send({ items: [] })
+
+      const familyTarget = {
+        id: viewerUser.id,
+        name: viewerUser.name?.trim() || viewerUser.handle || 'Family circle',
+        relationshipLabel: 'Family circle',
+        modeBand: 'ADULT' as const,
+        modeLabel: 'Family',
+      }
+      const memberMap = new Map(normalizedMembers.map((member: any) => [member.id, member]))
 
       let reactionsByPost: Record<string, unknown> = {}
       let pollSelectionsByPost: Record<string, unknown> = {}
       let recentCommentsByPost: Record<string, unknown[]> = {}
       try {
-        const formattingContext = await deps.loadViewerPostFormattingContext(authContext.userId, posts.map((post: any) => post.id), 5)
+        const formattingContext = await deps.loadViewerPostFormattingContext(authContext.userId, allPosts.map((post: any) => post.id), 5)
         reactionsByPost = formattingContext.reactionsByPost
         pollSelectionsByPost = formattingContext.pollSelectionsByPost
         recentCommentsByPost = formattingContext.recentCommentsByPost
@@ -702,17 +906,44 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         req.log.error({ err: error }, 'family_feed_context_load_failed')
       }
 
-      return reply.send({
-        items: posts
-          .map((post: any) =>
-            safeFormatFamilyInteractivePost(post, req.log, {
+      const items = [
+        ...audiencePosts.map((post: any) =>
+          formatAudienceFamilyFeedPost(post, req.log, {
+            badgeLabel:
+              post.authorId === authContext.userId
+                ? 'Parent'
+                : storedRelationshipLabels.get(post.authorId) ||
+                  toFamilyBadgeLabel(notificationRelationships.get(post.authorId)?.relationship, '') ||
+                  toFamilyBadgeLabel(reverseStoredRelationshipTypes.get(post.authorId), 'Family'),
+            target: familyTarget,
+            viewerId: authContext.userId,
+            viewerReaction: reactionsByPost[post.id] ?? null,
+            viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
+            recentComments: recentCommentsByPost[post.id] ?? [],
+          }),
+        ),
+        ...memberPosts.flatMap((post: any) => {
+          const memberId = typeof post.title === 'string' && post.title.startsWith('family-feed:')
+            ? post.title.slice('family-feed:'.length)
+            : null
+          const member = memberId ? memberMap.get(memberId) : null
+          if (!member) return []
+
+          return [
+            deps.formatChildFamilyFeedPost(memberId ? { id: post.id, familyMemberId: memberId, body: post.body, images: post.images, createdAt: post.createdAt, updatedAt: post.updatedAt } : post, member, safeFormatFamilyInteractivePost(post, req.log, {
               viewerId: authContext.userId,
               viewerReaction: reactionsByPost[post.id] ?? null,
               viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
               recentComments: recentCommentsByPost[post.id] ?? [],
-            }),
-          )
-          .filter(Boolean),
+            })),
+          ]
+        }),
+      ]
+
+      return reply.send({
+        items: items
+          .sort((left: any, right: any) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+          .slice(0, 40),
       })
     }
 
@@ -729,12 +960,39 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       include: deps.POST_INCLUDE,
     })
 
+    const storedRelationships = deps.getStoredProfileFamilyRelationships(targetMember.parent.communityMeta)
+    const storedRelationshipLabels = new Map(
+      storedRelationships
+        .filter((entry: any) => typeof entry?.relatedUserId === 'string' && entry.relatedUserId.trim().length > 0)
+        .map((entry: any) => [entry.relatedUserId, toFamilyBadgeLabel(entry.familyType)]),
+    )
+    const reverseStoredRelationships = await loadReverseStoredProfileRelationships(targetMember.parentId)
+    const reverseStoredRelationshipTypes = new Map(reverseStoredRelationships.map((entry) => [entry.id, entry.familyType]))
+    const notificationRelationships = await loadAcceptedNotificationRelationshipMap(targetMember.parentId)
+    const familyAudienceAuthorIds = Array.from(new Set([
+      targetMember.parentId,
+      ...storedRelationships.map((entry: any) => entry.relatedUserId).filter(Boolean),
+      ...notificationRelationships.keys(),
+      ...reverseStoredRelationships.map((entry) => entry.id),
+    ]))
+    const audiencePosts = await prisma.post.findMany({
+      where: {
+        authorId: { in: familyAudienceAuthorIds },
+        audience: 'family',
+        type: { not: deps.FAMILY_FEED_POST_TYPE },
+        visibility: 'public',
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 40,
+      include: deps.POST_INCLUDE,
+    })
+
     const viewerId = authContext.actor === 'user' ? authContext.userId : undefined
     let reactionsByPost: Record<string, unknown> = {}
     let pollSelectionsByPost: Record<string, unknown> = {}
     let recentCommentsByPost: Record<string, unknown[]> = {}
     try {
-      const formattingContext = await deps.loadViewerPostFormattingContext(viewerId, rows.map((row: any) => row.id), 5)
+      const formattingContext = await deps.loadViewerPostFormattingContext(viewerId, [...rows, ...audiencePosts].map((row: any) => row.id), 5)
       reactionsByPost = formattingContext.reactionsByPost
       pollSelectionsByPost = formattingContext.pollSelectionsByPost
       recentCommentsByPost = formattingContext.recentCommentsByPost
@@ -756,6 +1014,27 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     const normalizedMember = deps.normalizeFamilyMemberSummary(targetMember)
     const mirroredKeys = new Set(rows.map((row: any) => deps.buildLegacyFamilyFeedMirrorKey({ memberId: targetMember.id, body: row.body, createdAt: row.createdAt, images: row.images })))
     const items = [
+      ...audiencePosts.map((post: any) =>
+        formatAudienceFamilyFeedPost(post, req.log, {
+          badgeLabel:
+            post.authorId === targetMember.parentId
+              ? 'Parent'
+              : storedRelationshipLabels.get(post.authorId) ||
+                toFamilyBadgeLabel(notificationRelationships.get(post.authorId)?.relationship, '') ||
+                toFamilyBadgeLabel(reverseStoredRelationshipTypes.get(post.authorId), 'Family'),
+          target: {
+            id: normalizedMember.id,
+            name: normalizedMember.displayName,
+            relationshipLabel: normalizedMember.relationshipLabel,
+            modeBand: normalizedMember.modeBand,
+            modeLabel: normalizedMember.modeLabel,
+          },
+          viewerId,
+          viewerReaction: reactionsByPost[post.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
+          recentComments: recentCommentsByPost[post.id] ?? [],
+        }),
+      ),
       ...rows.map((row: any) => deps.formatChildFamilyFeedPost(
         { id: row.id, familyMemberId: targetMember.id, body: row.body, images: row.images, createdAt: row.createdAt, updatedAt: row.updatedAt },
         normalizedMember,
@@ -782,11 +1061,15 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
     if (authContext.actor === 'user' && !parse.data.memberId) {
-      const viewerUser = await prisma.user.findUnique({ where: { id: authContext.userId }, select: { communityMeta: true, handle: true } })
+      const viewerUser = await prisma.user.findUnique({ where: { id: authContext.userId }, select: { id: true, name: true, communityMeta: true, handle: true } })
       if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
 
       const relatedUserIds = Array.from(new Set(deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry: any) => entry.relatedUserId).filter(Boolean)))
-      if (!relatedUserIds.length) return reply.code(400).send({ error: 'family_audience_unavailable' })
+      const activeMemberCount = await prisma.familyMember.count({ where: { parentId: authContext.userId, suspendedAt: null } }).catch((error) => {
+        if (deps.isFamilyMemberTableMissing(error)) return 0
+        throw error
+      })
+      if (!relatedUserIds.length && activeMemberCount === 0) return reply.code(400).send({ error: 'family_audience_unavailable' })
 
       const body = deps.sanitizePlainText(parse.data.body)
       const images = parse.data.images.filter(Boolean)
@@ -812,7 +1095,15 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
 
       const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(authContext.userId, [created.id], 5)
       return reply.code(201).send({
-        post: deps.formatPost(created, {
+        post: formatAudienceFamilyFeedPost(created, req.log, {
+          badgeLabel: 'Parent',
+          target: {
+            id: viewerUser.id,
+            name: viewerUser.name?.trim() || viewerUser.handle || 'Family circle',
+            relationshipLabel: 'Family circle',
+            modeBand: 'ADULT',
+            modeLabel: 'Family',
+          },
           viewerId: authContext.userId,
           viewerReaction: reactionsByPost[created.id] ?? null,
           viewerPollOptionId: pollSelectionsByPost[created.id] ?? null,
@@ -1091,13 +1382,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     const bodyParse = z.object({ confirmationName: z.string().trim().min(1).max(120) }).safeParse(req.body ?? {})
     if (!bodyParse.success) return reply.code(400).send({ error: bodyParse.error.flatten() })
 
-    let existing: any
-    try {
-      existing = await prisma.familyMember.findFirst({ where: { id: params.data.id, parentId: userId }, select: { id: true, firstName: true, lastName: true } })
-    } catch (error) {
-      if (deps.isFamilyMemberTableMissing(error)) return reply.code(503).send({ error: 'family_mode_not_available' })
-      throw error
-    }
+    const existing = await deps.loadFamilyMemberSummaryForParent(params.data.id, userId)
     if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
 
     const expectedName = `${existing.firstName} ${existing.lastName}`.trim().toLowerCase()
@@ -1110,6 +1395,24 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       if (deps.isFamilyMemberTableMissing(error)) return reply.code(503).send({ error: 'family_mode_not_available' })
       throw error
     }
+
+    try {
+      const parent = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+      const baseMeta = deps.readBaseCommunityMeta(parent?.communityMeta ?? null)
+      const nextSettings =
+        baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
+          ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
+          : null
+
+      if (nextSettings && Object.prototype.hasOwnProperty.call(nextSettings, params.data.id)) {
+        delete nextSettings[params.data.id]
+        baseMeta.familyMemberSettings = nextSettings
+        await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta as Prisma.InputJsonValue } })
+      }
+    } catch (error) {
+      req.log.error({ err: error, memberId: params.data.id, userId }, 'family_member_legacy_settings_cleanup_failed')
+    }
+
     return reply.send({ ok: true })
   })
 

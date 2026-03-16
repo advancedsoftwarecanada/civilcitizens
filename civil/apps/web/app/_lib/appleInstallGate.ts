@@ -5,7 +5,7 @@ import { isAndroidNativeApp, isAppleNativeApp } from './nativePush'
 type NavigatorWithStandalone = Navigator & { standalone?: boolean }
 export const IOS_PWA_INSTALL_ROUTE = '/install/ios/pwa'
 export const IOS_SWITCH_TO_SAFARI_ROUTE = '/install/ios/switch-to-safari'
-export const ANDROID_PWA_INSTALL_ROUTE = '/install/android/pwa'
+export const ANDROID_PWA_INSTALL_ROUTE = '/install/android'
 export const IOS_APP_STORE_URL = 'https://apps.apple.com/ca/app/civil-citizens/id6740553511'
 
 export function isAppleMobileOrTablet(): boolean {

@@ -8832,6 +8832,7 @@ registerModerationActionRoutes(app, {
 })
 
 registerSupportRoutes(app, {
+  isSuperAdminEmail,
   SupportRequestBody,
   normalizeMediaUrl,
   resolveUserId,
