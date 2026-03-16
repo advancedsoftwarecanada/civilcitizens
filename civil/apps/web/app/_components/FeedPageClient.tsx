@@ -256,8 +256,8 @@ function formatSnapshotValue(value: number) {
   return value.toLocaleString()
 }
 
-const SMART_HOME_SEEN_STORAGE_KEY = 'cc:smart-home-seen:v1'
-const SMART_HOME_SEEN_STORAGE_LIMIT = 400
+const SMART_FEED_SEEN_STORAGE_PREFIX = 'cc:smart-feed-seen:'
+const SMART_FEED_SEEN_STORAGE_LIMIT = 400
 
 function dedupePostsById(items: ApiPost[]) {
   const deduped = new Map<string, ApiPost>()
@@ -276,10 +276,14 @@ function hashSmartFeedValue(value: string) {
   return (hash >>> 0) / 4294967295
 }
 
-function loadSmartHomeSeenIds() {
+function buildSmartFeedSeenStorageKey(scope: FeedScope) {
+  return `${SMART_FEED_SEEN_STORAGE_PREFIX}${scope}:v1`
+}
+
+function loadSmartFeedSeenIds(scope: FeedScope) {
   if (typeof window === 'undefined') return new Set<string>()
   try {
-    const raw = window.sessionStorage.getItem(SMART_HOME_SEEN_STORAGE_KEY)
+    const raw = window.sessionStorage.getItem(buildSmartFeedSeenStorageKey(scope))
     if (!raw) return new Set<string>()
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return new Set<string>()
@@ -289,28 +293,33 @@ function loadSmartHomeSeenIds() {
   }
 }
 
-function markSmartHomePostSeen(postId: string) {
+function markSmartFeedPostSeen(scope: FeedScope, postId: string) {
   if (typeof window === 'undefined' || !postId) return
   try {
-    const existing = Array.from(loadSmartHomeSeenIds()).filter((value) => value !== postId)
+    const existing = Array.from(loadSmartFeedSeenIds(scope)).filter((value) => value !== postId)
     existing.push(postId)
     window.sessionStorage.setItem(
-      SMART_HOME_SEEN_STORAGE_KEY,
-      JSON.stringify(existing.slice(-SMART_HOME_SEEN_STORAGE_LIMIT)),
+      buildSmartFeedSeenStorageKey(scope),
+      JSON.stringify(existing.slice(-SMART_FEED_SEEN_STORAGE_LIMIT)),
     )
   } catch {
     // Ignore storage failures and fall back to server ordering.
   }
 }
 
-function orderSmartHomePosts(items: ApiPost[], seenIds: Set<string>, seed: string) {
+function orderSmartFeedPosts(items: ApiPost[], seenIds: Set<string>, seed: string, scope: FeedScope) {
   const nowMs = Date.now()
   const scorePost = (post: ApiPost) => {
     const createdAtMs = Date.parse(post.createdAt)
     const ageHours = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) / (1000 * 60 * 60) : 9999
-    const recencyBoost = Math.max(0, 72 - ageHours) * 1.2
-    const jitter = hashSmartFeedValue(`${seed}:${post.id}`) * 100
-    return recencyBoost + jitter
+    const scopeWindowHours = scope === 'communities' ? 96 : 72
+    const scopeRecencyWeight = scope === 'communities' ? 1.45 : 1.2
+    const hotScore = Number(post.metrics?.hotScore ?? 0)
+    const homeCommunityBoost = scope === 'communities' && post.communitySlug ? 18 : 0
+    const recencyBoost = Math.max(0, scopeWindowHours - ageHours) * scopeRecencyWeight
+    const hotBoost = Math.log1p(Math.max(0, hotScore)) * (scope === 'communities' ? 9 : 6)
+    const jitter = hashSmartFeedValue(`${scope}:${seed}:${post.id}`) * (scope === 'communities' ? 120 : 100)
+    return recencyBoost + hotBoost + homeCommunityBoost + jitter
   }
 
   const deduped = dedupePostsById(items)
@@ -385,7 +394,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   }, [defaultSort])
 
   const loadPosts = useCallback(async (cursor?: string) => {
-    const shouldShuffleSmartHome = scope === 'all' && sortMode === 'hot'
+    const shouldShuffleSmartFeed = (scope === 'all' || scope === 'communities') && sortMode === 'hot' && !province && !community
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
@@ -399,7 +408,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     }
     setLoading(true)
     try {
-      if (!cursor && shouldShuffleSmartHome) {
+      if (!cursor && shouldShuffleSmartFeed) {
         smartHomeShuffleSeedRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
       }
       const query = new URLSearchParams(filterQuery)
@@ -427,19 +436,19 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       const newItems: ApiPost[] = Array.isArray(data.items) ? (data.items as ApiPost[]) : []
 
       setPosts((prev) => {
-        if (!shouldShuffleSmartHome) {
+        if (!shouldShuffleSmartFeed) {
           return cursor ? dedupePostsById([...prev, ...newItems]) : dedupePostsById(newItems)
         }
 
-        const seenIds = loadSmartHomeSeenIds()
+        const seenIds = loadSmartFeedSeenIds(scope)
         const seed = smartHomeShuffleSeedRef.current || 'smart-home'
         if (!cursor) {
-          return orderSmartHomePosts(newItems, seenIds, seed)
+          return orderSmartFeedPosts(newItems, seenIds, seed, scope)
         }
 
         const existingIds = new Set(prev.map((post) => post.id))
         const incomingUnique = newItems.filter((post) => !existingIds.has(post.id))
-        return [...prev, ...orderSmartHomePosts(incomingUnique, seenIds, seed)]
+        return [...prev, ...orderSmartFeedPosts(incomingUnique, seenIds, seed, scope)]
       })
       setNextCursor(data.nextCursor)
       setHasMore(!!data.nextCursor)
@@ -589,7 +598,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   }, [nextCursor, loading, loadPosts])
 
   const observerTarget = useRef<HTMLDivElement>(null)
-  const smartHomeShuffleEnabled = scope === 'all' && sortMode === 'hot'
+  const smartFeedShuffleEnabled = (scope === 'all' || scope === 'communities') && sortMode === 'hot' && !province && !community
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -629,8 +638,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
               impressionTimersRef.current.delete(postId)
               if (seenPostIdsRef.current.has(postId)) return
               seenPostIdsRef.current.add(postId)
-              if (smartHomeShuffleEnabled) {
-                markSmartHomePostSeen(postId)
+              if (smartFeedShuffleEnabled) {
+                markSmartFeedPostSeen(scope, postId)
               }
               pendingImpressionIdsRef.current.add(postId)
               schedulePostImpressionFlush()
@@ -658,7 +667,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       }
       impressionTimersRef.current.clear()
     }
-  }, [schedulePostImpressionFlush, posts, scope, me?.handle, smartHomeShuffleEnabled])
+  }, [community, province, schedulePostImpressionFlush, posts, scope, me?.handle, smartFeedShuffleEnabled])
 
   useEffect(() => {
     return () => {

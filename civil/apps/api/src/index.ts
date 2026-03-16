@@ -4456,6 +4456,7 @@ type RankedFeedCandidate = {
   postId: string
   score: number
   createdAtMs: number
+  ageHours: number
   category: FeedCategory
 }
 
@@ -4492,6 +4493,15 @@ function createSeededRandom(seed: number): () => number {
     state = (state * 1664525 + 1013904223) >>> 0
     return state / 4294967296
   }
+}
+
+function hashFeedRankValue(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) / 4294967295
 }
 
 function toCommunityKey(provinceCode: string | null | undefined, communitySlug: string | null | undefined): string | null {
@@ -4679,6 +4689,16 @@ function scoreFeedCandidate(args: {
     ? ({ 1: 220, 2: 130, 3: 70, 4: 18 } as const)
     : ({ 1: 60, 2: 36, 3: 18, 4: 0 } as const)
   const geoBoost = geoBoostByScope[geoLevel]
+  const category = resolveFeedCategory(args.post, args.scope, args.context)
+
+  const freshCommunityBoost =
+    category === 'community'
+      ? args.scope === 'communities'
+        ? Math.max(0, 36 - ageHours) * (geoLevel === 1 ? 18 : geoLevel <= 3 ? 12 : 6)
+        : args.scope === 'all'
+          ? Math.max(0, 24 - ageHours) * (geoLevel === 1 ? 15 : geoLevel <= 3 ? 10 : 4)
+          : 0
+      : 0
 
   let interactionBoost = 0
   if (args.hasReaction) interactionBoost += 55
@@ -4697,7 +4717,23 @@ function scoreFeedCandidate(args: {
         ? Math.exp(-ageHours / 24) * 180
         : 0
 
-  return unseenBoost + freshnessScore + activityScore + engagementScore + geoBoost + interactionBoost + viewerAuthorBoost - seenPenalty - maturityPenalty
+  const seenRecencyRecovery = args.impression
+    ? Math.max(0, 36 - Math.max(0, args.nowMs - args.impression.lastSeenAt.getTime()) / (1000 * 60 * 60)) * (args.scope === 'all' ? 5 : 3)
+    : 0
+
+  return (
+    unseenBoost +
+    freshnessScore +
+    activityScore +
+    engagementScore +
+    geoBoost +
+    freshCommunityBoost +
+    interactionBoost +
+    viewerAuthorBoost +
+    seenRecencyRecovery -
+    seenPenalty -
+    maturityPenalty
+  )
 }
 
 function pickWeightedFeedCategory(
@@ -4873,17 +4909,30 @@ async function rankFeedPosts(args: {
           Math.log1p(Math.max(0, rankingPost.commentCount)) * 14 +
           Math.log1p(Math.max(0, rankingPost.reactionTotal)) * 10
         : 0
+    const ageHours = Math.max(0, nowMs - rankingPost.createdAt.getTime()) / (1000 * 60 * 60)
+    const varietyAmplitude =
+      args.sortMode === 'hot'
+        ? args.scope === 'communities'
+          ? 36
+          : args.scope === 'all'
+            ? 26
+            : 14
+        : 0
+    const freshnessFactor = Math.max(0.12, 1 - Math.min(ageHours, 72) / 72)
+    const varietyJitter = ((hashFeedRankValue(`${rankingSeed}:${post.id}`) - 0.5) * 2) * varietyAmplitude * freshnessFactor
 
     return {
       postId: post.id,
-      score: baseScore + hotPreferenceBoost,
+      score: baseScore + hotPreferenceBoost + varietyJitter,
       createdAtMs: rankingPost.createdAt.getTime(),
+      ageHours,
       category: resolveFeedCategory(rankingPost, args.scope, args.context),
     }
   })
 
   rankedCandidates.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
+    if (a.ageHours !== b.ageHours) return a.ageHours - b.ageHours
     if (b.createdAtMs !== a.createdAtMs) return b.createdAtMs - a.createdAtMs
     return b.postId.localeCompare(a.postId)
   })
