@@ -21,6 +21,14 @@ const VotePostInput = z.object({
   value: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
 })
 
+const HTTP_URL_REGEX = /https?:\/\/[^\s<>"']+/gi
+
+function extractFirstPostUrl(value: string): string | null {
+  const matches = value.match(HTTP_URL_REGEX)
+  if (!matches?.length) return null
+  return matches[0] ?? null
+}
+
 type PostInteractionsDeps = Record<string, any>
 
 export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostInteractionsDeps) {
@@ -117,6 +125,9 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         : isArticle
           ? deps.sanitizeRichTextHtml(rawBody)
           : deps.sanitizePlainText(rawBody)
+      const previewSourceBody = isArticle ? deps.stripHtmlToPlainText(normalizedBody) : normalizedBody
+      const firstUrl = extractFirstPostUrl(previewSourceBody)
+      const linkPreview = firstUrl ? await deps.resolveLinkPreview(firstUrl, userId).catch(() => null) : null
 
       const slugBase = deps.buildPostSlugBase({ handle: author.handle, title, body: normalizedBody })
       const normalizedJurisdiction = jurisdiction ?? (provinceCode ? 'federal' : deps.DEFAULT_JURISDICTION)
@@ -143,6 +154,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
             body: normalizedBody,
             mediaUrl,
             images: images ? (images as any) : undefined,
+            ...(linkPreview ? { linkPreview: linkPreview as Prisma.InputJsonValue } : {}),
             type,
             title,
             provinceCode,
@@ -802,11 +814,27 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         if (title !== undefined || mediaUrl !== undefined) return reply.code(400).send({ error: 'poll_update_not_supported' })
       }
 
+      const normalizedUpdatedBody = rawBody !== undefined ? (post.type === 'article' ? deps.sanitizeRichTextHtml(rawBody) : deps.sanitizePlainText(rawBody)) : undefined
+      const updatedPreviewSource = normalizedUpdatedBody !== undefined
+        ? post.type === 'article'
+          ? deps.stripHtmlToPlainText(normalizedUpdatedBody)
+          : normalizedUpdatedBody
+        : undefined
+      const updatedFirstUrl = updatedPreviewSource ? extractFirstPostUrl(updatedPreviewSource) : null
+      const updatedLinkPreview = updatedPreviewSource !== undefined
+        ? updatedFirstUrl
+          ? await deps.resolveLinkPreview(updatedFirstUrl, userId).catch(() => null)
+          : null
+        : undefined
+
       const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const postData: Prisma.PostUpdateInput = {}
         if (title !== undefined) postData.title = title
-        if (rawBody !== undefined) postData.body = post.type === 'article' ? deps.sanitizeRichTextHtml(rawBody) : deps.sanitizePlainText(rawBody)
+        if (normalizedUpdatedBody !== undefined) postData.body = normalizedUpdatedBody
         if (mediaUrl !== undefined) postData.mediaUrl = mediaUrl
+        if (updatedLinkPreview !== undefined) {
+          postData.linkPreview = updatedLinkPreview ? (updatedLinkPreview as Prisma.InputJsonValue) : Prisma.DbNull
+        }
         if (showBusinessAuthor !== undefined) postData.showBusinessAuthor = Boolean(post.businessId && showBusinessAuthor)
 
         const updatedPost = await tx.post.update({

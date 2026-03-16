@@ -440,6 +440,7 @@ import {
   createMessageLinkPreviewHelpers,
   formatEventPreviewDate,
   formatMarketplacePrice,
+  normalizeStoredLinkPreview,
   truncatePreviewText,
 } from './messageLinkPreviewHelpers.js'
 import { createMessageFormattingHelpers } from './messageFormattingHelpers.js'
@@ -3905,6 +3906,7 @@ const POST_INCLUDE = {
 const {
   canViewerAccessPostForPreview,
   normalizeMessageLinkPath,
+  resolveLinkPreview,
   resolveMessageLinkPreview,
 } = createMessageLinkPreviewHelpers({
   civilPublicHost: CIVIL_PUBLIC_HOST,
@@ -3919,6 +3921,7 @@ const {
     }
   },
   getProvinceDisplayName,
+  isPrivateOrLocalNetworkUrl,
   isPostHiddenFromViewer: (post: unknown, blockState: unknown) => isPostHiddenFromViewer(post as any, blockState as any),
   loadViewerBlockState,
   normalizeMediaUrl,
@@ -3940,6 +3943,14 @@ type FormattedPost = {
   body: string
   mediaUrl: string | null
   images: string[] | null
+  linkPreview: {
+    kind: string
+    title: string
+    description: string | null
+    url: string
+    imageUrl: string | null
+    meta: string | null
+  } | null
   createdAt: Date
   updatedAt: Date
   jurisdiction: string
@@ -4335,6 +4346,7 @@ function formatPost(
     body: post.type === 'article' ? sanitizeRichTextHtml(post.body) : sanitizePlainText(post.body),
     mediaUrl: normalizeMediaUrl(post.mediaUrl ?? null),
     images: (post.images as string[] | null)?.map(normalizeMediaUrl).filter((url): url is string => url !== null) ?? null,
+    linkPreview: normalizeStoredLinkPreview((post as any).linkPreview ?? null, normalizeMediaUrl),
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
     jurisdiction: post.jurisdiction,
@@ -5162,8 +5174,10 @@ registerPostInteractionRoutes(app, {
   parseCommunityMeta,
   refreshCommentAggregates,
   refreshPostAggregates,
+  resolveLinkPreview,
   sanitizePlainText,
   sanitizeRichTextHtml,
+  stripHtmlToPlainText,
   truncatePushBody,
   withSchemaGuard,
 })
@@ -5186,6 +5200,8 @@ registerPostReadRoutes(app, {
   parseFeedRankCursor,
   rankFeedPosts,
   recordUserPostImpressions,
+  resolveLinkPreview,
+  stripHtmlToPlainText,
   syncLegacyParentFamilyFeedPosts,
   withSchemaGuard,
 })
@@ -5490,6 +5506,7 @@ registerMessagesCoreRoutes(app, {
   loadParentFamilyConversationThreads,
   loadViewerAuthContext,
   normalizeMessageLinkPath,
+  resolveLinkPreview,
   resolveActingUserId,
   resolveMessageLinkPreview,
   resolveUserId,

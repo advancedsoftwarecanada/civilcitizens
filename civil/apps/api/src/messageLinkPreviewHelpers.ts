@@ -1,6 +1,9 @@
 import { prisma } from '@civil/db'
 import { BusinessStatus, ModerationStatus } from '@prisma/client'
 
+const HTTP_URL_REGEX = /https?:\/\/[^\s<>"']+/gi
+const TRAILING_URL_PUNCTUATION = /[)\],.!?:;]+$/
+
 const MESSAGE_LINK_PREVIEW_HOSTS = new Set([
   'dev.civilcitizens.ca',
   'civilcitizens.ca',
@@ -8,6 +11,15 @@ const MESSAGE_LINK_PREVIEW_HOSTS = new Set([
   'civilvitizens.ca',
   'www.civilvitizens.ca',
 ])
+
+export type LinkPreviewRecord = {
+  kind: string
+  title: string
+  description: string | null
+  url: string
+  imageUrl: string | null
+  meta: string | null
+}
 
 type CreateMessageLinkPreviewHelpersDeps = {
   canViewerAccessEventForPreview?: (event: any, system: any, viewerId: string | null) => boolean
@@ -18,6 +30,7 @@ type CreateMessageLinkPreviewHelpersDeps = {
   formatPost: (post: any, options?: any) => any
   getCanonicalPaths: (post: any) => { community?: string; user?: string }
   getProvinceDisplayName: (province: string) => string
+  isPrivateOrLocalNetworkUrl: (value: string) => boolean
   isPostHiddenFromViewer: (post: any, blockState: any) => boolean
   loadViewerBlockState: (userId: string | null | undefined) => Promise<any>
   normalizeMediaUrl: (url?: string | null) => string | null
@@ -27,6 +40,115 @@ type CreateMessageLinkPreviewHelpersDeps = {
   readOrganizationHeadline: (value: unknown) => string | null
   readOrganizationSystemState: (value: unknown) => any
   stripHtmlToPlainText: (value: string) => string
+}
+
+function trimPreviewUrlPunctuation(raw: string): string {
+  let value = raw.trim()
+  while (TRAILING_URL_PUNCTUATION.test(value)) {
+    const next = value.replace(TRAILING_URL_PUNCTUATION, '')
+    if (next === value) break
+    value = next
+  }
+  return value
+}
+
+export function normalizeLinkPreviewUrl(raw: string): string | null {
+  const trimmed = trimPreviewUrlPunctuation(raw)
+  if (!trimmed) return null
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    parsed.hash = ''
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+export function extractFirstHttpUrl(value: string): string | null {
+  const matches = value.match(HTTP_URL_REGEX)
+  if (!matches?.length) return null
+  for (const match of matches) {
+    const normalized = normalizeLinkPreviewUrl(match)
+    if (normalized) return normalized
+  }
+  return null
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#x2F;/gi, '/')
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function extractMetaContent(html: string, names: string[]): string | null {
+  for (const name of names) {
+    const escaped = escapeRegExp(name)
+    const patterns = [
+      new RegExp(`<meta[^>]+(?:property|name)=['"]${escaped}['"][^>]+content=['"]([^'"]+)['"][^>]*>`, 'i'),
+      new RegExp(`<meta[^>]+content=['"]([^'"]+)['"][^>]+(?:property|name)=['"]${escaped}['"][^>]*>`, 'i'),
+    ]
+    for (const pattern of patterns) {
+      const match = html.match(pattern)
+      const content = match?.[1] ? decodeHtmlEntities(match[1]).trim() : ''
+      if (content) return content
+    }
+  }
+  return null
+}
+
+function extractTitle(html: string): string | null {
+  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  const title = match?.[1] ? decodeHtmlEntities(match[1]).replace(/\s+/g, ' ').trim() : ''
+  return title || null
+}
+
+function resolveLinkPreviewAssetUrl(candidate: string | null | undefined, baseUrl: string): string | null {
+  const raw = candidate?.trim()
+  if (!raw) return null
+  try {
+    const resolved = new URL(raw, baseUrl)
+    if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return null
+    return resolved.toString()
+  } catch {
+    return null
+  }
+}
+
+export function normalizeStoredLinkPreview(
+  value: unknown,
+  normalizeMediaUrl: (url?: string | null) => string | null,
+): LinkPreviewRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const rawUrl = typeof record.url === 'string' ? record.url.trim() : ''
+  const url = rawUrl.startsWith('/') ? rawUrl : normalizeLinkPreviewUrl(rawUrl)
+  const title = typeof record.title === 'string' ? record.title.trim() : ''
+  if (!url || !title) return null
+
+  const description = typeof record.description === 'string' && record.description.trim().length ? record.description.trim() : null
+  const meta = typeof record.meta === 'string' && record.meta.trim().length ? record.meta.trim() : null
+  const kind = typeof record.kind === 'string' && record.kind.trim().length ? record.kind.trim() : 'link'
+  const imageCandidate = typeof record.imageUrl === 'string' ? record.imageUrl.trim() : null
+
+  return {
+    kind,
+    title,
+    description,
+    url,
+    imageUrl: normalizeMediaUrl(imageCandidate),
+    meta,
+  }
 }
 
 export function createMessageLinkPreviewHelpers(deps: CreateMessageLinkPreviewHelpersDeps) {
@@ -66,6 +188,65 @@ export function createMessageLinkPreviewHelpers(deps: CreateMessageLinkPreviewHe
 
     const path = `${parsed.pathname || '/'}${parsed.search || ''}`
     return path.replace(/#.*/, '')
+  }
+
+  async function resolveExternalLinkPreview(rawUrl: string): Promise<LinkPreviewRecord | null> {
+    const normalizedUrl = normalizeLinkPreviewUrl(rawUrl)
+    if (!normalizedUrl || deps.isPrivateOrLocalNetworkUrl(normalizedUrl)) return null
+
+    let response: Response
+    try {
+      response = await fetch(normalizedUrl, {
+        headers: {
+          accept: 'text/html,application/xhtml+xml',
+          'user-agent': `CivilCitizensLinkPreview/1.0 (+https://${deps.civilPublicHost})`,
+        },
+        redirect: 'follow',
+        signal: AbortSignal.timeout(5000),
+      })
+    } catch {
+      return null
+    }
+
+    if (!response.ok) return null
+
+    const finalUrl = normalizeLinkPreviewUrl(response.url || normalizedUrl)
+    if (!finalUrl || deps.isPrivateOrLocalNetworkUrl(finalUrl)) return null
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase()
+    if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+      return null
+    }
+
+    const contentLength = Number(response.headers.get('content-length') || '0')
+    if (Number.isFinite(contentLength) && contentLength > 512_000) {
+      return null
+    }
+
+    const html = await response.text().catch(() => '')
+    if (!html.trim()) return null
+
+    const ogTitle = extractMetaContent(html, ['og:title', 'twitter:title'])
+    const ogDescription = extractMetaContent(html, ['og:description', 'twitter:description', 'description'])
+    const ogImage = extractMetaContent(html, ['og:image', 'twitter:image'])
+    const ogSiteName = extractMetaContent(html, ['og:site_name'])
+    const title = truncatePreviewText(ogTitle || extractTitle(html) || new URL(finalUrl).hostname.replace(/^www\./i, ''), 120)
+
+    if (!title) return null
+
+    const description = truncatePreviewText(ogDescription || '', 220) || null
+    const imageUrl = resolveLinkPreviewAssetUrl(ogImage, finalUrl)
+    const hostname = new URL(finalUrl).hostname.replace(/^www\./i, '')
+    const meta = truncatePreviewText(ogSiteName || hostname, 80) || null
+
+    return {
+      kind: 'link',
+      title,
+      description,
+      url: finalUrl,
+      imageUrl,
+      meta,
+    }
   }
 
   async function canViewerAccessPostForPreview(post: any, viewerId: string | null): Promise<boolean> {
@@ -497,12 +678,21 @@ export function createMessageLinkPreviewHelpers(deps: CreateMessageLinkPreviewHe
     return null
   }
 
+  async function resolveLinkPreview(url: string, viewerId: string | null) {
+    const normalizedPath = normalizeMessageLinkPath(url)
+    if (normalizedPath) {
+      return resolveMessageLinkPreview(normalizedPath, viewerId)
+    }
+    return resolveExternalLinkPreview(url)
+  }
+
   return {
     canViewerAccessEventForPreview,
     canViewerAccessPostForPreview,
     formatEventPreviewDate,
     formatMarketplacePrice,
     normalizeMessageLinkPath,
+    resolveLinkPreview,
     resolveMessageLinkPreview,
     truncatePreviewText,
   }

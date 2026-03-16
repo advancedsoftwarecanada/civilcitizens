@@ -165,6 +165,7 @@ model Post {
   type           String        @default("post")
   mediaUrl       String?
   images         Json?
+  linkPreview    Json?
   seoSlug        String?       @unique
   jurisdiction   String        @default("self")
   provinceCode   String?

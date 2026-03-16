@@ -27,7 +27,9 @@ import ShareSendModal from './ShareSendModal'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildPostShareTarget } from '../_lib/shareTarget'
 import CivilLinkPreviewList from './CivilLinkPreviewList'
-import { stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
+import LinkPreviewCard from './LinkPreviewCard'
+import LinkifiedText from './LinkifiedText'
+import { linkifyUrlsInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
 import PostReactionBar from './PostReactionBar'
 import PollCard from './PollCard'
 
@@ -112,6 +114,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
   const bodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post.body), [post.body])
   const articleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post.body), [post.body])
+  const linkedArticleBody = useMemo(() => linkifyUrlsInHtml(articleBodyWithoutCivilLinks), [articleBodyWithoutCivilLinks])
   const sharedPostBodyWithoutCivilLinks = useMemo(
     () => (post.sharedPost ? stripCivilUrlsFromText(post.sharedPost.body) : ''),
     [post.sharedPost],
@@ -502,7 +505,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                     <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
                       <div
                         className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}
-                        dangerouslySetInnerHTML={{ __html: articleBodyWithoutCivilLinks }}
+                        dangerouslySetInnerHTML={{ __html: linkedArticleBody }}
                       />
                     </Link>
                     {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
@@ -518,9 +521,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               bodyWithoutCivilLinks ? (
                 <div className="space-y-3">
                   <div className="relative">
-                    <Link href={postUrl} className={clsx('block whitespace-pre-wrap text-slate-800 hover:text-slate-900', shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
-                      {bodyWithoutCivilLinks}
-                    </Link>
+                    <div className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
+                      <LinkifiedText text={bodyWithoutCivilLinks} className="whitespace-pre-wrap text-slate-800" />
+                    </div>
                     {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
                   </div>
                   {shouldClampFeedBody ? (
@@ -534,9 +537,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               bodyWithoutCivilLinks ? (
                 <div className="space-y-3">
                   <div className="relative">
-                    <Link href={postUrl} className={clsx('block whitespace-pre-wrap text-slate-800 hover:text-slate-900', shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
-                      {bodyWithoutCivilLinks}
-                    </Link>
+                    <div className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
+                      <LinkifiedText text={bodyWithoutCivilLinks} className="whitespace-pre-wrap text-slate-800" />
+                    </div>
                     {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
                   </div>
                   {shouldClampFeedBody ? (
@@ -548,7 +551,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               ) : null
             )}
 
-            <CivilLinkPreviewList body={post.body} />
+            {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} />}
 
             {post.type === 'poll' && post.poll ? (
               <PollCard post={post} viewerId={viewerId} onPostUpdate={onUpdate} />
