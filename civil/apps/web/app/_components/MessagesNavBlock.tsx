@@ -62,7 +62,17 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
 
   return (
     <section className={clsx('surface-card p-4', className)}>
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Messages</h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Messages</h2>
+        {footerAction ? (
+          <Link
+            href={footerAction.href}
+            className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:border-[var(--cc-primary)]/35 hover:bg-[var(--cc-primary)]/5"
+          >
+            {footerAction.label}
+          </Link>
+        ) : null}
+      </div>
       <div className={clsx('grid gap-2', allowedItems.length >= 5 ? 'grid-cols-5' : allowedItems.length === 4 ? 'grid-cols-4' : allowedItems.length === 3 ? 'grid-cols-3' : 'grid-cols-2')}>
         {allowedItems.map((item) => {
           const isActive = item.key === resolvedActive
@@ -89,16 +99,6 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
           )
         })}
       </div>
-      {footerAction ? (
-        <div className="mt-3 flex justify-end">
-          <Link
-            href={footerAction.href}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-          >
-            {footerAction.label}
-          </Link>
-        </div>
-      ) : null}
     </section>
   )
 }
