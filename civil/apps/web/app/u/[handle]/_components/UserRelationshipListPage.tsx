@@ -311,7 +311,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
   const filteredItems = useMemo(() => {
     if (isContactKind) return visibleContactItems
     const normalizedQuery = searchQuery.trim().toLowerCase()
-    if (!normalizedQuery || kind !== 'friends') return items
+    if (!normalizedQuery) return items
 
     return items.filter((entry) => {
       if (!('handle' in entry)) return true
@@ -449,7 +449,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
                       name={entry.name}
                       avatarUrl={entry.avatarUrl}
                       coverUrl={entry.coverUrl}
-                      contextLabel={kind === 'connections' ? 'Network' : 'Friend'}
+                      contextLabel="Friend"
                       since={entry.since ?? null}
                     />
                   </div>
@@ -475,6 +475,10 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
                     subtitle="Organization"
                   />
                 )
+              }
+
+              if (!('provinceCode' in entry) || !('communitySlug' in entry)) {
+                return null
               }
 
               return (
