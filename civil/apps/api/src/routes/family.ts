@@ -190,67 +190,36 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
 
     let user: any = null
     let familyMemberDrafts: Array<{ id: string; createdAt: Date; updatedAt: Date }> = []
-    let usedLegacyFamilyMemberSchema = false
-
-    try {
-      user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          name: true,
-          communityMeta: true,
-          familyMembers: {
-            orderBy: [{ createdAt: 'asc' }],
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              dateOfBirth: true,
-              relationship: true,
-              friendCode: true,
-              username: true,
-              avatarUrl: true,
-              coverUrl: true,
-              allowChildOwnMediaEdits: true,
-              allowChildOwnUsernameEdits: true,
-              notifyParentOnMediaChanges: true,
-              suspendedAt: true,
-              suspendedById: true,
-              suspensionNote: true,
-              createdAt: true,
-              updatedAt: true,
-            },
+    user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        communityMeta: true,
+        familyMembers: {
+          orderBy: [{ createdAt: 'asc' }],
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            dateOfBirth: true,
+            relationship: true,
+            friendCode: true,
+            username: true,
+            avatarUrl: true,
+            coverUrl: true,
+            allowChildOwnMediaEdits: true,
+            allowChildOwnUsernameEdits: true,
+            notifyParentOnMediaChanges: true,
+            suspendedAt: true,
+            suspendedById: true,
+            suspensionNote: true,
+            createdAt: true,
+            updatedAt: true,
           },
         },
-      })
-    } catch (error) {
-      if (!deps.isFamilyMemberTableMissing(error)) throw error
-      usedLegacyFamilyMemberSchema = true
-      user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          name: true,
-          communityMeta: true,
-          familyMembers: {
-            orderBy: [{ createdAt: 'asc' }],
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              dateOfBirth: true,
-              relationship: true,
-              friendCode: true,
-              suspendedAt: true,
-              suspendedById: true,
-              suspensionNote: true,
-              createdAt: true,
-              updatedAt: true,
-            },
-          },
-        },
-      })
-    }
+      },
+    })
 
     if (!user) return reply.code(404).send({ error: 'not_found' })
 
@@ -375,16 +344,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       childSafetyInfoUrl: '/privacy',
       pendingDraft: familyMemberDrafts[0] ? deps.normalizeFamilyMemberDraftSummary(familyMemberDrafts[0]) : null,
       members: user.familyMembers.map((member: any) => {
-        const summary = deps.normalizeFamilyMemberSummary(
-          usedLegacyFamilyMemberSchema
-            ? {
-                ...member,
-                username: deps.getLegacyFamilyMemberStoredUsername(user?.communityMeta, member.id),
-                ...deps.getLegacyFamilyMemberStoredProfileMedia(user?.communityMeta, member.id),
-                ...deps.getLegacyFamilyMemberPermissionSettings(user?.communityMeta, member.id),
-              }
-            : member,
-        )
+        const summary = deps.normalizeFamilyMemberSummary(member)
         return { ...summary, latestPostAt: latestPostAtByMember.get(member.id) ?? null }
       }),
       profileRelationships: mergedProfileRelationships,
@@ -604,76 +564,29 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     const parsedDate = deps.parseFamilyMemberDateOfBirth(parse.data.dateOfBirth)
     if ('error' in parsedDate) return reply.code(400).send({ error: parsedDate.error })
 
-    let member: any
-    try {
-      const friendCode = await deps.generateUniqueFamilyFriendCode()
-      member = await prisma.familyMember.create({
-        data: {
-          parentId: userId,
-          firstName: parse.data.firstName.trim(),
-          lastName: parse.data.lastName.trim(),
-          dateOfBirth: parsedDate.dateOfBirth,
-          relationship: parse.data.relationship,
-          allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
-          allowChildOwnUsernameEdits: parse.data.allowChildOwnUsernameEdits,
-          allowChildAudioCalls: parse.data.allowChildAudioCalls,
-          allowChildVideoCalls: parse.data.allowChildVideoCalls,
-          notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
-          friendCode,
-          username: await deps.generateUniqueFamilyMemberUsername(parse.data.firstName.trim(), parse.data.lastName.trim()),
-        },
-        select: {
-          id: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
-          username: true, avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, allowChildOwnUsernameEdits: true,
-          allowChildAudioCalls: true, allowChildVideoCalls: true, notifyParentOnMediaChanges: true,
-          suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
-        },
-      })
-    } catch (error) {
-      if (!deps.isFamilyMemberTableMissing(error)) throw error
-      const friendCode = await deps.generateUniqueFamilyFriendCode()
-      const createdLegacyMember = await prisma.familyMember.create({
-        data: {
-          parentId: userId,
-          firstName: parse.data.firstName.trim(),
-          lastName: parse.data.lastName.trim(),
-          dateOfBirth: parsedDate.dateOfBirth,
-          relationship: parse.data.relationship,
-          friendCode,
-        },
-        select: {
-          id: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
-          suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
-        },
-      })
-
-      const baseMeta = deps.readBaseCommunityMeta(parent.communityMeta ?? null)
-      deps.writeLegacyFamilyMemberPermissionSettings(baseMeta, createdLegacyMember.id, {
+    const friendCode = await deps.generateUniqueFamilyFriendCode()
+    const member = await prisma.familyMember.create({
+      data: {
+        parentId: userId,
+        firstName: parse.data.firstName.trim(),
+        lastName: parse.data.lastName.trim(),
+        dateOfBirth: parsedDate.dateOfBirth,
+        relationship: parse.data.relationship,
         allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
         allowChildOwnUsernameEdits: parse.data.allowChildOwnUsernameEdits,
         allowChildAudioCalls: parse.data.allowChildAudioCalls,
         allowChildVideoCalls: parse.data.allowChildVideoCalls,
         notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
-      })
-      deps.writeLegacyFamilyMemberUsername(
-        baseMeta,
-        createdLegacyMember.id,
-        await deps.generateUniqueFamilyMemberUsername(parse.data.firstName.trim(), parse.data.lastName.trim()),
-      )
-      await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta as Prisma.InputJsonValue } })
-
-      member = {
-        ...createdLegacyMember,
-        username: deps.getLegacyFamilyMemberStoredUsername(baseMeta as Prisma.JsonValue, createdLegacyMember.id),
-        avatarUrl: null,
-        coverUrl: null,
-        allowChildOwnMediaEdits: parse.data.allowChildOwnMediaEdits,
-        allowChildOwnUsernameEdits: parse.data.allowChildOwnUsernameEdits,
-        allowChildAudioCalls: parse.data.allowChildAudioCalls,
-        allowChildVideoCalls: parse.data.allowChildVideoCalls,
-        notifyParentOnMediaChanges: parse.data.notifyParentOnMediaChanges,
-      }
-    }
+        friendCode,
+        username: await deps.generateUniqueFamilyMemberUsername(parse.data.firstName.trim(), parse.data.lastName.trim()),
+      },
+      select: {
+        id: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
+        username: true, avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, allowChildOwnUsernameEdits: true,
+        allowChildAudioCalls: true, allowChildVideoCalls: true, notifyParentOnMediaChanges: true,
+        suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
+      },
+    })
 
     return reply.code(201).send({ ok: true, member: deps.normalizeFamilyMemberSummary(member) })
   })
@@ -1321,25 +1234,15 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         if (taken) return reply.code(409).send({ error: 'family_member_username_taken' })
       }
 
-      let updatedMember: any = null
-      try {
-        updatedMember = await prisma.familyMember.update({
-          where: { id: authContext.member.id },
-          data: { username },
-          select: {
-            id: true, parentId: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
-            username: true, avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, allowChildOwnUsernameEdits: true,
-            notifyParentOnMediaChanges: true, suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
-          },
-        })
-      } catch (error) {
-        if (!deps.isFamilyMemberTableMissing(error)) throw error
-        const parent = await prisma.user.findUnique({ where: { id: authContext.member.parentId }, select: { communityMeta: true } })
-        const baseMeta = deps.readBaseCommunityMeta(parent?.communityMeta ?? null)
-        deps.writeLegacyFamilyMemberUsername(baseMeta, authContext.member.id, username)
-        await prisma.user.update({ where: { id: authContext.member.parentId }, data: { communityMeta: baseMeta as Prisma.InputJsonValue } })
-        updatedMember = { ...authContext.member, username }
-      }
+      const updatedMember = await prisma.familyMember.update({
+        where: { id: authContext.member.id },
+        data: { username },
+        select: {
+          id: true, parentId: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
+          username: true, avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, allowChildOwnUsernameEdits: true,
+          notifyParentOnMediaChanges: true, suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
+        },
+      })
 
       if (!updatedMember) return reply.code(500).send({ error: 'family_member_username_update_failed' })
 
@@ -1394,23 +1297,6 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       throw error
     }
 
-    try {
-      const parent = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
-      const baseMeta = deps.readBaseCommunityMeta(parent?.communityMeta ?? null)
-      const nextSettings =
-        baseMeta.familyMemberSettings && typeof baseMeta.familyMemberSettings === 'object' && !Array.isArray(baseMeta.familyMemberSettings)
-          ? { ...(baseMeta.familyMemberSettings as Record<string, unknown>) }
-          : null
-
-      if (nextSettings && Object.prototype.hasOwnProperty.call(nextSettings, params.data.id)) {
-        delete nextSettings[params.data.id]
-        baseMeta.familyMemberSettings = nextSettings
-        await prisma.user.update({ where: { id: userId }, data: { communityMeta: baseMeta as Prisma.InputJsonValue } })
-      }
-    } catch (error) {
-      req.log.error({ err: error, memberId: params.data.id, userId }, 'family_member_legacy_settings_cleanup_failed')
-    }
-
     return reply.send({ ok: true })
   })
 
@@ -1447,29 +1333,15 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       const displayUrl = deps.extractVariantUrl(asset.variants, body.data.category === 'avatar' ? ['avatar@2x', 'avatar@1x', 'avatar-thumb'] : ['cover-xl', 'cover-lg', 'cover-md'])
       if (!displayUrl) return reply.code(400).send({ error: 'display_variant_missing' })
 
-      let updatedMember: any
-      try {
-        updatedMember = await prisma.familyMember.update({
-          where: { id: member.id },
-          data: body.data.category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
-          select: {
-            id: true, parentId: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
-            avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, notifyParentOnMediaChanges: true,
-            suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
-          },
-        })
-      } catch (error) {
-        if (!deps.isFamilyMemberTableMissing(error)) throw error
-        const legacyUpdatedMember = await prisma.familyMember.update({
-          where: { id: member.id },
-          data: body.data.category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
-          select: {
-            id: true, parentId: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
-            avatarUrl: true, coverUrl: true, suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
-          },
-        })
-        updatedMember = { ...legacyUpdatedMember, allowChildOwnMediaEdits: member.allowChildOwnMediaEdits, notifyParentOnMediaChanges: member.notifyParentOnMediaChanges }
-      }
+      const updatedMember = await prisma.familyMember.update({
+        where: { id: member.id },
+        data: body.data.category === 'avatar' ? { avatarUrl: displayUrl } : { coverUrl: displayUrl },
+        select: {
+          id: true, parentId: true, firstName: true, lastName: true, dateOfBirth: true, relationship: true, friendCode: true,
+          avatarUrl: true, coverUrl: true, allowChildOwnMediaEdits: true, notifyParentOnMediaChanges: true,
+          suspendedAt: true, suspendedById: true, suspensionNote: true, createdAt: true, updatedAt: true,
+        },
+      })
 
       if (authContext.actor === 'family_member' && updatedMember.notifyParentOnMediaChanges) {
         void deps.createNotificationRecord({
