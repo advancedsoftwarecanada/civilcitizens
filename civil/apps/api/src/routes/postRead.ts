@@ -162,6 +162,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
 
       let memberBusinessIds: string[] = []
       let viewerFeedContext: any = null
+      let topLevelCommunityTargets: Array<{ provinceCode: string; communitySlug: string }> = []
       if (province && community) {
         where.visibility = 'public'
       } else if (!viewerId) {
@@ -183,6 +184,22 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
       if (viewerId && !province && !community) {
         viewerFeedContext = await deps.loadViewerFeedContext(viewerId)
         memberBusinessIds = [...viewerFeedContext.memberBusinessIds]
+
+        if (scope === 'communities') {
+          const follows = await prisma.communityFollow.findMany({
+            where: { userId: viewerId },
+            orderBy: [{ home: 'desc' }, { createdAt: 'asc' }],
+            select: { provinceCode: true, communitySlug: true },
+          })
+
+          const seenCommunityKeys = new Set<string>()
+          topLevelCommunityTargets = follows.filter((follow: { provinceCode: string; communitySlug: string }) => {
+            const key = `${follow.provinceCode}:${follow.communitySlug}`
+            if (seenCommunityKeys.has(key)) return false
+            seenCommunityKeys.add(key)
+            return true
+          })
+        }
 
         const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
         where.AND = [
@@ -275,28 +292,29 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         }
 
         if (includeCommunities) {
-          const prioritizedCommunityKeys = Array.from(
-            new Set(
-              [
-                viewerFeedContext.homeCommunityKey,
-                ...viewerFeedContext.nearbyCommunityKeys,
-                ...viewerFeedContext.regionalCommunityKeys,
-                ...viewerFeedContext.followedCommunityKeys,
-              ].filter((key): key is string => Boolean(key)),
-            ),
-          )
-
-          if (prioritizedCommunityKeys.length) {
-            for (const key of prioritizedCommunityKeys) {
-              const [provinceCode, communitySlug] = key.split(':')
-              if (!provinceCode || !communitySlug) continue
-              accessibleFilters.push({ provinceCode, communitySlug })
+          if (scope === 'communities') {
+            for (const target of topLevelCommunityTargets) {
+              accessibleFilters.push({ provinceCode: target.provinceCode, communitySlug: target.communitySlug })
             }
           } else {
-            accessibleFilters.push({
-              provinceCode: { not: null },
-              communitySlug: { not: null },
-            })
+            const communityKeys = Array.from(
+              new Set(
+                [
+                  viewerFeedContext.homeCommunityKey,
+                  ...viewerFeedContext.nearbyCommunityKeys,
+                  ...viewerFeedContext.regionalCommunityKeys,
+                  ...viewerFeedContext.followedCommunityKeys,
+                ].filter((key): key is string => Boolean(key)),
+              ),
+            )
+
+            if (communityKeys.length) {
+              for (const key of communityKeys) {
+                const [provinceCode, communitySlug] = key.split(':')
+                if (!provinceCode || !communitySlug) continue
+                accessibleFilters.push({ provinceCode, communitySlug })
+              }
+            }
           }
         }
 
@@ -362,8 +380,13 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         } else if (scope === 'network') {
           lastViewedAt = null
         } else if (scope === 'communities') {
-          const user = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedCommunitiesAt: true } })
-          lastViewedAt = user?.lastViewedCommunitiesAt ?? null
+          try {
+            const user = await prisma.user.findUnique({ where: { id: viewerId }, select: { lastViewedCommunitiesAt: true } })
+            lastViewedAt = user?.lastViewedCommunitiesAt ?? null
+          } catch (error) {
+            console.error('Unable to read lastViewedCommunitiesAt for communities feed', error)
+            lastViewedAt = null
+          }
           if (!cursor) {
             prisma.user.update({ where: { id: viewerId }, data: { lastViewedCommunitiesAt: new Date() } }).catch(console.error)
           }
@@ -399,6 +422,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         })
         items = ranked.items
         nextCursor = ranked.nextCursor
+
       } else {
         const queryResult = await prisma.post.findMany({
           where,
@@ -412,6 +436,47 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
           nextCursor = next.id
         }
         items = queryResult
+      }
+
+      if (!items.length && scope === 'communities' && !province && !community && topLevelCommunityTargets.length) {
+        const fallbackAnd: Prisma.PostWhereInput[] = [
+          {
+            OR: topLevelCommunityTargets.map((target) => ({
+              provinceCode: target.provinceCode,
+              communitySlug: target.communitySlug,
+            })),
+          },
+          {
+            OR: [
+              { visibility: 'public' },
+              {
+                visibility: 'members',
+                businessId: { in: memberBusinessIds },
+              },
+            ],
+          },
+        ]
+
+        const followScopedCommunityWhere: Prisma.PostWhereInput = { AND: fallbackAnd }
+        if (jurisdiction) {
+          followScopedCommunityWhere.jurisdiction = jurisdiction
+        }
+        if (!allowHomeFamilyPosts) {
+          followScopedCommunityWhere.type = { not: deps.FAMILY_FEED_POST_TYPE }
+        }
+        deps.applyVisibleModerationFiltersToPostWhere(followScopedCommunityWhere, viewerBlockState)
+
+        const fallbackQueryResult = await prisma.post.findMany({
+          where: followScopedCommunityWhere,
+          take: limit + 1,
+          orderBy: [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }],
+          include: deps.POST_INCLUDE,
+        })
+        if (fallbackQueryResult.length > limit) {
+          fallbackQueryResult.pop()
+        }
+        items = fallbackQueryResult
+        nextCursor = undefined
       }
 
       const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(
