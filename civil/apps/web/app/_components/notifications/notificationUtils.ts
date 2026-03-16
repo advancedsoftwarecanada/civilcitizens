@@ -320,11 +320,12 @@ export function isActionableNotification(notification: NotificationItem): boolea
 }
 
 export function getActorDisplayName(notification: NotificationItem) {
-  if (notification.type === 'family_child_media_change') {
-    const childDisplayName = typeof notification.payload?.childDisplayName === 'string' ? notification.payload.childDisplayName.trim() : ''
-    if (childDisplayName) return childDisplayName
-  }
-  if (notification.type === 'family_child_friend_removed' || notification.type === 'family_child_blocked_user') {
+  if (
+    notification.type === 'family_child_media_change' ||
+    notification.type === 'family_child_username_change' ||
+    notification.type === 'family_child_friend_removed' ||
+    notification.type === 'family_child_blocked_user'
+  ) {
     const childDisplayName = typeof notification.payload?.childDisplayName === 'string' ? notification.payload.childDisplayName.trim() : ''
     if (childDisplayName) return childDisplayName
   }
@@ -403,6 +404,10 @@ export function getNotificationMessage(notification: NotificationItem) {
     case 'family_child_media_change': {
       const categoryLabel = notification.payload?.category === 'cover' ? 'cover photo' : 'profile photo'
       return `changed their ${categoryLabel}`
+    }
+    case 'family_child_username_change': {
+      const username = typeof notification.payload?.username === 'string' ? notification.payload.username.trim() : ''
+      return username ? `changed their username to ${username}` : 'changed their username'
     }
     case 'family_child_friend_request': {
       const requesterChild = notification.payload?.requesterChild

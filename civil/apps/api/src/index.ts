@@ -1268,6 +1268,88 @@ const NOTIFICATION_SELECT = {
 
 type NotificationRecord = Prisma.NotificationGetPayload<{ select: typeof NOTIFICATION_SELECT }>
 
+function buildNotificationActorFromPayload(record: NotificationRecord) {
+  const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+    ? (record.payload as Record<string, unknown>)
+    : null
+  if (!payload) return null
+
+  const requesterChild = payload.requesterChild && typeof payload.requesterChild === 'object' && !Array.isArray(payload.requesterChild)
+    ? (payload.requesterChild as Record<string, unknown>)
+    : null
+  const childName =
+    typeof payload.childDisplayName === 'string' && payload.childDisplayName.trim()
+      ? payload.childDisplayName.trim()
+      : requesterChild && typeof requesterChild.displayName === 'string' && requesterChild.displayName.trim()
+        ? requesterChild.displayName.trim()
+        : ''
+  const childHandle =
+    typeof payload.childUsername === 'string' && payload.childUsername.trim()
+      ? payload.childUsername.trim()
+      : typeof payload.username === 'string' && payload.username.trim()
+        ? payload.username.trim()
+        : requesterChild && typeof requesterChild.username === 'string' && requesterChild.username.trim()
+          ? requesterChild.username.trim()
+          : ''
+  const childAvatarUrl =
+    typeof payload.childAvatarUrl === 'string' && payload.childAvatarUrl.trim()
+      ? normalizeMediaUrl(payload.childAvatarUrl)
+      : requesterChild && typeof requesterChild.avatarUrl === 'string' && requesterChild.avatarUrl.trim()
+        ? normalizeMediaUrl(requesterChild.avatarUrl)
+        : null
+  const childCoverUrl =
+    typeof payload.childCoverUrl === 'string' && payload.childCoverUrl.trim()
+      ? normalizeMediaUrl(payload.childCoverUrl)
+      : requesterChild && typeof requesterChild.coverUrl === 'string' && requesterChild.coverUrl.trim()
+        ? normalizeMediaUrl(requesterChild.coverUrl)
+        : null
+
+  if (!childName && !childHandle && !childAvatarUrl && !childCoverUrl) return null
+
+  return {
+    id: record.actorId ?? (typeof payload.memberId === 'string' ? payload.memberId : randomUUID()),
+    handle: childHandle,
+    name: childName || null,
+    avatarUrl: childAvatarUrl,
+    coverUrl: childCoverUrl,
+    isPremium: false,
+    isVerified: false,
+  }
+}
+
+async function loadNotificationActor(record: NotificationRecord) {
+  if (record.actorId) {
+    const actor = await prisma.user.findUnique({ where: { id: record.actorId }, select: FRIEND_USER_SELECT })
+    if (actor) return formatFriendUser(actor)
+
+    const familyMember = await prisma.familyMember.findUnique({
+      where: { id: record.actorId },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        username: true,
+        avatarUrl: true,
+        coverUrl: true,
+      },
+    })
+
+    if (familyMember) {
+      return {
+        id: familyMember.id,
+        handle: typeof familyMember.username === 'string' ? familyMember.username.trim() : '',
+        name: `${familyMember.firstName} ${familyMember.lastName}`.trim() || null,
+        avatarUrl: normalizeMediaUrl(familyMember.avatarUrl ?? null),
+        coverUrl: normalizeMediaUrl(familyMember.coverUrl ?? null),
+        isPremium: false,
+        isVerified: false,
+      }
+    }
+  }
+
+  return buildNotificationActorFromPayload(record)
+}
+
 function formatNotification(record: NotificationRecord) {
   return {
     id: record.id,
@@ -1310,6 +1392,7 @@ const {
   loadActiveAuthUserById,
   loadActiveNativePushTargets,
   loadFamilyMemberAuthViewerById,
+  loadNotificationActor,
   normalizeAttachmentList: (value) =>
     Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [],
   notificationSelect: NOTIFICATION_SELECT,
@@ -5363,6 +5446,7 @@ registerNotificationsSearchRoutes(app, {
   clearUserRealtimeOnline,
   formatFriendUser,
   formatNotification,
+  loadNotificationActor,
   markUserRealtimeOnline,
   normalizeSearchTerm,
   resolveStreamUserId,

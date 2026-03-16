@@ -161,6 +161,7 @@ type CreateNotificationHelpersDeps = {
   loadActiveAuthUserById: (userId: string) => Promise<{ id: string } | null>
   loadActiveNativePushTargets: (userId: string) => Promise<Array<{ platform: NativePushPlatform; token: string }>>
   loadFamilyMemberAuthViewerById: (memberId: string, parentId?: string | null) => Promise<{ parentId: string } | null>
+  loadNotificationActor: (record: any) => Promise<FriendUserLike | null>
   normalizeAttachmentList: (value: Prisma.JsonValue | null | undefined) => string[]
   notificationSelect: unknown
   pushAdminSecret: string
@@ -621,13 +622,7 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       suppressMobilePush?: boolean
     },
   ) {
-    let actor: FriendUserLike | null = null
-    if (record.actorId) {
-      const actorRecord = await prisma.user.findUnique({ where: { id: record.actorId }, select: deps.friendUserSelect as any })
-      if (actorRecord) {
-        actor = deps.formatFriendUser(actorRecord)
-      }
-    }
+    const actor = await deps.loadNotificationActor(record)
 
     await deps.dispatchRealtimeEvent(record.userId, {
       type: 'notification',
