@@ -791,74 +791,31 @@ const {
 })
 
 async function loadFamilyMemberSummaryForParent(memberId: string, parentId: string) {
-  try {
-    return await prisma.familyMember.findFirst({
-      where: { id: memberId, parentId },
-      select: {
-        id: true,
-        parentId: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        relationship: true,
-        friendCode: true,
-        username: true,
-        avatarUrl: true,
-        coverUrl: true,
-        allowChildOwnMediaEdits: true,
-        allowChildOwnUsernameEdits: true,
-        allowChildAudioCalls: true,
-        allowChildVideoCalls: true,
-        notifyParentOnMediaChanges: true,
-        suspendedAt: true,
-        suspendedById: true,
-        suspensionNote: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
-  } catch (error) {
-    if (!isFamilyMemberTableMissing(error)) throw error
-
-    const parent = await prisma.user.findUnique({
-      where: { id: parentId },
-      select: { communityMeta: true },
-    })
-    const legacySettings = getLegacyFamilyMemberPermissionSettings(parent?.communityMeta, memberId)
-    const legacyMedia = getLegacyFamilyMemberStoredProfileMedia(parent?.communityMeta, memberId)
-
-    const legacyMember = await prisma.familyMember.findFirst({
-      where: { id: memberId, parentId },
-      select: {
-        id: true,
-        parentId: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        relationship: true,
-        friendCode: true,
-        suspendedAt: true,
-        suspendedById: true,
-        suspensionNote: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
-
-    return legacyMember
-      ? {
-          ...legacyMember,
-          username: getLegacyFamilyMemberStoredUsername(parent?.communityMeta, memberId),
-          avatarUrl: legacyMedia.avatarUrl,
-          coverUrl: legacyMedia.coverUrl,
-          allowChildOwnMediaEdits: legacySettings.allowChildOwnMediaEdits,
-          allowChildOwnUsernameEdits: legacySettings.allowChildOwnUsernameEdits,
-          allowChildAudioCalls: legacySettings.allowChildAudioCalls,
-          allowChildVideoCalls: legacySettings.allowChildVideoCalls,
-          notifyParentOnMediaChanges: legacySettings.notifyParentOnMediaChanges,
-        }
-      : null
-  }
+  return await prisma.familyMember.findFirst({
+    where: { id: memberId, parentId },
+    select: {
+      id: true,
+      parentId: true,
+      firstName: true,
+      lastName: true,
+      dateOfBirth: true,
+      relationship: true,
+      friendCode: true,
+      username: true,
+      avatarUrl: true,
+      coverUrl: true,
+      allowChildOwnMediaEdits: true,
+      allowChildOwnUsernameEdits: true,
+      allowChildAudioCalls: true,
+      allowChildVideoCalls: true,
+      notifyParentOnMediaChanges: true,
+      suspendedAt: true,
+      suspendedById: true,
+      suspensionNote: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  })
 }
 
 async function updateFamilyMemberSummaryForParent(args: {
@@ -874,102 +831,41 @@ async function updateFamilyMemberSummaryForParent(args: {
   allowChildVideoCalls: boolean
   notifyParentOnMediaChanges: boolean
 }) {
-  try {
-    return await prisma.familyMember.update({
-      where: { id: args.memberId },
-      data: {
-        firstName: args.firstName,
-        lastName: args.lastName,
-        dateOfBirth: args.dateOfBirth,
-        relationship: args.relationship,
-        allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
-        allowChildOwnUsernameEdits: args.allowChildOwnUsernameEdits,
-        allowChildAudioCalls: args.allowChildAudioCalls,
-        allowChildVideoCalls: args.allowChildVideoCalls,
-        notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        relationship: true,
-        friendCode: true,
-        username: true,
-        avatarUrl: true,
-        coverUrl: true,
-        allowChildOwnMediaEdits: true,
-        allowChildOwnUsernameEdits: true,
-        allowChildAudioCalls: true,
-        allowChildVideoCalls: true,
-        notifyParentOnMediaChanges: true,
-        suspendedAt: true,
-        suspendedById: true,
-        suspensionNote: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
-  } catch (error) {
-    if (!isFamilyMemberTableMissing(error)) throw error
-
-    const existing = await prisma.familyMember.findFirst({
-      where: { id: args.memberId, parentId: args.parentId },
-      select: { id: true },
-    })
-    if (!existing) return null
-
-    const parent = await prisma.user.findUnique({
-      where: { id: args.parentId },
-      select: { communityMeta: true },
-    })
-    const baseMeta = readBaseCommunityMeta(parent?.communityMeta ?? null)
-    writeLegacyFamilyMemberPermissionSettings(baseMeta, args.memberId, {
+  return await prisma.familyMember.update({
+    where: { id: args.memberId },
+    data: {
+      firstName: args.firstName,
+      lastName: args.lastName,
+      dateOfBirth: args.dateOfBirth,
+      relationship: args.relationship,
       allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
       allowChildOwnUsernameEdits: args.allowChildOwnUsernameEdits,
       allowChildAudioCalls: args.allowChildAudioCalls,
       allowChildVideoCalls: args.allowChildVideoCalls,
       notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
-    })
-    await prisma.user.update({
-      where: { id: args.parentId },
-      data: {
-        communityMeta: baseMeta as Prisma.InputJsonValue,
-      },
-    })
-
-    const legacyMember = await prisma.familyMember.update({
-      where: { id: args.memberId },
-      data: {
-        firstName: args.firstName,
-        lastName: args.lastName,
-        dateOfBirth: args.dateOfBirth,
-        relationship: args.relationship,
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        relationship: true,
-        friendCode: true,
-        suspendedAt: true,
-        suspendedById: true,
-        suspensionNote: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
-
-    return {
-      ...legacyMember,
-      username: getLegacyFamilyMemberStoredUsername(parent?.communityMeta, args.memberId),
-      ...getLegacyFamilyMemberStoredProfileMedia(parent?.communityMeta, args.memberId),
-      allowChildOwnMediaEdits: args.allowChildOwnMediaEdits,
-      allowChildOwnUsernameEdits: args.allowChildOwnUsernameEdits,
-      notifyParentOnMediaChanges: args.notifyParentOnMediaChanges,
-    }
-  }
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      dateOfBirth: true,
+      relationship: true,
+      friendCode: true,
+      username: true,
+      avatarUrl: true,
+      coverUrl: true,
+      allowChildOwnMediaEdits: true,
+      allowChildOwnUsernameEdits: true,
+      allowChildAudioCalls: true,
+      allowChildVideoCalls: true,
+      notifyParentOnMediaChanges: true,
+      suspendedAt: true,
+      suspendedById: true,
+      suspensionNote: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  })
 }
 
 const {
@@ -1830,66 +1726,32 @@ const {
 })
 
 async function loadNormalizedFamilyMembersForParent(parentId: string) {
-  try {
-    const members = await prisma.familyMember.findMany({
-      where: { parentId },
-      orderBy: [{ createdAt: 'asc' }],
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        relationship: true,
-        friendCode: true,
-        username: true,
-        avatarUrl: true,
-        coverUrl: true,
-        allowChildOwnMediaEdits: true,
-        allowChildOwnUsernameEdits: true,
-        allowChildAudioCalls: true,
-        allowChildVideoCalls: true,
-        notifyParentOnMediaChanges: true,
-        suspendedAt: true,
-        suspendedById: true,
-        suspensionNote: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
-    return members.map((member: typeof members[number]) => normalizeFamilyMemberSummary(member))
-  } catch (error) {
-    if (!isFamilyMemberTableMissing(error)) throw error
-
-    const parent = await prisma.user.findUnique({
-      where: { id: parentId },
-      select: { communityMeta: true },
-    })
-    const members = await prisma.familyMember.findMany({
-      where: { parentId },
-      orderBy: [{ createdAt: 'asc' }],
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-        dateOfBirth: true,
-        relationship: true,
-        friendCode: true,
-        suspendedAt: true,
-        suspendedById: true,
-        suspensionNote: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    })
-    return members.map((member: typeof members[number]) =>
-      normalizeFamilyMemberSummary({
-        ...member,
-        username: getLegacyFamilyMemberStoredUsername(parent?.communityMeta, member.id),
-        ...getLegacyFamilyMemberStoredProfileMedia(parent?.communityMeta, member.id),
-        ...getLegacyFamilyMemberPermissionSettings(parent?.communityMeta, member.id),
-      }),
-    )
-  }
+  const members = await prisma.familyMember.findMany({
+    where: { parentId },
+    orderBy: [{ createdAt: 'asc' }],
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      dateOfBirth: true,
+      relationship: true,
+      friendCode: true,
+      username: true,
+      avatarUrl: true,
+      coverUrl: true,
+      allowChildOwnMediaEdits: true,
+      allowChildOwnUsernameEdits: true,
+      allowChildAudioCalls: true,
+      allowChildVideoCalls: true,
+      notifyParentOnMediaChanges: true,
+      suspendedAt: true,
+      suspendedById: true,
+      suspensionNote: true,
+      createdAt: true,
+      updatedAt: true,
+    },
+  })
+  return members.map((member: typeof members[number]) => normalizeFamilyMemberSummary(member))
 }
 
 
