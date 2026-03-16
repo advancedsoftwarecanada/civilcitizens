@@ -17,6 +17,20 @@ const FamilyFriendRequestInput = z
 
 type FamilyRoutesDeps = Record<string, any>
 
+type FamilyNotificationRelationship = {
+  relationship: string
+  createdAt: string
+}
+
+type ReverseStoredRelationshipRow = {
+  id: string
+  handle: string
+  name: string | null
+  avatarUrl: string | null
+  coverUrl: string | null
+  familyType: string | null
+}
+
 export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDeps) {
   function safeFormatFamilyInteractivePost(
     post: any,
@@ -98,7 +112,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     }
   }
 
-  async function loadAcceptedNotificationRelationshipMap(userId: string, excludedUserIds?: Set<string>) {
+  async function loadAcceptedNotificationRelationshipMap(userId: string, excludedUserIds?: Set<string>): Promise<Map<string, FamilyNotificationRelationship>> {
     try {
       const notifications = await prisma.notification.findMany({
         where: {
@@ -115,7 +129,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         },
       })
 
-      const relationshipMap = new Map<string, { relationship: string; createdAt: string }>()
+      const relationshipMap = new Map<string, FamilyNotificationRelationship>()
 
       for (const notification of notifications) {
         const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
@@ -142,20 +156,13 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       return relationshipMap
     } catch (error) {
       console.error('accepted_family_notification_relationships_load_failed', error)
-      return new Map<string, { relationship: string; createdAt: string }>()
+      return new Map<string, FamilyNotificationRelationship>()
     }
   }
 
-  async function loadReverseStoredProfileRelationships(userId: string, excludedUserIds?: Set<string>) {
+  async function loadReverseStoredProfileRelationships(userId: string, excludedUserIds?: Set<string>): Promise<ReverseStoredRelationshipRow[]> {
     try {
-      const rows = await prisma.$queryRaw<Array<{
-        id: string
-        handle: string
-        name: string | null
-        avatarUrl: string | null
-        coverUrl: string | null
-        familyType: string | null
-      }>>(Prisma.sql`
+      const rows = (await prisma.$queryRaw(Prisma.sql`
         SELECT DISTINCT ON (u.id)
           u.id,
           u.handle,
@@ -168,9 +175,9 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         WHERE u.id <> ${userId}
           AND rel.value->>'relatedUserId' = ${userId}
         ORDER BY u.id, u.name ASC NULLS LAST, u.handle ASC
-      `)
+      `)) as ReverseStoredRelationshipRow[]
 
-      return rows.filter((row) => !excludedUserIds?.has(row.id))
+      return rows.filter((row: ReverseStoredRelationshipRow) => !excludedUserIds?.has(row.id))
     } catch (error) {
       console.error('reverse_profile_family_relationships_load_failed', error)
       return []
@@ -330,8 +337,8 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
 
     if (reverseStoredRelationships.length > 0) {
       try {
-        const latestPostAtByUser = await deps.loadLatestPublicPostAtByUsers(reverseStoredRelationships.map((entry) => entry.id))
-        reverseStoredRelationshipItems = reverseStoredRelationships.map((relatedUser) => ({
+        const latestPostAtByUser = await deps.loadLatestPublicPostAtByUsers(reverseStoredRelationships.map((entry: ReverseStoredRelationshipRow) => entry.id))
+        reverseStoredRelationshipItems = reverseStoredRelationships.map((relatedUser: ReverseStoredRelationshipRow) => ({
           id: relatedUser.id,
           handle: relatedUser.handle,
           displayName: relatedUser.name?.trim() || relatedUser.handle,
@@ -812,18 +819,18 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
 
       const storedRelationships = deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta)
-      const storedRelationshipLabels = new Map(
+      const storedRelationshipLabels = new Map<string, string>(
         storedRelationships
           .filter((entry: any) => typeof entry?.relatedUserId === 'string' && entry.relatedUserId.trim().length > 0)
           .map((entry: any) => [entry.relatedUserId, toFamilyBadgeLabel(entry.familyType)]),
       )
-      const storedRelatedUserIds = storedRelationships.map((entry: any) => entry.relatedUserId).filter(Boolean)
+      const storedRelatedUserIds = storedRelationships.map((entry: any) => entry.relatedUserId).filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0)
       const reverseStoredRelationships = await loadReverseStoredProfileRelationships(authContext.userId)
-      const reverseStoredRelationshipTypes = new Map(reverseStoredRelationships.map((entry) => [entry.id, entry.familyType]))
+      const reverseStoredRelationshipTypes = new Map<string, string | null>(reverseStoredRelationships.map((entry: ReverseStoredRelationshipRow) => [entry.id, entry.familyType]))
       const notificationRelationships = await loadAcceptedNotificationRelationshipMap(authContext.userId)
       const notificationRelatedUserIds = [...notificationRelationships.keys()]
 
-      const relatedUserIds = Array.from(new Set([...storedRelatedUserIds, ...notificationRelatedUserIds, ...reverseStoredRelationships.map((entry) => entry.id)]))
+      const relatedUserIds = Array.from(new Set<string>([...storedRelatedUserIds, ...notificationRelatedUserIds, ...reverseStoredRelationships.map((entry: ReverseStoredRelationshipRow) => entry.id)]))
 
       await deps.syncLegacyParentFamilyFeedPosts(authContext.userId)
 
@@ -961,19 +968,19 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     })
 
     const storedRelationships = deps.getStoredProfileFamilyRelationships(targetMember.parent.communityMeta)
-    const storedRelationshipLabels = new Map(
+    const storedRelationshipLabels = new Map<string, string>(
       storedRelationships
         .filter((entry: any) => typeof entry?.relatedUserId === 'string' && entry.relatedUserId.trim().length > 0)
         .map((entry: any) => [entry.relatedUserId, toFamilyBadgeLabel(entry.familyType)]),
     )
     const reverseStoredRelationships = await loadReverseStoredProfileRelationships(targetMember.parentId)
-    const reverseStoredRelationshipTypes = new Map(reverseStoredRelationships.map((entry) => [entry.id, entry.familyType]))
+    const reverseStoredRelationshipTypes = new Map<string, string | null>(reverseStoredRelationships.map((entry: ReverseStoredRelationshipRow) => [entry.id, entry.familyType]))
     const notificationRelationships = await loadAcceptedNotificationRelationshipMap(targetMember.parentId)
-    const familyAudienceAuthorIds = Array.from(new Set([
+    const familyAudienceAuthorIds = Array.from(new Set<string>([
       targetMember.parentId,
       ...storedRelationships.map((entry: any) => entry.relatedUserId).filter(Boolean),
       ...notificationRelationships.keys(),
-      ...reverseStoredRelationships.map((entry) => entry.id),
+      ...reverseStoredRelationships.map((entry: ReverseStoredRelationshipRow) => entry.id),
     ]))
     const audiencePosts = await prisma.post.findMany({
       where: {
@@ -1065,7 +1072,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       if (!viewerUser) return reply.code(404).send({ error: 'not_found' })
 
       const relatedUserIds = Array.from(new Set(deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta).map((entry: any) => entry.relatedUserId).filter(Boolean)))
-      const activeMemberCount = await prisma.familyMember.count({ where: { parentId: authContext.userId, suspendedAt: null } }).catch((error) => {
+      const activeMemberCount = await prisma.familyMember.count({ where: { parentId: authContext.userId, suspendedAt: null } }).catch((error: unknown) => {
         if (deps.isFamilyMemberTableMissing(error)) return 0
         throw error
       })
