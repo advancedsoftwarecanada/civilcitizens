@@ -366,12 +366,12 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
           userId,
           provinceCode: province,
           communitySlug: community.slug,
-          home: true,
+          home: setAsHome,
         },
         update: {
-          home: true,
           provinceCode: province,
           communitySlug: community.slug,
+          ...(setAsHome ? { home: true } : {}),
         },
       })
     })

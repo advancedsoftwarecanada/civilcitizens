@@ -420,6 +420,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         redirectToAuthModal('login')
         return
       }
+      if (!response.ok) {
+        throw new Error(`feed_request_failed:${response.status}`)
+      }
       const data = await response.json().catch(() => ({ items: [], nextCursor: undefined, lastViewedAt: null }))
       const newItems: ApiPost[] = Array.isArray(data.items) ? (data.items as ApiPost[]) : []
 
@@ -503,9 +506,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   }, [loadPosts])
 
   useEffect(() => {
-    const isTopLevelCommunitiesFeed = scope === 'communities' && !province && !community
     const isPulseHighlightsFeed = scope === 'all' && sortMode === 'hot'
-    const shouldLoadActivity = isTopLevelCommunitiesFeed || isPulseHighlightsFeed
+    const shouldLoadActivity = isPulseHighlightsFeed
     if (!shouldLoadActivity) {
       setActivityEvents([])
       setActivityJobs([])
@@ -924,7 +926,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const isTopLevelCommunitiesFeed = scope === 'communities' && !province && !community
   const isPulseHighlightsFeed = scope === 'all' && sortMode === 'hot'
   const hasSupplementalActivity = activityItems.length > 0
-  const showSupplementalActivity = showSupplementalFeedItems && (isTopLevelCommunitiesFeed || isPulseHighlightsFeed) && hasSupplementalActivity
+  const showSupplementalActivity = showSupplementalFeedItems && isPulseHighlightsFeed && hasSupplementalActivity
   const supplementalTitle = isPulseHighlightsFeed ? 'Events and jobs in your feed' : 'Community activity'
   const supplementalDescription = isPulseHighlightsFeed
     ? 'Nearby events and open jobs surfaced alongside posts in your home feed.'
@@ -1226,20 +1228,13 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         ) : null}
 
         {showSupplementalActivity ? (
-          <section className="overflow-hidden rounded-[calc(var(--cc-radius)+4px)] border border-[var(--cc-primary)]/12 bg-[linear-gradient(180deg,rgba(255,255,255,1)_0%,rgba(249,250,251,0.98)_100%)] shadow-[0_24px_56px_rgba(15,23,42,0.08)]">
-            <div className="border-b border-slate-200/80 bg-[linear-gradient(135deg,rgba(185,28,28,0.06)_0%,rgba(255,255,255,0)_55%)] px-6 py-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--cc-primary)]">Feed</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">{supplementalTitle}</h2>
-              <p className="mt-1 max-w-2xl text-sm text-slate-600">{supplementalDescription}</p>
+          <section className="surface-card space-y-4 p-6 shadow-subtle">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--cc-primary)]">Feed</p>
+              <h2 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">{supplementalTitle}</h2>
+              <p className="mt-1 text-sm text-slate-600">{supplementalDescription}</p>
             </div>
-            <div className="px-6 py-5">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-slate-500">Ranked by recency, proximity, and activity.</p>
-                <div className="flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">
-                  <Link href="/events">Events</Link>
-                  <Link href="/work">Jobs</Link>
-                </div>
-              </div>
+            <div>
               <div className="space-y-3">
                 {activityItems.map((item) => renderSupplementalActivityCard(item))}
               </div>
@@ -1247,7 +1242,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           </section>
         ) : null}
 
-        {visiblePosts.length === 0 && !hasSupplementalActivity ? (
+        {visiblePosts.length === 0 && !showSupplementalActivity ? (
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
             {loading ? 'Loading the latest updates…' : emptyLabel}
             {!loading && emptyStateCta ? (
