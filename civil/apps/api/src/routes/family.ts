@@ -18,6 +18,24 @@ const FamilyFriendRequestInput = z
 type FamilyRoutesDeps = Record<string, any>
 
 export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDeps) {
+  function safeFormatFamilyInteractivePost(
+    post: any,
+    log: FastifyRequest['log'],
+    options: {
+      viewerId?: string
+      viewerReaction?: unknown
+      viewerPollOptionId?: unknown
+      recentComments?: unknown[]
+    },
+  ) {
+    try {
+      return deps.formatPost(post, options)
+    } catch (error) {
+      log.error({ err: error, postId: post?.id }, 'family_feed_post_format_failed')
+      return null
+    }
+  }
+
   async function loadAcceptedNotificationRelationshipMap(userId: string, excludedUserIds?: Set<string>) {
     try {
       const notifications = await prisma.notification.findMany({
@@ -672,16 +690,29 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         include: deps.POST_INCLUDE,
       })
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(authContext.userId, posts.map((post: any) => post.id), 5)
+      let reactionsByPost: Record<string, unknown> = {}
+      let pollSelectionsByPost: Record<string, unknown> = {}
+      let recentCommentsByPost: Record<string, unknown[]> = {}
+      try {
+        const formattingContext = await deps.loadViewerPostFormattingContext(authContext.userId, posts.map((post: any) => post.id), 5)
+        reactionsByPost = formattingContext.reactionsByPost
+        pollSelectionsByPost = formattingContext.pollSelectionsByPost
+        recentCommentsByPost = formattingContext.recentCommentsByPost
+      } catch (error) {
+        req.log.error({ err: error }, 'family_feed_context_load_failed')
+      }
+
       return reply.send({
-        items: posts.map((post: any) =>
-          deps.formatPost(post, {
-            viewerId: authContext.userId,
-            viewerReaction: reactionsByPost[post.id] ?? null,
-            viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
-            recentComments: recentCommentsByPost[post.id] ?? [],
-          }),
-        ),
+        items: posts
+          .map((post: any) =>
+            safeFormatFamilyInteractivePost(post, req.log, {
+              viewerId: authContext.userId,
+              viewerReaction: reactionsByPost[post.id] ?? null,
+              viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
+              recentComments: recentCommentsByPost[post.id] ?? [],
+            }),
+          )
+          .filter(Boolean),
       })
     }
 
@@ -690,11 +721,26 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
       return reply.code(authContext.actor === 'user' ? 400 : 404).send({ error: authContext.actor === 'user' ? 'family_member_required' : 'family_member_not_found' })
     }
 
+    await deps.syncLegacyParentFamilyFeedPosts(targetMember.parentId)
+
     const rows = await prisma.post.findMany({
       where: { authorId: targetMember.parentId, type: deps.FAMILY_FEED_POST_TYPE, title: deps.buildFamilyFeedPostTitle(targetMember.id) },
       orderBy: [{ createdAt: 'desc' }], take: 40,
-      select: { id: true, body: true, images: true, createdAt: true, updatedAt: true },
+      include: deps.POST_INCLUDE,
     })
+
+    const viewerId = authContext.actor === 'user' ? authContext.userId : undefined
+    let reactionsByPost: Record<string, unknown> = {}
+    let pollSelectionsByPost: Record<string, unknown> = {}
+    let recentCommentsByPost: Record<string, unknown[]> = {}
+    try {
+      const formattingContext = await deps.loadViewerPostFormattingContext(viewerId, rows.map((row: any) => row.id), 5)
+      reactionsByPost = formattingContext.reactionsByPost
+      pollSelectionsByPost = formattingContext.pollSelectionsByPost
+      recentCommentsByPost = formattingContext.recentCommentsByPost
+    } catch (error) {
+      req.log.error({ err: error, memberId: targetMember.id }, 'family_member_feed_context_load_failed')
+    }
 
     let parentRows: any[] = []
     try {
@@ -710,7 +756,16 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     const normalizedMember = deps.normalizeFamilyMemberSummary(targetMember)
     const mirroredKeys = new Set(rows.map((row: any) => deps.buildLegacyFamilyFeedMirrorKey({ memberId: targetMember.id, body: row.body, createdAt: row.createdAt, images: row.images })))
     const items = [
-      ...rows.map((row: any) => deps.formatChildFamilyFeedPost({ id: row.id, familyMemberId: targetMember.id, body: row.body, images: row.images, createdAt: row.createdAt, updatedAt: row.updatedAt }, normalizedMember)),
+      ...rows.map((row: any) => deps.formatChildFamilyFeedPost(
+        { id: row.id, familyMemberId: targetMember.id, body: row.body, images: row.images, createdAt: row.createdAt, updatedAt: row.updatedAt },
+        normalizedMember,
+        safeFormatFamilyInteractivePost(row, req.log, {
+          viewerId,
+          viewerReaction: reactionsByPost[row.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[row.id] ?? null,
+          recentComments: recentCommentsByPost[row.id] ?? [],
+        }),
+      )),
       ...parentRows
         .filter((row: any) => !mirroredKeys.has(deps.buildLegacyFamilyFeedMirrorKey({ memberId: row.familyMemberId, body: row.body, createdAt: row.createdAt, images: row.images })))
         .map((row: any) => deps.formatParentFamilyFeedPost(row, normalizedMember, targetMember.parent)),
@@ -786,12 +841,34 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
         visibility: 'public',
         jurisdiction: 'self',
       },
-      select: { id: true, body: true, images: true, createdAt: true, updatedAt: true },
+      include: deps.POST_INCLUDE,
     })
 
     const normalizedMember = deps.normalizeFamilyMemberSummary(targetMember)
+    const viewerId = authContext.actor === 'user' ? authContext.userId : undefined
+    let reactionsByPost: Record<string, unknown> = {}
+    let pollSelectionsByPost: Record<string, unknown> = {}
+    let recentCommentsByPost: Record<string, unknown[]> = {}
+    try {
+      const formattingContext = await deps.loadViewerPostFormattingContext(viewerId, [created.id], 5)
+      reactionsByPost = formattingContext.reactionsByPost
+      pollSelectionsByPost = formattingContext.pollSelectionsByPost
+      recentCommentsByPost = formattingContext.recentCommentsByPost
+    } catch (error) {
+      req.log.error({ err: error, postId: created.id }, 'family_feed_created_post_context_load_failed')
+    }
+
     return reply.code(201).send({
-      post: deps.formatChildFamilyFeedPost({ id: created.id, familyMemberId: targetMember.id, body: created.body, images: created.images, createdAt: created.createdAt, updatedAt: created.updatedAt }, normalizedMember),
+      post: deps.formatChildFamilyFeedPost(
+        { id: created.id, familyMemberId: targetMember.id, body: created.body, images: created.images, createdAt: created.createdAt, updatedAt: created.updatedAt },
+        normalizedMember,
+        safeFormatFamilyInteractivePost(created, req.log, {
+          viewerId,
+          viewerReaction: reactionsByPost[created.id] ?? null,
+          viewerPollOptionId: pollSelectionsByPost[created.id] ?? null,
+          recentComments: recentCommentsByPost[created.id] ?? [],
+        }),
+      ),
     })
   })
 

@@ -25,9 +25,13 @@ type MessagesNavBlockProps = {
   unreadCounts?: Partial<Record<MessagesNavSection, number>>
   visibleItems?: MessagesNavSection[]
   hrefOverrides?: Partial<Record<MessagesNavSection, string>>
+  footerAction?: {
+    label: string
+    href: string
+  }
 }
 
-export default function MessagesNavBlock({ active, className, onActiveChange, unreadCounts, visibleItems, hrefOverrides }: MessagesNavBlockProps) {
+export default function MessagesNavBlock({ active, className, onActiveChange, unreadCounts, visibleItems, hrefOverrides, footerAction }: MessagesNavBlockProps) {
   const [internalActive, setInternalActive] = useState<MessagesNavSection>(active ?? DEFAULT_MESSAGES_NAV_SECTION)
   const isControlled = typeof active === 'string'
   const allowedItems = useMemo(
@@ -85,6 +89,16 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
           )
         })}
       </div>
+      {footerAction ? (
+        <div className="mt-3 flex justify-end">
+          <Link
+            href={footerAction.href}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+          >
+            {footerAction.label}
+          </Link>
+        </div>
+      ) : null}
     </section>
   )
 }

@@ -4,6 +4,7 @@ export default function Loading() {
   return (
     <DashboardShell
       mainClassName="space-y-6"
+      registerRightRail={false}
       rightRail={
         <div className="space-y-6">
           <div className="surface-card h-48 animate-pulse p-5" />

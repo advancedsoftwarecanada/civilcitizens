@@ -313,8 +313,10 @@ export function createFamilyFeedHelpers(deps: CreateFamilyFeedHelpersDeps) {
       modeBand: string
       modeLabel: string
     },
+    formattedPost?: Record<string, unknown> | null,
   ) {
     return {
+      ...(formattedPost ?? {}),
       id: post.id,
       familyMemberId: post.familyMemberId,
       body: post.body,
@@ -362,10 +364,12 @@ export function createFamilyFeedHelpers(deps: CreateFamilyFeedHelpersDeps) {
       avatarUrl: string | null
       coverUrl: string | null
     },
+    formattedPost?: Record<string, unknown> | null,
   ) {
     const authorName = author.name?.trim() || author.handle || 'Parent'
 
     return {
+      ...(formattedPost ?? {}),
       id: post.id,
       familyMemberId: post.familyMemberId,
       body: post.body,

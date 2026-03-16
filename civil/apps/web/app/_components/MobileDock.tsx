@@ -24,6 +24,7 @@ import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { RightRail } from './RightRail'
 import CommunityRightRailClient from './CommunityRightRailClient'
+import { useRightRailRegistry } from './RightRailRegistry'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { readMarketCart } from '../market/_lib/cart'
 import { restoreParentAuthSession } from '../_lib/authSession'
@@ -148,6 +149,7 @@ function MobileDrawerProfileCardSkeleton() {
 }
 
 export default function MobileDock() {
+  const { activeRightRail } = useRightRailRegistry()
   const pathname = usePathname()
   const router = useRouter()
   const cachedViewer = useViewerStore((s) => s.me)
@@ -478,6 +480,10 @@ export default function MobileDock() {
   const showProfileCardSkeleton = hasSession && !effectiveViewer && !familyView
 
   const morePanelContent = useMemo(() => {
+    if (activeRightRail?.content) {
+      return activeRightRail.content
+    }
+
     if (pathname === '/home') {
       return <RightRail showOrganizations showRsvps />
     }
@@ -559,7 +565,7 @@ export default function MobileDock() {
       return <CommunityRightRailClient province={communityRoute.province} municipality={communityRoute.municipality} />
     }
     return <RightRail />
-  }, [pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute, userRelationshipRoute])
+  }, [activeRightRail, pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute, userRelationshipRoute])
 
   if (!hydrated || !hasSession) {
     return null

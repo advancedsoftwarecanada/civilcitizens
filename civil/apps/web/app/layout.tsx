@@ -24,6 +24,7 @@ import PlaceholderSanitizer from './_components/PlaceholderSanitizer'
 import AppScrollbar from './_components/AppScrollbar'
 import PushRedirectDebugModal from './_components/PushRedirectDebugModal'
 import WebPushDebugModal from './_components/WebPushDebugModal'
+import { RightRailRegistryProvider } from './_components/RightRailRegistry'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
@@ -140,11 +141,13 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
             <ScrollManager />
           </Suspense>
           <IosOpenInAppBanner />
-          <AppFrame modal={modal}>{children}</AppFrame>
-          <IncomingFamilyCallOverlay />
-          <IncomingMessageCallOverlay />
-          <AppScrollbar />
-          <MobileDockVisibility />
+          <RightRailRegistryProvider>
+            <AppFrame modal={modal}>{children}</AppFrame>
+            <IncomingFamilyCallOverlay />
+            <IncomingMessageCallOverlay />
+            <AppScrollbar />
+            <MobileDockVisibility />
+          </RightRailRegistryProvider>
           <Toasts />
         </div>
       </body>

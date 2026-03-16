@@ -2524,8 +2524,8 @@ export default function UserPostsPage({ params }: PageProps) {
 
                     const content = (
                       <>
-                        <div className="flex items-start justify-between gap-3">
-                          <span className={clsx('min-h-[2.75rem] text-[13px] font-medium leading-5 tracking-normal', card.href ? 'text-slate-500 transition group-hover:text-slate-700' : 'text-slate-500')}>
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <span className={clsx('min-h-[2.75rem] min-w-0 flex-1 text-[13px] font-medium leading-5 tracking-normal', card.href ? 'text-slate-500 transition group-hover:text-slate-700' : 'text-slate-500')}>
                             {card.label}
                           </span>
                           <span className={clsx('inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500', card.href ? 'transition group-hover:border-slate-300 group-hover:text-slate-700' : '')}>
