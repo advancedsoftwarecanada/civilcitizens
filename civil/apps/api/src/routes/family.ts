@@ -506,7 +506,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     if ('error' in parsedDate) return reply.code(400).send({ error: parsedDate.error })
 
     try {
-      const existingMember = await prisma.familyMember.findFirst({ where: { id: params.data.id, parentId: userId }, select: { id: true } })
+      const existingMember = await deps.loadFamilyMemberSummaryForParent(params.data.id, userId)
       if (existingMember) {
         const member = await deps.updateFamilyMemberSummaryForParent({
           memberId: params.data.id,
@@ -686,13 +686,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     const parse = FamilyMemberInput.safeParse(req.body ?? {})
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-    let existing: any
-    try {
-      existing = await prisma.familyMember.findFirst({ where: { id: params.data.id, parentId: userId }, select: { id: true } })
-    } catch (error) {
-      if (deps.isFamilyMemberTableMissing(error)) return reply.code(503).send({ error: 'family_mode_not_available' })
-      throw error
-    }
+    const existing = await deps.loadFamilyMemberSummaryForParent(params.data.id, userId)
     if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
 
     const parsedDate = deps.parseFamilyMemberDateOfBirth(parse.data.dateOfBirth)
@@ -729,10 +723,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
     try {
-      const existing = await prisma.familyMember.findFirst({
-        where: { id: params.data.id, parentId: userId },
-        select: { id: true, firstName: true, lastName: true, suspendedAt: true },
-      })
+      const existing = await deps.loadFamilyMemberSummaryForParent(params.data.id, userId)
       if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
       if (existing.suspendedAt) return reply.code(400).send({ error: 'family_member_already_suspended' })
 
@@ -759,7 +750,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
 
     try {
-      const existing = await prisma.familyMember.findFirst({ where: { id: params.data.id, parentId: userId }, select: { id: true, suspendedAt: true } })
+      const existing = await deps.loadFamilyMemberSummaryForParent(params.data.id, userId)
       if (!existing) return reply.code(404).send({ error: 'family_member_not_found' })
       if (!existing.suspendedAt) return reply.code(400).send({ error: 'family_member_not_suspended' })
 
