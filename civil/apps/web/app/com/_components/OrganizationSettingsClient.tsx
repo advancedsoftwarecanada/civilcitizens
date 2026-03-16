@@ -14,6 +14,14 @@ import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import Modal from '../../_components/Modal'
 import PhotoUpdateModal from '../../_components/PhotoUpdateModal'
 import RichTextEditor from '../../_components/RichTextEditor'
+import { CanadianAddressEditor } from '../../_components/address/CanadianAddressEditor'
+import {
+  createEmptyCanadianAddress,
+  formatCanadianAddressInline,
+  hasCanadianAddressValue,
+  normalizeCanadianAddress,
+  type CanadianAddress,
+} from '../../_lib/canadianAddresses'
 import { computeFallbackCropArea, generateCroppedImageBlob, readImageDimensions } from '../../_lib/imageCrop'
 
 type MeResponse = {
@@ -279,7 +287,7 @@ export default function OrganizationSettingsClient({
   const [details, setDetails] = useState({
     phone: '',
     websiteUrl: '',
-    address: '',
+    addressDetails: createEmptyCanadianAddress() as CanadianAddress,
     schedule: '',
   })
   const [detailsDirty, setDetailsDirty] = useState(false)
@@ -577,7 +585,7 @@ export default function OrganizationSettingsClient({
     setDetails({
       phone: org.phone ?? '',
       websiteUrl: org.websiteUrl ?? '',
-      address: org.address ?? '',
+      addressDetails: normalizeCanadianAddress(org.addressDetails ?? null),
       schedule: org.schedule ?? '',
     })
     setDetailsDirty(false)
@@ -602,7 +610,7 @@ export default function OrganizationSettingsClient({
         body: JSON.stringify({
           phone: details.phone.trim() ? details.phone.trim() : null,
           websiteUrl: details.websiteUrl.trim() ? details.websiteUrl.trim() : null,
-          address: details.address.trim() ? details.address.trim() : null,
+          addressDetails: hasCanadianAddressValue(details.addressDetails) ? normalizeCanadianAddress(details.addressDetails) : null,
           schedule: details.schedule.trim() ? details.schedule.trim() : null,
         }),
       })
@@ -632,7 +640,7 @@ export default function OrganizationSettingsClient({
     } finally {
       setSaving(false)
     }
-  }, [details.address, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
+  }, [details.addressDetails, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
 
   const saveOrganizationName = useCallback(async () => {
     if (!token) {
@@ -1869,19 +1877,27 @@ export default function OrganizationSettingsClient({
           </label>
         </div>
 
-        <label className="grid gap-1 text-sm font-medium text-slate-700">
-          Address
-          <input
-            value={details.address}
-            onChange={(e) => {
-              setDetails((prev) => ({ ...prev, address: e.target.value }))
+        <div className="space-y-3">
+          <div>
+            <p className="text-sm font-medium text-slate-700">Address</p>
+            <p className="mt-1 text-xs text-slate-500">Use the structured Canadian address fields below so the public profile and map stay consistent.</p>
+            {!hasCanadianAddressValue(details.addressDetails) && org?.address ? (
+              <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Legacy address on file: {formatCanadianAddressInline({ line1: org.address }) ?? org.address}
+              </p>
+            ) : null}
+          </div>
+
+          <CanadianAddressEditor
+            value={details.addressDetails}
+            onChange={(next) => {
+              setDetails((prev) => ({ ...prev, addressDetails: next }))
               setDetailsDirty(true)
             }}
             disabled={saving}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
-            placeholder="(optional)"
+            mode="organization"
           />
-        </label>
+        </div>
 
         <label className="grid gap-1 text-sm font-medium text-slate-700">
           Schedule

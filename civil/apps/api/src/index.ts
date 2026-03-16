@@ -6365,6 +6365,21 @@ const CommunityOrgSettingsBody = z.object({
   phone: z.string().trim().min(1).max(50).optional().nullable(),
   websiteUrl: z.string().trim().max(2048).optional().nullable(),
   address: z.string().trim().max(500).optional().nullable(),
+  addressDetails: z
+    .object({
+      name: z.string().trim().max(120).optional().nullable(),
+      label: z.string().trim().max(80).optional().nullable(),
+      line1: z.string().trim().max(180).optional().nullable(),
+      line2: z.string().trim().max(180).optional().nullable(),
+      city: z.string().trim().max(120).optional().nullable(),
+      province: z.string().trim().max(64).optional().nullable(),
+      postalCode: z.string().trim().max(32).optional().nullable(),
+      country: z.string().trim().max(2).optional().nullable(),
+      latitude: z.coerce.number().finite().min(-90).max(90).optional().nullable(),
+      longitude: z.coerce.number().finite().min(-180).max(180).optional().nullable(),
+    })
+    .optional()
+    .nullable(),
   schedule: z.string().trim().max(2000).optional().nullable(),
   isPublic: z.boolean().optional(),
 })
@@ -6898,6 +6913,7 @@ type CommunityOrgRecord = {
   phone?: string | null
   websiteUrl?: string | null
   address?: string | null
+  addressDetails?: unknown
   schedule?: string | null
   status: BusinessStatus
   moderationStatus?: ModerationStatus
@@ -6908,6 +6924,140 @@ type CommunityOrgRecord = {
   createdAt: Date
   updatedAt: Date
   _count?: { follows?: number }
+}
+
+type StructuredAddressRecord = {
+  name?: string | null
+  label?: string | null
+  line1?: string | null
+  line2?: string | null
+  city?: string | null
+  province?: string | null
+  postalCode?: string | null
+  country?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+type SavedShippingAddressRecord = StructuredAddressRecord & {
+  id: string
+  isDefault: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+function normalizeStructuredAddressText(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, maxLength) : null
+}
+
+function normalizeStructuredAddressCoordinate(value: unknown, min: number, max: number) {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed) && parsed >= min && parsed <= max) return parsed
+  }
+  return null
+}
+
+function normalizeStructuredAddressProvince(value: unknown) {
+  const raw = normalizeStructuredAddressText(value, 64)
+  return raw ? raw.toUpperCase() : null
+}
+
+function normalizeStructuredAddressPostalCode(value: unknown) {
+  const raw = normalizeStructuredAddressText(value, 32)
+  if (!raw) return null
+  const compact = raw.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+  if (compact.length <= 3) return compact
+  return `${compact.slice(0, 3)} ${compact.slice(3)}`
+}
+
+function normalizeStructuredAddressInput(value: unknown): StructuredAddressRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const next: StructuredAddressRecord = {
+    name: normalizeStructuredAddressText(record.name, 120),
+    label: normalizeStructuredAddressText(record.label, 80),
+    line1: normalizeStructuredAddressText(record.line1, 180),
+    line2: normalizeStructuredAddressText(record.line2, 180),
+    city: normalizeStructuredAddressText(record.city, 120),
+    province: normalizeStructuredAddressProvince(record.province),
+    postalCode: normalizeStructuredAddressPostalCode(record.postalCode),
+    country: normalizeStructuredAddressText(record.country, 2)?.toUpperCase() ?? 'CA',
+    latitude: normalizeStructuredAddressCoordinate(record.latitude, -90, 90),
+    longitude: normalizeStructuredAddressCoordinate(record.longitude, -180, 180),
+  }
+  const hasValue = Object.values(next).some((entry) => entry !== null && entry !== '')
+  return hasValue ? next : null
+}
+
+function formatStructuredAddress(value: StructuredAddressRecord | null | undefined) {
+  if (!value) return null
+  const lines = [value.line1, value.line2].filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+  const cityLine = [value.city, value.province, value.postalCode].filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0).join(', ')
+  if (cityLine) lines.push(cityLine)
+  if (value.country && value.country.trim()) lines.push(value.country.trim())
+  return lines.length ? lines.join(', ') : null
+}
+
+function readOrganizationAddressDetails(metadata: unknown): StructuredAddressRecord | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const value = (metadata as Record<string, unknown>).addressDetails
+  return normalizeStructuredAddressInput(value)
+}
+
+function mergeOrganizationAddressDetailsIntoMetadata(metadata: unknown, value: StructuredAddressRecord | null): Prisma.InputJsonValue {
+  const base = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? ({ ...(metadata as Record<string, unknown>) } as Record<string, unknown>) : {}
+  if (value) base.addressDetails = value
+  else delete base.addressDetails
+  return base as Prisma.InputJsonValue
+}
+
+function readMarketShippingAddresses(meta: Prisma.JsonValue | null | undefined): SavedShippingAddressRecord[] {
+  const base = readBaseCommunityMeta(meta)
+  const market = base.market
+  if (!market || typeof market !== 'object' || Array.isArray(market)) return []
+  const shippingAddresses = (market as Record<string, unknown>).shippingAddresses
+  if (!Array.isArray(shippingAddresses)) return []
+
+  const items = shippingAddresses
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+      const record = entry as Record<string, unknown>
+      const id = normalizeStructuredAddressText(record.id, 64)
+      if (!id) return null
+      const normalized = normalizeStructuredAddressInput(record)
+      if (!normalized) return null
+      return {
+        ...normalized,
+        id,
+        isDefault: Boolean(record.isDefault),
+        createdAt: normalizeStructuredAddressText(record.createdAt, 64) ?? new Date(0).toISOString(),
+        updatedAt: normalizeStructuredAddressText(record.updatedAt, 64) ?? new Date(0).toISOString(),
+      } satisfies SavedShippingAddressRecord
+    })
+    .filter((entry): entry is SavedShippingAddressRecord => Boolean(entry))
+
+  if (!items.length) return []
+  const hasDefault = items.some((entry) => entry.isDefault)
+  return items.map((entry, index) => ({ ...entry, isDefault: hasDefault ? entry.isDefault : index === 0 }))
+}
+
+function mergeMarketShippingAddressesIntoCommunityMeta(
+  meta: Prisma.JsonValue | null | undefined,
+  items: SavedShippingAddressRecord[],
+): Prisma.InputJsonValue {
+  const base = readBaseCommunityMeta(meta)
+  const market = base.market && typeof base.market === 'object' && !Array.isArray(base.market)
+    ? ({ ...(base.market as Record<string, unknown>) } as Record<string, unknown>)
+    : {}
+  if (items.length) market.shippingAddresses = items
+  else delete market.shippingAddresses
+  if (Object.keys(market).length) base.market = market
+  else delete base.market
+  return base as Prisma.InputJsonValue
 }
 
 function readOrganizationHeadline(metadata: unknown): string | null {
@@ -6948,6 +7098,7 @@ function mergeOrganizationShopPaymentsStateIntoMetadata(metadata: unknown, next:
 }
 
 function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boolean, viewerRole: 'OWNER' | 'MANAGER' | null = null) {
+  const addressDetails = org.addressDetails ? normalizeStructuredAddressInput(org.addressDetails) : readOrganizationAddressDetails(org.metadata)
   return {
     id: org.id,
     ownerId: org.ownerId,
@@ -6960,7 +7111,8 @@ function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boole
     description: org.description ? sanitizePlainText(org.description) : null,
     phone: org.phone ?? null,
     websiteUrl: org.websiteUrl ?? null,
-    address: org.address ?? null,
+    address: org.address ?? formatStructuredAddress(addressDetails),
+    addressDetails,
     schedule: org.schedule ?? null,
     status: org.status,
     isVerified: org.isVerified,
@@ -7822,13 +7974,16 @@ registerOrganizationCoreRoutes(app, {
   enqueueContentAiScanForOrganization,
   ensureUniqueCommunityOrgSlug,
   findCommunity,
+  formatStructuredAddress,
   isBusinessHiddenFromViewer,
   loadViewerAuthContext,
   loadViewerBlockState,
+  mergeOrganizationAddressDetailsIntoMetadata,
   mergeOrganizationSystemStateIntoMetadata,
   moderationLockedErrorCode,
   normalizeMediaUrl,
   normalizeProvinceCode,
+  normalizeStructuredAddressInput,
   readOrganizationSystemState,
   resolveUserId,
   sanitizePlainText,
@@ -8022,15 +8177,37 @@ const MarketCheckoutBody = z.object({
   shippingAddress: z
     .object({
       name: z.string().trim().min(1).max(120).optional(),
+      label: z.string().trim().max(80).optional(),
       line1: z.string().trim().min(1).max(120).optional(),
       line2: z.string().trim().max(120).optional().nullable(),
       city: z.string().trim().min(1).max(80).optional(),
       province: z.string().trim().min(1).max(80).optional(),
       postalCode: z.string().trim().min(1).max(32).optional(),
       country: z.string().trim().min(2).max(2).optional().default('CA'),
+      latitude: z.coerce.number().finite().min(-90).max(90).optional().nullable(),
+      longitude: z.coerce.number().finite().min(-180).max(180).optional().nullable(),
     })
     .optional()
     .nullable(),
+})
+
+const MarketShippingAddressBody = z.object({
+  id: z.string().trim().min(1).max(64).optional(),
+  label: z.string().trim().max(80).optional().nullable(),
+  name: z.string().trim().min(1).max(120),
+  line1: z.string().trim().min(1).max(180),
+  line2: z.string().trim().max(180).optional().nullable(),
+  city: z.string().trim().min(1).max(120),
+  province: z.string().trim().min(1).max(64),
+  postalCode: z.string().trim().min(1).max(32),
+  country: z.string().trim().min(2).max(2).default('CA'),
+  latitude: z.coerce.number().finite().min(-90).max(90).optional().nullable(),
+  longitude: z.coerce.number().finite().min(-180).max(180).optional().nullable(),
+  isDefault: z.boolean().optional().default(false),
+})
+
+const MarketShippingAddressParams = z.object({
+  addressId: z.string().trim().min(1).max(64),
 })
 
 const CANADA_TAX_REGION_CODES = new Set(['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT'])
@@ -8694,6 +8871,8 @@ async function readViewerCommunityFollows(userId: string): Promise<Array<{ provi
 
 registerMarketStorefrontRoutes(app, {
   MarketCheckoutBody,
+  MarketShippingAddressBody,
+  MarketShippingAddressParams,
   MarketOrderParams,
   MarketOrdersQuery,
   MarketProductParams,
@@ -8702,9 +8881,11 @@ registerMarketStorefrontRoutes(app, {
   ensureCitizenMarketplaceTables,
   ensureOrganizationShopTables,
   loadViewerBlockState,
+  mergeMarketShippingAddressesIntoCommunityMeta,
   normalizeMediaUrl,
   parseMarketCursor,
   parseTaxRatePct,
+  readMarketShippingAddresses,
   readGalleryUrls,
   readViewerCommunityFollows,
   resolveTaxRegionCode,

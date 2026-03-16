@@ -16,7 +16,7 @@ export default function MarketAccountPage() {
         <div className="mt-1 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold text-slate-900">Orders And Shipping</h1>
-            <p className="mt-1 text-sm text-slate-500">Review your orders and keep your saved shipping address current.</p>
+            <p className="mt-1 text-sm text-slate-500">Review your orders and manage the saved shipping addresses on your buyer account.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
