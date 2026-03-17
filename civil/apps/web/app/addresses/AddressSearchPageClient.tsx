@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import { HiOutlineCheckBadge, HiOutlineChevronDown, HiOutlineHeart, HiOutlineSparkles } from 'react-icons/hi2'
 import Block from '../_components/Block'
 import DashboardShell from '../_components/DashboardShell'
+import Modal from '../_components/Modal'
 import { AddressDirectionsMap } from '../_components/map/AddressDirectionsMap'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import {
@@ -266,6 +267,9 @@ export default function AddressSearchPageClient() {
   const [originMenuOpen, setOriginMenuOpen] = useState(false)
   const [originLoading, setOriginLoading] = useState(false)
   const [originError, setOriginError] = useState<string | null>(null)
+  const [favoriteAddModalOpen, setFavoriteAddModalOpen] = useState(false)
+  const [favoriteRemoveModalOpen, setFavoriteRemoveModalOpen] = useState(false)
+  const [favoriteNickname, setFavoriteNickname] = useState('')
   const [resolvedOrigin, setResolvedOrigin] = useState<ResolvedOrigin | null>(null)
   const [travelSummary, setTravelSummary] = useState<TravelSummary | null>(null)
   const [routeCoordinates, setRouteCoordinates] = useState<Array<[number, number]> | null>(null)
@@ -461,6 +465,12 @@ export default function AddressSearchPageClient() {
       (initialLatitude !== null && initialLongitude !== null && (initialLabel || initialAddress || initialQuery)),
   )
 
+  useEffect(() => {
+    if (!favoriteAddModalOpen) {
+      setFavoriteNickname(destinationLabel)
+    }
+  }, [destinationLabel, favoriteAddModalOpen])
+
   const resolveSavedOrigin = useCallback(async (option: OriginOption) => {
     if (!option.address) return
     setOriginLoading(true)
@@ -556,23 +566,46 @@ export default function AddressSearchPageClient() {
     [resolveSavedOrigin],
   )
 
-  const handleSaveFavorite = useCallback(() => {
-    const nextFavorite = {
-      id: currentFavoriteId,
-      label: destinationLabel,
-      address: (selectedDestination?.displayName ?? initialAddress) || null,
-      latitude: selectedDestination?.latitude ?? initialLatitude,
-      longitude: selectedDestination?.longitude ?? initialLongitude,
-      savedAt: new Date().toISOString(),
-    } satisfies FavoriteAddress
+  const handleFavoriteAddConfirm = useCallback(() => {
+    const trimmedNickname = favoriteNickname.trim()
+    if (!trimmedNickname) return
 
     setFavoriteAddresses((current) => {
+      const nextFavorite = {
+        id: currentFavoriteId,
+        label: trimmedNickname,
+        address: (selectedDestination?.displayName ?? initialAddress) || null,
+        latitude: selectedDestination?.latitude ?? initialLatitude,
+        longitude: selectedDestination?.longitude ?? initialLongitude,
+        savedAt: new Date().toISOString(),
+      } satisfies FavoriteAddress
+
       if (current.some((entry) => entry.id === nextFavorite.id)) return current
       const next = [nextFavorite, ...current].slice(0, 12)
       writeFavoriteAddresses(next)
       return next
     })
-  }, [currentFavoriteId, destinationLabel, initialAddress, initialLatitude, initialLongitude, selectedDestination])
+    setFavoriteAddModalOpen(false)
+  }, [currentFavoriteId, favoriteNickname, initialAddress, initialLatitude, initialLongitude, selectedDestination])
+
+  const handleFavoriteRemoveConfirm = useCallback(() => {
+    setFavoriteAddresses((current) => {
+      const next = current.filter((entry) => entry.id !== currentFavoriteId)
+      writeFavoriteAddresses(next)
+      return next
+    })
+    setFavoriteRemoveModalOpen(false)
+  }, [currentFavoriteId])
+
+  const handleFavoriteButtonClick = useCallback(() => {
+    if (!canSaveFavorite) return
+    if (isFavorite) {
+      setFavoriteRemoveModalOpen(true)
+      return
+    }
+    setFavoriteNickname(destinationLabel)
+    setFavoriteAddModalOpen(true)
+  }, [canSaveFavorite, destinationLabel, isFavorite])
 
   const rightRail = useMemo(
     () => <AddressPageRightRail homeAddress={homeAddress} nextAddress={nextAddress} favoriteAddresses={favoriteAddresses} />,
@@ -630,12 +663,12 @@ export default function AddressSearchPageClient() {
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               type="button"
-              onClick={handleSaveFavorite}
-              disabled={!canSaveFavorite || isFavorite}
-              className={`inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-semibold shadow-sm transition ${!canSaveFavorite ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : isFavorite ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-white text-slate-700 hover:border-[var(--cc-primary)]/50 hover:text-[var(--cc-primary)]'}`}
+              onClick={handleFavoriteButtonClick}
+              disabled={!canSaveFavorite}
+              className={`inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-semibold shadow-sm transition ${!canSaveFavorite ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400' : isFavorite ? 'border-rose-200 bg-rose-50 text-rose-700 hover:border-rose-300 hover:bg-rose-100' : 'border-slate-200 bg-white text-slate-700 hover:border-[var(--cc-primary)]/50 hover:text-[var(--cc-primary)]'}`}
             >
               <HiOutlineHeart className="h-4 w-4" />
-              <span>{isFavorite ? 'Saved Favorite' : 'Save Favorite'}</span>
+              <span>{isFavorite ? 'Remove Favorite' : 'Save Favorite'}</span>
             </button>
 
             <div className="relative">
@@ -702,6 +735,60 @@ export default function AddressSearchPageClient() {
           />
         </section>
       </div>
+
+      <Modal open={favoriteAddModalOpen} onClose={() => setFavoriteAddModalOpen(false)} title="Add To Favorites" maxWidthClassName="max-w-md">
+        <div className="space-y-4">
+          <label className="block space-y-2">
+            <span className="text-sm font-semibold text-slate-900">Give a nickname?</span>
+            <input
+              type="text"
+              value={favoriteNickname}
+              onChange={(event) => setFavoriteNickname(event.target.value)}
+              placeholder="Home, Mom, Cottage"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)]/60"
+            />
+          </label>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setFavoriteAddModalOpen(false)}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleFavoriteAddConfirm}
+              disabled={!favoriteNickname.trim()}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${favoriteNickname.trim() ? 'bg-slate-950 text-white hover:bg-slate-800' : 'cursor-not-allowed bg-slate-200 text-slate-500'}`}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={favoriteRemoveModalOpen} onClose={() => setFavoriteRemoveModalOpen(false)} title="Remove Favorite" maxWidthClassName="max-w-md">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">Remove this address from your favorites?</p>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={() => setFavoriteRemoveModalOpen(false)}
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleFavoriteRemoveConfirm}
+              className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-rose-500"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      </Modal>
     </DashboardShell>
   )
 }
