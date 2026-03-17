@@ -6441,8 +6441,39 @@ const CommunityOrgCreateBody = z.object({
   description: z.string().trim().max(2000).optional(),
 })
 
+const CommunityOrgDraftBody = z.object({
+  name: z.string().trim().min(3).max(160).optional(),
+  slug: z.string().trim().min(1).max(80).optional(),
+  type: z
+    .enum([
+      'LOCAL_BUSINESS',
+      'NON_PROFIT',
+      'COMMUNITY_GROUP',
+      'EDUCATIONAL',
+      'RELIGIOUS',
+      'GOVERNMENT',
+      'ARTS_CULTURE',
+      'SPORTS_RECREATION',
+    ])
+    .optional(),
+  description: z.string().trim().max(2000).optional(),
+})
+
 const CommunityOrgSettingsBody = z.object({
   name: z.string().trim().min(3).max(160).optional(),
+  slug: z.string().trim().min(1).max(80).optional(),
+  type: z
+    .enum([
+      'LOCAL_BUSINESS',
+      'NON_PROFIT',
+      'COMMUNITY_GROUP',
+      'EDUCATIONAL',
+      'RELIGIOUS',
+      'GOVERNMENT',
+      'ARTS_CULTURE',
+      'SPORTS_RECREATION',
+    ])
+    .optional(),
   headline: z.string().trim().max(60).optional().nullable(),
   description: z.string().trim().max(50000).optional().nullable(),
   logoMediaId: z.string().trim().min(3).optional(),
@@ -8176,6 +8207,7 @@ async function generateUniqueCommunityOrgSlug({
 
 registerOrganizationCoreRoutes(app, {
   CommunityOrgCreateBody,
+  CommunityOrgDraftBody,
   CommunityOrgListQuery,
   CommunityOrgMemberParams,
   CommunityOrgParams,
