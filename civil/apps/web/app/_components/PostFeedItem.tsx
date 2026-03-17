@@ -150,6 +150,12 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         id: post.author.id,
         label: authorDisplayName || post.author.handle,
       }
+  const writtenByBlockTarget = {
+    type: 'user' as const,
+    id: post.author.id,
+    label: formatDisplayName(post.author.name) || post.author.handle,
+  }
+  const moderationBlockTarget = showOrganizationAuthorBox ? writtenByBlockTarget : blockTarget
   const authorActions = isAuthor
     ? [
         {
@@ -461,8 +467,14 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         isVerified={isVerifiedAuthor}
         isBusiness={isBusinessAuthor}
         cardContentClassName="pr-14"
-        trailing={showOrganizationAuthorBox ? <PostAuthorMiniCard author={post.author} className="hidden w-[210px] md:block" /> : null}
-        afterHeader={showOrganizationAuthorBox ? <div className="flex justify-end md:hidden"><PostAuthorMiniCard author={post.author} className="w-full max-w-[220px]" /></div> : null}
+        trailing={null}
+        afterHeader={
+          showOrganizationAuthorBox ? (
+            <div className="flex justify-center">
+              <PostAuthorMiniCard author={post.author} className="w-full max-w-[320px]" />
+            </div>
+          ) : null
+        }
         headerOverlay={
           <div className="absolute right-3 top-3 z-30">
             <ContentModerationMenu
@@ -476,7 +488,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                       targetLabel: reportTargetLabel,
                     }
               }
-              blockTarget={isAuthor ? null : blockTarget}
+              blockTarget={isAuthor ? null : moderationBlockTarget}
               buttonLabel={isAuthor ? 'Post actions' : 'Post settings'}
               onReported={() => {
                 onDelete?.(post.id)

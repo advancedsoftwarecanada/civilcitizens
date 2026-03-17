@@ -206,6 +206,21 @@ export default function Home() {
           <p className="mt-10 text-slate-700 max-w-3xl mx-auto">
             A home for Canadian creators and local reporting — grounded in community context.
           </p>
+
+          <div className="mt-8 max-w-4xl mx-auto space-y-4">
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 shadow-subtle">
+              <Image
+                src="/eda-example-ontario.jpg"
+                alt="Ontario electoral district example"
+                width={1600}
+                height={900}
+                className="h-auto w-full"
+              />
+            </div>
+            <p className="text-base sm:text-lg text-slate-700 max-w-3xl mx-auto">
+              Civil is organized by Electoral Districts to help mobilize Citizens in a naturally productive community.
+            </p>
+          </div>
         </div>
       </section>
 
