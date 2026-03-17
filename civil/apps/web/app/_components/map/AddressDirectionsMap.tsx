@@ -55,6 +55,8 @@ const IDLE_ZOOM_WITH_ORIGIN = 14
 const ACTIVE_NAV_ZOOM = 19.4
 const ACTIVE_NAV_PITCH = 58
 const ACTIVE_NAV_FALLBACK_BEARING = -18
+const ACTIVE_NAV_LOOKAHEAD_POINTS = 6
+const LIVE_MARKER_ANIMATION_MS = 900
 
 function normalizeHeading(value: number) {
   const normalized = value % 360
@@ -111,6 +113,46 @@ function calculateBearingDegrees(start: [number, number], end: [number, number])
   const y = Math.sin(deltaLng) * Math.cos(endLat)
   const x = Math.cos(startLat) * Math.sin(endLat) - Math.sin(startLat) * Math.cos(endLat) * Math.cos(deltaLng)
   return normalizeHeading((Math.atan2(y, x) * 180) / Math.PI)
+}
+
+function normalizeBearingDelta(from: number, to: number) {
+  const delta = (to - from + 540) % 360 - 180
+  return delta
+}
+
+function blendBearing(from: number, to: number, factor: number) {
+  return normalizeHeading(from + normalizeBearingDelta(from, to) * factor)
+}
+
+function findClosestRouteCoordinateIndex(routeCoordinates: Array<[number, number]>, point: { latitude: number; longitude: number }) {
+  let closestIndex = 0
+  let closestDistance = Number.POSITIVE_INFINITY
+
+  routeCoordinates.forEach((coordinate, index) => {
+    const distance = calculateDistanceMeters(
+      { latitude: coordinate[1], longitude: coordinate[0] },
+      { latitude: point.latitude, longitude: point.longitude },
+    )
+    if (distance < closestDistance) {
+      closestDistance = distance
+      closestIndex = index
+    }
+  })
+
+  return closestIndex
+}
+
+function resolveRouteFollowBearing(point: { latitude: number; longitude: number }, routeCoordinates: Array<[number, number]> | null | undefined) {
+  if (!routeCoordinates || routeCoordinates.length < 2) return null
+
+  const closestIndex = findClosestRouteCoordinateIndex(routeCoordinates, point)
+  const startIndex = Math.min(closestIndex, routeCoordinates.length - 2)
+  const endIndex = Math.min(startIndex + ACTIVE_NAV_LOOKAHEAD_POINTS, routeCoordinates.length - 1)
+  const startCoordinate = routeCoordinates[startIndex]
+  const endCoordinate = routeCoordinates[endIndex]
+  if (!startCoordinate || !endCoordinate) return null
+
+  return calculateBearingDegrees(startCoordinate, endCoordinate)
 }
 
 function resolveHeadingCardinalLabel(heading: number | null, routeCoordinates: Array<[number, number]> | null | undefined) {
@@ -172,11 +214,13 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
   const routePointRef = useRef<MapPoint | null>(null)
   const noticeTimeoutRef = useRef<number | null>(null)
   const liveMarkerRef = useRef<any>(null)
+  const liveMarkerAnimationRef = useRef<number | null>(null)
   const navStatusRef = useRef<'idle' | 'starting' | 'active'>('idle')
   const routeOverviewActiveRef = useRef(false)
   const followZoomRef = useRef<number | null>(null)
   const hasAppliedFollowZoomRef = useRef(false)
   const pendingFollowResetRef = useRef(false)
+  const roadBearingRef = useRef<number | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [fullscreenActive, setFullscreenActive] = useState(false)
   const [navStatus, setNavStatus] = useState<'idle' | 'starting' | 'active'>('idle')
@@ -205,11 +249,22 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     ? navigationRoute.geometry
     : routeCoordinates ?? null
   const activeBearing = useMemo(() => {
-    if (typeof deviceHeading === 'number' && Number.isFinite(deviceHeading)) {
-      return -normalizeHeading(deviceHeading)
+    if (typeof activeOrigin?.latitude === 'number' && typeof activeOrigin.longitude === 'number') {
+      const routeBearing = resolveRouteFollowBearing(activeOrigin, activeRouteCoordinates)
+      if (typeof routeBearing === 'number' && Number.isFinite(routeBearing)) {
+        const blendedBearing = roadBearingRef.current === null ? routeBearing : blendBearing(roadBearingRef.current, routeBearing, 0.28)
+        roadBearingRef.current = blendedBearing
+        return -blendedBearing
+      }
     }
+    if (typeof deviceHeading === 'number' && Number.isFinite(deviceHeading)) {
+      const normalized = normalizeHeading(deviceHeading)
+      roadBearingRef.current = normalized
+      return -normalized
+    }
+    roadBearingRef.current = null
     return ACTIVE_NAV_FALLBACK_BEARING
-  }, [deviceHeading])
+  }, [activeOrigin, activeRouteCoordinates, deviceHeading])
   const headingCardinalLabel = useMemo(() => resolveHeadingCardinalLabel(deviceHeading, activeRouteCoordinates), [activeRouteCoordinates, deviceHeading])
   const nextTurnPreview = useMemo(() => {
     if (!navigationRoute?.steps.length) return null
@@ -325,6 +380,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     pendingFollowResetRef.current = false
     followZoomRef.current = null
     hasAppliedFollowZoomRef.current = false
+    roadBearingRef.current = null
     setNavStatus('idle')
     setFullscreenActive(false)
     setNavigationOrigin(null)
@@ -596,6 +652,10 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       if (noticeTimeoutRef.current !== null && typeof window !== 'undefined') {
         window.clearTimeout(noticeTimeoutRef.current)
       }
+      if (liveMarkerAnimationRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(liveMarkerAnimationRef.current)
+        liveMarkerAnimationRef.current = null
+      }
       liveMarkerRef.current?.remove?.()
       liveMarkerRef.current = null
       mapRef.current?.remove?.()
@@ -767,8 +827,47 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
         marker.addTo(map)
         liveMarkerRef.current = marker
       }
-      marker.setLngLat([activeOrigin.longitude, activeOrigin.latitude])
+      const targetLngLat: [number, number] = [activeOrigin.longitude, activeOrigin.latitude]
+      const previousLngLat = marker.getLngLat?.()
+      if (!previousLngLat) {
+        marker.setLngLat(targetLngLat)
+      } else {
+        if (liveMarkerAnimationRef.current !== null && typeof window !== 'undefined') {
+          window.cancelAnimationFrame(liveMarkerAnimationRef.current)
+          liveMarkerAnimationRef.current = null
+        }
+
+        const startLng = previousLngLat.lng
+        const startLat = previousLngLat.lat
+        const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
+
+        const animateMarker = (timestamp: number) => {
+          const elapsed = timestamp - startedAt
+          const progress = Math.max(0, Math.min(1, elapsed / LIVE_MARKER_ANIMATION_MS))
+          const eased = 1 - Math.pow(1 - progress, 3)
+          const nextLng = startLng + (targetLngLat[0] - startLng) * eased
+          const nextLat = startLat + (targetLngLat[1] - startLat) * eased
+          marker.setLngLat([nextLng, nextLat])
+
+          if (progress < 1 && typeof window !== 'undefined') {
+            liveMarkerAnimationRef.current = window.requestAnimationFrame(animateMarker)
+          } else {
+            liveMarkerAnimationRef.current = null
+            marker.setLngLat(targetLngLat)
+          }
+        }
+
+        if (typeof window !== 'undefined') {
+          liveMarkerAnimationRef.current = window.requestAnimationFrame(animateMarker)
+        } else {
+          marker.setLngLat(targetLngLat)
+        }
+      }
     } else if (liveMarkerRef.current) {
+      if (liveMarkerAnimationRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(liveMarkerAnimationRef.current)
+        liveMarkerAnimationRef.current = null
+      }
       liveMarkerRef.current.remove()
       liveMarkerRef.current = null
     }
