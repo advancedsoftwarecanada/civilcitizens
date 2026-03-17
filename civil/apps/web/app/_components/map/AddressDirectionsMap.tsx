@@ -28,6 +28,11 @@ type AddressDirectionsMapProps = {
   routeCoordinates?: Array<[number, number]> | null
 }
 
+type WakeLockSentinelLike = {
+  released?: boolean
+  release: () => Promise<void>
+}
+
 const ADDRESS_MAP_STYLE = {
   version: 8,
   sources: {
@@ -215,6 +220,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
   const noticeTimeoutRef = useRef<number | null>(null)
   const liveMarkerRef = useRef<any>(null)
   const liveMarkerAnimationRef = useRef<number | null>(null)
+  const wakeLockRef = useRef<WakeLockSentinelLike | null>(null)
   const navStatusRef = useRef<'idle' | 'starting' | 'active'>('idle')
   const routeOverviewActiveRef = useRef(false)
   const followZoomRef = useRef<number | null>(null)
@@ -319,6 +325,36 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     scheduleRefresh(320)
   }, [])
 
+  const releaseWakeLock = useCallback(async () => {
+    const wakeLock = wakeLockRef.current
+    wakeLockRef.current = null
+    if (!wakeLock) return
+
+    try {
+      await wakeLock.release()
+    } catch {
+      // ignore release errors
+    }
+  }, [])
+
+  const requestWakeLock = useCallback(async () => {
+    if (typeof document === 'undefined') return
+    if (document.visibilityState !== 'visible') return
+
+    const wakeLockApi = (navigator as Navigator & {
+      wakeLock?: { request?: (type: 'screen') => Promise<WakeLockSentinelLike> }
+    }).wakeLock
+
+    if (!wakeLockApi?.request) return
+    if (wakeLockRef.current && !wakeLockRef.current.released) return
+
+    try {
+      wakeLockRef.current = await wakeLockApi.request('screen')
+    } catch {
+      wakeLockRef.current = null
+    }
+  }, [])
+
   const handleZoomIn = useCallback(() => {
     mapRef.current?.zoomIn?.({ duration: 180 })
   }, [])
@@ -377,6 +413,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     routeAbortRef.current = null
     routePointRef.current = null
     routeRequestAtRef.current = 0
+    await releaseWakeLock()
     pendingFollowResetRef.current = false
     followZoomRef.current = null
     hasAppliedFollowZoomRef.current = false
@@ -402,7 +439,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
         // ignore
       }
     }
-  }, [destination, showNavigationNotice, stopWatcher])
+  }, [destination, releaseWakeLock, showNavigationNotice, stopWatcher])
 
   const refreshNavigationRoute = useCallback(async (nextOrigin: MapPoint, options?: { force?: boolean }) => {
     if (!destination) return
@@ -647,6 +684,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       cancelled = true
       clearNavigationNotice()
       stopWatcher()
+      void releaseWakeLock()
       routeAbortRef.current?.abort()
       routeAbortRef.current = null
       if (noticeTimeoutRef.current !== null && typeof window !== 'undefined') {
@@ -662,7 +700,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       mapRef.current = null
       mapLibreRef.current = null
     }
-  }, [clearNavigationNotice, stopWatcher])
+  }, [clearNavigationNotice, releaseWakeLock, stopWatcher])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
@@ -706,6 +744,31 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     if (!fullscreenActive || (navStatus !== 'starting' && navStatus !== 'active')) return
     refreshMapViewport()
   }, [fullscreenActive, navStatus, refreshMapViewport])
+
+  useEffect(() => {
+    if (!fullscreenActive || (navStatus !== 'starting' && navStatus !== 'active')) {
+      void releaseWakeLock()
+      return
+    }
+
+    void requestWakeLock()
+
+    if (typeof document === 'undefined') return
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void requestWakeLock()
+      } else {
+        void releaseWakeLock()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      void releaseWakeLock()
+    }
+  }, [fullscreenActive, navStatus, releaseWakeLock, requestWakeLock])
 
   useEffect(() => {
     if (!pendingFollowResetRef.current) return
