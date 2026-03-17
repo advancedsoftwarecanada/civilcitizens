@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import DashboardShell from '../../_components/DashboardShell'
 import type { CommunitySummary } from '../../_lib/community'
@@ -24,11 +24,23 @@ export default function CommunityLayoutClient({
 }) {
   const pathname = usePathname()
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    setHydrated(true)
+  }, [])
 
   const isOrganizationDetailRoute = useMemo(() => {
     if (!pathname) return false
     return /^\/com\/[^/]+\/[^/]+\/orgs\/[^/]+(\/.*)?$/.test(pathname)
   }, [pathname])
+
+  const isOrganizationsIndexRoute = useMemo(() => {
+    if (!pathname) return false
+    return /^\/com\/[^/]+\/[^/]+\/orgs\/?$/.test(pathname)
+  }, [pathname])
+
+  const showOrganizationsCreateRail = hydrated && isOrganizationsIndexRoute
 
   const isInviteRoute = useMemo(() => {
     if (!pathname) return false
@@ -48,7 +60,9 @@ export default function CommunityLayoutClient({
     <CommunityContextProvider value={summary}>
       <DashboardShell
         rightRail={
-          isOrganizationDetailRoute ? null : <CommunityContextRightRail province={province} municipality={municipality} />
+          isOrganizationDetailRoute
+            ? null
+            : <CommunityContextRightRail province={province} municipality={municipality} showCreateOrganization={showOrganizationsCreateRail} />
         }
         className="bg-slate-50"
         containerClassName="px-0 sm:px-0"

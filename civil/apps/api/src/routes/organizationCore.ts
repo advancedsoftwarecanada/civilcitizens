@@ -55,6 +55,8 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
           metadata: true,
           status: true,
           isVerified: true,
+          logoUrl: true,
+          coverUrl: true,
           createdAt: true,
           updatedAt: true,
           _count: { select: { follows: true } },

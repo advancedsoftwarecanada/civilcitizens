@@ -14,7 +14,6 @@ type CommunityOrganization = {
   logoUrl: string | null
   coverUrl: string | null
   description: string | null
-  status: 'DRAFT' | 'ACTIVE' | 'SUSPENDED' | 'CANCELED'
   isVerified: boolean
   followerCount: number
   viewerFollowed: boolean
@@ -77,7 +76,7 @@ export default function CommunityOrganizationsList({ province, municipality }: {
   }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="space-y-3">
       {orgs.map((org) => (
         <CivilCard
           key={org.id}
@@ -88,23 +87,9 @@ export default function CommunityOrganizationsList({ province, municipality }: {
           avatarInitials={org.name}
           avatarSrc={org.logoUrl}
           coverUrl={org.coverUrl}
+          subtitle={`${org.followerCount} followers`}
           details={org.description ? <p className="line-clamp-2">{org.description}</p> : null}
           isVerified={org.isVerified}
-          trailing={
-            <div className="flex flex-col items-end gap-1">
-              <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">
-                {org.status === 'DRAFT' ? 'Draft' : 'Live'}
-              </span>
-              <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">
-                {org.followerCount} followers
-              </span>
-              {org.isVerified ? (
-                <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">
-                  Verified
-                </span>
-              ) : null}
-            </div>
-          }
           className="transition hover:border-slate-300"
         />
       ))}
