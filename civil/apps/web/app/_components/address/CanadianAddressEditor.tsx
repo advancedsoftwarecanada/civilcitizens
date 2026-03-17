@@ -129,7 +129,7 @@ export function CanadianAddressEditor({
   const [postalInput, setPostalInput] = useState(normalizedValue.postalCode ?? '')
   const [postalVerifyModalOpen, setPostalVerifyModalOpen] = useState(false)
   const [savingCorrection, setSavingCorrection] = useState(false)
-  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const blurTimeoutRef = useRef<number | null>(null)
   const lastResolvedSearchSeedRef = useRef(formatSearchSeed(normalizedValue))
 
   useEffect(() => {

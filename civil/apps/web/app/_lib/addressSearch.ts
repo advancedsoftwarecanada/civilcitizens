@@ -97,10 +97,13 @@ function inferStreetLabelFromText(value: string) {
     .filter(Boolean)
 
   if (!segments.length) return ''
-  if (segments.length >= 2 && /^\d+[A-Za-z-]*$/.test(segments[0])) {
-    return `${segments[0]} ${segments[1]}`.trim()
+  const firstSegment = segments[0] ?? ''
+  const secondSegment = segments[1] ?? ''
+
+  if (segments.length >= 2 && /^\d+[A-Za-z-]*$/.test(firstSegment)) {
+    return `${firstSegment} ${secondSegment}`.trim()
   }
-  return segments[0]
+  return firstSegment
 }
 
 function normalizeAddressDisplayText(value: string) {
@@ -235,15 +238,14 @@ export async function fetchAddressSearchResults(query: string, signal?: AbortSig
   const payload = (await response.json().catch(() => [])) as unknown
   if (!Array.isArray(payload)) return []
 
-  const results = payload
-    .map((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+    const results = payload.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
       const record = entry as Record<string, unknown>
       const displayName = normalizeText(record.display_name)
       const latitude = normalizeNumber(record.lat)
       const longitude = normalizeNumber(record.lon)
-      if (!displayName || latitude === null || longitude === null) return null
-      return {
+      if (!displayName || latitude === null || longitude === null) return []
+      return [{
         placeId: normalizeNumber(record.place_id),
         osmType: normalizeText(record.osm_type) || null,
         osmId: normalizeNumber(record.osm_id),
@@ -257,9 +259,8 @@ export async function fetchAddressSearchResults(query: string, signal?: AbortSig
         originalPostalCode: normalizeCanadianPostalCode(normalizeText((record.address as Record<string, unknown> | undefined)?.postcode)) || null,
         postalCodeVerified: false,
         nominatimRaw: record,
-      } satisfies NominatimAddress
+      } satisfies NominatimAddress]
     })
-    .filter((entry): entry is NominatimAddress => Boolean(entry))
 
   if (!results.length) return results
 
