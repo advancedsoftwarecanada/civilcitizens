@@ -32,6 +32,18 @@ export type DrivingRoute = {
   distanceMeters: number
   durationSeconds: number
   geometry: Array<[number, number]>
+  steps: DrivingRouteStep[]
+}
+
+export type DrivingRouteStep = {
+  distanceMeters: number
+  durationSeconds: number
+  instruction: string
+  streetName: string | null
+  direction: string
+  turnModifier: string | null
+  maneuverType: string | null
+  maneuverLocation: [number, number] | null
 }
 
 type AddressCorrectionResolveResponse = {
@@ -53,6 +65,21 @@ type OsrmRouteResponse = {
       type?: string
       coordinates?: Array<[number, number]>
     }
+    legs?: Array<{
+      steps?: Array<{
+        distance?: number
+        duration?: number
+        name?: string
+        ref?: string
+        destinations?: string
+        rotary_name?: string
+        maneuver?: {
+          location?: [number, number]
+          modifier?: string
+          type?: string
+        }
+      }>
+    }>
   }>
 }
 
@@ -128,6 +155,93 @@ function normalizeProvinceDisplay(value: string) {
 
 function normalizePostalDisplay(value: string) {
   return normalizeText(value).toUpperCase()
+}
+
+function normalizeDrivingStepStreetName(step: {
+  name?: string
+  ref?: string
+  destinations?: string
+  rotary_name?: string
+}) {
+  return normalizeText(step.name) || normalizeText(step.ref) || normalizeText(step.destinations) || normalizeText(step.rotary_name) || ''
+}
+
+function normalizeDrivingDirectionLabel(modifier?: string | null) {
+  const normalized = normalizeText(modifier)
+  if (!normalized) return 'Continue'
+
+  switch (normalized) {
+    case 'uturn':
+      return 'U-turn'
+    case 'sharp left':
+      return 'Sharp left'
+    case 'left':
+      return 'Left'
+    case 'slight left':
+      return 'Slight left'
+    case 'sharp right':
+      return 'Sharp right'
+    case 'right':
+      return 'Right'
+    case 'slight right':
+      return 'Slight right'
+    case 'straight':
+      return 'Straight'
+    default:
+      return normalizeAddressDisplayText(normalized)
+  }
+}
+
+function buildDrivingStepInstruction(step: {
+  name?: string
+  ref?: string
+  destinations?: string
+  rotary_name?: string
+  maneuver?: {
+    modifier?: string
+    type?: string
+  }
+}) {
+  const streetName = normalizeDrivingStepStreetName(step)
+  const maneuverType = normalizeText(step.maneuver?.type)
+  const directionLabel = normalizeDrivingDirectionLabel(step.maneuver?.modifier)
+
+  switch (maneuverType) {
+    case 'arrive':
+      return 'Arrive at destination'
+    case 'depart':
+      if (streetName) {
+        if (directionLabel === 'Continue' || directionLabel === 'Straight') {
+          return `Head onto ${streetName}`
+        }
+        return `Head ${directionLabel.toLowerCase()} on ${streetName}`
+      }
+      return directionLabel === 'Continue' || directionLabel === 'Straight'
+        ? 'Head out'
+        : `Head ${directionLabel.toLowerCase()}`
+    case 'turn':
+    case 'fork':
+    case 'end of road':
+      return streetName ? `Turn ${directionLabel.toLowerCase()} onto ${streetName}` : `Turn ${directionLabel.toLowerCase()}`
+    case 'merge':
+      return streetName ? `Merge onto ${streetName}` : 'Merge ahead'
+    case 'continue':
+    case 'new name':
+    case 'notification':
+      return streetName ? `Continue on ${streetName}` : 'Continue straight'
+    case 'on ramp':
+      return streetName ? `Take the ramp onto ${streetName}` : 'Take the ramp'
+    case 'off ramp':
+      return streetName ? `Take the exit onto ${streetName}` : 'Take the exit'
+    case 'roundabout':
+    case 'roundabout turn':
+    case 'exit roundabout':
+    case 'rotary':
+    case 'exit rotary':
+      return streetName ? `Take the exit onto ${streetName}` : 'Take the roundabout exit'
+    default:
+      return streetName ? `Continue on ${streetName}` : 'Continue'
+  }
 }
 
 export function pickAddressLocalityRecord(address: Record<string, string>) {
@@ -391,7 +505,7 @@ export async function fetchDrivingRoute(origin: RoutePoint, destination: RoutePo
   const params = new URLSearchParams({
     overview: 'full',
     geometries: 'geojson',
-    steps: 'false',
+    steps: 'true',
   })
 
   const response = await fetch(`/osrm/route/v1/driving/${coordinates}?${params.toString()}`, {
@@ -416,6 +530,38 @@ export async function fetchDrivingRoute(origin: RoutePoint, destination: RoutePo
           Array.isArray(coordinate) && coordinate.length === 2 && coordinate.every((value) => typeof value === 'number' && Number.isFinite(value)),
       )
     : []
+  const steps = Array.isArray(route?.legs)
+    ? route.legs.flatMap((leg) => {
+        if (!Array.isArray(leg?.steps)) return [] as DrivingRouteStep[]
+        return leg.steps.flatMap((step) => {
+          const distanceMeters = typeof step?.distance === 'number' && Number.isFinite(step.distance) ? step.distance : null
+          const durationSeconds = typeof step?.duration === 'number' && Number.isFinite(step.duration) ? step.duration : null
+          if (distanceMeters === null || durationSeconds === null) return [] as DrivingRouteStep[]
+
+          const maneuverLocation = Array.isArray(step?.maneuver?.location) && step.maneuver.location.length === 2
+            ? step.maneuver.location
+            : null
+          const streetName = normalizeDrivingStepStreetName(step) || null
+          const direction = normalizeDrivingDirectionLabel(step?.maneuver?.modifier)
+          const maneuverType = normalizeText(step?.maneuver?.type) || null
+          const turnModifier = normalizeText(step?.maneuver?.modifier) || null
+
+          return [{
+            distanceMeters,
+            durationSeconds,
+            instruction: buildDrivingStepInstruction(step),
+            streetName,
+            direction,
+            turnModifier,
+            maneuverType,
+            maneuverLocation:
+              maneuverLocation && maneuverLocation.every((value) => typeof value === 'number' && Number.isFinite(value))
+                ? [maneuverLocation[0], maneuverLocation[1]]
+                : null,
+          } satisfies DrivingRouteStep]
+        })
+      })
+    : []
 
   if (distanceMeters === null || durationSeconds === null || coordinatesList.length < 2) return null
 
@@ -423,6 +569,7 @@ export async function fetchDrivingRoute(origin: RoutePoint, destination: RoutePo
     distanceMeters,
     durationSeconds,
     geometry: coordinatesList,
+    steps,
   }
 }
 

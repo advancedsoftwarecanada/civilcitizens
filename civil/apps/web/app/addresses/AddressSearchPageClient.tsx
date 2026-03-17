@@ -649,7 +649,7 @@ export default function AddressSearchPageClient() {
               </button>
 
               {originMenuOpen ? (
-                <div className="absolute left-1/2 top-[calc(100%+0.75rem)] z-20 w-[min(92vw,24rem)] -translate-x-1/2 rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-2xl shadow-slate-900/10 backdrop-blur">
+                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-20 w-[min(calc(100vw-2rem),24rem)] max-w-[calc(100vw-2rem)] rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-2xl shadow-slate-900/10 backdrop-blur sm:left-1/2 sm:right-auto sm:w-[min(92vw,24rem)] sm:max-w-none sm:-translate-x-1/2">
                   <p className="px-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Choose origin</p>
                   <div className="mt-3 space-y-2">
                     {originOptions.map((option) => (
