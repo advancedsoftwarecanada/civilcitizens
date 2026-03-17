@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import {
   HiOutlineBell,
   HiOutlineChatBubbleOvalLeft,
@@ -37,6 +37,10 @@ const MAX_VISIBLE_NOTIFICATIONS = 7
 
 const NOTIFICATION_TOAST_DEDUPE_WINDOW_MS = 5000
 
+function normalizeSearchInputValue(value: string | null) {
+  return value?.trim() ?? ''
+}
+
 function shouldShowNotificationToast(notificationId: string): boolean {
   if (typeof window === 'undefined') return true
   const globalKey = '__ccNotificationToastHistory'
@@ -55,6 +59,8 @@ function shouldShowNotificationToast(notificationId: string): boolean {
 
 export default function TopNav() {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const searchParamsKey = searchParams.toString()
   const viewer = useViewerStore((s) => s.me)
   const familyView = useViewerStore((s) => s.familyView)
   const isFamilyLockedSession = Boolean(familyView) || viewer?.accountType === 'family_member'
@@ -80,6 +86,13 @@ export default function TopNav() {
   useEffect(() => () => {
     if (searchBlurTimeout.current) clearTimeout(searchBlurTimeout.current)
   }, [])
+
+  useEffect(() => {
+    const nextQuery = normalizeSearchInputValue(searchParams.get('q'))
+      || normalizeSearchInputValue(searchParams.get('label'))
+      || normalizeSearchInputValue(searchParams.get('address'))
+    setSearchQuery(nextQuery)
+  }, [pathname, searchParamsKey])
 
   const applyLocalReadState = useCallback(() => {
     const timestamp = new Date().toISOString()

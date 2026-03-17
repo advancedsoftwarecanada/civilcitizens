@@ -1,6 +1,6 @@
 import type { ApiPost } from '../_components/PostComposer'
 
-export type ShareTargetKind = 'post' | 'event' | 'market_listing' | 'organization' | 'community' | 'profile' | 'url'
+export type ShareTargetKind = 'post' | 'event' | 'market_listing' | 'organization' | 'community' | 'profile' | 'url' | 'address'
 
 export type ShareTarget = {
   kind: ShareTargetKind
@@ -24,6 +24,15 @@ type EventShareTargetInput = {
   provinceCode: string
   communitySlug: string
   organizationSlug: string
+}
+
+type AddressShareTargetInput = {
+  title: string
+  description?: string | null
+  address?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  query?: string | null
 }
 
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i
@@ -98,6 +107,26 @@ export function buildEventShareTarget(input: EventShareTargetInput): ShareTarget
     url: `/com/${encodeURIComponent(province)}/${encodeURIComponent(community)}/orgs/${encodeURIComponent(organization)}/events/${encodeURIComponent(eventId)}`,
     imageUrl: input.primaryPhotoUrl ?? input.galleryPhotoUrls?.[0] ?? null,
     meta: [input.organizationName?.trim(), startsAtLabel].filter(Boolean).join(' • ') || null,
+  }
+}
+
+export function buildAddressShareTarget(input: AddressShareTargetInput): ShareTarget {
+  const title = input.title.trim() || 'Address'
+  const description = stripHtmlToText(input.description || input.address || '') || 'Shared address on Civil'
+  const params = new URLSearchParams()
+
+  if (input.query?.trim()) params.set('q', input.query.trim())
+  params.set('label', title)
+  if (input.address?.trim()) params.set('address', input.address.trim())
+  if (typeof input.latitude === 'number' && Number.isFinite(input.latitude)) params.set('lat', String(input.latitude))
+  if (typeof input.longitude === 'number' && Number.isFinite(input.longitude)) params.set('lon', String(input.longitude))
+
+  return {
+    kind: 'address',
+    title,
+    description,
+    url: `/addresses?${params.toString()}`,
+    meta: input.address?.trim() || null,
   }
 }
 

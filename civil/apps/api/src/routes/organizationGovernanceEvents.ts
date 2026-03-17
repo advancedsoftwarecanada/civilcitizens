@@ -6,6 +6,45 @@ import { Prisma } from '@prisma/client'
 
 type OrganizationGovernanceEventsDeps = Record<string, any>
 
+function normalizeStructuredAddressText(value: unknown, maxLength: number) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, maxLength) : null
+}
+
+function normalizeStructuredAddressCoordinate(value: unknown, min: number, max: number) {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed) && parsed >= min && parsed <= max) return parsed
+  }
+  return null
+}
+
+function normalizeStructuredAddressInput(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const next = {
+    name: normalizeStructuredAddressText(record.name, 120),
+    label: normalizeStructuredAddressText(record.label, 80),
+    line1: normalizeStructuredAddressText(record.line1, 180),
+    line2: normalizeStructuredAddressText(record.line2, 180),
+    city: normalizeStructuredAddressText(record.city, 120),
+    province: normalizeStructuredAddressText(record.province, 64),
+    postalCode: normalizeStructuredAddressText(record.postalCode, 32),
+    country: normalizeStructuredAddressText(record.country, 2)?.toUpperCase() ?? 'CA',
+    latitude: normalizeStructuredAddressCoordinate(record.latitude, -90, 90),
+    longitude: normalizeStructuredAddressCoordinate(record.longitude, -180, 180),
+  }
+  const hasValue = Object.values(next).some((entry) => entry !== null && entry !== '')
+  return hasValue ? next : null
+}
+
+function readOrganizationAddressDetails(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  return normalizeStructuredAddressInput((metadata as Record<string, unknown>).addressDetails)
+}
+
 function resolveOrganizationCommunitySlug(deps: OrganizationGovernanceEventsDeps, province: string, municipalityRaw: string) {
   const communitySlug = municipalityRaw.trim().toLowerCase()
   if (!communitySlug) return null
@@ -925,7 +964,7 @@ export function registerOrganizationGovernanceEventsRoutes(
 
       const org = await prisma.business.findFirst({
         where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug: params.data.slug.trim().toLowerCase(), status: 'ACTIVE' },
-        select: { id: true, ownerId: true, metadata: true, name: true, slug: true, provinceCode: true, communitySlug: true, logoUrl: true, coverUrl: true, isVerified: true },
+        select: { id: true, ownerId: true, metadata: true, name: true, slug: true, provinceCode: true, communitySlug: true, address: true, logoUrl: true, coverUrl: true, isVerified: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
 
@@ -1082,6 +1121,8 @@ export function registerOrganizationGovernanceEventsRoutes(
           slug: org.slug,
           provinceCode: org.provinceCode,
           communitySlug: org.communitySlug,
+          address: org.address ?? null,
+          addressDetails: readOrganizationAddressDetails(org.metadata),
           logoUrl: deps.normalizeMediaUrl(org.logoUrl ?? null),
           coverUrl: deps.normalizeMediaUrl(org.coverUrl ?? null),
           isVerified: org.isVerified,
