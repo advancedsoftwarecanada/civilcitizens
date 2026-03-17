@@ -7,12 +7,20 @@ import {
   type CommunitySearchResult,
   type EventSearchResult,
   type MarketSearchResult,
+  type SearchResponse,
   type OrganizationSearchResult,
   type PostSearchResult,
-  type SearchResponse,
   type UserSearchResult,
 } from './searchTypes'
 import { buildApiUrl } from '../../_lib/api'
+import {
+  buildAddressesHrefFromResult,
+  fetchAddressSearchResults,
+  formatAddressPrimaryLabel,
+  formatAddressSecondaryLabel,
+  isUsableAddressQuery,
+  type NominatimAddress,
+} from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
@@ -53,9 +61,42 @@ export function SearchResults({ query, open }: SearchResultsProps) {
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
+  const [addressResults, setAddressResults] = useState<NominatimAddress[]>([])
   const [loading, setLoading] = useState(false)
+  const [addressLoading, setAddressLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const addressAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    if (!open || !isUsableAddressQuery(trimmedQuery)) {
+      setAddressResults([])
+      setAddressLoading(false)
+      if (addressAbortRef.current) {
+        addressAbortRef.current.abort()
+        addressAbortRef.current = null
+      }
+      return
+    }
+
+    const controller = new AbortController()
+    addressAbortRef.current = controller
+    setAddressLoading(true)
+
+    void fetchAddressSearchResults(trimmedQuery, controller.signal, 4)
+      .then((results) => {
+        setAddressResults(results)
+      })
+      .catch((err) => {
+        if ((err as Error).name === 'AbortError') return
+        setAddressResults([])
+      })
+      .finally(() => {
+        setAddressLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [open, trimmedQuery])
 
   useEffect(() => {
     if (!open || trimmedQuery.length < MIN_QUERY_LENGTH) {
@@ -83,7 +124,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
       setMarketResults([])
       setPostResults([])
       setLoading(false)
-      setError('Sign in to search Civil.')
+      setError(null)
       return
     }
 
@@ -154,7 +195,8 @@ export function SearchResults({ query, open }: SearchResultsProps) {
     organizationResults.length > 0 ||
     eventResults.length > 0 ||
     marketResults.length > 0 ||
-    postResults.length > 0
+    postResults.length > 0 ||
+    addressResults.length > 0
 
   const sectionHref = useMemo(
     () => ({
@@ -164,6 +206,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
       events: `/search?q=${encodeURIComponent(trimmedQuery)}&type=events`,
       market: `/search?q=${encodeURIComponent(trimmedQuery)}&type=market`,
       posts: `/search?q=${encodeURIComponent(trimmedQuery)}&type=posts`,
+      addresses: `/addresses?q=${encodeURIComponent(trimmedQuery)}`,
     }),
     [trimmedQuery],
   )
@@ -184,12 +227,32 @@ export function SearchResults({ query, open }: SearchResultsProps) {
     >
       {error ? (
         <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
-      ) : loading && !hasAnyResults ? (
+      ) : (loading || addressLoading) && !hasAnyResults ? (
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Searching…</div>
-      ) : !hasAnyResults ? (
+      ) : !hasAnyResults && !addressLoading ? (
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil matches yet.</div>
       ) : (
         <div className="space-y-4">
+          {addressResults.length > 0 ? (
+            <CompactSection title="Addresses" href={sectionHref.addresses}>
+              <ul className="divide-y divide-slate-100">
+                {addressResults.map((result) => (
+                  <li key={`${result.placeId ?? result.displayName}-${result.latitude}-${result.longitude}`}>
+                    <Link href={buildAddressesHrefFromResult(result, trimmedQuery)} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                        <HiOutlineMapPin className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate font-semibold text-slate-900">{formatAddressPrimaryLabel(result)}</span>
+                        <p className="truncate text-xs text-slate-500">{formatAddressSecondaryLabel(result)}</p>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </CompactSection>
+          ) : null}
+
           {peopleResults.length > 0 ? (
             <CompactSection title="People" href={sectionHref.people}>
               <ul className="divide-y divide-slate-100">

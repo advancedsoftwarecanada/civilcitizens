@@ -9,6 +9,7 @@ import SharePostModal from '../../_components/SharePostModal'
 import ShareSendModal from '../../_components/ShareSendModal'
 import type { CommunityTarget } from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
+import { buildAddressesHref } from '../../_lib/addressSearch'
 import { buildEventShareTarget, type ShareTarget } from '../../_lib/shareTarget'
 
 type InviteStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED'
@@ -89,6 +90,19 @@ type OrganizationEventDetailResponse = {
     slug: string
     provinceCode: string | null
     communitySlug: string | null
+    address: string | null
+    addressDetails?: {
+      name?: string | null
+      label?: string | null
+      line1?: string | null
+      line2?: string | null
+      city?: string | null
+      province?: string | null
+      postalCode?: string | null
+      country?: string | null
+      latitude?: number | null
+      longitude?: number | null
+    } | null
     logoUrl: string | null
     coverUrl: string | null
     isVerified: boolean
@@ -244,6 +258,24 @@ export default function OrganizationEventDetailClient({
       organizationSlug: resolvedOrganizationSlug,
     })
   }, [event, org?.name, resolvedMunicipality, resolvedOrganizationSlug, resolvedProvince])
+  const attendanceMode = typeof (event as { attendanceMode?: unknown } | undefined)?.attendanceMode === 'string'
+    ? String((event as { attendanceMode?: string }).attendanceMode).trim().toUpperCase()
+    : null
+  const directionsHref = useMemo(() => {
+    if (!org) return null
+    const latitude = typeof org.addressDetails?.latitude === 'number' ? org.addressDetails.latitude : null
+    const longitude = typeof org.addressDetails?.longitude === 'number' ? org.addressDetails.longitude : null
+    const address = org.address?.trim() || null
+    if (!address && (latitude === null || longitude === null)) return null
+    return buildAddressesHref({
+      query: address || `${event?.title ?? org.name} ${resolvedMunicipality}`,
+      label: event?.title ?? org.name,
+      address,
+      latitude,
+      longitude,
+    })
+  }, [event?.title, org, resolvedMunicipality])
+  const showDirections = Boolean(directionsHref) && (!attendanceMode || attendanceMode === 'IN_PERSON' || attendanceMode === 'HYBRID')
 
   const guestSpeakerCards = useMemo(() => {
     if (!event) return []
@@ -507,6 +539,14 @@ export default function OrganizationEventDetailClient({
                 >
                   {viewerRsvp?.status === 'GOING' ? 'Update RSVP' : 'Join'}
                 </button>
+                {showDirections && directionsHref ? (
+                  <Link
+                    href={directionsHref}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <span>Directions</span>
+                  </Link>
+                ) : null}
                 {eventShareTarget ? (
                   <>
                     <button
