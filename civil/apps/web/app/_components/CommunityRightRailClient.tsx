@@ -2,22 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 import Block from './Block'
 import { buildApiUrl } from '../_lib/api'
 import CivilCard from './CivilCard'
-
-type NearbyCommunity = {
-  name: string
-  provinceCode: string
-  communitySlug: string
-}
-
-type CommunityStatsResponse = {
-  members?: number | null
-  postsToday?: number
-  postsThisMonth?: number
-  nearbyCommunities?: NearbyCommunity[]
-}
+import OrganizationCreateButton from '../com/_components/OrganizationCreateButton'
 
 type CommunityOrganization = {
   id: string
@@ -43,25 +32,27 @@ type CommunityFeedActivityResponse = {
 
 const numberFormatter = new Intl.NumberFormat('en-CA')
 
-function getOrganizationBadge(org: CommunityOrganization): 'Hot' | 'New' | null {
-  if (org.followerCount >= 20) return 'Hot'
-  const createdAt = Date.parse(org.createdAt)
-  if (!Number.isFinite(createdAt)) return null
-  const ageDays = (Date.now() - createdAt) / (1000 * 60 * 60 * 24)
-  if (ageDays <= 30) return 'New'
-  return null
-}
-
 export default function CommunityRightRailClient({
   province,
   municipality,
+  showCreateOrganization = false,
 }: {
   province: string
   municipality: string
+  showCreateOrganization?: boolean
 }) {
-  const [stats, setStats] = useState<CommunityStatsResponse | null>(null)
   const [organizations, setOrganizations] = useState<CommunityOrganization[]>([])
   const [feedActivity, setFeedActivity] = useState<{ eventCount: number; jobCount: number } | null>(null)
+
+  const provinceName = useMemo(() => {
+    const normalized = normalizeProvinceCode(province)
+    return (normalized ? getProvinceDisplayName(normalized) : null) || province.toUpperCase()
+  }, [province])
+
+  const communityName = useMemo(
+    () => municipality.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
+    [municipality],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -71,34 +62,25 @@ export default function CommunityRightRailClient({
       const headers = token ? { authorization: `Bearer ${token}` } : undefined
 
       try {
-        const [statsRes, orgsRes, activityRes] = await Promise.all([
-          fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/stats`), {
-            headers,
-            cache: 'no-store',
-          }),
+        const [orgsRes, activityRes] = await Promise.all([
           fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs?limit=20`), {
             headers,
             cache: 'no-store',
           }),
-          fetch(
-            buildApiUrl(
-              `/feed/activity?scope=communities&province=${encodeURIComponent(province)}&community=${encodeURIComponent(municipality)}&eventLimit=50&jobLimit=50`,
-            ),
-            {
-              headers,
-              cache: 'no-store',
-            },
-          ),
+          token
+            ? fetch(
+                buildApiUrl(
+                  `/feed/activity?scope=communities&province=${encodeURIComponent(province)}&community=${encodeURIComponent(municipality)}&eventLimit=12&jobLimit=12`,
+                ),
+                {
+                  headers,
+                  cache: 'no-store',
+                },
+              )
+            : Promise.resolve(null),
         ])
 
         if (!cancelled) {
-          if (statsRes.ok) {
-            const payload = (await statsRes.json().catch(() => null)) as CommunityStatsResponse | null
-            setStats(payload)
-          } else {
-            setStats(null)
-          }
-
           if (orgsRes.ok) {
             const payload = (await orgsRes.json().catch(() => null)) as CommunityOrganizationsResponse | null
             setOrganizations(Array.isArray(payload?.items) ? payload.items : [])
@@ -106,7 +88,7 @@ export default function CommunityRightRailClient({
             setOrganizations([])
           }
 
-          if (activityRes.ok) {
+          if (activityRes?.ok) {
             const payload = (await activityRes.json().catch(() => null)) as CommunityFeedActivityResponse | null
             setFeedActivity({
               eventCount: Array.isArray(payload?.events) ? payload.events.length : 0,
@@ -118,7 +100,6 @@ export default function CommunityRightRailClient({
         }
       } catch {
         if (!cancelled) {
-          setStats(null)
           setOrganizations([])
           setFeedActivity(null)
         }
@@ -140,45 +121,21 @@ export default function CommunityRightRailClient({
       .slice(0, 5)
   }, [organizations])
 
-  const nearby = Array.isArray(stats?.nearbyCommunities) ? stats.nearbyCommunities.slice(0, 5) : []
-
   return (
     <div className="space-y-6">
+      {showCreateOrganization ? <OrganizationCreateButton province={province} municipality={municipality} /> : null}
+
       <Block title="Community Stats">
         <dl className="space-y-3 text-sm text-slate-700">
           <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <dt className="font-semibold text-slate-600">Members</dt>
-            <dd className="font-semibold text-slate-900">
-              {typeof stats?.members === 'number' ? numberFormatter.format(stats.members) : '—'}
-            </dd>
+            <dt className="font-semibold text-slate-600">Community</dt>
+            <dd className="font-semibold text-slate-900">{communityName}</dd>
           </div>
           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <dt className="font-semibold text-slate-600">Posts</dt>
-            <dd className="mt-1 text-slate-900">
-              Today {numberFormatter.format(stats?.postsToday ?? 0)} | This month {numberFormatter.format(stats?.postsThisMonth ?? 0)}
-            </dd>
+            <dt className="font-semibold text-slate-600">Province</dt>
+            <dd className="mt-1 text-slate-900">{provinceName}</dd>
           </div>
         </dl>
-
-        <div className="mt-4">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Nearby Communities</p>
-          {nearby.length ? (
-            <ul className="mt-2 space-y-2">
-              {nearby.map((entry) => (
-                <li key={`${entry.provinceCode}:${entry.communitySlug}`}>
-                  <Link
-                    href={`/${entry.provinceCode.toLowerCase()}/${entry.communitySlug.toLowerCase()}`}
-                    className="text-sm font-medium text-slate-700 hover:text-slate-900"
-                  >
-                    {entry.name}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-sm text-slate-500">No nearby communities available yet.</p>
-          )}
-        </div>
       </Block>
 
       <Block title="Community Feed">
@@ -187,9 +144,7 @@ export default function CommunityRightRailClient({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="font-semibold text-slate-600">Posts</p>
-                <p className="mt-1 text-slate-900">
-                  Today {numberFormatter.format(stats?.postsToday ?? 0)} | This month {numberFormatter.format(stats?.postsThisMonth ?? 0)}
-                </p>
+                <p className="mt-1 text-slate-900">Open the local community feed.</p>
               </div>
               <Link
                 href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}`}
@@ -236,11 +191,9 @@ export default function CommunityRightRailClient({
           href: `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs`,
         }}
       >
-        <p className="mb-3 text-xs text-slate-500">New | Hot</p>
         {topOrganizations.length ? (
           <ul className="space-y-3">
             {topOrganizations.map((org) => {
-              const badge = getOrganizationBadge(org)
               const provinceCode = (org.provinceCode ?? province).toLowerCase()
               const communitySlug = (org.communitySlug ?? municipality).toLowerCase()
 
@@ -255,11 +208,6 @@ export default function CommunityRightRailClient({
                     avatarSrc={org.logoUrl ?? null}
                     coverUrl={org.coverUrl}
                     isVerified={Boolean(org.isVerified)}
-                    trailing={
-                      badge ? (
-                        <span className="rounded-full border border-white/40 bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white">{badge}</span>
-                      ) : null
-                    }
                   />
                 </li>
               )
