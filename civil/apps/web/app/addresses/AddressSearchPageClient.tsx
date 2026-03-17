@@ -3,23 +3,30 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { HiOutlineChevronDown, HiOutlineHeart, HiOutlineSparkles } from 'react-icons/hi2'
+import { HiOutlineCheckBadge, HiOutlineChevronDown, HiOutlineHeart, HiOutlineSparkles } from 'react-icons/hi2'
 import Block from '../_components/Block'
 import DashboardShell from '../_components/DashboardShell'
 import { AddressDirectionsMap } from '../_components/map/AddressDirectionsMap'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import {
+  buildAddressSearchQueries,
   buildAddressesHref,
   buildAddressesHrefFromAddress,
   calculateDistanceKm,
   estimateTravelMinutes,
+  fetchDrivingRoute,
   fetchAddressSearchResults,
   formatAddressPrimaryLabel,
   formatAddressSecondaryLabel,
+  isAddressPostalVerified,
   isUsableAddressQuery,
   type NominatimAddress,
 } from '../_lib/addressSearch'
-import { formatCanadianAddressInline, normalizeSavedShippingAddress, type SavedShippingAddress } from '../_lib/canadianAddresses'
+import {
+  isCanadianAddressPostalVerified,
+  normalizeSavedShippingAddress,
+  type SavedShippingAddress,
+} from '../_lib/canadianAddresses'
 import { getStoredToken } from '../_lib/tokenStorage'
 
 type ShippingAddressListResponse = {
@@ -40,6 +47,7 @@ type OriginOption = {
   label: string
   detail: string | null
   address: SavedShippingAddress | null
+  verified: boolean
 }
 
 type ResolvedOrigin = {
@@ -48,6 +56,13 @@ type ResolvedOrigin = {
   latitude: number
   longitude: number
   detail: string | null
+}
+
+type TravelSummary = {
+  distanceKm: number
+  travelMinutes: number
+  label: string
+  sourcedFromRoute: boolean
 }
 
 function normalizeQueryValue(value: string | null) {
@@ -81,6 +96,13 @@ function formatEstimate(distanceKm: number, travelMinutes: number) {
 }
 
 const ADDRESS_FAVORITES_STORAGE_KEY = 'civil_address_favorites'
+
+function formatSavedOriginFailureReason(attempts: Array<{ query: string; reason: string }>) {
+  if (!attempts.length) return 'Unable to resolve that saved address on the map.'
+
+  const lines = attempts.map((attempt) => `Tried "${attempt.query}": ${attempt.reason}.`)
+  return ['Unable to resolve that saved address on the map.', ...lines].join(' ')
+}
 
 function readFavoriteAddresses() {
   if (typeof window === 'undefined') return [] as FavoriteAddress[]
@@ -132,7 +154,13 @@ function formatSavedAddressTitle(address: SavedShippingAddress, fallback: string
 function formatSavedAddressDetail(address: SavedShippingAddress, options?: { includeName?: boolean }) {
   const includeName = options?.includeName ?? true
   const lines = [includeName ? address.name?.trim() : '', address.line1?.trim(), address.line2?.trim()].filter(Boolean)
-  const locality = [address.city?.trim(), address.province?.trim(), address.postalCode?.trim()].filter(Boolean).join(', ')
+  const locality = [
+    address.city?.trim(),
+    address.province?.trim(),
+    isCanadianAddressPostalVerified(address) ? address.postalCode?.trim() : '',
+  ]
+    .filter(Boolean)
+    .join(', ')
   if (locality) lines.push(locality)
   return lines.join(', ')
 }
@@ -160,7 +188,15 @@ function AddressPageRightRail({
               href={buildAddressesHrefFromAddress(homeAddress, 'Home')}
               className="block rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 transition hover:border-emerald-300 hover:bg-emerald-100/70"
             >
-              <p className="text-sm font-semibold text-emerald-900">{formatHomeAddressTitle(homeAddress)}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-emerald-900">{formatHomeAddressTitle(homeAddress)}</p>
+                {isCanadianAddressPostalVerified(homeAddress) ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                    Verified Address
+                  </span>
+                ) : null}
+              </div>
               <p className="mt-1 text-xs text-emerald-800">{formatSavedAddressDetail(homeAddress, { includeName: false })}</p>
             </Link>
           ) : null}
@@ -169,7 +205,15 @@ function AddressPageRightRail({
               href={buildAddressesHrefFromAddress(nextAddress, nextAddress.label?.trim() || nextAddress.name?.trim() || 'Next address')}
               className="block rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 transition hover:border-[var(--cc-primary)]/30 hover:bg-white"
             >
-              <p className="text-sm font-semibold text-slate-900">{formatSavedAddressTitle(nextAddress, 'Next Address')}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold text-slate-900">{formatSavedAddressTitle(nextAddress, 'Next Address')}</p>
+                {isCanadianAddressPostalVerified(nextAddress) ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                    Verified Address
+                  </span>
+                ) : null}
+              </div>
               <p className="mt-1 text-xs text-slate-500">{formatSavedAddressDetail(nextAddress)}</p>
             </Link>
           ) : null}
@@ -223,6 +267,8 @@ export default function AddressSearchPageClient() {
   const [originLoading, setOriginLoading] = useState(false)
   const [originError, setOriginError] = useState<string | null>(null)
   const [resolvedOrigin, setResolvedOrigin] = useState<ResolvedOrigin | null>(null)
+  const [travelSummary, setTravelSummary] = useState<TravelSummary | null>(null)
+  const [routeCoordinates, setRouteCoordinates] = useState<Array<[number, number]> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -325,6 +371,9 @@ export default function AddressSearchPageClient() {
         typeName: null,
         importance: null,
         address: {},
+        originalPostalCode: null,
+        postalCodeVerified: false,
+        nominatimRaw: {},
       } satisfies NominatimAddress
     }
     return null
@@ -337,10 +386,11 @@ export default function AddressSearchPageClient() {
     const items = savedAddresses.map((item) => ({
       id: item.id,
       label: item.label?.trim() || item.name?.trim() || 'Saved address',
-      detail: formatCanadianAddressInline(item),
+      detail: buildAddressSearchQueries(item)[0] || null,
       address: item,
+      verified: isCanadianAddressPostalVerified(item),
     }))
-    return [{ id: 'current', label: 'Current Location', detail: 'Use this device location', address: null }, ...items]
+    return [{ id: 'current', label: 'Current Location', detail: 'Use this device location', address: null, verified: false }, ...items]
   }, [savedAddresses])
 
   const orderedSavedAddresses = useMemo(
@@ -354,18 +404,50 @@ export default function AddressSearchPageClient() {
     [homeAddress, orderedSavedAddresses],
   )
 
-  const travelSummary = useMemo(() => {
-    if (!selectedDestination || !resolvedOrigin) return null
-    const distanceKm = calculateDistanceKm(
+  useEffect(() => {
+    if (!selectedDestination || !resolvedOrigin) {
+      setTravelSummary(null)
+      setRouteCoordinates(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const fallbackDistanceKm = calculateDistanceKm(
       { latitude: resolvedOrigin.latitude, longitude: resolvedOrigin.longitude },
       { latitude: selectedDestination.latitude, longitude: selectedDestination.longitude },
     )
-    const travelMinutes = estimateTravelMinutes(distanceKm)
-    return {
-      distanceKm,
-      travelMinutes,
-      label: formatEstimate(distanceKm, travelMinutes),
-    }
+    const fallbackTravelMinutes = estimateTravelMinutes(fallbackDistanceKm)
+
+    setTravelSummary({
+      distanceKm: fallbackDistanceKm,
+      travelMinutes: fallbackTravelMinutes,
+      label: formatEstimate(fallbackDistanceKm, fallbackTravelMinutes),
+      sourcedFromRoute: false,
+    })
+    setRouteCoordinates(null)
+
+    void fetchDrivingRoute(
+      { latitude: resolvedOrigin.latitude, longitude: resolvedOrigin.longitude },
+      { latitude: selectedDestination.latitude, longitude: selectedDestination.longitude },
+      controller.signal,
+    )
+      .then((route) => {
+        if (!route) return
+        const distanceKm = route.distanceMeters / 1000
+        const travelMinutes = Math.max(1, Math.round(route.durationSeconds / 60))
+        setRouteCoordinates(route.geometry)
+        setTravelSummary({
+          distanceKm,
+          travelMinutes,
+          label: formatEstimate(distanceKm, travelMinutes),
+          sourcedFromRoute: true,
+        })
+      })
+      .catch((error) => {
+        if ((error as Error).name === 'AbortError') return
+      })
+
+    return () => controller.abort()
   }, [resolvedOrigin, selectedDestination])
 
   const currentFavoriteId = useMemo(
@@ -396,16 +478,30 @@ export default function AddressSearchPageClient() {
         return
       }
 
-      const geocodeQuery = formatCanadianAddressInline(option.address)
-      if (!geocodeQuery) {
+      const geocodeQueries = buildAddressSearchQueries(option.address)
+      if (!geocodeQueries.length) {
         setOriginError('That saved address does not have enough detail to geocode.')
         return
       }
 
-      const geocoded = await fetchAddressSearchResults(geocodeQuery, undefined, 1)
-      const firstResult = geocoded[0]
+      let firstResult: NominatimAddress | null = null
+      const attempts: Array<{ query: string; reason: string }> = []
+      for (const geocodeQuery of geocodeQueries) {
+        try {
+          const geocoded = await fetchAddressSearchResults(geocodeQuery, undefined, 1)
+          if (geocoded[0]) {
+            firstResult = geocoded[0]
+            break
+          }
+          attempts.push({ query: geocodeQuery, reason: 'no address match returned' })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'unknown lookup failure'
+          attempts.push({ query: geocodeQuery, reason: message.replace(/^nominatim_search_failed:/, 'lookup failed with status ') })
+        }
+      }
+
       if (!firstResult) {
-        setOriginError('Unable to resolve that saved address on the map.')
+        setOriginError(formatSavedOriginFailureReason(attempts))
         return
       }
 
@@ -498,7 +594,15 @@ export default function AddressSearchPageClient() {
       <div className="space-y-6">
         <section className="space-y-4 rounded-[28px] border border-white/60 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
           <div>
-            <h2 className="text-xl font-semibold text-slate-900">{destinationLabel}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold text-slate-900">{destinationLabel}</h2>
+              {isAddressPostalVerified(selectedDestination) ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                  <HiOutlineCheckBadge className="h-4 w-4" />
+                  Verified Address
+                </span>
+              ) : null}
+            </div>
             {destinationDetail ? <p className="mt-1 text-sm text-slate-500">{destinationDetail}</p> : null}
           </div>
 
@@ -516,7 +620,7 @@ export default function AddressSearchPageClient() {
               </div>
               <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm">
                 <HiOutlineSparkles className="h-4 w-4 text-emerald-600" />
-                <span>Straight-line estimate</span>
+                <span>{travelSummary.sourcedFromRoute ? 'Driving route' : 'Straight-line estimate'}</span>
               </div>
             </div>
           ) : null}
@@ -555,7 +659,15 @@ export default function AddressSearchPageClient() {
                         onClick={() => void handleOriginSelect(option)}
                         className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3 text-left transition hover:border-[var(--cc-primary)]/30 hover:bg-white"
                       >
-                        <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                          {option.verified ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                              <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                              Verified Address
+                            </span>
+                          ) : null}
+                        </div>
                         {option.detail ? <p className="mt-1 text-xs text-slate-500">{option.detail}</p> : null}
                       </button>
                     ))}
@@ -586,6 +698,7 @@ export default function AddressSearchPageClient() {
                   }
                 : null
             }
+            routeCoordinates={routeCoordinates}
           />
         </section>
       </div>

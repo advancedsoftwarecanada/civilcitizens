@@ -6,14 +6,37 @@ import { useRouter } from 'next/navigation'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { CanadianAddressEditor } from '../../_components/address/CanadianAddressEditor'
 import RichTextEditor from '../../_components/RichTextEditor'
+import {
+  createEmptyCanadianAddress,
+  formatCanadianPhysicalAddressInline,
+  hasCanadianAddressValue,
+  normalizeCanadianAddress,
+  normalizeCanadianPostalCode,
+  normalizeCanadianProvince,
+  type CanadianAddress,
+} from '../../_lib/canadianAddresses'
+import { fetchAddressSearchResults, formatAddressPrimaryLabel, pickAddressLocalityRecord, type NominatimAddress } from '../../_lib/addressSearch'
 import { DEFAULT_EVENT_CATEGORY, EVENT_CATEGORIES, type EventCategory } from '../_lib/eventCategories'
+
+type EventType = 'MEETING_ROOM' | 'LOCATION'
+
+type EventMeetingRoomAttachment = {
+  meetingId: string
+  title: string | null
+  status: 'ACTIVE' | 'ARCHIVED' | null
+  visibility: 'PUBLIC' | 'PRIVATE' | null
+  startsAt: string | null
+  endsAt: string | null
+}
 
 type GovernanceEvent = {
   id: string
   title: string
   description: string | null
   category?: EventCategory
+  eventType?: EventType
   access: 'PUBLIC' | 'RESTRICTED'
   startsAt: string
   endsAt: string | null
@@ -26,6 +49,8 @@ type GovernanceEvent = {
   sponsors?: EventSponsorTag[]
   sponsorInvites?: SponsorInvitePayload[]
   fees?: EventFeePayload[]
+  meetingRoom?: EventMeetingRoomAttachment | null
+  locationAddress?: CanadianAddress | null
   primaryPhotoUrl: string | null
   galleryPhotoUrls: string[]
   status: 'DRAFT' | 'PUBLISHED'
@@ -125,6 +150,22 @@ type OrganizationDirectoryResult = {
   communitySlug: string
   logoUrl: string | null
   coverUrl: string | null
+}
+
+type MeetingOption = {
+  id: string
+  title?: string
+  description?: string | null
+  visibility?: 'PUBLIC' | 'PRIVATE'
+  status?: 'ACTIVE' | 'ARCHIVED'
+  schedule?: {
+    startsAt?: string | null
+    endsAt?: string | null
+  }
+}
+
+type MeetingOptionsResponse = {
+  items?: MeetingOption[]
 }
 
 type EventSponsorTag = {
@@ -338,6 +379,53 @@ function mapFeesToDraftRows(fees: EventFeePayload[] | undefined): EventFeeDraftR
   }))
 }
 
+function resolveEventType(event: GovernanceEvent | null | undefined): EventType {
+  if (event?.eventType === 'MEETING_ROOM') return 'MEETING_ROOM'
+  return event?.meetingRoom?.meetingId ? 'MEETING_ROOM' : 'LOCATION'
+}
+
+function hasLocationAddressCore(address: CanadianAddress | null | undefined) {
+  const normalized = normalizeCanadianAddress(address)
+  return Boolean(normalized.line1 && normalized.city && normalized.province && normalized.postalCode)
+}
+
+function buildCanadianAddressFromSearchResult(result: NominatimAddress, current: CanadianAddress): CanadianAddress {
+  const nextPostal = normalizeCanadianPostalCode(result.address.postcode || result.originalPostalCode)
+  const originalPostal = normalizeCanadianPostalCode(result.originalPostalCode || result.address.postcode)
+  return {
+    ...current,
+    line1: formatAddressPrimaryLabel(result),
+    line2: current.line2 ?? '',
+    city: pickAddressLocalityRecord(result.address),
+    province: normalizeCanadianProvince(result.address.state || result.address.province || result.address.region || ''),
+    postalCode: nextPostal,
+    originalPostalCode: originalPostal,
+    country: (result.address.country_code || result.address.country || 'CA').toUpperCase(),
+    latitude: result.latitude,
+    longitude: result.longitude,
+    nominatimDisplayName: result.displayName,
+    nominatimRaw: result.nominatimRaw,
+  }
+}
+
+function serializeEventLocationAddress(address: CanadianAddress | null | undefined) {
+  const normalized = normalizeCanadianAddress(address)
+  return {
+    name: normalized.name || null,
+    label: normalized.label || null,
+    line1: normalized.line1 || null,
+    line2: normalized.line2 || null,
+    city: normalized.city || null,
+    province: normalized.province || null,
+    postalCode: normalized.postalCode || null,
+    originalPostalCode: normalized.originalPostalCode || null,
+    country: normalized.country || 'CA',
+    latitude: normalized.latitude ?? null,
+    longitude: normalized.longitude ?? null,
+    nominatimDisplayName: normalized.nominatimDisplayName || null,
+  }
+}
+
 export default function OrganizationEventCreateClient({
   province,
   municipality,
@@ -368,6 +456,12 @@ export default function OrganizationEventCreateClient({
   const [sponsorSearching, setSponsorSearching] = useState(false)
   const [selectedSponsors, setSelectedSponsors] = useState<SelectedSponsor[]>([])
   const [feeRows, setFeeRows] = useState<EventFeeDraftRow[]>([])
+  const [eventType, setEventType] = useState<EventType>('LOCATION')
+  const [meetingOptions, setMeetingOptions] = useState<MeetingOption[]>([])
+  const [meetingsLoading, setMeetingsLoading] = useState(false)
+  const [selectedMeetingId, setSelectedMeetingId] = useState('')
+  const [locationAddress, setLocationAddress] = useState<CanadianAddress>(createEmptyCanadianAddress())
+  const [locationSearchQuery, setLocationSearchQuery] = useState('')
   const [eventRsvps, setEventRsvps] = useState<EventRsvpRow[]>([])
   const [showPublishModal, setShowPublishModal] = useState(false)
   const [showUnpublishModal, setShowUnpublishModal] = useState(false)
@@ -519,6 +613,86 @@ export default function OrganizationEventCreateClient({
     [editRoute],
   )
 
+  const applyDraftEvent = useCallback((event: GovernanceEvent | null | undefined, rsvps: EventRsvpRow[] = []) => {
+    if (!event) return
+    setDraft(event)
+    setForm((prev) => ({
+      ...prev,
+      title: event.title === 'Untitled event' ? '' : event.title,
+      description: event.description ?? '',
+      category: event.category ?? DEFAULT_EVENT_CATEGORY,
+      access: event.access,
+      startsAtLocal: toLocalDateTimeInputValue(event.startsAt) || prev.startsAtLocal,
+      endsAtLocal: toLocalDateTimeInputValue(event.endsAt),
+      paid: event.paid,
+      price: centsToCadAmountInput(event.priceCents),
+      capacity: event.capacity != null ? String(event.capacity) : '',
+    }))
+    setSelectedGuestSpeakers(
+      Array.isArray(event.guestSpeakerInvites) && event.guestSpeakerInvites.length > 0
+        ? event.guestSpeakerInvites.map((invite) => ({
+            id: invite.userId,
+            name: invite.name,
+            handle: invite.handle ?? null,
+            avatarUrl: invite.avatarUrl ?? null,
+            coverUrl: invite.coverUrl ?? null,
+            status: invite.status ?? 'PENDING',
+          }))
+        : (event.guestSpeakers ?? []).map((name) => ({
+            id: `legacy_${name.toLowerCase().replace(/\s+/g, '_')}`,
+            name,
+            handle: null,
+            avatarUrl: null,
+            coverUrl: null,
+            status: 'PENDING',
+          })),
+    )
+    setSelectedSponsors(
+      Array.isArray(event.sponsorInvites) && event.sponsorInvites.length > 0
+        ? event.sponsorInvites.map((invite) => ({
+            organizationId: invite.organizationId,
+            name: invite.name,
+            slug: invite.slug,
+            provinceCode: invite.provinceCode,
+            communitySlug: invite.communitySlug,
+            logoUrl: invite.logoUrl ?? null,
+            coverUrl: invite.coverUrl ?? null,
+            status: invite.status ?? 'PENDING',
+          }))
+        : Array.isArray(event.sponsors)
+          ? event.sponsors.map((item) => ({ ...item, coverUrl: item.coverUrl ?? null, status: 'PENDING' as InviteStatus }))
+          : [],
+    )
+    setFeeRows(mapFeesToDraftRows(event.fees))
+    setEventRsvps(rsvps)
+    setPrimaryPhotoUrl(event.primaryPhotoUrl ?? '')
+    setGalleryPhotoUrls(Array.isArray(event.galleryPhotoUrls) ? event.galleryPhotoUrls : [])
+    setEventType(resolveEventType(event))
+    setSelectedMeetingId(event.meetingRoom?.meetingId ?? '')
+    const nextLocationAddress = normalizeCanadianAddress(event.locationAddress ?? createEmptyCanadianAddress())
+    setLocationAddress(nextLocationAddress)
+    setLocationSearchQuery(formatCanadianPhysicalAddressInline(nextLocationAddress) || '')
+  }, [])
+
+  const resolveLocationAddressForSave = useCallback(async () => {
+    const normalized = normalizeCanadianAddress(locationAddress)
+    if (hasLocationAddressCore(normalized)) return normalized
+
+    const query = locationSearchQuery.trim()
+    if (!query) return normalized
+
+    try {
+      const results = await fetchAddressSearchResults(query, undefined, 5)
+      const resolved = results[0]
+      if (!resolved) return normalized
+      const next = buildCanadianAddressFromSearchResult(resolved, normalized)
+      setLocationAddress(next)
+      return next
+    } catch {
+      return normalized
+    }
+  }, [locationAddress, locationSearchQuery])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
@@ -556,59 +730,7 @@ export default function OrganizationEventCreateClient({
         }
 
         const event = json.event
-
-        setDraft(event)
-        setForm((prev) => ({
-          ...prev,
-          title: event.title === 'Untitled event' ? '' : event.title,
-          description: event.description ?? '',
-          category: event.category ?? DEFAULT_EVENT_CATEGORY,
-          access: event.access,
-          startsAtLocal: toLocalDateTimeInputValue(event.startsAt) || prev.startsAtLocal,
-          endsAtLocal: toLocalDateTimeInputValue(event.endsAt),
-          paid: event.paid,
-          price: centsToCadAmountInput(event.priceCents),
-          capacity: event.capacity != null ? String(event.capacity) : '',
-        }))
-        setSelectedGuestSpeakers(
-          Array.isArray(event.guestSpeakerInvites) && event.guestSpeakerInvites.length > 0
-            ? event.guestSpeakerInvites.map((invite) => ({
-                id: invite.userId,
-                name: invite.name,
-                handle: invite.handle ?? null,
-                avatarUrl: invite.avatarUrl ?? null,
-                coverUrl: invite.coverUrl ?? null,
-                status: invite.status ?? 'PENDING',
-              }))
-            : (event.guestSpeakers ?? []).map((name) => ({
-                id: `legacy_${name.toLowerCase().replace(/\s+/g, '_')}`,
-                name,
-                handle: null,
-                avatarUrl: null,
-                coverUrl: null,
-                status: 'PENDING',
-              })),
-        )
-        setSelectedSponsors(
-          Array.isArray(event.sponsorInvites) && event.sponsorInvites.length > 0
-            ? event.sponsorInvites.map((invite) => ({
-                organizationId: invite.organizationId,
-                name: invite.name,
-                slug: invite.slug,
-                provinceCode: invite.provinceCode,
-                communitySlug: invite.communitySlug,
-                logoUrl: invite.logoUrl ?? null,
-                coverUrl: invite.coverUrl ?? null,
-                status: invite.status ?? 'PENDING',
-              }))
-            : Array.isArray(event.sponsors)
-              ? event.sponsors.map((item) => ({ ...item, coverUrl: item.coverUrl ?? null, status: 'PENDING' as InviteStatus }))
-              : [],
-        )
-        setFeeRows(mapFeesToDraftRows(event.fees))
-        setEventRsvps(Array.isArray(json.rsvps) ? json.rsvps : [])
-        setPrimaryPhotoUrl(event.primaryPhotoUrl ?? '')
-        setGalleryPhotoUrls(Array.isArray(event.galleryPhotoUrls) ? event.galleryPhotoUrls : [])
+        applyDraftEvent(event, Array.isArray(json.rsvps) ? json.rsvps : [])
       } catch {
         setDraft(null)
         pushToast('Unable to load event draft.', 'error')
@@ -616,7 +738,7 @@ export default function OrganizationEventCreateClient({
         setLoading(false)
       }
     },
-    [orgApiPath, token],
+    [applyDraftEvent, orgApiPath, token],
   )
 
   const createDraft = useCallback(async () => {
@@ -645,26 +767,7 @@ export default function OrganizationEventCreateClient({
       }
 
       const event = json.event
-
-      setDraft(event)
-      setForm((prev) => ({
-        ...prev,
-        title: event.title === 'Untitled event' ? '' : event.title,
-        description: event.description ?? '',
-        category: event.category ?? DEFAULT_EVENT_CATEGORY,
-        access: event.access,
-        startsAtLocal: toLocalDateTimeInputValue(event.startsAt) || prev.startsAtLocal,
-        endsAtLocal: toLocalDateTimeInputValue(event.endsAt),
-        paid: event.paid,
-        price: centsToCadAmountInput(event.priceCents),
-        capacity: event.capacity != null ? String(event.capacity) : '',
-      }))
-      setSelectedGuestSpeakers([])
-      setSelectedSponsors([])
-      setFeeRows(mapFeesToDraftRows(event.fees))
-      setEventRsvps([])
-      setPrimaryPhotoUrl(event.primaryPhotoUrl ?? '')
-      setGalleryPhotoUrls(Array.isArray(event.galleryPhotoUrls) ? event.galleryPhotoUrls : [])
+      applyDraftEvent(event, [])
 
       router.replace(draftEditRoute(event.id))
     } catch {
@@ -673,7 +776,7 @@ export default function OrganizationEventCreateClient({
     } finally {
       setLoading(false)
     }
-  }, [draftEditRoute, orgApiPath, router, token])
+  }, [applyDraftEvent, draftEditRoute, orgApiPath, router, token])
 
   useEffect(() => {
     if (!authResolved) return
@@ -758,6 +861,40 @@ export default function OrganizationEventCreateClient({
       window.clearTimeout(timer)
     }
   }, [sponsorQuery])
+
+  useEffect(() => {
+    if (!authResolved || !token) {
+      setMeetingOptions([])
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      setMeetingsLoading(true)
+      try {
+        const meetingsUrl = buildApiUrl(`${orgApiPath}/meetings?includeArchived=1`)
+        const res = await fetch(meetingsUrl, {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const { json } = await parseApiResponse<MeetingOptionsResponse & { error?: unknown }>(res)
+        if (cancelled) return
+        if (!res.ok) {
+          setMeetingOptions([])
+          return
+        }
+        setMeetingOptions(Array.isArray(json?.items) ? json.items : [])
+      } catch {
+        if (!cancelled) setMeetingOptions([])
+      } finally {
+        if (!cancelled) setMeetingsLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authResolved, orgApiPath, token])
 
   const buildGuestSpeakersPayload = useCallback(
     (speakers: SelectedGuestSpeaker[]) =>
@@ -978,6 +1115,14 @@ export default function OrganizationEventCreateClient({
     const hasPaidFees = minPaidFee !== null
     const guestSpeakers = buildGuestSpeakersPayload(selectedGuestSpeakers)
     const sponsorsPayload = buildSponsorsPayload(selectedSponsors)
+    const normalizedLocationAddress = eventType === 'LOCATION'
+      ? await resolveLocationAddressForSave()
+      : normalizeCanadianAddress(locationAddress)
+
+    if (eventType === 'LOCATION' && !hasCanadianAddressValue(normalizedLocationAddress)) {
+      pushToast('Select a location address for this event.', 'error')
+      return
+    }
 
     setSaving(true)
     try {
@@ -1001,6 +1146,12 @@ export default function OrganizationEventCreateClient({
           fees: feesPayload,
           guestSpeakers,
           sponsors: sponsorsPayload,
+          eventType,
+          meetingRoom: eventType === 'MEETING_ROOM' && selectedMeetingId ? { meetingId: selectedMeetingId } : null,
+          locationAddress:
+            eventType === 'LOCATION' && hasCanadianAddressValue(normalizedLocationAddress)
+              ? serializeEventLocationAddress(normalizedLocationAddress)
+              : null,
           primaryPhotoUrl: primaryPhotoUrl.trim() ? primaryPhotoUrl.trim() : null,
           galleryPhotoUrls,
         }),
@@ -1013,14 +1164,14 @@ export default function OrganizationEventCreateClient({
         return
       }
 
-      setDraft(json.event)
+      applyDraftEvent(json.event, eventRsvps)
       pushToast('Saved', 'success')
     } catch {
       pushToast('Unable to save draft.', 'error')
     } finally {
       setSaving(false)
     }
-  }, [buildFeesPayload, buildGuestSpeakersPayload, buildSponsorsPayload, draft?.id, form, galleryPhotoUrls, orgApiPath, primaryPhotoUrl, selectedGuestSpeakers, selectedSponsors, token, uploading])
+  }, [applyDraftEvent, buildFeesPayload, buildGuestSpeakersPayload, buildSponsorsPayload, draft?.id, eventRsvps, eventType, form, galleryPhotoUrls, locationAddress, locationSearchQuery, orgApiPath, primaryPhotoUrl, resolveLocationAddressForSave, selectedGuestSpeakers, selectedSponsors, selectedMeetingId, token, uploading])
 
   const publishDraft = useCallback(async () => {
     if (!token) {
@@ -1046,7 +1197,10 @@ export default function OrganizationEventCreateClient({
       pushToast('Capacity must be a positive integer.', 'error')
       return false
     }
-
+    if (eventType === 'MEETING_ROOM' && !selectedMeetingId) {
+      pushToast('Select a Civil meeting room for this online event.', 'error')
+      return false
+    }
     const feesPayload = buildFeesPayload()
     if (!feesPayload) return false
     const minPaidFee = feesPayload
@@ -1056,6 +1210,13 @@ export default function OrganizationEventCreateClient({
     const hasPaidFees = minPaidFee !== null
     const guestSpeakers = buildGuestSpeakersPayload(selectedGuestSpeakers)
     const sponsorsPayload = buildSponsorsPayload(selectedSponsors)
+    const normalizedLocationAddress = eventType === 'LOCATION'
+      ? await resolveLocationAddressForSave()
+      : normalizeCanadianAddress(locationAddress)
+    if (eventType === 'LOCATION' && !hasLocationAddressCore(normalizedLocationAddress)) {
+      pushToast('Select a complete location address for this event.', 'error')
+      return false
+    }
 
     setSaving(true)
     try {
@@ -1079,6 +1240,9 @@ export default function OrganizationEventCreateClient({
           fees: feesPayload,
           guestSpeakers,
           sponsors: sponsorsPayload,
+          eventType,
+          meetingRoom: eventType === 'MEETING_ROOM' ? { meetingId: selectedMeetingId } : null,
+          locationAddress: eventType === 'LOCATION' ? serializeEventLocationAddress(normalizedLocationAddress) : null,
           agenda: [],
           attachments: [],
           primaryPhotoUrl: primaryPhotoUrl.trim() ? primaryPhotoUrl.trim() : null,
@@ -1093,7 +1257,7 @@ export default function OrganizationEventCreateClient({
         return false
       }
 
-      setDraft(json.event)
+      applyDraftEvent(json.event, eventRsvps)
       pushToast('Event published.', 'success')
       return true
     } catch {
@@ -1102,7 +1266,7 @@ export default function OrganizationEventCreateClient({
     } finally {
       setSaving(false)
     }
-  }, [buildFeesPayload, buildGuestSpeakersPayload, buildSponsorsPayload, draft?.id, form, galleryPhotoUrls, orgApiPath, primaryPhotoUrl, selectedGuestSpeakers, selectedSponsors, token, uploading])
+  }, [applyDraftEvent, buildFeesPayload, buildGuestSpeakersPayload, buildSponsorsPayload, draft?.id, eventRsvps, eventType, form, galleryPhotoUrls, locationAddress, orgApiPath, primaryPhotoUrl, resolveLocationAddressForSave, selectedGuestSpeakers, selectedSponsors, selectedMeetingId, token, uploading])
 
   const requestStatusChange = useCallback(
     (currentStatus: 'DRAFT' | 'PUBLISHED', nextStatus: 'DRAFT' | 'PUBLISHED') => {
@@ -1146,7 +1310,7 @@ export default function OrganizationEventCreateClient({
         return
       }
 
-      setDraft(json.event)
+      applyDraftEvent(json.event, eventRsvps)
       setShowUnpublishModal(false)
       pushToast('Event unpublished.', 'success')
     } catch {
@@ -1154,7 +1318,7 @@ export default function OrganizationEventCreateClient({
     } finally {
       setUnpublishing(false)
     }
-  }, [draft?.id, orgApiPath, token])
+  }, [applyDraftEvent, draft?.id, eventRsvps, orgApiPath, token])
 
   const deleteEvent = useCallback(async () => {
     if (!token) {
@@ -1238,6 +1402,20 @@ export default function OrganizationEventCreateClient({
 
   const startsAtParts = parseLocalDateTimeParts(form.startsAtLocal)
   const endsAtParts = parseLocalDateTimeParts(form.endsAtLocal)
+  const selectedMeeting = meetingOptions.find((meeting) => meeting.id === selectedMeetingId) ?? (draft?.meetingRoom ? {
+    id: draft.meetingRoom.meetingId,
+    title: draft.meetingRoom.title ?? 'Untitled meeting',
+    visibility: draft.meetingRoom.visibility ?? undefined,
+    status: draft.meetingRoom.status ?? undefined,
+    schedule: {
+      startsAt: draft.meetingRoom.startsAt ?? null,
+      endsAt: draft.meetingRoom.endsAt ?? null,
+    },
+  } : null)
+  const selectedMeetingSchedule = selectedMeeting?.schedule?.startsAt
+    ? new Date(selectedMeeting.schedule.startsAt).toLocaleString()
+    : 'Schedule will follow the event time.'
+  const locationSummary = formatCanadianPhysicalAddressInline(locationAddress)
 
   const updateDateTimeField = (field: 'startsAtLocal' | 'endsAtLocal', patch: Partial<LocalDateTimeParts>) => {
     setForm((prev) => {
@@ -1270,7 +1448,6 @@ export default function OrganizationEventCreateClient({
               <option value="DRAFT">Unpublished</option>
               <option value="PUBLISHED">Published</option>
             </select>
-            <span className="text-xs text-slate-500">Draft id: {draft.id}</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1971,6 +2148,91 @@ export default function OrganizationEventCreateClient({
             </div>
           </div>
         ) : null}
+      </section>
+
+      <section className="surface-card space-y-3 p-4 shadow-subtle">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Event type</h3>
+          <p className="text-xs text-slate-500">Choose whether this event uses a Civil meeting room or a physical address.</p>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => setEventType('MEETING_ROOM')}
+            className={eventType === 'MEETING_ROOM' ? 'rounded-2xl border border-sky-600 bg-sky-50 p-4 text-left' : 'rounded-2xl border border-slate-200 bg-white p-4 text-left hover:border-slate-300'}
+          >
+            <p className="text-sm font-semibold text-slate-900">Online Civil Meeting Room</p>
+            <p className="mt-1 text-xs text-slate-500">Attach one of your organization meeting rooms so the event opens directly into Civil.</p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setEventType('LOCATION')}
+            className={eventType === 'LOCATION' ? 'rounded-2xl border border-[var(--cc-primary)] bg-emerald-50 p-4 text-left' : 'rounded-2xl border border-slate-200 bg-white p-4 text-left hover:border-slate-300'}
+          >
+            <p className="text-sm font-semibold text-slate-900">At a location</p>
+            <p className="mt-1 text-xs text-slate-500">Reuse the Canadian address flow so mapping and directions work correctly for attendees.</p>
+          </button>
+        </div>
+
+        {eventType === 'MEETING_ROOM' ? (
+          <div className="space-y-3">
+            <label className="grid gap-1 text-xs font-semibold text-slate-700">
+              Civil meeting room
+              <select
+                value={selectedMeetingId}
+                onChange={(event) => setSelectedMeetingId(event.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal focus:border-[var(--cc-primary)] focus:outline-none"
+              >
+                <option value="">Select a meeting room</option>
+                {meetingOptions.map((meeting) => (
+                  <option key={meeting.id} value={meeting.id}>
+                    {(meeting.title || 'Untitled meeting').trim() || 'Untitled meeting'}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Link
+                href={`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/meetings/manage`}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Manage meeting rooms
+              </Link>
+              <Link
+                href={`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/meetings/manage/create`}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Create meeting room
+              </Link>
+              {meetingsLoading ? <span className="text-slate-500">Loading rooms…</span> : null}
+            </div>
+
+            {selectedMeeting ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">{(selectedMeeting.title || 'Untitled meeting').trim() || 'Untitled meeting'}</p>
+                <p className="mt-1 text-xs text-slate-500">{selectedMeeting.visibility || 'PUBLIC'} · {selectedMeeting.status || 'ARCHIVED'}</p>
+                <p className="mt-2 text-xs text-slate-500">{selectedMeetingSchedule}</p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">Select an existing meeting room or create a new one for this event.</p>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {locationSummary ? <p className="text-xs text-slate-500">Current location: {locationSummary}</p> : null}
+            <CanadianAddressEditor
+              value={locationAddress}
+              onChange={setLocationAddress}
+              onSearchQueryChange={setLocationSearchQuery}
+              disabled={saving || uploading || deleting || unpublishing}
+              mode="organization"
+              required
+            />
+          </div>
+        )}
       </section>
 
       <section className="surface-card space-y-3 p-4 shadow-subtle">

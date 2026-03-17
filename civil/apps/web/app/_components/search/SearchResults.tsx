@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { HiOutlineBuildingOffice2, HiOutlineCalendarDays, HiOutlineDocumentText, HiOutlineMapPin, HiOutlineShoppingBag } from 'react-icons/hi2'
+import { HiOutlineBuildingOffice2, HiOutlineCalendarDays, HiOutlineCheckBadge, HiOutlineDocumentText, HiOutlineMapPin, HiOutlineShoppingBag } from 'react-icons/hi2'
 import {
   type CommunitySearchResult,
   type EventSearchResult,
@@ -18,6 +18,7 @@ import {
   fetchAddressSearchResults,
   formatAddressPrimaryLabel,
   formatAddressSecondaryLabel,
+  isAddressPostalVerified,
   isUsableAddressQuery,
   type NominatimAddress,
 } from '../../_lib/addressSearch'
@@ -243,7 +244,15 @@ export function SearchResults({ query, open }: SearchResultsProps) {
                         <HiOutlineMapPin className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <span className="block truncate font-semibold text-slate-900">{formatAddressPrimaryLabel(result)}</span>
+                        <span className="flex items-center gap-2 truncate font-semibold text-slate-900">
+                          <span className="truncate">{formatAddressPrimaryLabel(result)}</span>
+                          {isAddressPostalVerified(result) ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                              <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                              Verified Address
+                            </span>
+                          ) : null}
+                        </span>
                         <p className="truncate text-xs text-slate-500">{formatAddressSecondaryLabel(result)}</p>
                       </div>
                     </Link>

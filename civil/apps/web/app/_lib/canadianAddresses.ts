@@ -6,9 +6,12 @@ export type CanadianAddress = {
   city?: string | null
   province?: string | null
   postalCode?: string | null
+  originalPostalCode?: string | null
   country?: string | null
   latitude?: number | null
   longitude?: number | null
+  nominatimDisplayName?: string | null
+  nominatimRaw?: unknown
 }
 
 export type SavedShippingAddress = CanadianAddress & {
@@ -53,14 +56,27 @@ export function createEmptyCanadianAddress(): CanadianAddress {
     city: '',
     province: '',
     postalCode: '',
+    originalPostalCode: '',
     country: 'CA',
     latitude: null,
     longitude: null,
+    nominatimDisplayName: '',
+    nominatimRaw: null,
   }
 }
 
 function normalizeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function shouldDisplayCountry(value: string | null | undefined) {
+  const normalized = normalizeText(value).toUpperCase()
+  return Boolean(normalized) && normalized !== 'CA' && normalized !== 'CANADA'
+}
+
+function readNominatimRawRecord(address: CanadianAddress | null | undefined): Record<string, unknown> | null {
+  if (!address?.nominatimRaw || typeof address.nominatimRaw !== 'object' || Array.isArray(address.nominatimRaw)) return null
+  return address.nominatimRaw as Record<string, unknown>
 }
 
 function normalizeCoordinate(value: unknown): number | null {
@@ -101,10 +117,28 @@ export function normalizeCanadianAddress(value: unknown): CanadianAddress {
     city: normalizeText(record.city),
     province: normalizeCanadianProvince(normalizeText(record.province)),
     postalCode: normalizeCanadianPostalCode(normalizeText(record.postalCode)),
+    originalPostalCode: normalizeCanadianPostalCode(normalizeText(record.originalPostalCode)),
     country: normalizeText(record.country || 'CA').toUpperCase() || 'CA',
     latitude: normalizeCoordinate(record.latitude),
     longitude: normalizeCoordinate(record.longitude),
+    nominatimDisplayName: normalizeText(record.nominatimDisplayName),
+    nominatimRaw: record.nominatimRaw ?? null,
   }
+}
+
+export function getCanadianAddressSystemDisplayName(address: CanadianAddress | null | undefined): string | null {
+  const normalized = normalizeCanadianAddress(address)
+  if (normalized.nominatimDisplayName) return normalized.nominatimDisplayName
+  const raw = readNominatimRawRecord(normalized)
+  const fallback = normalizeText(raw?.display_name)
+  return fallback || null
+}
+
+export function isCanadianAddressPostalVerified(address: CanadianAddress | null | undefined): boolean {
+  if (!address) return false
+  const normalized = normalizeCanadianAddress(address)
+  if (!normalized.postalCode || !normalized.originalPostalCode) return false
+  return normalized.postalCode !== normalized.originalPostalCode
 }
 
 export function normalizeSavedShippingAddress(value: unknown): SavedShippingAddress | null {
@@ -142,18 +176,37 @@ export function formatCanadianAddressLines(address: CanadianAddress | null | und
   if (!address) return []
   const normalized = normalizeCanadianAddress(address)
   const lines: string[] = []
+  const postalCode = isCanadianAddressPostalVerified(normalized) ? normalized.postalCode : ''
   if (normalized.label) lines.push(normalized.label)
   if (normalized.name) lines.push(normalized.name)
   if (normalized.line1) lines.push(normalized.line1)
   if (normalized.line2) lines.push(normalized.line2)
-  const cityLine = [normalized.city, normalized.province, normalized.postalCode].filter(Boolean).join(', ')
+  const cityLine = [normalized.city, normalized.province, postalCode].filter(Boolean).join(', ')
   if (cityLine) lines.push(cityLine)
-  if (normalized.country) lines.push(normalized.country)
+  if (shouldDisplayCountry(normalized.country)) lines.push(normalized.country as string)
+  return lines
+}
+
+export function formatCanadianPhysicalAddressLines(address: CanadianAddress | null | undefined): string[] {
+  if (!address) return []
+  const normalized = normalizeCanadianAddress(address)
+  const lines: string[] = []
+  const postalCode = isCanadianAddressPostalVerified(normalized) ? normalized.postalCode : ''
+  if (normalized.line1) lines.push(normalized.line1)
+  if (normalized.line2) lines.push(normalized.line2)
+  const cityLine = [normalized.city, normalized.province, postalCode].filter(Boolean).join(', ')
+  if (cityLine) lines.push(cityLine)
+  if (shouldDisplayCountry(normalized.country)) lines.push(normalized.country as string)
   return lines
 }
 
 export function formatCanadianAddressInline(address: CanadianAddress | null | undefined): string | null {
   const lines = formatCanadianAddressLines(address)
+  return lines.length ? lines.join(', ') : null
+}
+
+export function formatCanadianPhysicalAddressInline(address: CanadianAddress | null | undefined): string | null {
+  const lines = formatCanadianPhysicalAddressLines(address)
   return lines.length ? lines.join(', ') : null
 }
 

@@ -1,4 +1,11 @@
-import { CANADIAN_PROVINCE_OPTIONS, formatCanadianAddressInline, type CanadianAddress } from './canadianAddresses'
+import { buildApiUrl } from './api'
+import {
+  CANADIAN_PROVINCE_OPTIONS,
+  formatCanadianPhysicalAddressInline,
+  getCanadianAddressSystemDisplayName,
+  normalizeCanadianPostalCode,
+  type CanadianAddress,
+} from './canadianAddresses'
 
 export type NominatimAddress = {
   placeId: number | null
@@ -11,6 +18,42 @@ export type NominatimAddress = {
   typeName: string | null
   importance: number | null
   address: Record<string, string>
+  originalPostalCode: string | null
+  postalCodeVerified: boolean
+  nominatimRaw: Record<string, unknown>
+}
+
+export type RoutePoint = {
+  latitude: number
+  longitude: number
+}
+
+export type DrivingRoute = {
+  distanceMeters: number
+  durationSeconds: number
+  geometry: Array<[number, number]>
+}
+
+type AddressCorrectionResolveResponse = {
+  items?: Array<{
+    latitude: number
+    longitude: number
+    originalPostal: string | null
+    correctedPostal: string | null
+    source?: string | null
+  }>
+}
+
+type OsrmRouteResponse = {
+  code?: string
+  routes?: Array<{
+    distance?: number
+    duration?: number
+    geometry?: {
+      type?: string
+      coordinates?: Array<[number, number]>
+    }
+  }>
 }
 
 const MIN_ADDRESS_QUERY_LENGTH = 3
@@ -37,6 +80,29 @@ function normalizeAddressRecord(value: unknown) {
   }, {})
 }
 
+function readNominatimSavedAddress(address: CanadianAddress | null | undefined) {
+  if (!address?.nominatimRaw || typeof address.nominatimRaw !== 'object' || Array.isArray(address.nominatimRaw)) {
+    return {} as Record<string, string>
+  }
+  const raw = address.nominatimRaw as Record<string, unknown>
+  return normalizeAddressRecord(raw.address)
+}
+
+function inferStreetLabelFromText(value: string) {
+  const trimmed = normalizeText(value)
+  if (!trimmed) return ''
+  const segments = trimmed
+    .split(',')
+    .map((segment) => normalizeAddressDisplayText(segment))
+    .filter(Boolean)
+
+  if (!segments.length) return ''
+  if (segments.length >= 2 && /^\d+[A-Za-z-]*$/.test(segments[0])) {
+    return `${segments[0]} ${segments[1]}`.trim()
+  }
+  return segments[0]
+}
+
 function normalizeAddressDisplayText(value: string) {
   const trimmed = normalizeText(value)
   if (!trimmed) return ''
@@ -61,20 +127,82 @@ function normalizePostalDisplay(value: string) {
   return normalizeText(value).toUpperCase()
 }
 
+export function pickAddressLocalityRecord(address: Record<string, string>) {
+  return (
+    address.city ||
+    address.municipality ||
+    address.town ||
+    address.village ||
+    address.borough ||
+    address.city_district ||
+    address.township ||
+    address.hamlet ||
+    address.suburb ||
+    address.county ||
+    ''
+  )
+}
+
+function normalizeCountryDisplay(value: string) {
+  const normalized = normalizeText(value)
+  if (!normalized) return ''
+  const upper = normalized.toUpperCase()
+  if (upper === 'CA' || upper === 'CANADA') return ''
+  return normalizeAddressDisplayText(normalized)
+}
+
 function formatAddressStreetLabel(address: CanadianAddress | null | undefined) {
-  return normalizeAddressDisplayText(normalizeText(address?.line1))
+  const nominatimAddress = readNominatimSavedAddress(address)
+  const houseNumber = normalizeText(nominatimAddress.house_number)
+  const road = normalizeText(nominatimAddress.road)
+  if (houseNumber && road) return `${houseNumber} ${road}`
+  if (road) return road
+
+  const line1 = normalizeAddressDisplayText(normalizeText(address?.line1))
+  if (!line1) return ''
+  if (!line1.includes(',')) return line1
+  return inferStreetLabelFromText(line1)
 }
 
 function formatAddressQueryInline(address: CanadianAddress | null | undefined) {
+  const nominatimAddress = readNominatimSavedAddress(address)
   const line1 = formatAddressStreetLabel(address)
-  const line2 = normalizeAddressDisplayText(normalizeText(address?.line2))
-  const city = normalizeAddressDisplayText(normalizeText(address?.city))
-  const province = normalizeProvinceDisplay(normalizeText(address?.province))
-  const postalCode = normalizePostalDisplay(normalizeText(address?.postalCode))
+  const line2 = normalizeAddressDisplayText(normalizeText(address?.line2 || nominatimAddress.suburb || nominatimAddress.neighbourhood || nominatimAddress.city_district))
+  const city = normalizeAddressDisplayText(normalizeText(address?.city || nominatimAddress.city || nominatimAddress.town || nominatimAddress.village || nominatimAddress.hamlet))
+  const province = normalizeProvinceDisplay(normalizeText(address?.province || nominatimAddress.state || nominatimAddress.province || nominatimAddress.region))
+  const postalCode = normalizePostalDisplay(normalizeText(address?.postalCode || nominatimAddress.postcode))
+  const country = normalizeCountryDisplay(normalizeText(address?.country || nominatimAddress.country || 'CA'))
 
   const locality = [city, province, postalCode].filter(Boolean).join(', ')
-  const pieces = [line1, line2, locality].filter(Boolean)
+  const pieces = [line1, line2, locality, country].filter(Boolean)
   return pieces.join(', ')
+}
+
+export function buildAddressSearchQueries(address: CanadianAddress | null | undefined) {
+  if (!address) return [] as string[]
+
+  const line1 = formatAddressStreetLabel(address)
+  const line2 = normalizeAddressDisplayText(normalizeText(address.line2))
+  const city = normalizeAddressDisplayText(normalizeText(address.city))
+  const province = normalizeProvinceDisplay(normalizeText(address.province))
+  const postalCode = normalizePostalDisplay(normalizeText(address.postalCode))
+  const systemDisplayName = normalizeText(getCanadianAddressSystemDisplayName(address))
+  const physicalInline = formatCanadianPhysicalAddressInline(address) || ''
+
+  const candidates = [
+    systemDisplayName,
+    [line1, line2, [city, province, postalCode].filter(Boolean).join(', ')].filter(Boolean).join(', '),
+    [line1, [city, province, postalCode].filter(Boolean).join(', ')].filter(Boolean).join(', '),
+    [line1, [city, province].filter(Boolean).join(', ')].filter(Boolean).join(', '),
+    [line1, city].filter(Boolean).join(', '),
+    physicalInline,
+  ]
+
+  return candidates.filter((candidate, index, values) => {
+    const normalized = normalizeText(candidate)
+    if (normalized.length < MIN_ADDRESS_QUERY_LENGTH) return false
+    return values.findIndex((value) => normalizeText(value).toLowerCase() === normalized.toLowerCase()) === index
+  })
 }
 
 export function buildNominatimSearchUrl(query: string, limit = 5) {
@@ -107,7 +235,7 @@ export async function fetchAddressSearchResults(query: string, signal?: AbortSig
   const payload = (await response.json().catch(() => [])) as unknown
   if (!Array.isArray(payload)) return []
 
-  return payload
+  const results = payload
     .map((entry) => {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
       const record = entry as Record<string, unknown>
@@ -126,9 +254,49 @@ export async function fetchAddressSearchResults(query: string, signal?: AbortSig
         typeName: normalizeText(record.type) || null,
         importance: normalizeNumber(record.importance),
         address: normalizeAddressRecord(record.address),
+        originalPostalCode: normalizeCanadianPostalCode(normalizeText((record.address as Record<string, unknown> | undefined)?.postcode)) || null,
+        postalCodeVerified: false,
+        nominatimRaw: record,
       } satisfies NominatimAddress
     })
     .filter((entry): entry is NominatimAddress => Boolean(entry))
+
+  if (!results.length) return results
+
+  try {
+    const response = await fetch(buildApiUrl('/address-corrections/resolve'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        points: results.map((result) => ({
+          latitude: result.latitude,
+          longitude: result.longitude,
+          postalCode: result.address.postcode ?? null,
+        })),
+      }),
+      signal,
+    })
+
+    if (!response.ok) return results
+    const payload = (await response.json().catch(() => null)) as AddressCorrectionResolveResponse | null
+    const corrections = Array.isArray(payload?.items) ? payload.items : []
+    if (!corrections.length) return results
+
+    return results.map((result, index) => {
+      const correction = corrections[index]
+      if (!correction?.correctedPostal) return result
+      return {
+        ...result,
+        postalCodeVerified: true,
+        address: {
+          ...result.address,
+          postcode: correction.correctedPostal,
+        },
+      }
+    })
+  } catch {
+    return results
+  }
 }
 
 export function formatAddressPrimaryLabel(result: NominatimAddress) {
@@ -140,12 +308,16 @@ export function formatAddressPrimaryLabel(result: NominatimAddress) {
 }
 
 export function formatAddressSecondaryLabel(result: NominatimAddress) {
-  const locality = normalizeText(result.address.city) || normalizeText(result.address.town) || normalizeText(result.address.village) || normalizeText(result.address.hamlet)
+  const locality = normalizeText(pickAddressLocalityRecord(result.address))
   const province = normalizeText(result.address.state)
-  const postcode = normalizeText(result.address.postcode)
+  const postcode = result.postalCodeVerified ? normalizeText(result.address.postcode) : ''
   const pieces = [locality, province, postcode].filter(Boolean)
   if (pieces.length) return pieces.join(' • ')
   return result.displayName
+}
+
+export function isAddressPostalVerified(result: NominatimAddress | null | undefined) {
+  return Boolean(result?.postalCodeVerified)
 }
 
 export function buildAddressesHref(options: {
@@ -181,7 +353,8 @@ export function buildAddressesHrefFromResult(result: NominatimAddress, query?: s
 }
 
 export function buildAddressesHrefFromAddress(address: CanadianAddress | null | undefined, label?: string | null) {
-  const inline = formatAddressQueryInline(address) || formatCanadianAddressInline(address)
+  const systemDisplayName = getCanadianAddressSystemDisplayName(address)
+  const inline = systemDisplayName || formatAddressQueryInline(address) || formatCanadianPhysicalAddressInline(address)
   const streetLabel = formatAddressStreetLabel(address) || normalizeText(label) || inline
   return buildAddressesHref({
     query: streetLabel,
@@ -210,6 +383,46 @@ export function calculateDistanceKm(origin: { latitude: number; longitude: numbe
 export function estimateTravelMinutes(distanceKm: number) {
   const averageUrbanSpeedKmH = 45
   return Math.max(5, Math.round((distanceKm / averageUrbanSpeedKmH) * 60))
+}
+
+export async function fetchDrivingRoute(origin: RoutePoint, destination: RoutePoint, signal?: AbortSignal): Promise<DrivingRoute | null> {
+  const coordinates = `${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}`
+  const params = new URLSearchParams({
+    overview: 'full',
+    geometries: 'geojson',
+    steps: 'false',
+  })
+
+  const response = await fetch(`/osrm/route/v1/driving/${coordinates}?${params.toString()}`, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    cache: 'no-store',
+    signal,
+  })
+
+  if (!response.ok) {
+    throw new Error(`osrm_route_failed:${response.status}`)
+  }
+
+  const payload = (await response.json().catch(() => null)) as OsrmRouteResponse | null
+  if (!payload || payload.code !== 'Ok') return null
+  const route = Array.isArray(payload.routes) ? payload.routes[0] : null
+  const distanceMeters = typeof route?.distance === 'number' && Number.isFinite(route.distance) ? route.distance : null
+  const durationSeconds = typeof route?.duration === 'number' && Number.isFinite(route.duration) ? route.duration : null
+  const coordinatesList = Array.isArray(route?.geometry?.coordinates)
+    ? route.geometry.coordinates.filter(
+        (coordinate): coordinate is [number, number] =>
+          Array.isArray(coordinate) && coordinate.length === 2 && coordinate.every((value) => typeof value === 'number' && Number.isFinite(value)),
+      )
+    : []
+
+  if (distanceMeters === null || durationSeconds === null || coordinatesList.length < 2) return null
+
+  return {
+    distanceMeters,
+    durationSeconds,
+    geometry: coordinatesList,
+  }
 }
 
 export function isUsableAddressQuery(value: string | null | undefined) {

@@ -1,5 +1,6 @@
 import OrganizationSection from '../../../../../../_components/OrganizationSection'
 import OrganizationSettingsClient from '../../../../../../_components/OrganizationSettingsClient'
+import { fetchCommunityOrganization } from '../../../../../../../_lib/organizations'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,10 +12,22 @@ type PageProps = {
   }
 }
 
-export default function OrganizationSettingsDetailsPage({ params }: PageProps) {
+export default async function OrganizationSettingsDetailsPage({ params }: PageProps) {
+  const org = await fetchCommunityOrganization({
+    province: params.province,
+    municipality: params.municipality,
+    slug: params.organization,
+  })
+
   return (
     <OrganizationSection title="Details" description="Manage your organization profile, photos, and visibility.">
-      <OrganizationSettingsClient province={params.province} municipality={params.municipality} slug={params.organization} section="details" />
+      <OrganizationSettingsClient
+        province={params.province}
+        municipality={params.municipality}
+        slug={params.organization}
+        initialOrg={org}
+        section="details"
+      />
     </OrganizationSection>
   )
 }
