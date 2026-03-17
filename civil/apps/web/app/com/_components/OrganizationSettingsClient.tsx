@@ -7,6 +7,7 @@ import { Area } from 'react-easy-crop'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { getStoredToken } from '../../_lib/tokenStorage'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import { formatUserDisplayName } from '../../_lib/text'
@@ -386,7 +387,8 @@ export default function OrganizationSettingsClient({
   const logoInputRef = useRef<HTMLInputElement | null>(null)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
 
-  const token = useMemo(() => (typeof window !== 'undefined' ? localStorage.getItem('token') : null), [])
+  const [token, setToken] = useState<string | null>(null)
+  const [tokenReady, setTokenReady] = useState(false)
   const canManage = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || (me?.id && org?.ownerId && me.id === org.ownerId))
   const isOwner = Boolean(org?.viewerRole === 'OWNER' || (me?.id && org?.ownerId && me.id === org.ownerId))
   const canSaveOrganizationName = Boolean(isOwner && org && organizationName.trim().length >= 3 && organizationName.trim() !== org.name)
@@ -403,7 +405,13 @@ export default function OrganizationSettingsClient({
     return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
   }, [municipality, province, slug])
 
+  useEffect(() => {
+    setToken(getStoredToken())
+    setTokenReady(true)
+  }, [])
+
   const loadMembers = useCallback(async () => {
+    if (!tokenReady) return
     if (!token) {
       setMembers([])
       setFollowers([])
@@ -429,9 +437,10 @@ export default function OrganizationSettingsClient({
     } finally {
       setMembersLoading(false)
     }
-  }, [orgApiPath, token])
+  }, [orgApiPath, token, tokenReady])
 
   const loadAudit = useCallback(async () => {
+    if (!tokenReady) return
     if (!token) {
       setAuditItems([])
       return
@@ -454,9 +463,10 @@ export default function OrganizationSettingsClient({
     } finally {
       setAuditLoading(false)
     }
-  }, [orgApiPath, token])
+  }, [orgApiPath, token, tokenReady])
 
   const loadGovernanceOverview = useCallback(async () => {
+    if (!tokenReady) return
     if (!token) {
       setGovernanceState(null)
       setGovernanceAnalytics(null)
@@ -495,9 +505,10 @@ export default function OrganizationSettingsClient({
     } finally {
       setGovernanceLoading(false)
     }
-  }, [orgApiPath, token])
+  }, [orgApiPath, token, tokenReady])
 
   const load = useCallback(async () => {
+    if (!tokenReady) return
     setLoading(true)
     try {
       if (token && cachedMe?.id) {
@@ -526,7 +537,7 @@ export default function OrganizationSettingsClient({
     } finally {
       setLoading(false)
     }
-  }, [cachedMe, orgApiPath, token])
+  }, [cachedMe, orgApiPath, token, tokenReady])
 
   useEffect(() => {
     void load()
@@ -751,7 +762,7 @@ export default function OrganizationSettingsClient({
       redirectToAuthModal('login')
       return
     }
-    if (!org || !isOwner) return
+    if (!org || !canManage) return
     if (!deleteConfirmationMatches) {
       pushToast('Type the organization name to confirm deletion.', 'error')
       return
@@ -766,7 +777,7 @@ export default function OrganizationSettingsClient({
       const { json } = await parseApiResponse<{ error?: unknown }>(res)
       if (!res.ok) {
         if (res.status === 403) {
-          pushToast('Only the organization owner can delete this organization.', 'error')
+          pushToast('Only organization admins can delete this organization.', 'error')
         } else {
           const rawError =
             typeof (json as any)?.error === 'string'
@@ -781,7 +792,7 @@ export default function OrganizationSettingsClient({
 
       setDeleteModalOpen(false)
       setDeleteConfirmName('')
-      pushToast('Organization deleted.', 'success')
+      pushToast('Organization marked as deleted.', 'success')
       router.push('/organizations/manager')
     } catch (err) {
       console.error('Failed to delete organization', err)
@@ -789,7 +800,7 @@ export default function OrganizationSettingsClient({
     } finally {
       setDeleteSaving(false)
     }
-  }, [deleteConfirmationMatches, isOwner, org, orgApiPath, router, token])
+  }, [canManage, deleteConfirmationMatches, org, orgApiPath, router, token])
 
   const updateVisibility = useCallback(async (nextPublic: boolean) => {
     if (!token || !org || !canManage) return
@@ -1613,7 +1624,7 @@ export default function OrganizationSettingsClient({
   const logoDisplayUrl = org?.logoUrl ?? null
   const coverDisplayUrl = org?.coverUrl ?? null
 
-  if (loading) {
+  if (loading || !tokenReady) {
     return <p className="text-sm text-slate-600">Loading…</p>
   }
 
@@ -1652,7 +1663,7 @@ export default function OrganizationSettingsClient({
       <Modal open={deleteModalOpen} onClose={closeDeleteModal} title="Delete organization">
         <div className="space-y-4">
           <p className="text-sm text-slate-700">
-            This permanently deletes this organization. All posts, products, channels, and related data will be permanently deleted.
+            This marks the organization as deleted and hides it from public discovery. Organization posts will also be marked deleted.
           </p>
           <p className="text-xs text-slate-500">
             Type <span className="font-semibold text-slate-700">{org.name}</span> to confirm.
@@ -1679,7 +1690,7 @@ export default function OrganizationSettingsClient({
               disabled={deleteSaving || !deleteConfirmationMatches}
               className="rounded-full border border-rose-300 bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
             >
-              {deleteSaving ? 'Deleting…' : 'Delete permanently'}
+              {deleteSaving ? 'Deleting…' : 'Delete organization'}
             </button>
           </div>
         </div>
@@ -2848,11 +2859,11 @@ export default function OrganizationSettingsClient({
 
       ) : null}
 
-      {showDetails && isOwner ? (
+      {showDetails && canManage ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
           <h3 className="text-sm font-semibold text-rose-700">Danger zone</h3>
           <p className="text-xs text-slate-600">
-            Deleting permanently removes this organization and all posts, products, channels, and related records.
+            Mark this organization as deleted and hide it from public discovery. Organization posts will also be marked deleted.
           </p>
           <button
             type="button"
