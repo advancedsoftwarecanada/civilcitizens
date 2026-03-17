@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { ElectoralDistrictContextResponse } from '@civil/shared'
+import { MapZoomControls } from './MapZoomControls'
 
 type CivilDistrictMapProps = {
   context: ElectoralDistrictContextResponse
@@ -9,6 +10,15 @@ type CivilDistrictMapProps = {
 
 export function CivilDistrictMap({ context }: CivilDistrictMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const mapRef = useRef<any>(null)
+
+  const handleZoomIn = useCallback(() => {
+    mapRef.current?.zoomIn?.({ duration: 180 })
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    mapRef.current?.zoomOut?.({ duration: 180 })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -25,8 +35,7 @@ export function CivilDistrictMap({ context }: CivilDistrictMapProps) {
         zoom: 9,
         attributionControl: false,
       })
-
-      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
+      mapRef.current = map
 
       map.on('load', () => {
         const userFeature = {
@@ -118,7 +127,10 @@ export function CivilDistrictMap({ context }: CivilDistrictMapProps) {
         })
       })
 
-      cleanup = () => map.remove()
+      cleanup = () => {
+        map.remove()
+        mapRef.current = null
+      }
     })()
 
     return () => {
@@ -127,5 +139,10 @@ export function CivilDistrictMap({ context }: CivilDistrictMapProps) {
     }
   }, [context])
 
-  return <div ref={containerRef} className="h-[360px] w-full overflow-hidden rounded-[24px] border border-[var(--cc-border)] bg-slate-100 shadow-subtle" />
+  return (
+    <div className="relative h-[360px] w-full overflow-hidden rounded-[24px] border border-[var(--cc-border)] bg-slate-100 shadow-subtle">
+      <div ref={containerRef} className="h-full w-full" />
+      <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
+    </div>
+  )
 }

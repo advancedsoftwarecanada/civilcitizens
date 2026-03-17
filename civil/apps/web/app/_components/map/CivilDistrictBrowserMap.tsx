@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ElectoralDistrictBrowserResponse } from '@civil/shared'
+import { MapZoomControls } from './MapZoomControls'
 
 type BrowserDistrict = ElectoralDistrictBrowserResponse['districts'][number]
 type DistrictVisualStatus = 'default' | 'nearby' | 'following' | 'home'
@@ -292,6 +293,14 @@ export function CivilDistrictBrowserMap({
     isFollowPending,
   })
 
+  const handleZoomIn = useCallback(() => {
+    mapRef.current?.zoomIn?.({ duration: 180 })
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    mapRef.current?.zoomOut?.({ duration: 180 })
+  }, [])
+
   useEffect(() => {
     onSelectDistrictRef.current = onSelectDistrict
   }, [onSelectDistrict])
@@ -423,8 +432,6 @@ export function CivilDistrictBrowserMap({
         attributionControl: false,
       })
       mapRef.current = map
-
-      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
 
       const popup = new maplibregl.Popup({
         closeButton: true,
@@ -654,6 +661,7 @@ export function CivilDistrictBrowserMap({
         >
           {isFullscreen ? 'Exit full screen' : 'Full screen'}
         </button>
+        <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="top-16" />
         <div ref={containerRef} className="h-full w-full" />
       </div>
     </>
