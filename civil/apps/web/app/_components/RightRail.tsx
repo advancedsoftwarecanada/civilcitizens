@@ -79,6 +79,46 @@ type OrganizationsMembershipsResponse = {
   items?: MemberOrganization[]
 }
 
+type CommunityFollowEntry = {
+  province: string
+  communitySlug: string
+  home?: boolean
+  community?: {
+    name?: string | null
+    cityName?: string | null
+    province: string
+    slug: string
+  } | null
+}
+
+type CommunityFollowsResponse = {
+  items?: CommunityFollowEntry[]
+}
+
+type CommunityOrganizationRailItem = {
+  id: string
+  name: string
+  slug: string
+  provinceCode: string | null
+  communitySlug: string | null
+  isVerified?: boolean
+  logoUrl?: string | null
+  coverUrl?: string | null
+}
+
+type CommunityOrganizationsRailResponse = {
+  items?: CommunityOrganizationRailItem[]
+}
+
+type CommunityOrganizationsRailGroup = {
+  key: string
+  title: string
+  isHome: boolean
+  href: string
+  communityHref: string
+  items: CommunityOrganizationRailItem[]
+}
+
 type ConnectionEntry = {
   id: string
   status: string
@@ -222,6 +262,26 @@ type FamilyRailEntry = SharedFamilyRailEntry
 
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 
+function formatCommunityRailLabel(value: string | null | undefined) {
+  if (!value) return 'Community'
+  return value
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function shuffleItems<T>(items: T[]) {
+  const next = [...items]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const current = next[index]
+    next[index] = next[swapIndex] as T
+    next[swapIndex] = current as T
+  }
+  return next
+}
+
 export function RightRail({
   mode = 'default',
   showOrganizations = false,
@@ -261,6 +321,7 @@ export function RightRail({
   const [pendingConnectionAction, setPendingConnectionAction] = useState<{ id: string; action: 'accept' | 'reject' } | null>(null)
   const [eventRsvps, setEventRsvps] = useState<EventSidebarRsvpItem[]>([])
   const [eventOrganizations, setEventOrganizations] = useState<EventSidebarOrganization[]>([])
+  const [communityOrganizationGroups, setCommunityOrganizationGroups] = useState<CommunityOrganizationsRailGroup[]>([])
   const [workApplications, setWorkApplications] = useState<WorkApplicationRailItem[]>([])
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberRailItem[]>([])
   const [familyRelationships, setFamilyRelationships] = useState<ProfileFamilyRelationshipRailItem[]>([])
@@ -277,6 +338,7 @@ export function RightRail({
   const shouldLoadOrganizations = !isFamilyLockedSession && (mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'community' || showOrganizations)
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
+  const shouldLoadCommunityOrganizations = !isFamilyLockedSession && mode === 'communitiesFeed'
   const shouldLoadConnections = mode === 'network'
   const shouldLoadPendingFriendRequests = showPendingFriendRequests
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
@@ -398,7 +460,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'family'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'family'
         promise: Promise<Response>
       }> = []
 
@@ -433,6 +495,15 @@ export function RightRail({
         requests.push({
           key: 'memberships',
           promise: fetch(buildApiUrl('/organizations/memberships'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        })
+      }
+
+      if (shouldLoadCommunityOrganizations) {
+        requests.push({
+          key: 'communityFollows',
+          promise: fetch(buildApiUrl('/communities/follows'), {
             headers: { authorization: `Bearer ${token}` },
           }),
         })
@@ -500,6 +571,7 @@ export function RightRail({
       const followsRes = byKey.get('follows')
       const ownedRes = byKey.get('owned')
       const membershipsRes = byKey.get('memberships')
+      const communityFollowsRes = byKey.get('communityFollows')
       const connectionsRes = byKey.get('connections')
       const friendRequestsRes = byKey.get('friendRequests')
       const connectionRequestsRes = byKey.get('connectionRequests')
@@ -512,6 +584,7 @@ export function RightRail({
         followsRes?.status === 401 ||
         ownedRes?.status === 401 ||
         membershipsRes?.status === 401 ||
+        communityFollowsRes?.status === 401 ||
         connectionsRes?.status === 401 ||
         friendRequestsRes?.status === 401 ||
         connectionRequestsRes?.status === 401 ||
@@ -527,18 +600,20 @@ export function RightRail({
       const requiredFollowsOk = shouldLoadOrganizations ? Boolean(followsRes?.ok) : true
       const requiredOwnedOk = shouldLoadOwnedOrganizations ? Boolean(ownedRes?.ok) : true
       const requiredMembershipsOk = shouldLoadMemberOrganizations ? Boolean(membershipsRes?.ok) : true
+      const requiredCommunityOrganizationsOk = shouldLoadCommunityOrganizations ? Boolean(communityFollowsRes?.ok) : true
       const requiredConnectionsOk = shouldLoadConnections ? Boolean(connectionsRes?.ok) : true
       const requiredFriendRequestsOk = shouldLoadPendingFriendRequests ? Boolean(friendRequestsRes?.ok) : true
       const requiredConnectionRequestsOk = shouldLoadPendingConnectionRequests ? Boolean(connectionRequestsRes?.ok) : true
       const requiredEventsSidebarOk = shouldLoadEventsSidebar ? Boolean(eventsSidebarRes?.ok) : true
       const requiredWorkApplicationsOk = shouldLoadWorkApplications ? Boolean(workApplicationsRes?.ok) : true
 
-      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredMembershipsOk || !requiredConnectionsOk || !requiredFriendRequestsOk || !requiredConnectionRequestsOk || !requiredEventsSidebarOk || !requiredWorkApplicationsOk) {
+      if (!requiredHomeOk || !requiredFollowsOk || !requiredOwnedOk || !requiredMembershipsOk || !requiredCommunityOrganizationsOk || !requiredConnectionsOk || !requiredFriendRequestsOk || !requiredConnectionRequestsOk || !requiredEventsSidebarOk || !requiredWorkApplicationsOk) {
         setStatus('error')
         if (!shouldLoadHomeRail) setData(null)
         if (!shouldLoadOrganizations) setOrganizations([])
         if (!shouldLoadOwnedOrganizations) setOwnedOrganizations([])
         if (!shouldLoadMemberOrganizations) setMemberOrganizations([])
+        if (!shouldLoadCommunityOrganizations) setCommunityOrganizationGroups([])
         if (!shouldLoadConnections) setConnections([])
         if (!shouldLoadPendingFriendRequests) setPendingFriendRequests([])
         if (!shouldLoadPendingConnectionRequests) setPendingConnectionRequests([])
@@ -579,6 +654,72 @@ export function RightRail({
         setMemberOrganizations(items)
       } else {
         setMemberOrganizations([])
+      }
+
+      if (communityFollowsRes?.ok) {
+        const payload = (await communityFollowsRes.json().catch(() => null)) as CommunityFollowsResponse | null
+        const rawItems = Array.isArray(payload?.items) ? payload.items : []
+        const orderedItems = [...rawItems].sort((left, right) => {
+          const leftIsHome = Boolean(left.home || (viewer?.homeCommunity?.provinceCode === left.province && viewer?.homeCommunity?.communitySlug === left.communitySlug))
+          const rightIsHome = Boolean(right.home || (viewer?.homeCommunity?.provinceCode === right.province && viewer?.homeCommunity?.communitySlug === right.communitySlug))
+          if (leftIsHome !== rightIsHome) return leftIsHome ? -1 : 1
+
+          const leftLabel = formatCommunityRailLabel(left.community?.cityName ?? left.community?.name ?? left.communitySlug)
+          const rightLabel = formatCommunityRailLabel(right.community?.cityName ?? right.community?.name ?? right.communitySlug)
+          return leftLabel.localeCompare(rightLabel)
+        })
+
+        const groups = await Promise.all(
+          orderedItems.map(async (item) => {
+            const provinceCode = item.province.trim().toLowerCase()
+            const communitySlug = item.communitySlug.trim().toLowerCase()
+            const href = `/com/${provinceCode}/${communitySlug}/orgs`
+            const communityHref = `/${provinceCode}/${communitySlug}`
+            const isHome = Boolean(item.home || (viewer?.homeCommunity?.provinceCode === item.province && viewer?.homeCommunity?.communitySlug === item.communitySlug))
+            const communityName = formatCommunityRailLabel(item.community?.cityName ?? item.community?.name ?? item.communitySlug)
+
+            try {
+              const response = await fetch(buildApiUrl(`/communities/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs?limit=24`), {
+                headers: { authorization: `Bearer ${token}` },
+              })
+
+              if (!response.ok) {
+                return {
+                  key: `${provinceCode}:${communitySlug}`,
+                  title: communityName,
+                  isHome,
+                  href,
+                  communityHref,
+                  items: [],
+                }
+              }
+
+              const orgPayload = (await response.json().catch(() => null)) as CommunityOrganizationsRailResponse | null
+              return {
+                key: `${provinceCode}:${communitySlug}`,
+                title: communityName,
+                isHome,
+                href,
+                communityHref,
+                items: shuffleItems(Array.isArray(orgPayload?.items) ? orgPayload.items : []).slice(0, 5),
+              }
+            } catch (error) {
+              console.error('Unable to load community organizations for rail', error)
+              return {
+                key: `${provinceCode}:${communitySlug}`,
+                title: communityName,
+                isHome,
+                href,
+                communityHref,
+                items: [],
+              }
+            }
+          }),
+        )
+
+        setCommunityOrganizationGroups(groups)
+      } else {
+        setCommunityOrganizationGroups([])
       }
 
       if (connectionsRes?.ok) {
@@ -635,7 +776,7 @@ export function RightRail({
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadFamilyRail])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadFamilyRail, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
 
   useEffect(() => {
     void loadData()
@@ -749,6 +890,55 @@ export function RightRail({
             </ul>
           </Block>
         ) : null}
+
+        {communityOrganizationGroups.length ? (
+          communityOrganizationGroups.map((group) => (
+            <Block
+              key={group.key}
+              title={
+                <div className="space-y-1">
+                  {group.isHome ? (
+                    <span className="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                      Home
+                    </span>
+                  ) : null}
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Organizations in</p>
+                    <Link href={group.communityHref} className="inline-flex text-base font-semibold leading-5 text-slate-900 hover:text-[var(--cc-primary)] hover:underline">
+                      {group.title}
+                    </Link>
+                  </div>
+                </div>
+              }
+              action={{ label: 'Directory', href: group.href }}
+            >
+              {group.items.length ? (
+                <ul className="space-y-3">
+                  {group.items.map((org) => (
+                    <li key={org.id}>
+                      <CivilCard
+                        href={org.provinceCode && org.communitySlug ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}` : group.href}
+                        size="md"
+                        name={org.name}
+                        avatarAlt={org.name}
+                        avatarInitials={org.name}
+                        avatarSrc={org.logoUrl ?? null}
+                        coverUrl={org.coverUrl ?? null}
+                        isVerified={Boolean(org.isVerified)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-500">No organizations in this community yet.</p>
+              )}
+            </Block>
+          ))
+        ) : (
+          <Block title="Community Organizations" action={{ label: 'View all', href: '/communities/settings' }}>
+            <p className="text-sm text-slate-500">Follow a community to see its organizations here.</p>
+          </Block>
+        )}
       </div>
     )
   }

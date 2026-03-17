@@ -30,6 +30,9 @@ export default function PostAuthorMiniCard({ author, className }: PostAuthorMini
       titleHref={`/u/${author.handle}`}
       isVerified={Boolean(author.isVerified)}
       isBusiness={Boolean(author.isPremium)}
+      titleLines={2}
+      titleClassName="w-full text-center"
+      subtitleClassName="text-center"
       className={className}
     />
   )

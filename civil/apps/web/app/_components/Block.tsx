@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { ReactNode } from 'react'
 
 type BlockProps = {
-  title: string
+  title: ReactNode
   action?: {
     label: string
     href: string
@@ -15,8 +15,8 @@ type BlockProps = {
 export default function Block({ title, action, actionVariant = 'link', children, className = '' }: BlockProps) {
   return (
     <section className={`surface-card p-5 ${className}`}>
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</h2>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">{typeof title === 'string' ? <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">{title}</h2> : title}</div>
         {action && (
           <Link
             href={action.href}
