@@ -7,6 +7,7 @@ import Block from '../../_components/Block'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
 import type { CommunityOrganization } from '../../_lib/organizations'
+import { getStoredToken } from '../../_lib/tokenStorage'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import { ORGANIZATION_RIGHT_RAIL_LINKS } from './organizationRailLinks'
@@ -46,6 +47,8 @@ export default function OrganizationRailCard({
   const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [viewerPermissions, setViewerPermissions] = useState<string[]>([])
+  const [token, setToken] = useState<string | null>(null)
+  const [tokenReady, setTokenReady] = useState(false)
 
   const isOwner = Boolean(me?.id && org?.ownerId && me.id === org.ownerId)
   const canManageSettings = useMemo(() => {
@@ -54,8 +57,13 @@ export default function OrganizationRailCard({
   }, [isOwner, org?.viewerRole, viewerPermissions])
 
   useEffect(() => {
+    setToken(getStoredToken())
+    setTokenReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!tokenReady) return
     let cancelled = false
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
 
     if (cachedMe?.id) {
       setMe({ id: cachedMe.id })
@@ -109,7 +117,7 @@ export default function OrganizationRailCard({
     return () => {
       cancelled = true
     }
-  }, [cachedMe, municipality, organizationSlug, province])
+  }, [cachedMe, municipality, organizationSlug, province, token, tokenReady])
 
   const resolvedName = org?.name ?? organizationName
 
@@ -136,7 +144,7 @@ export default function OrganizationRailCard({
             />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">{resolvedName}</p>
-              <p className="mt-0.5 text-xs text-slate-500">{org?.followerCount ?? 0} joined</p>
+              <p className="mt-0.5 text-xs text-slate-500">{org?.followerCount ?? 0} followers</p>
             </div>
           </div>
         </div>

@@ -14,19 +14,15 @@ export default function OrganizationFollowButton({ province, municipality, slug,
   const [following, setFollowing] = useState<boolean>(initialFollowed)
   const [busy, setBusy] = useState<boolean>(false)
 
-  const token = useMemo(() => {
-    if (typeof window === 'undefined') return null
-    return window.localStorage.getItem('token')
-  }, [])
-
   const apiBase = useMemo(() => {
     const base = `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/follow`
     return buildApiUrl(base)
   }, [province, municipality, slug])
 
   const onToggle = useCallback(async () => {
+    const token = typeof window === 'undefined' ? null : window.localStorage.getItem('token')
     if (!token) {
-      alert('Please sign in to join organizations.')
+      alert('Please sign in to follow organizations.')
       return
     }
 
@@ -40,7 +36,7 @@ export default function OrganizationFollowButton({ province, municipality, slug,
       })
 
       if (!response.ok) {
-        const message = following ? 'Unable to leave organization.' : 'Unable to join organization.'
+        const message = following ? 'Unable to unfollow organization.' : 'Unable to follow organization.'
         alert(message)
         return
       }
@@ -49,7 +45,7 @@ export default function OrganizationFollowButton({ province, municipality, slug,
     } finally {
       setBusy(false)
     }
-  }, [apiBase, following, token])
+  }, [apiBase, following])
 
   return (
     <button
@@ -62,7 +58,7 @@ export default function OrganizationFollowButton({ province, municipality, slug,
           : 'inline-flex items-center rounded-full border border-slate-200 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60'
       }
     >
-      {busy ? 'Please wait…' : following ? 'Joined' : 'Join'}
+      {busy ? 'Please wait…' : following ? 'Following' : 'Follow'}
     </button>
   )
 }

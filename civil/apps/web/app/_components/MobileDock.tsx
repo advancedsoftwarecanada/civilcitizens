@@ -519,7 +519,7 @@ export default function MobileDock() {
       return <RightRail mode="organizations" organizationLinkTarget="chat" />
     }
     if (pathname === '/organizations') {
-      return <RightRail showOrganizations hideContacts hideCommunities />
+      return <RightRail showOrganizations organizationBlockVariant="followed" hideContacts hideCommunities hideFamilyBlock />
     }
     if (pathname?.startsWith('/organizations')) {
       return isOrganizationsDirectory ? (

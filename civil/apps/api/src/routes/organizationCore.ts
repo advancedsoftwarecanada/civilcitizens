@@ -517,15 +517,61 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
 
       const org = await prisma.business.findFirst({
         where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
-        select: { id: true, ownerId: true, moderationStatus: true },
+        select: { id: true, ownerId: true, name: true, status: true, moderationStatus: true, metadata: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
       if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
         return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
       }
-      if (org.ownerId !== userId) return reply.code(403).send({ error: 'owner_required_for_delete' })
 
-      await prisma.business.delete({ where: { id: org.id } })
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership) return reply.code(403).send({ error: 'forbidden' })
+
+      const deletedAt = new Date().toISOString()
+      const nextMetadata = org.metadata && typeof org.metadata === 'object' && !Array.isArray(org.metadata)
+        ? ({ ...(org.metadata as Record<string, unknown>) } as Record<string, unknown>)
+        : {}
+      nextMetadata.deletion = {
+        deletedAt,
+        deletedByUserId: userId,
+        deletedByRole: membership.role,
+        previousStatus: org.status,
+      }
+
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.business.update({
+          where: { id: org.id },
+          data: {
+            status: deps.BusinessStatus.CANCELED,
+            moderationStatus: deps.ModerationStatus.QUARANTINED,
+            metadata: nextMetadata as Prisma.InputJsonValue,
+          },
+        })
+
+        await tx.post.updateMany({
+          where: { businessId: org.id },
+          data: {
+            moderationStatus: deps.ModerationStatus.QUARANTINED,
+            visibility: 'deleted',
+          },
+        })
+
+        await deps.appendOrganizationAuditLogEntry(tx, org.id, {
+          actorUserId: userId,
+          action: 'organization.deleted',
+          reason: null,
+          previousValue: { status: org.status, moderationStatus: org.moderationStatus, name: org.name },
+          nextValue: {
+            status: deps.BusinessStatus.CANCELED,
+            moderationStatus: deps.ModerationStatus.QUARANTINED,
+            deletedAt,
+          },
+        })
+      })
+
       return reply.send({ ok: true })
     }),
   )

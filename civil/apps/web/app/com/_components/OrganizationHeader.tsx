@@ -147,7 +147,7 @@ export default function OrganizationHeader({
                 </p>
               ) : null}
               <p className="mt-1 text-sm text-slate-500">
-                {memberCount === null ? '—' : memberCount} members · {resolvedOrg?.followerCount ?? 0} joined
+                {memberCount === null ? '—' : memberCount} members · {resolvedOrg?.followerCount ?? 0} followers
               </p>
             </div>
           </div>

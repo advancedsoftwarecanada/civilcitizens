@@ -227,6 +227,7 @@ export function RightRail({
   showOrganizations = false,
   showRsvps = false,
   organizationLinkTarget = 'org',
+  organizationBlockVariant = 'combined',
   hideContactsAndCommunities = false,
   hideContacts = false,
   hideCommunities = false,
@@ -238,6 +239,7 @@ export function RightRail({
   showOrganizations?: boolean
   showRsvps?: boolean
   organizationLinkTarget?: 'org' | 'chat'
+  organizationBlockVariant?: 'combined' | 'followed'
   hideContactsAndCommunities?: boolean
   hideContacts?: boolean
   hideCommunities?: boolean
@@ -340,6 +342,12 @@ export function RightRail({
     const followed = subscribedOrganizations.filter((org) => !partOfIds.has(org.id))
     return [...owned, ...dedupedMemberships, ...followed]
   }, [ownedOrganizations, memberOrganizations, subscribedOrganizations])
+
+  const railOrganizations = organizationBlockVariant === 'followed' ? subscribedOrganizations : combinedOrganizations
+
+  const railOrganizationsTitle = organizationBlockVariant === 'followed' ? 'Organizations you follow' : 'Your Organizations'
+
+  const railOrganizationsEmptyLabel = organizationBlockVariant === 'followed' ? 'No organizations followed yet.' : 'No organizations yet.'
 
   const manageCreateEventHref = useMemo(() => {
     const org = eventOrganizations[0]
@@ -1132,10 +1140,10 @@ export function RightRail({
       ) : null}
 
       {mode === 'default' && showOrganizations && !isFamilyLockedSession ? (
-        <Block title="Your Organizations" action={{ label: 'View all', href: '/organizations/directory' }}>
-          {combinedOrganizations.length ? (
+        <Block title={railOrganizationsTitle} action={{ label: 'View all', href: '/organizations/directory' }}>
+          {railOrganizations.length ? (
             <ul className="space-y-3">
-              {combinedOrganizations.slice(0, 5).map((org) => (
+              {railOrganizations.slice(0, 5).map((org) => (
                 <li key={org.id}>
                   <CivilCard
                     href={getOrganizationHref(org)}
@@ -1151,7 +1159,7 @@ export function RightRail({
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">No organizations yet.</p>
+            <p className="text-sm text-slate-500">{railOrganizationsEmptyLabel}</p>
           )}
         </Block>
       ) : null}

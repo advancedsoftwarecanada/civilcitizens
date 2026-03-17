@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactionType } from '@civil/shared'
 import PostFeedItem from '../../_components/PostFeedItem'
 import PostComposer from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { clearAuthSession } from '../../_lib/authSession'
+import { getStoredToken } from '../../_lib/tokenStorage'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import type { ApiPost } from '../../_components/PostComposer'
 import type { CommunityOrganization } from '../../_lib/organizations'
@@ -43,17 +44,17 @@ export default function OrganizationWallClient({
   const [orgLoading, setOrgLoading] = useState(false)
   const [sortMode, setSortMode] = useState<'hot' | 'new'>('new')
 
-  const token = useMemo(() => {
-    if (typeof window === 'undefined') return null
-    return window.localStorage.getItem('token')
+  const [token, setToken] = useState<string | null>(null)
+  const [tokenReady, setTokenReady] = useState(false)
+
+  useEffect(() => {
+    setToken(getStoredToken())
+    setTokenReady(true)
   }, [])
 
   const loadOrg = useCallback(async () => {
+    if (!tokenReady) return
     if (org) return
-    if (!token) {
-      redirectToAuthModal('login')
-      return
-    }
 
     setOrgLoading(true)
     setError(null)
@@ -63,7 +64,7 @@ export default function OrganizationWallClient({
         buildApiUrl(
           `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
         ),
-        { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+        { headers: token ? { authorization: `Bearer ${token}` } : undefined, cache: 'no-store' },
       )
 
       if (res.status === 401) {
@@ -94,7 +95,7 @@ export default function OrganizationWallClient({
     } finally {
       setOrgLoading(false)
     }
-  }, [municipality, org, province, slug, token])
+  }, [municipality, org, province, slug, token, tokenReady])
 
   const loadPosts = useCallback(async () => {
     if (!org) return
@@ -149,7 +150,7 @@ export default function OrganizationWallClient({
   }, [loadPosts])
 
   useEffect(() => {
-    if (!token) return
+    if (!tokenReady || !token) return
     let cancelled = false
     const loadMe = async () => {
       try {
@@ -173,10 +174,10 @@ export default function OrganizationWallClient({
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [token, tokenReady])
 
   useEffect(() => {
-    if (!token) return
+    if (!tokenReady || !token) return
     let cancelled = false
     const refreshOrg = async () => {
       try {
@@ -197,7 +198,7 @@ export default function OrganizationWallClient({
     return () => {
       cancelled = true
     }
-  }, [municipality, province, slug, token])
+  }, [municipality, province, slug, token, tokenReady])
 
   const canPostAsOrg = Boolean(viewerId && org && (org.viewerRole === 'OWNER' || org.viewerRole === 'MANAGER' || org.ownerId === viewerId))
   const communityTarget = org?.provinceCode && org?.communitySlug ? { provinceCode: org.provinceCode, communitySlug: org.communitySlug } : null

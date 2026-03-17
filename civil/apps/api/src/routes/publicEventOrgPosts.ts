@@ -335,24 +335,32 @@ export function registerPublicEventOrgPostRoutes(app: FastifyInstance, deps: Pub
       if (!resolvedCommunitySlug) return reply.code(404).send({ error: 'community_not_found' })
 
       const slug = params.data.slug.trim().toLowerCase()
-      const org = await prisma.business.findFirst({ where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug }, select: { id: true, ownerId: true, moderationStatus: true } })
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug },
+        select: { id: true, ownerId: true, status: true, moderationStatus: true },
+      })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
-      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) return reply.code(404).send({ error: 'organization_not_found' })
+
+      const viewerId = (req as any).user?.id as string | undefined
+      const isOwner = Boolean(viewerId && org.ownerId === viewerId)
+      const membership = viewerId && !isOwner
+        ? await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId: viewerId } }, select: { role: true } })
+        : null
+      const isAssociated = Boolean(isOwner || membership)
+
+      if ((org.status !== 'ACTIVE' || org.moderationStatus !== deps.ModerationStatus.VISIBLE) && !isAssociated) {
+        return reply.code(404).send({ error: 'organization_not_found' })
+      }
 
       const { cursor, limit, jurisdiction, sort } = query.data
       const sortMode = sort ?? 'new'
       const where: Prisma.PostWhereInput = { businessId: org.id, ...(jurisdiction ? { jurisdiction } : {}) }
 
-      const viewerId = (req as any).user?.id as string | undefined
       const viewerBlockState = await deps.loadViewerBlockState(viewerId)
       if (viewerBlockState.blockedBusinessIds.has(org.id)) return reply.code(404).send({ error: 'organization_not_found' })
       deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
 
       if (viewerId) {
-        const isOwner = org.ownerId === viewerId
-        const membership = isOwner
-          ? { role: 'OWNER' as const }
-          : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId: viewerId } }, select: { role: true } })
         if (!membership) where.visibility = 'public'
       } else {
         where.visibility = 'public'
