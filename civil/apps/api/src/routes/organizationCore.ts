@@ -332,6 +332,117 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
     }),
   )
 
+  app.post('/communities/:province/:municipality/orgs/draft', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (req as any).user?.id as string | undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgDraftBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+      const communitySlug = params.data.municipality.trim().toLowerCase()
+      if (!communitySlug) return reply.code(404).send({ error: 'community_not_found' })
+
+      const community = deps.findCommunity(province, communitySlug)
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })
+      if (!user) return reply.code(404).send({ error: 'user_not_found' })
+
+      const ownedCount = await prisma.business.count({ where: { ownerId: userId } })
+      if (ownedCount >= deps.MAX_BUSINESSES_PER_USER) return reply.code(403).send({ error: 'business_limit_reached' })
+
+      const draftName = body.data.name?.trim() || 'Untitled organization'
+      const desiredSlugRaw = body.data.slug?.trim() || ''
+      const desiredSlug = desiredSlugRaw ? deps.trimSlugLength(deps.slugifyText(desiredSlugRaw.toLowerCase()), 80) : null
+      const baseSlug = desiredSlug || deps.trimSlugLength(deps.slugifyText(draftName), 80) || 'organization'
+      const slug = await deps.ensureUniqueCommunityOrgSlug({ provinceCode: province, communitySlug: community.slug, baseSlug })
+
+      const type = (body.data.type ?? 'LOCAL_BUSINESS') as any
+      const initialOrgSystem = deps.readOrganizationSystemState(null)
+      initialOrgSystem.members[userId] = {
+        rankId: deps.SYSTEM_MANAGER_RANK_ID,
+        planId: null,
+        status: 'ACTIVE',
+        referredByUserId: null,
+        reputation: 0,
+        updatedAt: new Date().toISOString(),
+      }
+
+      const org = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const created = await tx.business.create({
+          data: {
+            ownerId: userId,
+            provinceCode: province,
+            communitySlug: community.slug,
+            name: draftName,
+            slug,
+            type,
+            description: body.data.description?.trim() ? deps.sanitizePlainText(body.data.description).trim() : null,
+            metadata: deps.mergeOrganizationSystemStateIntoMetadata(null, initialOrgSystem),
+            status: 'DRAFT',
+          },
+          select: { id: true },
+        })
+
+        await tx.businessFollow.upsert({
+          where: { businessId_userId: { businessId: created.id, userId } },
+          create: { businessId: created.id, userId },
+          update: {},
+          select: { id: true },
+        })
+
+        await tx.businessMembership.upsert({
+          where: { businessId_userId: { businessId: created.id, userId } },
+          create: { businessId: created.id, userId, role: 'OWNER' },
+          update: { role: 'OWNER' },
+          select: { id: true },
+        })
+
+        await deps.appendOrganizationAuditLogEntry(tx, created.id, {
+          actorUserId: userId,
+          action: 'organization.draft_created',
+          reason: null,
+          previousValue: null,
+          nextValue: { name: draftName, slug, type, provinceCode: province, communitySlug: community.slug, status: 'DRAFT' },
+        })
+
+        return tx.business.findUnique({
+          where: { id: created.id },
+          select: {
+            id: true,
+            ownerId: true,
+            provinceCode: true,
+            communitySlug: true,
+            name: true,
+            slug: true,
+            type: true,
+            description: true,
+            metadata: true,
+            status: true,
+            isVerified: true,
+            logoUrl: true,
+            coverUrl: true,
+            createdAt: true,
+            updatedAt: true,
+            _count: { select: { follows: true } },
+          },
+        })
+      })
+
+      void deps.enqueueContentAiScanForOrganization(org).catch((error: unknown) => {
+        console.error('content_ai_scan_enqueue_organization_draft_failed', error)
+      })
+
+      return reply.code(201).send({ org: deps.buildCommunityOrgPayload(org, true, 'OWNER') })
+    }),
+  )
+
   app.post('/communities/:province/:municipality/orgs/:slug/follow', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (req as any).user?.id as string | undefined
@@ -406,7 +517,7 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       const slug = params.data.slug.trim().toLowerCase()
       const org = await prisma.business.findFirst({
         where: { provinceCode: province, communitySlug: resolvedCommunitySlug, slug },
-        select: { id: true, ownerId: true, name: true, metadata: true, moderationStatus: true },
+        select: { id: true, ownerId: true, name: true, slug: true, status: true, type: true, metadata: true, moderationStatus: true },
       })
       if (!org) return reply.code(404).send({ error: 'organization_not_found' })
       if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
@@ -423,10 +534,26 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       let nextMetadata = org.metadata && typeof org.metadata === 'object' && !Array.isArray(org.metadata)
         ? ({ ...(org.metadata as Record<string, unknown>) } as Record<string, unknown>)
         : {}
+      if ('slug' in body.data) {
+        if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_slug_change' })
+        if (org.status !== 'DRAFT') return reply.code(403).send({ error: 'slug_locked_after_publish' })
+        const nextSlugRaw = body.data.slug?.trim() ?? ''
+        if (!nextSlugRaw) return reply.code(400).send({ error: 'slug_required' })
+        const nextSlugBase = deps.trimSlugLength(deps.slugifyText(nextSlugRaw.toLowerCase()), 80)
+        if (!nextSlugBase) return reply.code(400).send({ error: 'invalid_slug' })
+        if (nextSlugBase !== org.slug) {
+          const nextSlug = await deps.ensureUniqueCommunityOrgSlug({ provinceCode: province, communitySlug: resolvedCommunitySlug, baseSlug: nextSlugBase })
+          nextData.slug = nextSlug
+        }
+      }
       if ('name' in body.data && typeof body.data.name === 'string') {
         if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_rename' })
         const nextName = body.data.name.trim()
         if (nextName && nextName !== org.name) nextData.name = nextName
+      }
+      if ('type' in body.data && body.data.type) {
+        if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_type_change' })
+        if (body.data.type !== org.type) nextData.type = body.data.type
       }
       if ('phone' in body.data) nextData.phone = body.data.phone ? body.data.phone : null
       if ('websiteUrl' in body.data) nextData.websiteUrl = body.data.websiteUrl ? body.data.websiteUrl : null
@@ -443,7 +570,19 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
         if (nextHeadline) nextMetadata.headline = nextHeadline.slice(0, 60)
         else delete nextMetadata.headline
       }
-      if ('isPublic' in body.data && typeof body.data.isPublic === 'boolean') nextData.status = body.data.isPublic ? 'ACTIVE' : 'DRAFT'
+      if ('isPublic' in body.data && typeof body.data.isPublic === 'boolean') {
+        if (body.data.isPublic) {
+          const effectiveName = typeof nextData.name === 'string' ? nextData.name : org.name
+          const effectiveSlug = typeof nextData.slug === 'string' ? nextData.slug : org.slug
+          if (!effectiveName.trim() || effectiveName.trim().toLowerCase() === 'untitled organization') {
+            return reply.code(400).send({ error: 'organization_name_required_before_publish' })
+          }
+          if (/^organization(?:-\d+)?$/.test(effectiveSlug)) {
+            return reply.code(400).send({ error: 'organization_slug_required_before_publish' })
+          }
+        }
+        nextData.status = body.data.isPublic ? 'ACTIVE' : 'DRAFT'
+      }
       if ('headline' in body.data || 'addressDetails' in body.data) nextData.metadata = nextMetadata as Prisma.InputJsonValue
 
       if (body.data.logoMediaId) {

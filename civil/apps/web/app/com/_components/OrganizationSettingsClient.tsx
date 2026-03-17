@@ -77,6 +77,19 @@ type OrgMembersResponse = {
   followers?: OrgFollowerItem[]
 }
 
+const ORGANIZATION_TYPE_OPTIONS = [
+  { value: 'LOCAL_BUSINESS', label: 'Local Business' },
+  { value: 'NON_PROFIT', label: 'Non-Profit / Charity' },
+  { value: 'COMMUNITY_GROUP', label: 'Community Group' },
+  { value: 'EDUCATIONAL', label: 'Educational Organization' },
+  { value: 'RELIGIOUS', label: 'Religious / Spiritual Organization' },
+  { value: 'GOVERNMENT', label: 'Government / Civic Body' },
+  { value: 'ARTS_CULTURE', label: 'Arts & Culture Organization' },
+  { value: 'SPORTS_RECREATION', label: 'Sports & Recreation Organization' },
+] as const
+
+type OrganizationTypeValue = (typeof ORGANIZATION_TYPE_OPTIONS)[number]['value']
+
 type OrgAuditItem = {
   id: string
   actorUserId: string
@@ -295,6 +308,8 @@ export default function OrganizationSettingsClient({
   })
   const [detailsDirty, setDetailsDirty] = useState(false)
   const [organizationName, setOrganizationName] = useState('')
+  const [organizationSlug, setOrganizationSlug] = useState('')
+  const [organizationType, setOrganizationType] = useState<OrganizationTypeValue>('LOCAL_BUSINESS')
   const [organizationNameSaving, setOrganizationNameSaving] = useState(false)
   const [profileHeadline, setProfileHeadline] = useState('')
   const [profileAbout, setProfileAbout] = useState('')
@@ -391,7 +406,15 @@ export default function OrganizationSettingsClient({
   const [tokenReady, setTokenReady] = useState(false)
   const canManage = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || (me?.id && org?.ownerId && me.id === org.ownerId))
   const isOwner = Boolean(org?.viewerRole === 'OWNER' || (me?.id && org?.ownerId && me.id === org.ownerId))
-  const canSaveOrganizationName = Boolean(isOwner && org && organizationName.trim().length >= 3 && organizationName.trim() !== org.name)
+  const normalizedOrganizationSlug = organizationSlug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
+  const canSaveOrganizationIdentity = Boolean(
+    isOwner &&
+      org &&
+      organizationName.trim().length >= 3 &&
+      (organizationName.trim() !== org.name ||
+        organizationType !== org.type ||
+        (org.status === 'DRAFT' && normalizedOrganizationSlug.length >= 1 && normalizedOrganizationSlug !== org.slug)),
+  )
   const profileHeadlineTrimmed = profileHeadline.trim().slice(0, HEADLINE_MAX_CHARS)
   const profileAboutNormalized = normalizeRichText(profileAbout)
   const canSaveProfile = Boolean(
@@ -402,8 +425,8 @@ export default function OrganizationSettingsClient({
   const deleteConfirmationMatches = Boolean(org && deleteConfirmName.trim() === org.name.trim())
 
   const orgApiPath = useMemo(() => {
-    return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
-  }, [municipality, province, slug])
+    return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(org?.slug ?? slug)}`
+  }, [municipality, org?.slug, province, slug])
 
   useEffect(() => {
     setToken(getStoredToken())
@@ -591,6 +614,8 @@ export default function OrganizationSettingsClient({
   useEffect(() => {
     if (!org) return
     setOrganizationName(org.name)
+    setOrganizationSlug(org.slug)
+    setOrganizationType(org.type as OrganizationTypeValue)
     setProfileHeadline((org.headline ?? '').slice(0, HEADLINE_MAX_CHARS))
     setProfileAbout(org.description ?? '')
     setDetails({
@@ -653,7 +678,7 @@ export default function OrganizationSettingsClient({
     }
   }, [details.addressDetails, details.phone, details.schedule, details.websiteUrl, org, orgApiPath, token])
 
-  const saveOrganizationName = useCallback(async () => {
+  const saveOrganizationIdentity = useCallback(async () => {
     if (!token) {
       redirectToAuthModal('login')
       return
@@ -665,23 +690,34 @@ export default function OrganizationSettingsClient({
       pushToast('Organization name must be at least 3 characters.', 'error')
       return
     }
-    if (nextName === org.name) return
+    if (org.status === 'DRAFT' && !normalizedOrganizationSlug) {
+      pushToast('Organization URL must contain at least one letter or number.', 'error')
+      return
+    }
+    if (!canSaveOrganizationIdentity) return
 
     setOrganizationNameSaving(true)
     try {
+      const body: Record<string, unknown> = {}
+      if (nextName !== org.name) body.name = nextName
+      if (organizationType !== org.type) body.type = organizationType
+      if (org.status === 'DRAFT' && normalizedOrganizationSlug && normalizedOrganizationSlug !== org.slug) {
+        body.slug = normalizedOrganizationSlug
+      }
+
       const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
         method: 'PUT',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ name: nextName }),
+        body: JSON.stringify(body),
       })
 
       const { json } = await parseApiResponse<{ org?: CommunityOrganization; error?: unknown }>(res)
       if (!res.ok) {
         if (res.status === 403) {
-          pushToast('Only the organization owner can rename this organization.', 'error')
+          pushToast('Only the organization owner can update organization identity.', 'error')
         } else {
           const rawError =
             typeof (json as any)?.error === 'string'
@@ -689,20 +725,30 @@ export default function OrganizationSettingsClient({
               : typeof (json as any)?.error?.message === 'string'
                 ? (json as any).error.message
                 : null
-          pushToast(rawError ?? 'Unable to rename this organization right now.', 'error')
+          pushToast(rawError ?? 'Unable to save organization identity right now.', 'error')
         }
         return
       }
 
-      if (json?.org) setOrg(json.org)
-      pushToast('Organization renamed. Joined members received a rename post.', 'success')
+      if (json?.org) {
+        const nextOrg = json.org
+        const slugChanged = nextOrg.slug !== org.slug
+        setOrg(nextOrg)
+        setOrganizationName(nextOrg.name)
+        setOrganizationSlug(nextOrg.slug)
+        setOrganizationType(nextOrg.type as OrganizationTypeValue)
+        if (slugChanged) {
+          router.replace(`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(nextOrg.slug)}/settings/details`)
+        }
+      }
+      pushToast('Organization identity saved.', 'success')
     } catch (err) {
-      console.error('Failed to rename organization', err)
-      pushToast('Unable to rename this organization right now.', 'error')
+      console.error('Failed to save organization identity', err)
+      pushToast('Unable to save organization identity right now.', 'error')
     } finally {
       setOrganizationNameSaving(false)
     }
-  }, [isOwner, org, orgApiPath, organizationName, token])
+  }, [canSaveOrganizationIdentity, isOwner, municipality, normalizedOrganizationSlug, org, orgApiPath, organizationName, organizationType, province, router, token])
 
   const saveProfileDetails = useCallback(async () => {
     if (!token) {
@@ -1831,23 +1877,58 @@ export default function OrganizationSettingsClient({
 
       {showDetails && isOwner ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
-          <h3 className="text-sm font-semibold text-slate-900">Organization name</h3>
-          <p className="text-xs text-slate-500">Renaming the organization publishes a rename post for joined members.</p>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              value={organizationName}
-              onChange={(e) => setOrganizationName(e.target.value)}
-              disabled={organizationNameSaving}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
-              placeholder="Organization name"
-            />
+          <h3 className="text-sm font-semibold text-slate-900">Organization identity</h3>
+          <p className="text-xs text-slate-500">Set the public name, URL, and directory type before publishing your organization.</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="grid gap-1 text-sm font-medium text-slate-700 sm:col-span-2">
+              Organization name
+              <input
+                value={organizationName}
+                onChange={(e) => setOrganizationName(e.target.value)}
+                disabled={organizationNameSaving}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+                placeholder="Organization name"
+              />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              URL slug
+              <input
+                value={organizationSlug}
+                onChange={(e) => setOrganizationSlug(e.target.value)}
+                disabled={organizationNameSaving || org.status !== 'DRAFT'}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+                placeholder="civil-citizens-incorporated"
+              />
+              <span className="text-xs text-slate-500">
+                {org.status === 'DRAFT'
+                  ? `Preview: /com/${province}/${municipality}/orgs/${normalizedOrganizationSlug || 'your-organization'}`
+                  : 'Organization URLs lock after publishing.'}
+              </span>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              Organization type
+              <select
+                value={organizationType}
+                onChange={(e) => setOrganizationType(e.target.value as OrganizationTypeValue)}
+                disabled={organizationNameSaving}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+              >
+                {ORGANIZATION_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex justify-end">
             <button
               type="button"
-              onClick={saveOrganizationName}
-              disabled={!canSaveOrganizationName || organizationNameSaving}
+              onClick={saveOrganizationIdentity}
+              disabled={!canSaveOrganizationIdentity || organizationNameSaving}
               className="inline-flex shrink-0 items-center justify-center rounded-full border border-emerald-600 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
             >
-              {organizationNameSaving ? 'Renaming…' : 'Save name'}
+              {organizationNameSaving ? 'Saving…' : 'Save identity'}
             </button>
           </div>
         </section>
@@ -2005,6 +2086,11 @@ export default function OrganizationSettingsClient({
             {org.status === 'ACTIVE' ? 'Public' : 'Private'}
           </span>
           <p className="text-xs text-slate-600">Public organizations are discoverable. Private organizations are only visible to admins.</p>
+          {org.status === 'DRAFT' ? (
+            <p className="text-xs text-slate-500">
+              Drafts need a real organization name and custom URL slug before they can be made public.
+            </p>
+          ) : null}
           <button
             type="button"
             onClick={() => {

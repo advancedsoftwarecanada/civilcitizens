@@ -1,58 +1,21 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
-import { buildApiUrl } from '../../_lib/api'
-import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
-import { hasHomeCommunity, type MeResponse } from '../../_lib/me'
-import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 import OrganizationCreateButton from '../../com/_components/OrganizationCreateButton'
 import { RightRail } from '../../_components/RightRail'
-
-type CommunityFollowRow = {
-  province: string
-  communitySlug: string
-  home?: boolean
-  community?: {
-    name?: string | null
-    cityName?: string | null
-    province: string
-    slug: string
-  } | null
-}
-
-type CommunityFollowsResponse = {
-  items?: CommunityFollowRow[]
-}
-
-type CommunityOption = {
-  provinceCode: string
-  provinceName: string
-  communitySlug: string
-  communityName: string
-  isHome: boolean
-}
-
-function followToOption(follow: CommunityFollowRow): CommunityOption {
-  const normalized = normalizeProvinceCode(follow.province)
-  const provinceCode = normalized ?? follow.province
-  const provinceName = normalized ? getProvinceDisplayName(normalized) ?? normalized.toUpperCase() : follow.province.toUpperCase()
-  const communitySlug = follow.communitySlug
-  const communityName = follow.community?.name ?? follow.community?.cityName ?? follow.communitySlug
-  return {
-    provinceCode,
-    provinceName,
-    communitySlug,
-    communityName,
-    isHome: Boolean(follow.home),
-  }
-}
+import OrganizationsAdminCreatePanel from '../_components/OrganizationsAdminCreatePanel'
+import {
+  loadViewerCommunityOptions,
+  type CommunityOption,
+} from '../_components/communityOptions'
 
 export default function CreateOrganizationPage() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'unauthorized' | 'error'>('loading')
   const [options, setOptions] = useState<CommunityOption[]>([])
   const [selectedKey, setSelectedKey] = useState<string>('')
+  const selectedKeyRef = useRef('')
   const cachedMe = useViewerStore((s) => s.me)
 
   const token = useMemo(() => {
@@ -61,63 +24,21 @@ export default function CreateOrganizationPage() {
   }, [])
 
   const load = useCallback(async () => {
-    if (!token) {
-      setStatus('unauthorized')
-      return
-    }
-
     setStatus('loading')
     try {
-      let followsRes: Response
-
-      const [meData, followsResponse] = await Promise.all([
-        cachedMe ? Promise.resolve(cachedMe) : ensureViewerMe({ token }),
-        fetch(buildApiUrl('/communities/follows'), { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' }),
-      ])
-
-      const tokenStillPresent = typeof window !== 'undefined' ? Boolean(window.localStorage.getItem('token')) : true
-      if (!tokenStillPresent || followsResponse.status === 401) {
-        setStatus('unauthorized')
-        return
-      }
-
-      if (!meData || !followsResponse.ok) {
-        setStatus('error')
-        return
-      }
-
-      followsRes = followsResponse
-      const followsData = (await followsRes.json().catch(() => null)) as CommunityFollowsResponse | null
-
-      const followItems = Array.isArray(followsData?.items) ? followsData.items : []
-      const deduped = new Map<string, CommunityOption>()
-      followItems.forEach((follow) => {
-        if (!follow.communitySlug) return
-        const option = followToOption(follow)
-        deduped.set(`${option.provinceCode}:${option.communitySlug}`, option)
-      })
-
-      const sorted = Array.from(deduped.values()).sort((a, b) => {
-        if (a.isHome !== b.isHome) return a.isHome ? -1 : 1
-        return a.communityName.localeCompare(b.communityName)
-      })
-
-      setOptions(sorted)
-
-      const initial = (() => {
-        if (hasHomeCommunity(meData)) {
-          const home = (meData.homeCommunity ?? meData.homeChamber)!
-          return `${home.provinceCode}:${home.communitySlug}`
-        }
-        return sorted[0] ? `${sorted[0].provinceCode}:${sorted[0].communitySlug}` : ''
-      })()
-      setSelectedKey(initial)
-      setStatus('ready')
+      const result = await loadViewerCommunityOptions({ token, cachedMe, preferredKey: selectedKeyRef.current })
+      setOptions(result.options)
+      setSelectedKey((prev) => prev || result.selectedKey)
+      setStatus(result.status)
     } catch (err) {
       console.error('Unable to load create organization page', err)
       setStatus('error')
     }
   }, [cachedMe, token])
+
+  useEffect(() => {
+    selectedKeyRef.current = selectedKey
+  }, [selectedKey])
 
   useEffect(() => {
     void load()
@@ -135,50 +56,23 @@ export default function CreateOrganizationPage() {
       className="bg-slate-50"
       mainClassName="space-y-6"
     >
-      <section className="surface-card px-6 py-5 shadow-subtle">
-        <p className="text-xs font-semibold uppercase tracking-[0.35em] text-slate-400">Organizations</p>
-        <h1 className="mt-2 text-2xl font-semibold text-slate-900">Create an organization</h1>
-        <p className="mt-2 text-sm text-slate-600">Choose a community, then create an organization tied to it.</p>
-
-        {status === 'loading' ? <div className="mt-6 h-24 animate-pulse rounded-2xl border border-slate-200 bg-white" /> : null}
-
-        {status === 'unauthorized' ? (
-          <p className="mt-6 text-sm text-slate-600">Please sign in to continue.</p>
-        ) : null}
-
-        {status === 'error' ? <p className="mt-6 text-sm text-slate-600">Unable to load your communities right now.</p> : null}
-
-        {status === 'ready' ? (
-          <div className="mt-6 space-y-4">
-            {options.length ? (
-              <label className="grid gap-1 text-sm font-semibold text-slate-700">
-                Community
-                <select
-                  className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 focus:border-[var(--cc-primary)] focus:outline-none"
-                  value={selectedKey}
-                  onChange={(e) => setSelectedKey(e.target.value)}
-                >
-                  {options.map((opt) => {
-                    const key = `${opt.provinceCode}:${opt.communitySlug}`
-                    const label = `${opt.communityName} (${opt.provinceName})${opt.isHome ? ' · Home' : ''}`
-                    return (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
-                    )
-                  })}
-                </select>
-              </label>
-            ) : (
-              <p className="text-sm text-slate-600">Follow a community first to create an organization.</p>
-            )}
-
-            {selected ? (
-              <OrganizationCreateButton province={selected.provinceCode} municipality={selected.communitySlug} defaultOpen />
-            ) : null}
+      <OrganizationsAdminCreatePanel
+        title="Create an organization"
+        description="Choose a community, then create an organization tied to it."
+        status={status}
+        options={options}
+        selectedKey={selectedKey}
+        onSelectedKeyChange={setSelectedKey}
+        emptyMessage="Follow a community first to create an organization."
+        errorMessage="Unable to load your communities right now."
+      >
+        {selected ? <OrganizationCreateButton province={selected.provinceCode} municipality={selected.communitySlug} /> : null}
+        {selected ? (
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            A draft organization opens in settings first, where you can set its name, URL, type, and visibility before publishing.
           </div>
         ) : null}
-      </section>
+      </OrganizationsAdminCreatePanel>
     </DashboardShell>
   )
 }

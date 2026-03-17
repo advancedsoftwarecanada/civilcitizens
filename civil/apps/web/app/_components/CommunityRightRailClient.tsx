@@ -32,6 +32,15 @@ type CommunityFeedActivityResponse = {
 
 const numberFormatter = new Intl.NumberFormat('en-CA')
 
+function shuffleOrganizations<T>(items: T[]): T[] {
+  const next = [...items]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    ;[next[index], next[swapIndex]] = [next[swapIndex], next[index]]
+  }
+  return next
+}
+
 export default function CommunityRightRailClient({
   province,
   municipality,
@@ -113,11 +122,7 @@ export default function CommunityRightRailClient({
   }, [municipality, province])
 
   const topOrganizations = useMemo(() => {
-    return [...organizations]
-      .sort((a, b) => {
-        if (b.followerCount !== a.followerCount) return b.followerCount - a.followerCount
-        return Date.parse(b.createdAt) - Date.parse(a.createdAt)
-      })
+    return shuffleOrganizations(organizations)
       .slice(0, 5)
   }, [organizations])
 
@@ -185,9 +190,19 @@ export default function CommunityRightRailClient({
       </Block>
 
       <Block
-        title="Organizations"
+        title={
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Organizations in</p>
+            <Link
+              href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}`}
+              className="inline-flex text-base font-semibold leading-5 text-slate-900 hover:text-[var(--cc-primary)] hover:underline"
+            >
+              {communityName}
+            </Link>
+          </div>
+        }
         action={{
-          label: 'View all',
+          label: 'Directory',
           href: `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs`,
         }}
       >
@@ -214,7 +229,7 @@ export default function CommunityRightRailClient({
             })}
           </ul>
         ) : (
-          <p className="text-sm text-slate-500">No organizations yet.</p>
+          <p className="text-sm text-slate-500">No organizations in this community yet.</p>
         )}
       </Block>
     </div>
