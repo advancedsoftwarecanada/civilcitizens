@@ -450,6 +450,7 @@ import { createSocialGraphHelpers } from './socialGraphHelpers.js'
 import { createSearchHelpers } from './searchHelpers.js'
 import { registerAdminAiDebugRoutes } from './routes/adminAiDebug.js'
 import { registerAdminAnalyticsDetailRoutes } from './routes/adminAnalyticsDetail.js'
+import { registerAddressCorrectionRoutes } from './routes/addressCorrections.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerAdminModerationRoutes } from './routes/adminModeration.js'
 import { registerAdminReportingRoutes } from './routes/adminReporting.js'
@@ -5142,6 +5143,7 @@ registerCommunityBootstrapRoutes(app, {
   registerCommunityRoute,
 })
 
+registerAddressCorrectionRoutes(app)
 registerGeographyRoutes(app)
 
 // Basic auth hook (placeholder)
@@ -6457,9 +6459,12 @@ const CommunityOrgSettingsBody = z.object({
       city: z.string().trim().max(120).optional().nullable(),
       province: z.string().trim().max(64).optional().nullable(),
       postalCode: z.string().trim().max(32).optional().nullable(),
+      originalPostalCode: z.string().trim().max(32).optional().nullable(),
       country: z.string().trim().max(2).optional().nullable(),
       latitude: z.coerce.number().finite().min(-90).max(90).optional().nullable(),
       longitude: z.coerce.number().finite().min(-180).max(180).optional().nullable(),
+      nominatimDisplayName: z.string().trim().max(500).optional().nullable(),
+      nominatimRaw: z.unknown().optional().nullable(),
     })
     .optional()
     .nullable(),
@@ -6598,6 +6603,32 @@ const OrgEventFeeSchema = z.object({
   cashOnly: z.boolean().default(true),
 })
 
+const OrgEventTypeValues = ['MEETING_ROOM', 'LOCATION'] as const
+
+const OrgStructuredAddressSchema = z.object({
+  name: z.string().trim().max(120).optional().nullable(),
+  label: z.string().trim().max(80).optional().nullable(),
+  line1: z.string().trim().max(180).optional().nullable(),
+  line2: z.string().trim().max(180).optional().nullable(),
+  city: z.string().trim().max(120).optional().nullable(),
+  province: z.string().trim().max(64).optional().nullable(),
+  postalCode: z.string().trim().max(32).optional().nullable(),
+  originalPostalCode: z.string().trim().max(32).optional().nullable(),
+  country: z.string().trim().max(2).optional().nullable(),
+  latitude: z.coerce.number().min(-90).max(90).optional().nullable(),
+  longitude: z.coerce.number().min(-180).max(180).optional().nullable(),
+  nominatimDisplayName: z.string().trim().max(500).optional().nullable(),
+}).strict()
+
+const OrgEventMeetingRoomSchema = z.object({
+  meetingId: z.string().trim().min(3).max(80),
+  title: z.string().trim().max(180).optional().nullable(),
+  status: z.enum(['ACTIVE', 'ARCHIVED']).optional().nullable(),
+  visibility: z.enum(['PUBLIC', 'PRIVATE']).optional().nullable(),
+  startsAt: z.string().datetime().optional().nullable(),
+  endsAt: z.string().datetime().optional().nullable(),
+}).strict()
+
 const CommunityOrgEventBody = z
   .object({
     title: z.string().trim().min(3).max(180),
@@ -6618,10 +6649,19 @@ const CommunityOrgEventBody = z
     attachments: z.array(z.object({ title: z.string().trim().min(1).max(160), url: z.string().trim().url().max(2048) })).max(50).optional(),
     primaryPhotoUrl: z.string().trim().url().max(2048).optional().nullable(),
     galleryPhotoUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+    eventType: z.enum(OrgEventTypeValues).default('LOCATION'),
+    meetingRoom: OrgEventMeetingRoomSchema.optional().nullable(),
+    locationAddress: OrgStructuredAddressSchema.optional().nullable(),
   })
   .superRefine((value, ctx) => {
     if (value.paid && (typeof value.priceCents !== 'number' || value.priceCents <= 0)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['priceCents'], message: 'price_cents_required_for_paid_event' })
+    }
+    if (value.eventType === 'MEETING_ROOM' && !value.meetingRoom?.meetingId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['meetingRoom'], message: 'meeting_room_required_for_online_event' })
+    }
+    if (value.eventType === 'LOCATION' && !value.locationAddress) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['locationAddress'], message: 'location_required_for_location_event' })
     }
   })
 
@@ -6648,6 +6688,9 @@ const CommunityOrgEventDraftUpdateBody = z
     attachments: z.array(z.object({ title: z.string().trim().min(1).max(160), url: z.string().trim().url().max(2048) })).max(50).optional(),
     primaryPhotoUrl: z.string().trim().url().max(2048).optional().nullable(),
     galleryPhotoUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
+    eventType: z.enum(OrgEventTypeValues).optional(),
+    meetingRoom: OrgEventMeetingRoomSchema.optional().nullable(),
+    locationAddress: OrgStructuredAddressSchema.optional().nullable(),
   })
   .superRefine((value, ctx) => {
     if (value.paid === true && (typeof value.priceCents !== 'number' || value.priceCents <= 0)) {
@@ -7017,9 +7060,12 @@ type StructuredAddressRecord = {
   city?: string | null
   province?: string | null
   postalCode?: string | null
+  originalPostalCode?: string | null
   country?: string | null
   latitude?: number | null
   longitude?: number | null
+  nominatimDisplayName?: string | null
+  nominatimRaw?: unknown
 }
 
 type SavedShippingAddressRecord = StructuredAddressRecord & {
@@ -7068,9 +7114,15 @@ function normalizeStructuredAddressInput(value: unknown): StructuredAddressRecor
     city: normalizeStructuredAddressText(record.city, 120),
     province: normalizeStructuredAddressProvince(record.province),
     postalCode: normalizeStructuredAddressPostalCode(record.postalCode),
+    originalPostalCode: normalizeStructuredAddressPostalCode(record.originalPostalCode),
     country: normalizeStructuredAddressText(record.country, 2)?.toUpperCase() ?? 'CA',
     latitude: normalizeStructuredAddressCoordinate(record.latitude, -90, 90),
     longitude: normalizeStructuredAddressCoordinate(record.longitude, -180, 180),
+    nominatimDisplayName: normalizeStructuredAddressText(record.nominatimDisplayName, 500),
+    nominatimRaw:
+      record.nominatimRaw && typeof record.nominatimRaw === 'object'
+        ? (record.nominatimRaw as Record<string, unknown>)
+        : null,
   }
   const hasValue = Object.values(next).some((entry) => entry !== null && entry !== '')
   return hasValue ? next : null
@@ -7348,6 +7400,7 @@ type OrgEventDefinition = {
   title: string
   description: string | null
   category?: (typeof OrgEventCategoryValues)[number]
+  eventType?: (typeof OrgEventTypeValues)[number]
   access: 'PUBLIC' | 'RESTRICTED'
   eligibleRankIds: string[]
   startsAt: string
@@ -7361,6 +7414,28 @@ type OrgEventDefinition = {
   sponsors: OrgEventSponsorTag[]
   sponsorInvites: OrgEventSponsorInvite[]
   fees: OrgEventFee[]
+  meetingRoom?: {
+    meetingId: string
+    title: string | null
+    status: 'ACTIVE' | 'ARCHIVED' | null
+    visibility: 'PUBLIC' | 'PRIVATE' | null
+    startsAt: string | null
+    endsAt: string | null
+  } | null
+  locationAddress?: {
+    name?: string | null
+    label?: string | null
+    line1?: string | null
+    line2?: string | null
+    city?: string | null
+    province?: string | null
+    postalCode?: string | null
+    originalPostalCode?: string | null
+    country?: string | null
+    latitude?: number | null
+    longitude?: number | null
+    nominatimDisplayName?: string | null
+  } | null
   primaryPhotoUrl: string | null
   galleryPhotoUrls: string[]
   agenda: Array<{ title: string; startsAt: string | null }>
@@ -7584,6 +7659,62 @@ function buildDefaultOrganizationRanks(): OrgRankDefinition[] {
   ]
 }
 
+function normalizeOrganizationStructuredAddress(value: unknown): OrgEventDefinition['locationAddress'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const readText = (entry: unknown, maxLength: number) => {
+    if (typeof entry !== 'string') return null
+    const trimmed = entry.trim()
+    return trimmed ? trimmed.slice(0, maxLength) : null
+  }
+  const readCoordinate = (entry: unknown, min: number, max: number) => {
+    if (typeof entry === 'number' && Number.isFinite(entry) && entry >= min && entry <= max) return entry
+    if (typeof entry === 'string') {
+      const parsed = Number(entry.trim())
+      if (Number.isFinite(parsed) && parsed >= min && parsed <= max) return parsed
+    }
+    return null
+  }
+
+  const next = {
+    name: readText(record.name, 120),
+    label: readText(record.label, 80),
+    line1: readText(record.line1, 180),
+    line2: readText(record.line2, 180),
+    city: readText(record.city, 120),
+    province: readText(record.province, 64),
+    postalCode: readText(record.postalCode, 32),
+    originalPostalCode: readText(record.originalPostalCode, 32),
+    country: readText(record.country, 2)?.toUpperCase() ?? 'CA',
+    latitude: readCoordinate(record.latitude, -90, 90),
+    longitude: readCoordinate(record.longitude, -180, 180),
+    nominatimDisplayName: readText(record.nominatimDisplayName, 500),
+  }
+
+  return Object.values(next).some((entry) => entry !== null && entry !== '') ? next : null
+}
+
+function normalizeOrganizationEventType(value: unknown, event: Partial<OrgEventDefinition>): (typeof OrgEventTypeValues)[number] {
+  if (typeof value === 'string') {
+    const upper = value.trim().toUpperCase()
+    if (upper === 'MEETING_ROOM' || upper === 'LOCATION') return upper
+  }
+  return event.meetingRoom?.meetingId ? 'MEETING_ROOM' : 'LOCATION'
+}
+
+function normalizeOrganizationEventMeetingRoom(value: unknown): OrgEventDefinition['meetingRoom'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const meetingId = typeof record.meetingId === 'string' ? record.meetingId.trim() : ''
+  if (!meetingId) return null
+  const title = typeof record.title === 'string' ? record.title.trim() || null : null
+  const status = record.status === 'ACTIVE' || record.status === 'ARCHIVED' ? record.status : null
+  const visibility = record.visibility === 'PUBLIC' || record.visibility === 'PRIVATE' ? record.visibility : null
+  const startsAt = typeof record.startsAt === 'string' && record.startsAt.trim() ? record.startsAt.trim() : null
+  const endsAt = typeof record.endsAt === 'string' && record.endsAt.trim() ? record.endsAt.trim() : null
+  return { meetingId, title, status, visibility, startsAt, endsAt }
+}
+
 function readOrganizationSystemState(metadata: unknown): OrganizationSystemState {
   const fallback: OrganizationSystemState = {
     version: 1,
@@ -7634,6 +7765,7 @@ function readOrganizationSystemState(metadata: unknown): OrganizationSystemState
     events: Array.isArray(typed.events)
       ? (typed.events as OrgEventDefinition[]).map((event) => ({
           ...event,
+          eventType: normalizeOrganizationEventType((event as Partial<OrgEventDefinition>).eventType, event),
           guestSpeakerInvites: Array.isArray((event as Partial<OrgEventDefinition>).guestSpeakerInvites)
             ? ((event as Partial<OrgEventDefinition>).guestSpeakerInvites as OrgEventGuestSpeakerInvite[])
             : [],
@@ -7646,6 +7778,8 @@ function readOrganizationSystemState(metadata: unknown): OrganizationSystemState
           fees: Array.isArray((event as Partial<OrgEventDefinition>).fees)
             ? ((event as Partial<OrgEventDefinition>).fees as OrgEventFee[])
             : [],
+          meetingRoom: normalizeOrganizationEventMeetingRoom((event as Partial<OrgEventDefinition>).meetingRoom),
+          locationAddress: normalizeOrganizationStructuredAddress((event as Partial<OrgEventDefinition>).locationAddress),
         }))
       : [],
     achievements: Array.isArray(typed.achievements) ? (typed.achievements as OrgAchievementDefinition[]) : [],
@@ -8277,15 +8411,18 @@ const MarketCheckoutBody = z.object({
 const MarketShippingAddressBody = z.object({
   id: z.string().trim().min(1).max(64).optional(),
   label: z.string().trim().max(80).optional().nullable(),
-  name: z.string().trim().min(1).max(120),
+  name: z.string().trim().max(120).optional().nullable(),
   line1: z.string().trim().min(1).max(180),
   line2: z.string().trim().max(180).optional().nullable(),
   city: z.string().trim().min(1).max(120),
   province: z.string().trim().min(1).max(64),
   postalCode: z.string().trim().min(1).max(32),
+  originalPostalCode: z.string().trim().max(32).optional().nullable(),
   country: z.string().trim().min(2).max(2).default('CA'),
   latitude: z.coerce.number().finite().min(-90).max(90).optional().nullable(),
   longitude: z.coerce.number().finite().min(-180).max(180).optional().nullable(),
+  nominatimDisplayName: z.string().trim().max(500).optional().nullable(),
+  nominatimRaw: z.unknown().optional().nullable(),
   isDefault: z.boolean().optional().default(false),
 })
 

@@ -10,6 +10,7 @@ import ShareSendModal from '../../_components/ShareSendModal'
 import type { CommunityTarget } from '../../_components/PostComposer'
 import { buildApiUrl } from '../../_lib/api'
 import { buildAddressesHref } from '../../_lib/addressSearch'
+import { formatCanadianPhysicalAddressInline, normalizeCanadianAddress, type CanadianAddress } from '../../_lib/canadianAddresses'
 import { buildEventShareTarget, type ShareTarget } from '../../_lib/shareTarget'
 
 type InviteStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED'
@@ -50,6 +51,7 @@ type OrganizationEventDetailResponse = {
     title: string
     description: string | null
     category?: string
+    eventType?: 'MEETING_ROOM' | 'LOCATION'
     access: 'PUBLIC' | 'RESTRICTED'
     startsAt: string
     endsAt: string | null
@@ -62,6 +64,15 @@ type OrganizationEventDetailResponse = {
     sponsors?: EventSponsorTag[]
     sponsorInvites?: EventSponsorTag[]
     fees?: EventFee[]
+    meetingRoom?: {
+      meetingId: string
+      title: string | null
+      status: 'ACTIVE' | 'ARCHIVED' | null
+      visibility: 'PUBLIC' | 'PRIVATE' | null
+      startsAt: string | null
+      endsAt: string | null
+    } | null
+    locationAddress?: CanadianAddress | null
     primaryPhotoUrl: string | null
     galleryPhotoUrls: string[]
   }
@@ -261,11 +272,25 @@ export default function OrganizationEventDetailClient({
   const attendanceMode = typeof (event as { attendanceMode?: unknown } | undefined)?.attendanceMode === 'string'
     ? String((event as { attendanceMode?: string }).attendanceMode).trim().toUpperCase()
     : null
+  const eventType = event?.eventType === 'MEETING_ROOM' ? 'MEETING_ROOM' : event?.meetingRoom?.meetingId ? 'MEETING_ROOM' : 'LOCATION'
+  const eventLocation = normalizeCanadianAddress(event?.locationAddress ?? org?.addressDetails ?? null)
+  const eventLocationLabel = formatCanadianPhysicalAddressInline(eventLocation)
+  const meetingRoomHref = event?.meetingRoom?.meetingId
+    ? `/com/${encodeURIComponent(resolvedProvince)}/${encodeURIComponent(resolvedMunicipality)}/orgs/${encodeURIComponent(resolvedOrganizationSlug)}/meetings/${encodeURIComponent(event.meetingRoom.meetingId)}`
+    : null
   const directionsHref = useMemo(() => {
     if (!org) return null
-    const latitude = typeof org.addressDetails?.latitude === 'number' ? org.addressDetails.latitude : null
-    const longitude = typeof org.addressDetails?.longitude === 'number' ? org.addressDetails.longitude : null
-    const address = org.address?.trim() || null
+    const latitude = typeof eventLocation.latitude === 'number'
+      ? eventLocation.latitude
+      : typeof org.addressDetails?.latitude === 'number'
+        ? org.addressDetails.latitude
+        : null
+    const longitude = typeof eventLocation.longitude === 'number'
+      ? eventLocation.longitude
+      : typeof org.addressDetails?.longitude === 'number'
+        ? org.addressDetails.longitude
+        : null
+    const address = eventLocationLabel || org.address?.trim() || null
     if (!address && (latitude === null || longitude === null)) return null
     return buildAddressesHref({
       query: address || `${event?.title ?? org.name} ${resolvedMunicipality}`,
@@ -274,8 +299,8 @@ export default function OrganizationEventDetailClient({
       latitude,
       longitude,
     })
-  }, [event?.title, org, resolvedMunicipality])
-  const showDirections = Boolean(directionsHref) && (!attendanceMode || attendanceMode === 'IN_PERSON' || attendanceMode === 'HYBRID')
+  }, [event?.title, eventLocation.latitude, eventLocation.longitude, eventLocationLabel, org, resolvedMunicipality])
+  const showDirections = Boolean(directionsHref) && (eventType === 'LOCATION' || attendanceMode === 'IN_PERSON' || attendanceMode === 'HYBRID')
 
   const guestSpeakerCards = useMemo(() => {
     if (!event) return []
@@ -539,6 +564,14 @@ export default function OrganizationEventDetailClient({
                 >
                   {viewerRsvp?.status === 'GOING' ? 'Update RSVP' : 'Join'}
                 </button>
+                {eventType === 'MEETING_ROOM' && meetingRoomHref ? (
+                  <Link
+                    href={meetingRoomHref}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                  >
+                    <span>Open meeting room</span>
+                  </Link>
+                ) : null}
                 {showDirections && directionsHref ? (
                   <Link
                     href={directionsHref}
@@ -570,6 +603,21 @@ export default function OrganizationEventDetailClient({
               </div>
 
               {event.description ? <div className="prose max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: event.description }} /> : null}
+              {eventType === 'MEETING_ROOM' && event.meetingRoom ? (
+                <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-900">Online Civil Meeting Room</p>
+                  <p className="mt-1">{event.meetingRoom.title?.trim() || 'Untitled meeting'}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {(event.meetingRoom.visibility || 'PUBLIC')} · {(event.meetingRoom.status || 'ARCHIVED')}
+                  </p>
+                </div>
+              ) : null}
+              {eventType === 'LOCATION' && eventLocationLabel ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-slate-700">
+                  <p className="font-semibold text-slate-900">Location</p>
+                  <p className="mt-1">{eventLocationLabel}</p>
+                </div>
+              ) : null}
               {event.capacity ? <p className="text-sm text-slate-600">Capacity: {event.capacity}</p> : null}
             </div>
           </section>

@@ -265,15 +265,17 @@ export default function OrganizationSettingsClient({
   province,
   municipality,
   slug,
+  initialOrg = null,
   section = 'all',
 }: {
   province: string
   municipality: string
   slug: string
+  initialOrg?: CommunityOrganization | null
   section?: OrganizationSettingsSection
 }) {
   const router = useRouter()
-  const [org, setOrg] = useState<CommunityOrganization | null>(null)
+  const [org, setOrg] = useState<CommunityOrganization | null>(initialOrg)
   const [me, setMe] = useState<MeResponse | null>(null)
   const cachedMe = useViewerStore((s) => s.me)
   const [loading, setLoading] = useState(true)
@@ -519,9 +521,7 @@ export default function OrganizationSettingsClient({
 
       if (orgRes.ok) {
         const payload = (await orgRes.json().catch(() => null)) as { org?: CommunityOrganization } | null
-        setOrg(payload?.org ?? null)
-      } else {
-        setOrg(null)
+        setOrg((current) => payload?.org ?? current)
       }
     } finally {
       setLoading(false)

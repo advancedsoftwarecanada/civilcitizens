@@ -87,10 +87,15 @@ model User {
   jobAnalyticsEvents        JobAnalyticsEvent[]   @relation("JobAnalyticsActor")
   pushSubscriptions         PushSubscription[]
   location                  UserLocation?
+  addressCorrectionsCreated AddressCorrection[]
   communityMeta             Json?
   lastViewedHomeAt          DateTime?
   lastViewedFriendsAt       DateTime?
   lastViewedCommunitiesAt   DateTime?
+}
+
+enum AddressCorrectionSource {
+  USER
 }
 
 model FamilyMember {
@@ -687,6 +692,25 @@ model UserLocation {
   electoralDistrict     ElectoralDistrict? @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
 
   @@index([electoralDistrictCode])
+}
+
+model AddressCorrection {
+  id              String                  @id @default(cuid())
+  latitude        Float
+  longitude       Float
+  originalPostal  String?
+  correctedPostal String
+  source          AddressCorrectionSource @default(USER)
+  confidenceScore Float                   @default(1.0)
+  createdByUserId String?
+  pointGeom       Unsupported("geometry(Point,4326)")?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  createdByUser   User?                   @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdByUserId])
+  @@index([latitude, longitude])
+  @@index([correctedPostal])
 }
 
 model Hashtag {

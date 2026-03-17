@@ -45,6 +45,61 @@ function readOrganizationAddressDetails(metadata: unknown) {
   return normalizeStructuredAddressInput((metadata as Record<string, unknown>).addressDetails)
 }
 
+type OrganizationEventMeetingRow = {
+  id: string
+  title: string
+  status: string
+  visibility: string
+  schedule_starts_at: Date | null
+  schedule_ends_at: Date | null
+}
+
+function resolveEventType(value: unknown, fallback: { meetingRoom?: { meetingId?: string | null } | null }) {
+  if (value === 'MEETING_ROOM' || value === 'LOCATION') return value
+  return fallback.meetingRoom?.meetingId ? 'MEETING_ROOM' : 'LOCATION'
+}
+
+async function resolveMeetingRoomAttachment(args: {
+  deps: OrganizationGovernanceEventsDeps
+  orgId: string
+  meetingId: string
+  startsAt: string | null
+  endsAt: string | null
+  syncSchedule: boolean
+}) {
+  await args.deps.ensureOrganizationMeetingTables()
+
+  const rows = (await prisma.$queryRaw(Prisma.sql`
+    SELECT id, title, status, visibility, schedule_starts_at, schedule_ends_at
+    FROM organization_meeting
+    WHERE id = ${args.meetingId}
+      AND business_id = ${args.orgId}
+    LIMIT 1
+  `)) as OrganizationEventMeetingRow[]
+  const row = rows[0]
+  if (!row) return null
+
+  if (args.syncSchedule) {
+    await prisma.$executeRaw`
+      UPDATE organization_meeting
+      SET
+        schedule_starts_at = ${args.startsAt ? new Date(args.startsAt) : null},
+        schedule_ends_at = ${args.endsAt ? new Date(args.endsAt) : null},
+        updated_at = ${new Date()}
+      WHERE id = ${row.id}
+    `
+  }
+
+  return {
+    meetingId: row.id,
+    title: row.title?.trim() || 'Untitled meeting',
+    status: args.deps.normalizeMeetingStatus(row.status),
+    visibility: row.visibility === 'PRIVATE' ? 'PRIVATE' : 'PUBLIC',
+    startsAt: args.startsAt ?? (row.schedule_starts_at ? row.schedule_starts_at.toISOString() : null),
+    endsAt: args.endsAt ?? (row.schedule_ends_at ? row.schedule_ends_at.toISOString() : null),
+  }
+}
+
 function resolveOrganizationCommunitySlug(deps: OrganizationGovernanceEventsDeps, province: string, municipalityRaw: string) {
   const communitySlug = municipalityRaw.trim().toLowerCase()
   if (!communitySlug) return null
@@ -90,11 +145,13 @@ export function registerOrganizationGovernanceEventsRoutes(
       if (!canCreate) return reply.code(403).send({ error: 'forbidden' })
 
       const nowIso = new Date().toISOString()
+      const locationAddress = readOrganizationAddressDetails(org.metadata)
       const event = {
         id: `event_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
         title: 'Untitled event',
         description: null,
         category: 'Other',
+        eventType: 'LOCATION',
         access: 'PUBLIC',
         eligibleRankIds: [],
         startsAt: nowIso,
@@ -108,6 +165,8 @@ export function registerOrganizationGovernanceEventsRoutes(
         sponsors: [],
         sponsorInvites: [],
         fees: [],
+        meetingRoom: null,
+        locationAddress,
         primaryPhotoUrl: null,
         galleryPhotoUrls: [],
         agenda: [],
@@ -270,11 +329,34 @@ export function registerOrganizationGovernanceEventsRoutes(
           ? previous.agenda
           : body.data.agenda.map((item: { title: string; startsAt?: string | null }) => ({ title: item.title, startsAt: item.startsAt ?? null }))
 
+      const nextEventType = resolveEventType(body.data.eventType, previous)
+      const nextLocationAddress = nextEventType === 'LOCATION'
+        ? body.data.locationAddress === undefined
+          ? normalizeStructuredAddressInput(previous.locationAddress) ?? null
+          : normalizeStructuredAddressInput(body.data.locationAddress)
+        : null
+      let nextMeetingRoom = null
+      if (nextEventType === 'MEETING_ROOM') {
+        const requestedMeetingId = body.data.meetingRoom?.meetingId ?? (body.data.meetingRoom === null ? null : previous.meetingRoom?.meetingId ?? null)
+        if (requestedMeetingId) {
+          nextMeetingRoom = await resolveMeetingRoomAttachment({
+            deps,
+            orgId: org.id,
+            meetingId: requestedMeetingId,
+            startsAt: nextStartsAt,
+            endsAt: body.data.endsAt === undefined ? previous.endsAt : body.data.endsAt ?? null,
+            syncSchedule: true,
+          })
+          if (!nextMeetingRoom) return reply.code(404).send({ error: 'meeting_not_found' })
+        }
+      }
+
       const next = {
         ...previous,
         title: body.data.title ?? previous.title,
         description: body.data.description === undefined ? previous.description : body.data.description ?? null,
         category: body.data.category ?? previous.category ?? 'Other',
+        eventType: nextEventType,
         access: body.data.access ?? previous.access,
         eligibleRankIds: body.data.eligibleRankIds ?? previous.eligibleRankIds,
         startsAt: nextStartsAt,
@@ -288,6 +370,8 @@ export function registerOrganizationGovernanceEventsRoutes(
         sponsors: normalizedSponsors ?? previous.sponsors ?? [],
         sponsorInvites: sponsorInviteBuild ? sponsorInviteBuild.nextInvites : previous.sponsorInvites ?? [],
         fees: nextFees,
+        meetingRoom: nextMeetingRoom,
+        locationAddress: nextLocationAddress,
         agenda: nextAgenda,
         attachments: body.data.attachments ?? previous.attachments,
         primaryPhotoUrl: body.data.primaryPhotoUrl === undefined ? previous.primaryPhotoUrl : body.data.primaryPhotoUrl ?? null,
@@ -428,11 +512,32 @@ export function registerOrganizationGovernanceEventsRoutes(
         .map((fee: { amountCents: number }) => fee.amountCents)
         .filter((amount: number) => Number.isFinite(amount) && amount > 0)
         .sort((a: number, b: number) => a - b)[0] ?? null
+      const nextEventType = resolveEventType(body.data.eventType, previous)
+      const nextLocationAddress = nextEventType === 'LOCATION'
+        ? normalizeStructuredAddressInput(body.data.locationAddress) ?? readOrganizationAddressDetails(org.metadata)
+        : null
+      if (nextEventType === 'LOCATION' && !nextLocationAddress) {
+        return reply.code(400).send({ error: 'location_required_for_location_event' })
+      }
+      const nextMeetingRoom = nextEventType === 'MEETING_ROOM'
+        ? await resolveMeetingRoomAttachment({
+            deps,
+            orgId: org.id,
+            meetingId: body.data.meetingRoom?.meetingId ?? '',
+            startsAt: body.data.startsAt,
+            endsAt: body.data.endsAt ?? null,
+            syncSchedule: true,
+          })
+        : null
+      if (nextEventType === 'MEETING_ROOM' && !nextMeetingRoom) {
+        return reply.code(404).send({ error: 'meeting_not_found' })
+      }
       const next = {
         ...previous,
         title: body.data.title,
         description: body.data.description ?? null,
         category: body.data.category,
+        eventType: nextEventType,
         access: body.data.access,
         eligibleRankIds: body.data.eligibleRankIds ?? [],
         startsAt: body.data.startsAt,
@@ -446,6 +551,8 @@ export function registerOrganizationGovernanceEventsRoutes(
         sponsors: normalizedSponsors,
         sponsorInvites: sponsorInviteBuild.nextInvites,
         fees: body.data.fees ?? [],
+        meetingRoom: nextMeetingRoom,
+        locationAddress: nextLocationAddress,
         primaryPhotoUrl: body.data.primaryPhotoUrl ?? null,
         galleryPhotoUrls: body.data.galleryPhotoUrls ?? [],
         agenda: body.data.agenda?.map((item: { title: string; startsAt?: string | null }) => ({ title: item.title, startsAt: item.startsAt ?? null })) ?? [],
@@ -661,11 +768,32 @@ export function registerOrganizationGovernanceEventsRoutes(
         .map((fee: { amountCents: number }) => fee.amountCents)
         .filter((amount: number) => Number.isFinite(amount) && amount > 0)
         .sort((a: number, b: number) => a - b)[0] ?? null
+      const eventType = resolveEventType(body.data.eventType, { meetingRoom: null })
+      const locationAddress = eventType === 'LOCATION'
+        ? normalizeStructuredAddressInput(body.data.locationAddress) ?? readOrganizationAddressDetails(org.metadata)
+        : null
+      if (eventType === 'LOCATION' && !locationAddress) {
+        return reply.code(400).send({ error: 'location_required_for_location_event' })
+      }
+      const meetingRoom = eventType === 'MEETING_ROOM'
+        ? await resolveMeetingRoomAttachment({
+            deps,
+            orgId: org.id,
+            meetingId: body.data.meetingRoom?.meetingId ?? '',
+            startsAt: body.data.startsAt,
+            endsAt: body.data.endsAt ?? null,
+            syncSchedule: true,
+          })
+        : null
+      if (eventType === 'MEETING_ROOM' && !meetingRoom) {
+        return reply.code(404).send({ error: 'meeting_not_found' })
+      }
       const event = {
         id: `event_${randomUUID().replace(/-/g, '').slice(0, 14)}`,
         title: body.data.title,
         description: body.data.description ?? null,
         category: body.data.category,
+        eventType,
         access: body.data.access,
         eligibleRankIds: body.data.eligibleRankIds ?? [],
         startsAt: body.data.startsAt,
@@ -679,6 +807,8 @@ export function registerOrganizationGovernanceEventsRoutes(
         sponsors: normalizedSponsors,
         sponsorInvites: sponsorInviteBuild.nextInvites,
         fees: body.data.fees ?? [],
+        meetingRoom,
+        locationAddress,
         primaryPhotoUrl: body.data.primaryPhotoUrl ?? null,
         galleryPhotoUrls: body.data.galleryPhotoUrls ?? [],
         agenda: body.data.agenda?.map((item: { title: string; startsAt?: string | null }) => ({ title: item.title, startsAt: item.startsAt ?? null })) ?? [],

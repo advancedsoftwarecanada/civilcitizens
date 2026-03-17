@@ -11,6 +11,7 @@ type MapPoint = {
 type AddressDirectionsMapProps = {
   destination: MapPoint | null
   origin?: MapPoint | null
+  routeCoordinates?: Array<[number, number]> | null
 }
 
 const ADDRESS_MAP_STYLE = {
@@ -32,7 +33,7 @@ const ADDRESS_MAP_STYLE = {
   ],
 } as const
 
-export function AddressDirectionsMap({ destination, origin }: AddressDirectionsMapProps) {
+export function AddressDirectionsMap({ destination, origin, routeCoordinates }: AddressDirectionsMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -108,16 +109,18 @@ export function AddressDirectionsMap({ destination, origin }: AddressDirectionsM
         })
 
         if (origin) {
+          const routeLineCoordinates = routeCoordinates?.length ? routeCoordinates : [
+            [origin.longitude, origin.latitude],
+            [destination.longitude, destination.latitude],
+          ]
+
           map.addSource('address-route', {
             type: 'geojson',
             data: {
               type: 'Feature',
               geometry: {
                 type: 'LineString',
-                coordinates: [
-                  [origin.longitude, origin.latitude],
-                  [destination.longitude, destination.latitude],
-                ],
+                coordinates: routeLineCoordinates,
               },
               properties: {},
             },
@@ -156,7 +159,7 @@ export function AddressDirectionsMap({ destination, origin }: AddressDirectionsM
       cancelled = true
       cleanup?.()
     }
-  }, [destination, origin])
+  }, [destination, origin, routeCoordinates])
 
   return <div ref={containerRef} className="h-[420px] w-full overflow-hidden rounded-[28px] bg-slate-100 shadow-[0_20px_60px_rgba(15,23,42,0.08)]" />
 }
