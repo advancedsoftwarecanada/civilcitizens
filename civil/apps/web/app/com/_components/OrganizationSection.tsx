@@ -8,19 +8,25 @@ export default function OrganizationSection({
   title,
   description,
   children,
+  variant = 'card',
 }: {
   title?: string
   description?: string
   children?: ReactNode
+  variant?: 'card' | 'plain'
 }) {
   const organization = useOrganization()
   const community = useCommunity()
 
   const cleanTitle = typeof title === 'string' ? title.trim() : ''
   const cleanDescription = typeof description === 'string' ? description.trim() : ''
+  const containerClassName =
+    variant === 'plain'
+      ? 'space-y-0'
+      : 'rounded-3xl border border-slate-200 bg-white p-6 shadow-sm'
 
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className={containerClassName}>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
         {organization.name} · {community.municipalityName}
       </p>

@@ -78,17 +78,59 @@ type OrgMembersResponse = {
 }
 
 const ORGANIZATION_TYPE_OPTIONS = [
-  { value: 'LOCAL_BUSINESS', label: 'Local Business' },
-  { value: 'NON_PROFIT', label: 'Non-Profit / Charity' },
+  { value: 'INDIVIDUAL', label: 'Individual' },
+  { value: 'SOLE_PROPRIETORSHIP', label: 'Sole Proprietorship' },
+  { value: 'CORPORATION', label: 'Corporation' },
+  { value: 'NON_PROFIT', label: 'Non Profit' },
+  { value: 'CHARITY', label: 'Charity' },
   { value: 'COMMUNITY_GROUP', label: 'Community Group' },
-  { value: 'EDUCATIONAL', label: 'Educational Organization' },
-  { value: 'RELIGIOUS', label: 'Religious / Spiritual Organization' },
-  { value: 'GOVERNMENT', label: 'Government / Civic Body' },
-  { value: 'ARTS_CULTURE', label: 'Arts & Culture Organization' },
-  { value: 'SPORTS_RECREATION', label: 'Sports & Recreation Organization' },
+  { value: 'RELIGIOUS_ORGANIZATION', label: 'Religious Organization' },
+  { value: 'GOVERNMENT', label: 'Government' },
 ] as const
 
 type OrganizationTypeValue = (typeof ORGANIZATION_TYPE_OPTIONS)[number]['value']
+
+const ORGANIZATION_CATEGORY_SPECIALIZATION_OPTIONS = {
+  TRADES: ['ELECTRICIAN', 'PLUMBER', 'CARPENTER', 'HVAC_TECHNICIAN', 'ROOFER', 'PAINTER', 'DRYWALL_INSTALLER', 'FLOORING_INSTALLER', 'WELDER', 'GENERAL_CONTRACTOR', 'HANDYMAN', 'APPLIANCE_REPAIR_TECHNICIAN', 'ELEVATOR_TECHNICIAN', 'MASONRY_BRICKLAYER'],
+  CONSTRUCTION_RENOVATION: ['HOME_BUILDER', 'RENOVATION_SPECIALIST', 'DEMOLITION', 'FRAMING', 'CONCRETE_WORK', 'EXCAVATION', 'LANDSCAPING', 'FENCE_DECK_BUILDER', 'POOL_INSTALLATION', 'CABINET_MAKER'],
+  AUTOMOTIVE_MECHANICAL: ['AUTO_REPAIR_MECHANIC', 'MOBILE_MECHANIC', 'AUTO_BODY_REPAIR', 'TIRE_SERVICES', 'OIL_CHANGE_SERVICES', 'CAR_DETAILING', 'VEHICLE_INSPECTION', 'SMALL_ENGINE_REPAIR', 'DIESEL_MECHANIC'],
+  TRANSPORTATION_DELIVERY: ['COURIER_DELIVERY_DRIVER', 'MOVING_SERVICES', 'TRUCKING_FREIGHT', 'RIDESHARE_DRIVER', 'PERSONAL_DRIVER_CHAUFFEUR', 'LOGISTICS_COORDINATION', 'TOWING_SERVICES'],
+  FOOD_CATERING: ['CATERING_SERVICES', 'PRIVATE_CHEF', 'MEAL_PREP_SERVICES', 'BAKERY', 'FOOD_TRUCK', 'RESTAURANT', 'BUTCHER', 'MEAL_DELIVERY', 'FARMERS_MARKET_VENDOR'],
+  AGRICULTURE_FARMING: ['VEGETABLE_FARMING', 'FRUIT_FARMING', 'LIVESTOCK_FARMING', 'DAIRY_PRODUCTION', 'POULTRY_FARMING', 'GREENHOUSE_PRODUCTION', 'BEEKEEPING', 'AQUACULTURE', 'ORGANIC_FARMING'],
+  RETAIL_ECOMMERCE: ['GENERAL_RETAIL', 'ONLINE_STORE', 'WHOLESALE_DISTRIBUTOR', 'DROPSHIPPING', 'SPECIALTY_SHOP', 'CONVENIENCE_STORE', 'MARKET_VENDOR'],
+  HEALTH_BEAUTY: ['MASSAGE_THERAPIST', 'HAIR_STYLIST', 'BARBER', 'ESTHETICIAN', 'NAIL_TECHNICIAN', 'MAKEUP_ARTIST', 'SPA_SERVICES', 'TATTOO_ARTIST', 'PIERCING_SERVICES'],
+  HEALTHCARE: ['NURSE', 'PERSONAL_SUPPORT_WORKER', 'PHYSIOTHERAPIST', 'CHIROPRACTOR', 'OCCUPATIONAL_THERAPIST', 'MENTAL_HEALTH_COUNSELOR', 'HOME_CARE_PROVIDER', 'MEDICAL_CLINIC'],
+  FITNESS_SPORTS: ['PERSONAL_TRAINER', 'FITNESS_COACH', 'YOGA_INSTRUCTOR', 'MARTIAL_ARTS_INSTRUCTOR', 'SPORTS_COACH', 'GYM_FITNESS_FACILITY'],
+  EDUCATION_TUTORING: ['TUTOR', 'LANGUAGE_INSTRUCTOR', 'MUSIC_TEACHER', 'DRIVING_INSTRUCTOR', 'EDUCATIONAL_CONSULTANT', 'PRIVATE_SCHOOL', 'ONLINE_COURSE_PROVIDER'],
+  CHILDCARE_FAMILY: ['BABYSITTER', 'NANNY', 'DAYCARE_PROVIDER', 'FAMILY_SUPPORT_SERVICES', 'ELDER_CARE'],
+  CLEANING_MAINTENANCE: ['RESIDENTIAL_CLEANING', 'COMMERCIAL_CLEANING', 'WINDOW_CLEANING', 'CARPET_CLEANING', 'PRESSURE_WASHING', 'JANITORIAL_SERVICES', 'PROPERTY_MAINTENANCE'],
+  PROFESSIONAL_SERVICES: ['ACCOUNTANT', 'BOOKKEEPER', 'LAWYER', 'PARALEGAL', 'CONSULTANT', 'BUSINESS_ADVISOR', 'INSURANCE_AGENT', 'FINANCIAL_ADVISOR'],
+  TECHNOLOGY_IT: ['SOFTWARE_DEVELOPER', 'WEB_DEVELOPER', 'MOBILE_APP_DEVELOPER', 'IT_SUPPORT', 'NETWORK_TECHNICIAN', 'CYBERSECURITY_SPECIALIST', 'AI_DEVELOPER', 'DATA_ANALYST'],
+  MEDIA_CREATIVE: ['GRAPHIC_DESIGNER', 'WEB_DESIGNER', 'PHOTOGRAPHER', 'VIDEOGRAPHER', 'VIDEO_EDITOR', 'ANIMATOR', 'CONTENT_CREATOR', 'COPYWRITER'],
+  MARKETING_SALES: ['DIGITAL_MARKETING', 'SEO_SPECIALIST', 'SOCIAL_MEDIA_MANAGER', 'ADVERTISING_SPECIALIST', 'SALES_REPRESENTATIVE', 'LEAD_GENERATION'],
+  EVENTS_ENTERTAINMENT: ['EVENT_PLANNER', 'DJ', 'MUSICIAN', 'ENTERTAINER', 'WEDDING_SERVICES', 'PARTY_RENTALS'],
+  REAL_ESTATE_PROPERTY: ['REAL_ESTATE_AGENT', 'PROPERTY_MANAGER', 'HOME_INSPECTOR', 'MORTGAGE_BROKER', 'APPRAISER'],
+  TRAVEL_HOSPITALITY: ['TRAVEL_AGENT', 'TOUR_GUIDE', 'HOTEL_ACCOMMODATION', 'SHORT_TERM_RENTAL_HOST'],
+  SECURITY_SAFETY: ['SECURITY_GUARD', 'PRIVATE_INVESTIGATOR', 'ALARM_SYSTEMS', 'FIRE_SAFETY_SERVICES'],
+  GOVERNMENT_PUBLIC_SERVICES: ['MUNICIPAL_SERVICES', 'PROVINCIAL_SERVICES', 'FEDERAL_SERVICES', 'PUBLIC_ADMINISTRATION'],
+  NON_PROFIT_COMMUNITY: ['COMMUNITY_ORGANIZATION', 'ADVOCACY_GROUP', 'VOLUNTEER_ORGANIZATION', 'FOOD_BANK', 'SHELTER_SERVICES'],
+  RELIGIOUS: ['CHURCH', 'MOSQUE', 'TEMPLE', 'SYNAGOGUE', 'FAITH_BASED_SERVICES'],
+  ARTS_CULTURE: ['ARTIST', 'GALLERY', 'CULTURAL_ORGANIZATION', 'MUSEUM', 'THEATER'],
+  MANUFACTURING_INDUSTRIAL: ['FABRICATION', 'ASSEMBLY', 'PACKAGING', 'CNC_MACHINING', 'THREE_D_PRINTING', 'TEXTILE_PRODUCTION'],
+  OTHER: ['OTHER_SERVICES', 'MISCELLANEOUS'],
+} as const
+
+type OrganizationCategoryValue = keyof typeof ORGANIZATION_CATEGORY_SPECIALIZATION_OPTIONS
+type OrganizationSpecializationValue = (typeof ORGANIZATION_CATEGORY_SPECIALIZATION_OPTIONS)[OrganizationCategoryValue][number]
+
+const ORGANIZATION_CATEGORY_OPTIONS = Object.keys(ORGANIZATION_CATEGORY_SPECIALIZATION_OPTIONS) as OrganizationCategoryValue[]
+
+function formatOrganizationDirectoryLabel(value: string) {
+  return value
+    .split('_')
+    .map((segment) => (segment ? segment[0] + segment.slice(1).toLowerCase() : segment))
+    .join(' ')
+}
 
 type OrgAuditItem = {
   id: string
@@ -308,8 +350,9 @@ export default function OrganizationSettingsClient({
   })
   const [detailsDirty, setDetailsDirty] = useState(false)
   const [organizationName, setOrganizationName] = useState('')
-  const [organizationSlug, setOrganizationSlug] = useState('')
-  const [organizationType, setOrganizationType] = useState<OrganizationTypeValue>('LOCAL_BUSINESS')
+  const [organizationType, setOrganizationType] = useState<OrganizationTypeValue>('INDIVIDUAL')
+  const [organizationCategory, setOrganizationCategory] = useState<OrganizationCategoryValue | ''>('')
+  const [organizationSpecialization, setOrganizationSpecialization] = useState<OrganizationSpecializationValue | ''>('')
   const [organizationNameSaving, setOrganizationNameSaving] = useState(false)
   const [profileHeadline, setProfileHeadline] = useState('')
   const [profileAbout, setProfileAbout] = useState('')
@@ -406,14 +449,14 @@ export default function OrganizationSettingsClient({
   const [tokenReady, setTokenReady] = useState(false)
   const canManage = Boolean(org?.viewerRole === 'OWNER' || org?.viewerRole === 'MANAGER' || (me?.id && org?.ownerId && me.id === org.ownerId))
   const isOwner = Boolean(org?.viewerRole === 'OWNER' || (me?.id && org?.ownerId && me.id === org.ownerId))
-  const normalizedOrganizationSlug = organizationSlug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '')
   const canSaveOrganizationIdentity = Boolean(
     isOwner &&
       org &&
       organizationName.trim().length >= 3 &&
       (organizationName.trim() !== org.name ||
         organizationType !== org.type ||
-        (org.status === 'DRAFT' && normalizedOrganizationSlug.length >= 1 && normalizedOrganizationSlug !== org.slug)),
+        organizationCategory !== (org.category ?? '') ||
+        organizationSpecialization !== (org.specialization ?? '')),
   )
   const profileHeadlineTrimmed = profileHeadline.trim().slice(0, HEADLINE_MAX_CHARS)
   const profileAboutNormalized = normalizeRichText(profileAbout)
@@ -427,6 +470,10 @@ export default function OrganizationSettingsClient({
   const orgApiPath = useMemo(() => {
     return `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(org?.slug ?? slug)}`
   }, [municipality, org?.slug, province, slug])
+
+  const specializationOptions = useMemo(() => {
+    return organizationCategory ? ORGANIZATION_CATEGORY_SPECIALIZATION_OPTIONS[organizationCategory] : []
+  }, [organizationCategory])
 
   useEffect(() => {
     setToken(getStoredToken())
@@ -614,8 +661,9 @@ export default function OrganizationSettingsClient({
   useEffect(() => {
     if (!org) return
     setOrganizationName(org.name)
-    setOrganizationSlug(org.slug)
     setOrganizationType(org.type as OrganizationTypeValue)
+    setOrganizationCategory((org.category ?? '') as OrganizationCategoryValue | '')
+    setOrganizationSpecialization((org.specialization ?? '') as OrganizationSpecializationValue | '')
     setProfileHeadline((org.headline ?? '').slice(0, HEADLINE_MAX_CHARS))
     setProfileAbout(org.description ?? '')
     setDetails({
@@ -690,10 +738,6 @@ export default function OrganizationSettingsClient({
       pushToast('Organization name must be at least 3 characters.', 'error')
       return
     }
-    if (org.status === 'DRAFT' && !normalizedOrganizationSlug) {
-      pushToast('Organization URL must contain at least one letter or number.', 'error')
-      return
-    }
     if (!canSaveOrganizationIdentity) return
 
     setOrganizationNameSaving(true)
@@ -701,9 +745,8 @@ export default function OrganizationSettingsClient({
       const body: Record<string, unknown> = {}
       if (nextName !== org.name) body.name = nextName
       if (organizationType !== org.type) body.type = organizationType
-      if (org.status === 'DRAFT' && normalizedOrganizationSlug && normalizedOrganizationSlug !== org.slug) {
-        body.slug = normalizedOrganizationSlug
-      }
+      if (organizationCategory !== (org.category ?? '')) body.category = organizationCategory || null
+      if (organizationSpecialization !== (org.specialization ?? '')) body.specialization = organizationSpecialization || null
 
       const res = await fetch(buildApiUrl(`${orgApiPath}/settings`), {
         method: 'PUT',
@@ -735,8 +778,9 @@ export default function OrganizationSettingsClient({
         const slugChanged = nextOrg.slug !== org.slug
         setOrg(nextOrg)
         setOrganizationName(nextOrg.name)
-        setOrganizationSlug(nextOrg.slug)
         setOrganizationType(nextOrg.type as OrganizationTypeValue)
+        setOrganizationCategory((nextOrg.category ?? '') as OrganizationCategoryValue | '')
+        setOrganizationSpecialization((nextOrg.specialization ?? '') as OrganizationSpecializationValue | '')
         if (slugChanged) {
           router.replace(`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(nextOrg.slug)}/settings/details`)
         }
@@ -748,7 +792,7 @@ export default function OrganizationSettingsClient({
     } finally {
       setOrganizationNameSaving(false)
     }
-  }, [canSaveOrganizationIdentity, isOwner, municipality, normalizedOrganizationSlug, org, orgApiPath, organizationName, organizationType, province, router, token])
+  }, [canSaveOrganizationIdentity, isOwner, municipality, org, orgApiPath, organizationCategory, organizationName, organizationSpecialization, organizationType, province, router, token])
 
   const saveProfileDetails = useCallback(async () => {
     if (!token) {
@@ -1805,7 +1849,6 @@ export default function OrganizationSettingsClient({
       <section className="surface-card space-y-6 p-6 shadow-subtle">
         <header className="space-y-1">
           <h3 className="text-lg font-semibold text-slate-900">Photos</h3>
-          <p className="text-sm text-slate-500">Upload a cover and profile photo to personalize this organization.</p>
         </header>
 
         <div>
@@ -1877,8 +1920,8 @@ export default function OrganizationSettingsClient({
 
       {showDetails && isOwner ? (
         <section className="surface-card space-y-3 p-6 shadow-subtle">
-          <h3 className="text-sm font-semibold text-slate-900">Organization identity</h3>
-          <p className="text-xs text-slate-500">Set the public name, URL, and directory type before publishing your organization.</p>
+          <h3 className="text-lg font-semibold text-slate-900">Organization identity</h3>
+          <p className="text-xs text-slate-500">Set the public name and directory classification for this organization.</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1 text-sm font-medium text-slate-700 sm:col-span-2">
               Organization name
@@ -1890,22 +1933,7 @@ export default function OrganizationSettingsClient({
                 placeholder="Organization name"
               />
             </label>
-            <label className="grid gap-1 text-sm font-medium text-slate-700">
-              URL slug
-              <input
-                value={organizationSlug}
-                onChange={(e) => setOrganizationSlug(e.target.value)}
-                disabled={organizationNameSaving || org.status !== 'DRAFT'}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
-                placeholder="civil-citizens-incorporated"
-              />
-              <span className="text-xs text-slate-500">
-                {org.status === 'DRAFT'
-                  ? `Preview: /com/${province}/${municipality}/orgs/${normalizedOrganizationSlug || 'your-organization'}`
-                  : 'Organization URLs lock after publishing.'}
-              </span>
-            </label>
-            <label className="grid gap-1 text-sm font-medium text-slate-700">
+            <label className="grid gap-1 text-sm font-medium text-slate-700 sm:col-span-2">
               Organization type
               <select
                 value={organizationType}
@@ -1916,6 +1944,49 @@ export default function OrganizationSettingsClient({
                 {ORGANIZATION_TYPE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              Category
+              <select
+                value={organizationCategory}
+                onChange={(e) => {
+                  const nextCategory = e.target.value as OrganizationCategoryValue | ''
+                  setOrganizationCategory(nextCategory)
+                  if (!nextCategory) {
+                    setOrganizationSpecialization('')
+                    return
+                  }
+                  const nextOptions = ORGANIZATION_CATEGORY_SPECIALIZATION_OPTIONS[nextCategory] as readonly string[]
+                  if (!nextOptions.includes(organizationSpecialization as OrganizationSpecializationValue)) {
+                    setOrganizationSpecialization('')
+                  }
+                }}
+                disabled={organizationNameSaving}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+              >
+                <option value="">Select a category</option>
+                {ORGANIZATION_CATEGORY_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {formatOrganizationDirectoryLabel(option)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-slate-700">
+              Specialization
+              <select
+                value={organizationSpecialization}
+                onChange={(e) => setOrganizationSpecialization(e.target.value as OrganizationSpecializationValue | '')}
+                disabled={organizationNameSaving || !organizationCategory}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
+              >
+                <option value="">{organizationCategory ? 'Select a specialization' : 'Select a category first'}</option>
+                {specializationOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {formatOrganizationDirectoryLabel(option)}
                   </option>
                 ))}
               </select>
@@ -1936,7 +2007,7 @@ export default function OrganizationSettingsClient({
 
       {showDetails ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Directory details</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Directory details</h3>
         <p className="text-xs text-slate-500">These appear on the organizations directory page.</p>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -2074,7 +2145,7 @@ export default function OrganizationSettingsClient({
 
       {showDetails ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Visibility</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Visibility</h3>
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
           <span
             className={
@@ -2088,7 +2159,7 @@ export default function OrganizationSettingsClient({
           <p className="text-xs text-slate-600">Public organizations are discoverable. Private organizations are only visible to admins.</p>
           {org.status === 'DRAFT' ? (
             <p className="text-xs text-slate-500">
-              Drafts need a real organization name and custom URL slug before they can be made public.
+              Drafts need a real organization name before they can be made public.
             </p>
           ) : null}
           <button
@@ -2112,7 +2183,7 @@ export default function OrganizationSettingsClient({
 
       {showPeople ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Members</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Members</h3>
         {membersLoading ? <p className="text-xs text-slate-500">Loading members…</p> : null}
         {!membersLoading && !members.length ? <p className="text-xs text-slate-500">No members yet.</p> : null}
         {members.length ? (
@@ -2150,7 +2221,7 @@ export default function OrganizationSettingsClient({
 
       {showPeople ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Joined Members</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Joined Members</h3>
         <p className="text-xs text-slate-500">Promote a joined member to manager so they can help run this organization.</p>
         {!followers.length ? <p className="text-xs text-slate-500">No joined members available to promote.</p> : null}
         {followers.length ? (
@@ -2189,7 +2260,7 @@ export default function OrganizationSettingsClient({
       <section className="surface-card space-y-4 p-6 shadow-subtle">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Governance testing actions</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Governance testing actions</h3>
             <p className="text-xs text-slate-500">Trigger referral, reputation, RSVP, and economics actions directly.</p>
           </div>
           <button
@@ -2380,7 +2451,7 @@ export default function OrganizationSettingsClient({
       {showRoles ? (
       <section className="surface-card space-y-4 p-6 shadow-subtle">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Role admin tools</h3>
+          <h3 className="text-lg font-semibold text-slate-900">Role admin tools</h3>
           <p className="text-xs text-slate-500">Create ranks (roles) and assign permissions.</p>
         </div>
 
@@ -2578,7 +2649,7 @@ export default function OrganizationSettingsClient({
       {showGovernance ? (
       <section className="surface-card space-y-4 p-6 shadow-subtle">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Governance admin tools</h3>
+          <h3 className="text-lg font-semibold text-slate-900">Governance admin tools</h3>
           <p className="text-xs text-slate-500">Create plans, sponsors, achievements, and manage join mode/pending members.</p>
         </div>
 
@@ -2889,7 +2960,7 @@ export default function OrganizationSettingsClient({
 
       {showGovernance ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Governance audit log</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Governance audit log</h3>
         <p className="text-xs text-slate-500">Recent governance actions for transparency and accountability.</p>
         {auditLoading ? <p className="text-xs text-slate-500">Loading audit log…</p> : null}
         {!auditLoading && !auditItems.length ? <p className="text-xs text-slate-500">No governance actions logged yet.</p> : null}
@@ -2913,7 +2984,7 @@ export default function OrganizationSettingsClient({
 
       {showGovernance ? (
       <section className="surface-card space-y-3 p-6 shadow-subtle">
-        <h3 className="text-sm font-semibold text-slate-900">Governance system overview</h3>
+        <h3 className="text-lg font-semibold text-slate-900">Governance system overview</h3>
         <p className="text-xs text-slate-500">Live counts for plans, referrals, events, achievements, reputation, and economics.</p>
         {governanceLoading ? <p className="text-xs text-slate-500">Loading governance overview…</p> : null}
         {!governanceLoading && !governanceState ? <p className="text-xs text-slate-500">Governance overview unavailable.</p> : null}

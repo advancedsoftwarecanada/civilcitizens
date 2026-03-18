@@ -499,6 +499,24 @@ export async function resolveElectoralDistrictContext(args: {
   }
 }
 
+export async function resolveCommunityElectoralDistrictContext(args: {
+  provinceCode: string
+  communitySlug: string
+}) {
+  await ensureSpatialDataReady()
+
+  const district = await findElectoralDistrictBySlug(args.provinceCode.trim().toLowerCase(), args.communitySlug.trim())
+
+  return {
+    resolvedFrom: 'coordinates' as const,
+    postalCode: null,
+    tileServerBaseUrl: getPublicMapTileServerBaseUrl(),
+    styleUrl: getMapStyleUrl(),
+    userLocation: district?.center ?? { lat: 56.1304, lng: -106.3468 },
+    district,
+  }
+}
+
 export async function browseElectoralDistricts(args: {
   userId: string
   provinceCode?: string | null

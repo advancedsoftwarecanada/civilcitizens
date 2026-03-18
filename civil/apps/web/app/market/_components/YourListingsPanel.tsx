@@ -58,14 +58,13 @@ export default function YourListingsPanel() {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-900">Your Listings</h3>
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-          <Link href="/market/listings" className="hover:text-slate-900">
+        <h3 className="text-sm font-semibold text-slate-900">Your listing</h3>
+        <div className="flex items-center gap-2 text-xs font-semibold">
+          <Link
+            href="/market/listings"
+            className="inline-flex items-center justify-center rounded-full bg-red-600 px-3 py-1.5 text-white transition hover:bg-red-500"
+          >
             View all
-          </Link>
-          <span className="text-slate-300">|</span>
-          <Link href="/market/listings/new" className="hover:text-slate-900">
-            Create
           </Link>
         </div>
       </div>

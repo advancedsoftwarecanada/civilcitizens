@@ -10,14 +10,16 @@ export type CommunityOrganization = {
   headline?: string | null
   slug: string
   type:
-    | 'LOCAL_BUSINESS'
+    | 'INDIVIDUAL'
+    | 'SOLE_PROPRIETORSHIP'
+    | 'CORPORATION'
     | 'NON_PROFIT'
+    | 'CHARITY'
     | 'COMMUNITY_GROUP'
-    | 'EDUCATIONAL'
-    | 'RELIGIOUS'
+    | 'RELIGIOUS_ORGANIZATION'
     | 'GOVERNMENT'
-    | 'ARTS_CULTURE'
-    | 'SPORTS_RECREATION'
+  category?: string | null
+  specialization?: string | null
   description: string | null
   phone?: string | null
   websiteUrl?: string | null

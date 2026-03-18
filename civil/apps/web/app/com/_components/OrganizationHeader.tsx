@@ -1,6 +1,7 @@
 'use client'
 
 import clsx from 'clsx'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { LuRepeat2, LuShare } from 'react-icons/lu'
@@ -18,6 +19,37 @@ function formatShortDate(value?: string | null) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatDirectoryLabel(value?: string | null) {
+  if (!value) return null
+  return value
+    .split('_')
+    .map((segment) => (segment ? segment[0] + segment.slice(1).toLowerCase() : segment))
+    .join(' ')
+}
+
+function formatTypeLabel(value?: CommunityOrganization['type']) {
+  switch (value) {
+    case 'INDIVIDUAL':
+      return 'Individual'
+    case 'SOLE_PROPRIETORSHIP':
+      return 'Sole Proprietorship'
+    case 'CORPORATION':
+      return 'Corporation'
+    case 'NON_PROFIT':
+      return 'Non Profit'
+    case 'CHARITY':
+      return 'Charity'
+    case 'COMMUNITY_GROUP':
+      return 'Community Group'
+    case 'RELIGIOUS_ORGANIZATION':
+      return 'Religious Organization'
+    case 'GOVERNMENT':
+      return 'Government'
+    default:
+      return null
+  }
 }
 
 export default function OrganizationHeader({
@@ -100,10 +132,19 @@ export default function OrganizationHeader({
       }
     : null
   const showModerationMenu = Boolean(resolvedOrg && !resolvedOrg.viewerRole)
+  const directoryTypeLabel = formatTypeLabel(resolvedOrg?.type)
+  const directoryCategoryLabel = formatDirectoryLabel(resolvedOrg?.category)
+  const directorySpecializationLabel = formatDirectoryLabel(resolvedOrg?.specialization)
+  const categoryDirectoryHref = resolvedOrg?.category
+    ? `/organizations/directory?category=${encodeURIComponent(resolvedOrg.category)}`
+    : null
+  const specializationDirectoryHref = resolvedOrg?.category && resolvedOrg?.specialization
+    ? `/organizations/directory?category=${encodeURIComponent(resolvedOrg.category)}&specialization=${encodeURIComponent(resolvedOrg.specialization)}`
+    : null
 
   return (
-    <div className={resolvedOrg ? 'space-y-0' : undefined}>
-      <section className="relative rounded-[36px] rounded-b-none border border-white/60 bg-white/40 shadow-subtle">
+    <div className="space-y-5">
+      <section className="overflow-hidden rounded-[32px] border border-white/60 bg-white/92 text-slate-700 shadow-[0_28px_90px_rgba(15,23,42,0.10)] backdrop-blur">
         <div className="relative h-48 w-full overflow-hidden rounded-t-[36px] sm:h-60">
           {coverDisplayUrl ? (
             <>
@@ -114,15 +155,9 @@ export default function OrganizationHeader({
             <div className="absolute inset-0 bg-gradient-to-r from-rose-100 via-violet-50 to-sky-100" />
           )}
         </div>
-      </section>
 
-      <section
-        className={clsx(
-          'rounded-[32px] border border-white/60 bg-white/80 p-6 text-slate-700 shadow-subtle backdrop-blur sm:p-8',
-          resolvedOrg && 'rounded-t-none border-t-0',
-        )}
-      >
-        <div className="flex min-w-0 flex-col gap-6 md:flex-row md:items-center md:justify-between">
+        <div className="p-6 sm:p-8">
+          <div className="flex min-w-0 flex-col gap-6">
           <div className="flex min-w-0 items-center gap-4">
             <div className="relative">
               <div
@@ -135,68 +170,83 @@ export default function OrganizationHeader({
                 initials={name}
                 size={96}
                 isVerified={Boolean(resolvedOrg?.isVerified)}
-                isBusiness
                 className="relative border-4 border-white"
               />
             </div>
             <div className="min-w-0">
               <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">{name}</h1>
-              {resolvedOrg?.slug ? (
-                <p className="text-sm text-slate-500">
-                  @{resolvedOrg.slug} · Organization since {createdLabel}
-                </p>
-              ) : null}
+              <p className="text-sm text-slate-500">Organization since {createdLabel}</p>
               <p className="mt-1 text-sm text-slate-500">
                 {memberCount === null ? '—' : memberCount} members · {resolvedOrg?.followerCount ?? 0} followers
               </p>
+              {directoryTypeLabel || directoryCategoryLabel || directorySpecializationLabel ? (
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
+                  {directoryTypeLabel ? <span>{directoryTypeLabel}</span> : null}
+                  {directoryTypeLabel && (directoryCategoryLabel || directorySpecializationLabel) ? <span className="text-slate-300">|</span> : null}
+                  {directoryCategoryLabel && categoryDirectoryHref ? (
+                    <Link href={categoryDirectoryHref} className="font-medium text-slate-700 hover:text-[var(--cc-primary)] hover:underline">
+                      {directoryCategoryLabel}
+                    </Link>
+                  ) : null}
+                  {directoryCategoryLabel && directorySpecializationLabel ? <span className="text-slate-300">|</span> : null}
+                  {directorySpecializationLabel && specializationDirectoryHref ? (
+                    <Link href={specializationDirectoryHref} className="font-medium text-slate-700 hover:text-[var(--cc-primary)] hover:underline">
+                      {directorySpecializationLabel}
+                    </Link>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
-
-          {resolvedOrg ? (
-            <div className="flex flex-wrap items-center gap-2 md:self-start">
-              {showModerationMenu ? (
-                <ContentModerationMenu
-                  reportTarget={{
-                    targetType: 'ORGANIZATION',
-                    targetId: resolvedOrg.id,
-                    targetLabel: resolvedOrg.name,
-                  }}
-                  blockTarget={{
-                    type: 'organization',
-                    id: resolvedOrg.id,
-                    label: resolvedOrg.name,
-                  }}
-                  buttonClassName="border-slate-200 bg-white text-slate-700 shadow-none backdrop-blur-0 hover:bg-slate-50 hover:text-slate-900"
-                  onReported={() => router.push('/home')}
-                  onBlocked={() => router.push('/home')}
-                />
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setRepostModalOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              >
-                <LuRepeat2 className="h-4 w-4" />
-                <span>Repost</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShareModalOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-              >
-                <LuShare className="h-4 w-4" />
-                <span>Share</span>
-              </button>
-              <OrganizationFollowButton
-                province={province}
-                municipality={municipality}
-                slug={slug}
-                initialFollowed={resolvedOrg.viewerFollowed ?? false}
-              />
-            </div>
-          ) : null}
+        </div>
         </div>
       </section>
+
+      {resolvedOrg ? (
+        <div className="flex justify-center px-2">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-sm">
+            <OrganizationFollowButton
+              province={province}
+              municipality={municipality}
+              slug={slug}
+              initialFollowed={resolvedOrg.viewerFollowed ?? false}
+            />
+            <button
+              type="button"
+              onClick={() => setRepostModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            >
+              <LuRepeat2 className="h-4 w-4" />
+              <span>Repost</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShareModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            >
+              <LuShare className="h-4 w-4" />
+              <span>Share</span>
+            </button>
+            {showModerationMenu ? (
+              <ContentModerationMenu
+                reportTarget={{
+                  targetType: 'ORGANIZATION',
+                  targetId: resolvedOrg.id,
+                  targetLabel: resolvedOrg.name,
+                }}
+                blockTarget={{
+                  type: 'organization',
+                  id: resolvedOrg.id,
+                  label: resolvedOrg.name,
+                }}
+                buttonClassName="border-slate-200 bg-white text-slate-700 shadow-none backdrop-blur-0 hover:bg-slate-50 hover:text-slate-900 [&_svg]:text-slate-700"
+                onReported={() => router.push('/home')}
+                onBlocked={() => router.push('/home')}
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {repostModalOpen && organizationShareTarget ? (
         <SharePostModal
