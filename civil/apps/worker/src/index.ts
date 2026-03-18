@@ -5,6 +5,9 @@ import sharp from 'sharp'
 import pino from 'pino'
 import { prisma } from '@civil/db'
 import type { MediaCategory } from '@civil/db'
+import { PoliticianScrapeJobSource, PoliticianScrapeJobStatus, Prisma } from '@prisma/client'
+import { XMLParser } from 'fast-xml-parser'
+import { chromium, type Browser } from 'playwright'
 import { promises as fs } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -20,6 +23,8 @@ const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `https://${C
 const CIVIL_AI_VISION_MODEL = (process.env.CIVIL_AI_VISION_MODEL || '').trim()
 const REDDIT_EPOCH_SECONDS = 1134028003
 const REACTION_HOT_WINDOW_HOURS = 48
+const OUR_COMMONS_XML_TIMEOUT_MS = 20_000
+const OUR_COMMONS_HTML_TIMEOUT_MS = 30_000
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' })
 
@@ -71,6 +76,28 @@ const contentAiScanEvents = new QueueEvents('content-ai-scan', workerConnectionO
 contentAiScanEvents.on('completed', ({ jobId }) => logger.info({ jobId }, 'content ai scan job completed'))
 contentAiScanEvents.on('failed', ({ jobId, failedReason }) => logger.error({ jobId, failedReason }, 'content ai scan job failed'))
 
+type PoliticianScrapeJobPayload = { scrapeJobId: string }
+
+const politicianScrapeWorker = new Worker<PoliticianScrapeJobPayload>(
+  'politician-scrape',
+  async (job) => processPoliticianScrapeJob(job),
+  {
+    ...workerConnectionOptions,
+    concurrency: 1,
+  },
+)
+
+const politicianScrapeEvents = new QueueEvents('politician-scrape', workerConnectionOptions)
+politicianScrapeEvents.on('completed', ({ jobId }) => logger.info({ jobId }, 'politician scrape job completed'))
+politicianScrapeEvents.on('failed', ({ jobId, failedReason }) => logger.error({ jobId, failedReason }, 'politician scrape job failed'))
+
+const OUR_COMMONS_XML_PARSER = new XMLParser({
+  attributeNamePrefix: '@_',
+  ignoreAttributes: false,
+  parseTagValue: false,
+  trimValues: true,
+})
+
 type SharpFit = keyof sharp.FitEnum
 type VariantOptions = { width?: number; height?: number; fit?: SharpFit; quality?: number }
 type VariantPreset = VariantOptions & { name: string }
@@ -110,6 +137,106 @@ const VARIANT_PRESETS: Record<MediaCategory, VariantPreset[]> = {
 const PUBLIC_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 
 let contentAiScanTablesReady: Promise<void> | null = null
+let commonsBrowserPromise: Promise<Browser> | null = null
+
+const COMMONS_PROFILE_EVAL = String.raw`(() => {
+  const normalizeText = (value) => (value || '').replace(/\\s+/g, ' ').trim()
+  const linesFromText = (value) =>
+    (value || '')
+      .split(/\\n+/)
+      .map((entry) => normalizeText(entry))
+      .filter(Boolean)
+
+  const collectSectionNodes = (headingText) => {
+    const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+    const heading = headings.find((node) => normalizeText(node.textContent).toUpperCase() === headingText.toUpperCase())
+    if (!heading) return []
+    const level = Number(heading.tagName.slice(1))
+    const nodes = []
+    let current = heading.nextElementSibling
+    while (current) {
+      if (/^H[1-6]$/.test(current.tagName) && Number(current.tagName.slice(1)) <= level) break
+      nodes.push(current)
+      current = current.nextElementSibling
+    }
+    return nodes
+  }
+
+  const parseOfficeBlock = (label, blockText) => {
+    const normalized = normalizeText(blockText)
+      const telephoneMatch = normalized.match(/Telephone:\s*([0-9(). -]+)/i)
+      const faxMatch = normalized.match(/Fax:\s*([0-9(). -]+)/i)
+    const lines = linesFromText(blockText)
+      .map((entry) => entry.replace(/^Telephone:\s*/i, '').replace(/^Fax:\s*/i, '').trim())
+      .filter((entry) => entry && !/^Telephone:/i.test(entry) && !/^Fax:/i.test(entry))
+
+    return {
+      label,
+      lines,
+      telephone: telephoneMatch ? normalizeText(telephoneMatch[1]) : null,
+      fax: faxMatch ? normalizeText(faxMatch[1]) : null,
+    }
+  }
+
+  const contactNodes = collectSectionNodes('CONTACT DETAILS')
+  const contactText = contactNodes.map((node) => node.textContent || '').join('\\n')
+  const contactLinks = contactNodes.flatMap((node) => Array.from(node.querySelectorAll('a[href]')))
+  const email =
+    contactLinks
+      .map((node) => node.href)
+      .find((href) => /^mailto:/i.test(href))
+      ?.replace(/^mailto:/i, '')
+      .trim() || null
+  const website =
+    contactLinks
+      .map((node) => node.href)
+      .find((href) => /^https?:\/\//i.test(href) && !/ourcommons\.ca|parl\.gc\.ca|parl\.ca/i.test(href)) || null
+  const photoUrl = document.querySelector('img[alt^="Photo -"]')?.src || null
+
+  const offices = []
+  let currentLabel = null
+  let currentLines = []
+
+  for (const node of contactNodes) {
+    if (/^H[1-6]$/.test(node.tagName)) {
+      const label = normalizeText(node.textContent)
+      if (/^(Email|Website)$/i.test(label)) {
+        currentLabel = null
+        currentLines = []
+        continue
+      }
+      if (label) {
+        if (currentLabel && currentLines.length) {
+          offices.push(parseOfficeBlock(currentLabel, currentLines.join('\\n')))
+        }
+        currentLabel = label
+        currentLines = []
+      }
+      continue
+    }
+
+    if (currentLabel) {
+      const text = node.textContent || ''
+      if (text.trim()) currentLines.push(text)
+    }
+  }
+
+  if (currentLabel && currentLines.length) {
+    offices.push(parseOfficeBlock(currentLabel, currentLines.join('\\n')))
+  }
+
+  const hillOffice = offices.find((office) => /hill office/i.test(office.label)) || null
+  const constituencyOffices = offices.filter((office) => /constituency office/i.test(office.label))
+  const fallbackHillOffice = !hillOffice && /Hill Office/i.test(contactText) ? parseOfficeBlock('Hill Office', contactText) : null
+
+  return {
+    photoUrl,
+    email,
+    website,
+    hillOffice: hillOffice || fallbackHillOffice,
+    constituencyOffices,
+  }
+})()`
 
 type CivilAiServerConfig = {
   id: string
@@ -480,6 +607,313 @@ function parseOrganizationEventScanTargetId(targetId: string) {
   const eventId = targetId.slice(separatorIndex + 1).trim()
   if (!orgId || !eventId) return null
   return { orgId, eventId }
+}
+
+function readXmlText(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed || null
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (record['@_xsi:nil'] === 'true') return null
+  const text = record['#text']
+  return typeof text === 'string' && text.trim() ? text.trim() : null
+}
+
+function toArray<T>(value: T | T[] | null | undefined): T[] {
+  if (Array.isArray(value)) return value
+  return value == null ? [] : [value]
+}
+
+function jsonObject(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return { ...(value as Record<string, unknown>) }
+}
+
+function parseIsoDate(value: string | null) {
+  if (!value) return null
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function readRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+async function fetchXmlDocument(url: string) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), OUR_COMMONS_XML_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, {
+      headers: { accept: 'application/xml,text/xml' },
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      throw new Error(`commons_fetch_failed:${response.status}`)
+    }
+
+    const raw = await response.text()
+    return OUR_COMMONS_XML_PARSER.parse(raw) as Record<string, unknown>
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function extractOurCommonsProfileResult(doc: Record<string, unknown>) {
+  const profile = readRecord(doc.Profile) ?? doc
+  const memberRole = readRecord(profile.MemberOfParliamentRole)
+  const caucusRolesContainer = readRecord(profile.CaucusMemberRoles)
+  const committeeRolesContainer = readRecord(profile.CommitteeMemberRoles)
+  const associationRolesContainer = readRecord(profile.ParliamentaryAssociationsandInterparliamentaryGroupRoles)
+
+  return {
+    memberRole: memberRole
+      ? {
+          personId: readXmlText(memberRole.PersonId),
+          constituencyName: readXmlText(memberRole.ConstituencyName),
+          provinceName: readXmlText(memberRole.ConstituencyProvinceTerritoryName),
+          caucusShortName: readXmlText(memberRole.CaucusShortName),
+          fromDateTime: readXmlText(memberRole.FromDateTime),
+          toDateTime: readXmlText(memberRole.ToDateTime),
+        }
+      : null,
+    caucusRoles: toArray(caucusRolesContainer?.CaucusMemberRole).map((role) => {
+      const record = readRecord(role)
+      return {
+        caucusShortName: readXmlText(record?.CaucusShortName),
+        title: readXmlText(record?.Title),
+        fromDateTime: readXmlText(record?.FromDateTime),
+        toDateTime: readXmlText(record?.ToDateTime),
+      }
+    }),
+    committeeRoles: toArray(committeeRolesContainer?.CommitteeMemberRole).map((role) => {
+      const record = readRecord(role)
+      return {
+        organization: readXmlText(record?.Organization),
+        title: readXmlText(record?.Title),
+      }
+    }),
+    associationRoles: toArray(associationRolesContainer?.ParliamentaryAssociationsandInterparliamentaryGroupRole).map((role) => {
+      const record = readRecord(role)
+      return {
+        organization: readXmlText(record?.Organization),
+        title: readXmlText(record?.Title),
+        roleType: readXmlText(record?.AssociationMemberRoleType),
+      }
+    }),
+    raw: doc,
+  }
+}
+
+async function getCommonsBrowser() {
+  if (!commonsBrowserPromise) {
+    commonsBrowserPromise = chromium.launch({ headless: true }).then((browser) => {
+      browser.on('disconnected', () => {
+        commonsBrowserPromise = null
+      })
+      return browser
+    }).catch((error) => {
+      commonsBrowserPromise = null
+      throw error
+    })
+  }
+
+  return commonsBrowserPromise
+}
+
+function resetCommonsBrowser() {
+  commonsBrowserPromise = null
+}
+
+function isRecoverableBrowserError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  return /Target page, context or browser has been closed|Browser has been closed|Execution context was destroyed/i.test(message)
+}
+
+type CommonsHtmlOffice = {
+  label: string
+  lines: string[]
+  telephone: string | null
+  fax: string | null
+}
+
+type CommonsHtmlProfileResult = {
+  photoUrl: string | null
+  email: string | null
+  website: string | null
+  hillOffice: CommonsHtmlOffice | null
+  constituencyOffices: CommonsHtmlOffice[]
+}
+
+async function scrapeOurCommonsHtmlProfile(profileUrl: string): Promise<CommonsHtmlProfileResult> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let page: Awaited<ReturnType<Browser['newPage']>> | null = null
+    try {
+      const browser = await getCommonsBrowser()
+      page = await browser.newPage()
+      await page.goto(profileUrl, { waitUntil: 'domcontentloaded', timeout: OUR_COMMONS_HTML_TIMEOUT_MS })
+      await page.waitForLoadState('networkidle', { timeout: OUR_COMMONS_HTML_TIMEOUT_MS }).catch(() => null)
+      return await page.evaluate(COMMONS_PROFILE_EVAL) as CommonsHtmlProfileResult
+    } catch (error) {
+      if (isRecoverableBrowserError(error) && attempt === 0) {
+        resetCommonsBrowser()
+        continue
+      }
+      throw error
+    } finally {
+      await page?.close().catch(() => null)
+    }
+  }
+
+  throw new Error('commons_html_scrape_unreachable')
+}
+
+async function processPoliticianScrapeJob(job: Job<PoliticianScrapeJobPayload>) {
+  const scrapeJob = await prisma.politicianScrapeJob.findUnique({
+    where: { id: job.data.scrapeJobId },
+    include: {
+      politician: {
+        select: {
+          id: true,
+          metadata: true,
+          currentSeat: {
+            select: { id: true, metadata: true },
+          },
+        },
+      },
+    },
+  })
+
+  if (!scrapeJob) {
+    logger.warn({ scrapeJobId: job.data.scrapeJobId }, 'politician scrape job missing from database')
+    return
+  }
+
+  await prisma.politicianScrapeJob.update({
+    where: { id: scrapeJob.id },
+    data: {
+      status: PoliticianScrapeJobStatus.PROCESSING,
+      startedAt: new Date(),
+      attempts: { increment: 1 },
+      lastError: null,
+    },
+  })
+
+  try {
+    const completedAt = new Date()
+    let politicianMetadata: Record<string, unknown>
+    let result: Prisma.InputJsonValue
+
+    if (scrapeJob.source === PoliticianScrapeJobSource.OUR_COMMONS_MEMBER_XML) {
+      if (!scrapeJob.xmlUrl) {
+        throw new Error('politician_scrape_missing_xml_url')
+      }
+
+      const document = await fetchXmlDocument(scrapeJob.xmlUrl)
+      const parsed = extractOurCommonsProfileResult(document)
+      politicianMetadata = {
+        ...jsonObject(scrapeJob.politician.metadata),
+        scrape: {
+          ...jsonObject(jsonObject(scrapeJob.politician.metadata).scrape),
+          lastScrapeAt: completedAt.toISOString(),
+          lastXmlSyncAt: completedAt.toISOString(),
+        },
+        ourCommons: {
+          ...jsonObject(jsonObject(scrapeJob.politician.metadata).ourCommons),
+          personId: scrapeJob.personId,
+          profileUrl: scrapeJob.profileUrl,
+          xmlUrl: scrapeJob.xmlUrl,
+          lastXmlSyncAt: completedAt.toISOString(),
+          detail: {
+            memberRole: parsed.memberRole,
+            caucusRoles: parsed.caucusRoles,
+            committeeRoles: parsed.committeeRoles,
+            associationRoles: parsed.associationRoles,
+          },
+        },
+      }
+      result = parsed.raw as Prisma.InputJsonValue
+    } else if (scrapeJob.source === PoliticianScrapeJobSource.OUR_COMMONS_MEMBER_HTML) {
+      if (!scrapeJob.profileUrl) {
+        throw new Error('politician_scrape_missing_profile_url')
+      }
+
+      const parsed = await scrapeOurCommonsHtmlProfile(scrapeJob.profileUrl)
+      politicianMetadata = {
+        ...jsonObject(scrapeJob.politician.metadata),
+        scrape: {
+          ...jsonObject(jsonObject(scrapeJob.politician.metadata).scrape),
+          lastScrapeAt: completedAt.toISOString(),
+          lastHtmlSyncAt: completedAt.toISOString(),
+        },
+        ourCommons: {
+          ...jsonObject(jsonObject(scrapeJob.politician.metadata).ourCommons),
+          profileUrl: scrapeJob.profileUrl,
+          lastHtmlSyncAt: completedAt.toISOString(),
+          photoUrl: parsed.photoUrl,
+          contact: {
+            email: parsed.email,
+            website: parsed.website,
+            hillOffice: parsed.hillOffice,
+            constituencyOffices: parsed.constituencyOffices,
+          },
+        },
+      }
+      result = parsed as Prisma.InputJsonValue
+    } else {
+      logger.warn({ scrapeJobId: scrapeJob.id, source: scrapeJob.source }, 'unsupported politician scrape source')
+      return
+    }
+
+    await prisma.$transaction([
+      prisma.politicianScrapeJob.update({
+        where: { id: scrapeJob.id },
+        data: {
+          status: PoliticianScrapeJobStatus.COMPLETED,
+          completedAt,
+          nextRunAt: null,
+          lastError: null,
+          result,
+        },
+      }),
+      prisma.politician.update({
+        where: { id: scrapeJob.politicianId },
+        data: {
+          metadata: politicianMetadata as Prisma.InputJsonValue,
+        },
+      }),
+      ...(scrapeJob.politician.currentSeat
+        ? [
+            prisma.politicalSeat.update({
+              where: { id: scrapeJob.politician.currentSeat.id },
+              data: {
+                metadata: {
+                  ...jsonObject(scrapeJob.politician.currentSeat.metadata),
+                  scrape: {
+                    lastScrapeAt: completedAt.toISOString(),
+                  },
+                } as Prisma.InputJsonValue,
+              },
+            }),
+          ]
+        : []),
+    ])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    await prisma.politicianScrapeJob.update({
+      where: { id: scrapeJob.id },
+      data: {
+        status: PoliticianScrapeJobStatus.FAILED,
+        completedAt: new Date(),
+        nextRunAt: null,
+        lastError: message.slice(0, 2000),
+      },
+    })
+    throw error
+  }
 }
 
 async function markContentAiScanFailed(targetType: 'post' | 'comment' | 'market_listing' | 'market_product' | 'organization_event' | 'organization', targetId: string, errorText: string) {

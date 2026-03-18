@@ -30,13 +30,38 @@ type CommunityFeedActivityResponse = {
   jobs?: Array<{ id: string }>
 }
 
+type CommunityPoliticiansResponse = {
+  federal?: {
+    seat?: {
+      title: string
+      politician?: {
+        id: string
+        slug: string
+        displayName: string
+        lastScrapeAt: string | null
+      } | null
+      party?: {
+        id: string
+        slug: string
+        name: string
+        shortName: string | null
+      } | null
+      lastScrapeAt: string | null
+    } | null
+  }
+}
+
+type CommunityFederalSeat = NonNullable<NonNullable<CommunityPoliticiansResponse['federal']>['seat']>
+
 const numberFormatter = new Intl.NumberFormat('en-CA')
 
 function shuffleOrganizations<T>(items: T[]): T[] {
   const next = [...items]
   for (let index = next.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1))
-    ;[next[index], next[swapIndex]] = [next[swapIndex], next[index]]
+    const current = next[index]!
+    next[index] = next[swapIndex]!
+    next[swapIndex] = current
   }
   return next
 }
@@ -52,6 +77,8 @@ export default function CommunityRightRailClient({
 }) {
   const [organizations, setOrganizations] = useState<CommunityOrganization[]>([])
   const [feedActivity, setFeedActivity] = useState<{ eventCount: number; jobCount: number } | null>(null)
+  const [federalSeat, setFederalSeat] = useState<CommunityFederalSeat | null>(null)
+  const [loadingCommunityData, setLoadingCommunityData] = useState(true)
 
   const provinceName = useMemo(() => {
     const normalized = normalizeProvinceCode(province)
@@ -67,11 +94,12 @@ export default function CommunityRightRailClient({
     let cancelled = false
 
     const load = async () => {
+      setLoadingCommunityData(true)
       const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
       const headers = token ? { authorization: `Bearer ${token}` } : undefined
 
       try {
-        const [orgsRes, activityRes] = await Promise.all([
+        const [orgsRes, activityRes, politiciansRes] = await Promise.all([
           fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs?limit=20`), {
             headers,
             cache: 'no-store',
@@ -87,6 +115,9 @@ export default function CommunityRightRailClient({
                 },
               )
             : Promise.resolve(null),
+          fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/politicians`), {
+            cache: 'no-store',
+          }),
         ])
 
         if (!cancelled) {
@@ -106,11 +137,23 @@ export default function CommunityRightRailClient({
           } else {
             setFeedActivity(null)
           }
+
+          if (politiciansRes.ok) {
+            const payload = (await politiciansRes.json().catch(() => null)) as CommunityPoliticiansResponse | null
+            setFederalSeat(payload?.federal?.seat ?? null)
+          } else {
+            setFederalSeat(null)
+          }
         }
       } catch {
         if (!cancelled) {
           setOrganizations([])
           setFeedActivity(null)
+          setFederalSeat(null)
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCommunityData(false)
         }
       }
     }
@@ -126,6 +169,17 @@ export default function CommunityRightRailClient({
       .slice(0, 5)
   }, [organizations])
 
+  const federalSeatLabel = useMemo(() => {
+    if (!federalSeat) return ''
+    const politicianName = federalSeat.politician?.displayName?.trim()
+    const partyName = federalSeat.party?.shortName?.trim() || federalSeat.party?.name?.trim() || ''
+    if (politicianName && partyName) return `${politicianName}, ${partyName}`
+    if (politicianName) return politicianName
+    return ''
+  }, [federalSeat])
+
+  const dataLoaderDiv = <div className="mt-2 h-4 w-28 animate-pulse rounded bg-slate-200" />
+
   return (
     <div className="space-y-6">
       {showCreateOrganization ? <OrganizationCreateButton province={province} municipality={municipality} /> : null}
@@ -139,6 +193,20 @@ export default function CommunityRightRailClient({
           <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
             <dt className="font-semibold text-slate-600">Province</dt>
             <dd className="mt-1 text-slate-900">{provinceName}</dd>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <dt className="font-semibold text-slate-600">MP</dt>
+                <dd className="mt-1 min-h-6 text-slate-900">{loadingCommunityData ? dataLoaderDiv : federalSeatLabel}</dd>
+              </div>
+              <Link
+                href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}/politicians`}
+                className="text-xs font-semibold text-[var(--cc-primary)] hover:underline"
+              >
+                View all
+              </Link>
+            </div>
           </div>
         </dl>
       </Block>
@@ -164,7 +232,7 @@ export default function CommunityRightRailClient({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="font-semibold text-slate-600">Events</p>
-                <p className="mt-1 text-slate-900">Upcoming {numberFormatter.format(feedActivity?.eventCount ?? 0)}</p>
+                {loadingCommunityData ? dataLoaderDiv : <p className="mt-1 text-slate-900">Upcoming {numberFormatter.format(feedActivity?.eventCount ?? 0)}</p>}
               </div>
               <Link href="/events" className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
                 Open
@@ -176,7 +244,7 @@ export default function CommunityRightRailClient({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="font-semibold text-slate-600">Open roles</p>
-                <p className="mt-1 text-slate-900">Active {numberFormatter.format(feedActivity?.jobCount ?? 0)}</p>
+                {loadingCommunityData ? dataLoaderDiv : <p className="mt-1 text-slate-900">Active {numberFormatter.format(feedActivity?.jobCount ?? 0)}</p>}
               </div>
               <Link
                 href={`/work?provinceCode=${encodeURIComponent(province.toUpperCase())}&communitySlug=${encodeURIComponent(municipality.toLowerCase())}`}

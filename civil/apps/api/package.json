@@ -38,6 +38,7 @@
     "@types/node": "^20.12.12",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.8.2",
+    "fast-xml-parser": "^5.5.6",
     "fastify": "^5.0.0",
     "fastify-raw-body": "^5.0.0",
     "fastify-sse-v2": "^3.1.2",
