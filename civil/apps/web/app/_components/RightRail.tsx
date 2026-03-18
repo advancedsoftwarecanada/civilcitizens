@@ -258,6 +258,20 @@ type FamilyRailResponse = {
   profileRelationships?: ProfileFamilyRelationshipRailItem[]
 }
 
+type PublicFamilyRailEntry = {
+  id: string
+  handle: string
+  name?: string | null
+  avatarUrl?: string | null
+  coverUrl?: string | null
+  relationshipLabel: string
+}
+
+type PublicFamilyRailResponse = {
+  immediateFamily?: PublicFamilyRailEntry[]
+  extendedFamily?: PublicFamilyRailEntry[]
+}
+
 type FamilyRailEntry = SharedFamilyRailEntry
 
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
@@ -765,7 +779,42 @@ export function RightRail({
       if (familyRes?.ok) {
         const payload = (await familyRes.json().catch(() => null)) as FamilyRailResponse | null
         setFamilyMembers(Array.isArray(payload?.members) ? payload.members : [])
-        setFamilyRelationships(Array.isArray(payload?.profileRelationships) ? payload.profileRelationships : [])
+        let nextRelationships = Array.isArray(payload?.profileRelationships) ? payload.profileRelationships : []
+
+        if (nextRelationships.length === 0 && viewer?.handle) {
+          try {
+            const publicFamilyResponse = await fetch(buildApiUrl(`/users/${encodeURIComponent(viewer.handle)}/family`), {
+              cache: 'no-store',
+            })
+            if (publicFamilyResponse.ok) {
+              const publicPayload = (await publicFamilyResponse.json().catch(() => null)) as PublicFamilyRailResponse | null
+              const combinedEntries = [
+                ...(Array.isArray(publicPayload?.immediateFamily) ? publicPayload.immediateFamily : []),
+                ...(Array.isArray(publicPayload?.extendedFamily) ? publicPayload.extendedFamily : []),
+              ]
+              nextRelationships = Array.from(
+                new Map(
+                  combinedEntries.map((entry) => [
+                    entry.id,
+                    {
+                      id: entry.id,
+                      handle: entry.handle,
+                      displayName: entry.name?.trim() || entry.handle,
+                      relationshipLabel: entry.relationshipLabel,
+                      avatarUrl: entry.avatarUrl ?? null,
+                      coverUrl: entry.coverUrl ?? null,
+                      latestPostAt: null,
+                    } satisfies ProfileFamilyRelationshipRailItem,
+                  ]),
+                ).values(),
+              )
+            }
+          } catch (fallbackError) {
+            console.error('Failed to load public family fallback for right rail', fallbackError)
+          }
+        }
+
+        setFamilyRelationships(nextRelationships)
       } else {
         setFamilyMembers([])
         setFamilyRelationships([])
