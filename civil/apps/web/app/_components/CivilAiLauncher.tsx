@@ -653,7 +653,7 @@ export default function CivilAiLauncher() {
       {open ? (
         <div className="pointer-events-none fixed inset-y-0 right-0 z-[45] w-full sm:w-[min(460px,100vw)]">
           <section className="pointer-events-auto absolute inset-y-0 right-0 flex w-full flex-col overflow-hidden border-l border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] text-slate-900 shadow-[0_24px_80px_rgba(15,23,42,0.22)] sm:rounded-l-[2rem]">
-            <div className="border-b border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff8f7_100%)] px-5 py-4">
+            <div className="border-b border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#fff8f7_100%)] px-5 pb-4 pt-[calc(var(--cc-native-safe-top-offset)+1rem)]">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-[var(--cc-primary)]/10 bg-white p-1 shadow-[0_8px_18px_rgba(213,43,30,0.1)]">
