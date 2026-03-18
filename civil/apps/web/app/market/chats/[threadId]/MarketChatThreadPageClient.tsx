@@ -372,7 +372,7 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
             <h1 className="text-2xl font-semibold text-slate-900">Marketplace Chat</h1>
             <p className="mt-1 text-sm text-slate-600">{counterpart?.name || (counterpart?.handle ? `@${counterpart.handle}` : 'Conversation')}</p>
           </div>
-          <Link href="/market/chats" className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          <Link href="/messages?inbox=market" className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
             Back to market chats
           </Link>
         </div>

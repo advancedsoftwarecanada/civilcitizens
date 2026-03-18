@@ -598,7 +598,6 @@ export function registerMessagesDetailRoutes(app: FastifyInstance, deps: Message
       const thread = await prisma.messageThread.findFirst({
         where: {
           id: params.data.id,
-          OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
           participants: { some: { userId } },
         },
         select: { id: true, participants: { select: { userId: true, mutedUntil: true } } },
@@ -792,7 +791,6 @@ export function registerMessagesDetailRoutes(app: FastifyInstance, deps: Message
       const membership = await prisma.messageParticipant.findUnique({
         where: {
           threadId_userId: { threadId: params.data.id, userId },
-          thread: { OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }] },
         },
         select: { threadId: true },
       })
