@@ -182,6 +182,18 @@ type PublicFamilyListResponse = {
   extendedFamily?: FamilyProfileListItem[]
 }
 
+type FamilyResponse = {
+  profileRelationships?: Array<{
+    id: string
+    handle: string
+    displayName: string
+    relationshipLabel: string
+    avatarUrl?: string | null
+    coverUrl?: string | null
+    latestPostAt?: string | null
+  }>
+}
+
 type CreateDirectThreadResponse = {
   thread?: ThreadSummary
   error?: string
@@ -1001,6 +1013,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   } | null>(null)
   const selectedThreadRef = useRef<string | null>(initialThreadId ?? null)
   const initialThreadIdRef = useRef<string | null>(initialThreadId ?? null)
+  const explicitThreadOpenRef = useRef<string | null>(null)
   const forceBottomScrollThreadRef = useRef<string | null>(initialThreadId ?? null)
   const failedThreadDetailRef = useRef<Set<string>>(new Set())
   const shownThreadDetailErrorRef = useRef<Set<string>>(new Set())
@@ -1565,23 +1578,47 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     }
 
     try {
-      const response = await fetch(buildApiUrl(`/users/${encodeURIComponent(viewerHandle)}/family`), {
+      const response = await authedFetch('/family', { cache: 'no-store' })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (response.ok) {
+        const payload = (await response.json().catch(() => null)) as FamilyResponse | null
+        const nextRelationships = Array.isArray(payload?.profileRelationships)
+          ? payload.profileRelationships.map((entry) => ({
+              id: entry.id,
+              handle: entry.handle,
+              name: entry.displayName,
+              avatarUrl: entry.avatarUrl ?? null,
+              coverUrl: entry.coverUrl ?? null,
+              relationshipLabel: entry.relationshipLabel,
+            }))
+          : []
+
+        if (nextRelationships.length > 0) {
+          setFamilyProfileContacts(Array.from(new Map(nextRelationships.map((entry) => [entry.id, entry])).values()))
+          return
+        }
+      }
+
+      const publicResponse = await fetch(buildApiUrl(`/users/${encodeURIComponent(viewerHandle)}/family`), {
         cache: 'no-store',
       })
-      if (!response.ok) {
+      if (!publicResponse.ok) {
         throw new Error('failed_family_profiles')
       }
-      const payload = (await response.json().catch(() => null)) as PublicFamilyListResponse | null
+      const publicPayload = (await publicResponse.json().catch(() => null)) as PublicFamilyListResponse | null
       const combinedEntries = [
-        ...(Array.isArray(payload?.immediateFamily) ? payload.immediateFamily : []),
-        ...(Array.isArray(payload?.extendedFamily) ? payload.extendedFamily : []),
+        ...(Array.isArray(publicPayload?.immediateFamily) ? publicPayload.immediateFamily : []),
+        ...(Array.isArray(publicPayload?.extendedFamily) ? publicPayload.extendedFamily : []),
       ]
       setFamilyProfileContacts(Array.from(new Map(combinedEntries.map((entry) => [entry.id, entry])).values()))
     } catch (error) {
       console.error('Failed to load family profile contacts', error)
       setFamilyProfileContacts([])
     }
-  }, [isFamilySession, me?.handle])
+  }, [authedFetch, isFamilySession, me?.handle])
 
   const fetchThreadDetail = useCallback(
     async (threadId: string) => {
@@ -1602,14 +1639,20 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         upsertThread({ ...payload.thread, lastMessage, lastMessageAt: lastMessage?.createdAt ?? payload.thread.lastMessageAt })
         setMessagesByThread((prev) => ({ ...prev, [threadId]: normalizedMessages }))
         setMessageCursors((prev) => ({ ...prev, [threadId]: payload.nextCursor ?? null }))
-        if (lastMessage) {
+        if (lastMessage && explicitThreadOpenRef.current === threadId) {
           markThreadReadLocally(threadId, lastMessage.createdAt)
           void markThreadRead(threadId, lastMessage.id)
+        }
+        if (explicitThreadOpenRef.current === threadId) {
+          explicitThreadOpenRef.current = null
         }
         failedThreadDetailRef.current.delete(threadId)
         shownThreadDetailErrorRef.current.delete(threadId)
       } catch (err) {
         console.error('Failed to load thread detail', err)
+        if (explicitThreadOpenRef.current === threadId) {
+          explicitThreadOpenRef.current = null
+        }
         failedThreadDetailRef.current.add(threadId)
         setSelectedThreadId((prev) => (prev === threadId ? null : prev))
         if (!shownThreadDetailErrorRef.current.has(threadId)) {
@@ -1943,12 +1986,25 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const orderedThreads = useMemo(() => sortThreadsForInbox(threads), [threads])
   const friendContactIdSet = useMemo(() => new Set(friendContactIds), [friendContactIds])
   const networkContactIdSet = useMemo(() => new Set(networkContactIds), [networkContactIds])
+  const familyProfileContactIdSet = useMemo(() => new Set(familyProfileContacts.map((entry) => entry.id)), [familyProfileContacts])
   const categorizedThreads = useMemo(() => {
     const groups = sortThreadsForInbox(orderedThreads.filter((thread) => thread.type === 'group'))
     const family = showFamilyInbox
-      ? sortThreadsForInbox(orderedThreads.filter((thread) => thread.type !== 'group' && thread.inboxSection === 'family'))
+      ? sortThreadsForInbox(
+          orderedThreads.filter(
+            (thread) =>
+              thread.type !== 'group' &&
+              (thread.inboxSection === 'family' ||
+                getOtherParticipants(thread, me?.id).some((participant) => familyProfileContactIdSet.has(participant.userId))),
+          ),
+        )
       : ([] as ThreadSummary[])
-    const directThreads = orderedThreads.filter((thread) => thread.type !== 'group' && thread.inboxSection !== 'family')
+    const directThreads = orderedThreads.filter(
+      (thread) =>
+        thread.type !== 'group' &&
+        thread.inboxSection !== 'family' &&
+        !getOtherParticipants(thread, me?.id).some((participant) => familyProfileContactIdSet.has(participant.userId)),
+    )
     if (isFamilySession) {
       return {
         friends: sortThreadsForInbox(directThreads),
@@ -1979,7 +2035,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       network: sortThreadsForInbox(network),
       groups,
     }
-  }, [contactsBucketReady, friendContactIdSet, isFamilySession, me?.id, networkContactIdSet, orderedThreads, showFamilyInbox])
+  }, [contactsBucketReady, familyProfileContactIdSet, friendContactIdSet, isFamilySession, me?.id, networkContactIdSet, orderedThreads, showFamilyInbox])
   const messagesNavUnreadCounts = useMemo(
     () => ({
       friends: countUnreadInThreads(categorizedThreads.friends),
@@ -2092,7 +2148,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (selectedThreadId && filteredOrderedThreads.some((thread) => thread.id === selectedThreadId)) {
       return
     }
-    setSelectedThreadId(isMobileMessagesViewport() ? null : filteredOrderedThreads[0]?.id ?? null)
+    if (selectedThreadId) {
+      setSelectedThreadId(null)
+    }
   }, [familyParentThreadId, filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
 
   useEffect(() => {
@@ -2305,6 +2363,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       shownThreadDetailErrorRef.current.delete(threadId)
       forceBottomScrollThreadRef.current = threadId
       smoothScrollPendingRef.current = false
+      explicitThreadOpenRef.current = threadId
       setSelectedThreadId(threadId)
       const threadMessages = messagesByThread[threadId]
       if (!threadMessages) {
@@ -2314,6 +2373,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         if (lastMessage) {
           markThreadReadLocally(threadId, lastMessage.createdAt)
           void markThreadRead(threadId, lastMessage.id)
+        }
+        if (explicitThreadOpenRef.current === threadId) {
+          explicitThreadOpenRef.current = null
         }
       }
     },
@@ -2577,6 +2639,53 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
 
   const renderThreadList = () => {
     const mobileViewport = isMobileViewport
+    const familyThreadStarters =
+      activeInboxSection === 'family' && familyContactsWithoutThreads.length > 0 ? (
+        <div className="space-y-3">
+          {filteredOrderedThreads.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-center text-sm text-slate-500">
+              <p>No family messages yet.</p>
+              <p className="mt-1">Start a conversation with someone from your Family.</p>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white/70 p-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Start a Family chat
+            </div>
+          )}
+          <ul className="space-y-2">
+            {familyContactsWithoutThreads.map((entry) => {
+              const displayName = entry.name?.trim() || entry.handle
+              return (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    onClick={() => void handleStartFamilyDirectThread(entry)}
+                    disabled={startingFamilyThreadUserId === entry.id}
+                    className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/5 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <VerifiedAvatar
+                      src={entry.avatarUrl ?? null}
+                      alt={displayName}
+                      initials={displayName}
+                      size={44}
+                      isVerified={false}
+                      isBusiness={false}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
+                      <p className="truncate text-xs text-slate-500">{entry.relationshipLabel}</p>
+                    </div>
+                    <span className="text-xs font-semibold text-[var(--cc-primary)]">
+                      {startingFamilyThreadUserId === entry.id ? 'Opening...' : 'Open'}
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ) : null
+
     if (threadsLoading && filteredOrderedThreads.length === 0) {
       return <p className="text-sm text-slate-500">Loading your conversations…</p>
     }
@@ -2587,46 +2696,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       if (isFamilySession && activeInboxSection === 'friends') {
         return null
       }
-      if (activeInboxSection === 'family' && familyContactsWithoutThreads.length > 0) {
-        return (
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-center text-sm text-slate-500">
-              <p>No family messages yet.</p>
-              <p className="mt-1">Start a conversation with someone from your Family.</p>
-            </div>
-            <ul className="space-y-2">
-              {familyContactsWithoutThreads.map((entry) => {
-                const displayName = entry.name?.trim() || entry.handle
-                return (
-                  <li key={entry.id}>
-                    <button
-                      type="button"
-                      onClick={() => void handleStartFamilyDirectThread(entry)}
-                      disabled={startingFamilyThreadUserId === entry.id}
-                      className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/5 disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      <VerifiedAvatar
-                        src={entry.avatarUrl ?? null}
-                        alt={displayName}
-                        initials={displayName}
-                        size={44}
-                        isVerified={false}
-                        isBusiness={false}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-slate-900">{displayName}</p>
-                        <p className="truncate text-xs text-slate-500">{entry.relationshipLabel}</p>
-                      </div>
-                      <span className="text-xs font-semibold text-[var(--cc-primary)]">
-                        {startingFamilyThreadUserId === entry.id ? 'Opening...' : 'Message'}
-                      </span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        )
+      if (familyThreadStarters) {
+        return familyThreadStarters
       }
       const emptyLabel =
         activeInboxSection === 'groups'
@@ -2649,8 +2720,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       )
     }
     return (
-      <ul className="space-y-2">
-        {filteredOrderedThreads.map((thread) => {
+      <div className="space-y-3">
+        {familyThreadStarters}
+        <ul className="space-y-2">
+          {filteredOrderedThreads.map((thread) => {
           const title = getThreadTitle(thread)
           const isGroupThread = thread.type === 'group'
           const active = thread.id === selectedThreadId
@@ -2747,7 +2820,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             </li>
           )
         })}
-      </ul>
+        </ul>
+      </div>
     )
   }
 
