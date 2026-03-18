@@ -93,6 +93,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       const threadIds = threads.map((thread: any) => thread.id)
       const notInterestedByThreadId = new Set<string>()
+      const unreadCountByThreadId = new Map<string, number>()
       if (threadIds.length) {
         const interestRows = await prisma.$queryRaw<Array<{ thread_id: string; interested: boolean }>>`
           SELECT thread_id, interested
@@ -105,6 +106,22 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           if (row && row.thread_id && row.interested === false) {
             notInterestedByThreadId.add(String(row.thread_id))
           }
+        }
+
+        const unreadRows = await prisma.$queryRaw<Array<{ threadId: string; count: number }>>(Prisma.sql`
+          SELECT m."threadId" as "threadId", COUNT(*)::int as count
+          FROM "Message" m
+          JOIN "MessageParticipant" mp ON mp."threadId" = m."threadId"
+          WHERE mp."userId" = ${userId}
+            AND m."threadId" IN (${Prisma.join(threadIds)})
+            AND m."senderId" <> ${userId}
+            AND m."deletedAt" IS NULL
+            AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
+          GROUP BY m."threadId"
+        `)
+
+        for (const row of unreadRows) {
+          unreadCountByThreadId.set(String(row.threadId), Number(row.count) || 0)
         }
       }
 
@@ -163,6 +180,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         const counterpart = thread.participants.find((participant: any) => participant.userId !== userId)
         const item = {
           threadId: thread.id,
+          unreadCount: unreadCountByThreadId.get(thread.id) ?? 0,
           listingId,
           listingTitle: listing.title,
           listingStatus: listing.status,
@@ -242,6 +260,93 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         inactiveItems,
         soldItems,
       })
+    }),
+  )
+
+  app.get('/market/pickups', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const rows = await prisma.$queryRaw<Array<{
+        id: string
+        title: string
+        status: string
+        price_cents: number
+        currency: string
+        photo_urls: unknown
+        pickup_city: string | null
+        pickup_province: string | null
+        pickup_address_line1: string | null
+        pickup_address_line2: string | null
+        pickup_postal_code: string | null
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+        pickup_completed_at: Date | null
+      }>>`
+        SELECT
+          id,
+          title,
+          status,
+          price_cents,
+          currency,
+          photo_urls,
+          pickup_city,
+          pickup_province,
+          pickup_address_line1,
+          pickup_address_line2,
+          pickup_postal_code,
+          seller_user_id,
+          selected_buyer_user_id,
+          pickup_completed_at
+        FROM citizen_market_listing
+        WHERE status = 'pending'
+          AND pickup_completed_at IS NULL
+          AND (seller_user_id = ${userId} OR selected_buyer_user_id = ${userId})
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 100
+      `
+
+      const items = await Promise.all(
+        rows.map(async (row) => {
+          const selectedThread = row.selected_buyer_user_id
+            ? await prisma.messageThread.findFirst({
+                where: {
+                  contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+                  contextId: row.id,
+                  participants: { some: { userId: row.selected_buyer_user_id } },
+                },
+                select: { id: true },
+              })
+            : null
+
+          return {
+            listingId: row.id,
+            threadId: selectedThread?.id ?? null,
+            role: row.seller_user_id === userId ? 'seller' : 'buyer',
+            title: row.title,
+            status: row.status,
+            priceCents: Number(row.price_cents) || 0,
+            currency: row.currency,
+            photoUrl: deps.readGalleryUrls(row.photo_urls)[0] ?? null,
+            pickupCity: row.pickup_city,
+            pickupProvince: row.pickup_province,
+            pickupAddress: {
+              name: row.title,
+              line1: row.pickup_address_line1,
+              line2: row.pickup_address_line2,
+              city: row.pickup_city,
+              province: row.pickup_province,
+              postalCode: row.pickup_postal_code,
+              country: 'CA',
+            },
+          }
+        }),
+      )
+
+      return reply.send({ items })
     }),
   )
 
@@ -347,10 +452,14 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         photo_urls: unknown
         pickup_city: string | null
         pickup_province: string | null
+        pickup_address_line1: string | null
+        pickup_address_line2: string | null
+        pickup_postal_code: string | null
         seller_user_id: string
         selected_buyer_user_id: string | null
+        pickup_completed_at: Date | null
       }>>`
-        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, seller_user_id, selected_buyer_user_id
+        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, seller_user_id, selected_buyer_user_id, pickup_completed_at
         FROM citizen_market_listing
         WHERE id = ${thread.contextId}
         LIMIT 1
@@ -360,6 +469,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
 
       const selectedBuyerUserId = listing.selected_buyer_user_id
+      const viewerIsSeller = listing.seller_user_id === userId
+      const viewerIsSelectedBuyer = Boolean(selectedBuyerUserId && selectedBuyerUserId === userId)
       let selectedThreadId: string | null = null
       if (selectedBuyerUserId) {
         const selectedThread = await prisma.messageThread.findFirst({
@@ -373,6 +484,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         selectedThreadId = selectedThread?.id ?? null
       }
 
+      const viewerCanAccessPickupAddress = Boolean((viewerIsSeller || viewerIsSelectedBuyer) && selectedThreadId === thread.id)
+
       return reply.send({
         listing: {
           id: listing.id,
@@ -384,7 +497,21 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           pickupCity: listing.pickup_city,
           pickupProvince: listing.pickup_province,
         },
-        viewerIsSeller: listing.seller_user_id === userId,
+        viewerIsSeller,
+        viewerIsSelectedBuyer,
+        viewerCanAccessPickupAddress,
+        pickupCompletedAt: listing.pickup_completed_at ? listing.pickup_completed_at.toISOString() : null,
+        pickupAddress: viewerCanAccessPickupAddress
+          ? {
+              name: listing.title,
+              line1: listing.pickup_address_line1,
+              line2: listing.pickup_address_line2,
+              city: listing.pickup_city,
+              province: listing.pickup_province,
+              postalCode: listing.pickup_postal_code,
+              country: 'CA',
+            }
+          : null,
         selectedBuyerUserId,
         selectedThreadId,
       })
@@ -569,7 +696,34 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       const now = new Date()
       const notifyOthersBody = deps.sanitizePlainText("I have found a potential buyer, but I'll let you know if that deal falls though").trim()
-      const notifySelectedBody = deps.sanitizePlainText('I have selected you as the buyer for this item. Please confirm pickup details.').trim()
+      const listingAddressRows = await prisma.$queryRaw<Array<{
+        pickup_address_line1: string | null
+        pickup_address_line2: string | null
+        pickup_city: string | null
+        pickup_province: string | null
+        pickup_postal_code: string | null
+      }>>`
+        SELECT pickup_address_line1, pickup_address_line2, pickup_city, pickup_province, pickup_postal_code
+        FROM citizen_market_listing
+        WHERE id = ${listing.id}
+        LIMIT 1
+      `
+      const listingAddress = listingAddressRows[0]
+      const pickupAddressInline = [
+        listingAddress?.pickup_address_line1,
+        listingAddress?.pickup_address_line2,
+        [listingAddress?.pickup_city, listingAddress?.pickup_province].filter(Boolean).join(', '),
+        listingAddress?.pickup_postal_code,
+      ]
+        .filter((value) => typeof value === 'string' && value.trim().length > 0)
+        .join(', ')
+      const notifySelectedBody = deps
+        .sanitizePlainText(
+          pickupAddressInline
+            ? `I have selected you as the buyer for this item. The pickup address is ${pickupAddressInline}. Please confirm pickup details.`
+            : 'I have selected you as the buyer for this item. Please confirm pickup details.',
+        )
+        .trim()
 
       const createdMessages = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await tx.$executeRaw`
@@ -619,6 +773,49 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       )
 
       return reply.send({ success: true, selectedBuyerUserId: buyerId, selectedThreadId: selectedThread.id, selectedAt: now.toISOString() })
+    }),
+  )
+
+  app.post('/market/chats/item/:listingId/pickup-complete', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.MarketListingParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const listingRows = await prisma.$queryRaw<Array<{
+        id: string
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+        status: string
+        pickup_completed_at: Date | null
+      }>>`
+        SELECT id, seller_user_id, selected_buyer_user_id, status, pickup_completed_at
+        FROM citizen_market_listing
+        WHERE id = ${params.data.listingId}
+        LIMIT 1
+      `
+
+      const listing = listingRows[0]
+      if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
+      if (listing.status !== 'pending') return reply.code(409).send({ error: 'pickup_not_pending' })
+      if (listing.pickup_completed_at) return reply.send({ success: true, pickupCompletedAt: listing.pickup_completed_at.toISOString() })
+
+      const isParticipant = listing.seller_user_id === userId || listing.selected_buyer_user_id === userId
+      if (!isParticipant) return reply.code(404).send({ error: 'listing_not_found' })
+
+      await prisma.$executeRaw`
+        UPDATE citizen_market_listing
+        SET pickup_completed_at = NOW(),
+            pickup_completed_by_user_id = ${userId},
+            updated_at = NOW()
+        WHERE id = ${listing.id}
+      `
+
+      return reply.send({ success: true, pickupCompletedAt: new Date().toISOString() })
     }),
   )
 

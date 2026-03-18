@@ -12,6 +12,7 @@ import CivilCard from '../_components/CivilCard'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
+import { buildAddressesHrefFromAddress } from '../_lib/addressSearch'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
 import {
@@ -156,6 +157,20 @@ type MarketListingHeaderSummary = {
 type MarketThreadContext = {
   listing: MarketListingHeaderSummary
   viewerIsSeller: boolean
+  viewerIsSelectedBuyer?: boolean
+  viewerCanAccessPickupAddress?: boolean
+  pickupCompletedAt?: string | null
+  pickupAddress?: {
+    name?: string | null
+    line1?: string | null
+    line2?: string | null
+    city?: string | null
+    province?: string | null
+    postalCode?: string | null
+    country?: string | null
+    latitude?: number | null
+    longitude?: number | null
+  } | null
   selectedBuyerUserId: string | null
   selectedThreadId: string | null
 }
@@ -170,6 +185,7 @@ type MarketInboxCounterpart = {
 
 type MarketInboxItem = {
   threadId: string
+  unreadCount?: number
   listingId: string
   listingTitle: string
   listingStatus: string
@@ -2206,6 +2222,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     () => sortThreadsForInbox(threads.filter((thread) => thread.contextType === 'market_listing')),
     [threads],
   )
+  const marketThreadById = useMemo(() => new Map(marketThreads.map((thread) => [thread.id, thread])), [marketThreads])
+  const marketUnreadCountByThreadId = useMemo(() => {
+    const next = new Map<string, number>()
+    for (const thread of marketThreads) {
+      next.set(thread.id, threadUnreadCount(thread))
+    }
+    return next
+  }, [marketThreads])
   const marketInboxEntries = useMemo(() => {
     const items = Object.values(marketInboxItemsByThreadId)
     const itemByThreadId = new Map(items.map((item) => [item.threadId, item]))
@@ -2215,6 +2239,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       const primaryParticipant = getPrimaryOtherParticipant(thread, me?.id)
       itemByThreadId.set(thread.id, {
         threadId: thread.id,
+        unreadCount: threadUnreadCount(thread),
         listingId: thread.contextId ?? thread.id,
         listingTitle: 'Marketplace item',
         listingStatus: '',
@@ -2245,6 +2270,20 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       (left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime(),
     )
   }, [marketInboxItemsByThreadId, marketThreads, me?.id])
+  const marketUnreadEntries = useMemo(
+    () => marketInboxEntries.filter((item) => Math.max(item.unreadCount ?? 0, marketUnreadCountByThreadId.get(item.threadId) ?? 0) > 0),
+    [marketInboxEntries, marketUnreadCountByThreadId],
+  )
+  const unreadOverviewGroups = useMemo(
+    () => [
+      { key: 'family', label: 'Family', threads: categorizedThreads.family.filter((thread) => threadHasUnread(thread)) },
+      { key: 'friends', label: 'Friends', threads: categorizedThreads.friends.filter((thread) => threadHasUnread(thread)) },
+      { key: 'network', label: 'Network', threads: categorizedThreads.network.filter((thread) => threadHasUnread(thread)) },
+      { key: 'groups', label: 'Groups', threads: categorizedThreads.groups.filter((thread) => threadHasUnread(thread)) },
+      { key: 'market', label: 'Market', items: marketUnreadEntries },
+    ],
+    [categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadEntries],
+  )
 
   const loadActiveMarketThreadContext = useCallback(async () => {
     if (!activeThread || activeThread.contextType !== 'market_listing') {
@@ -2646,6 +2685,48 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const canMarkSoldFromActiveMarketThread = Boolean(
     marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
   )
+  const canAccessActiveMarketPickupDirections = Boolean(
+    marketThreadContext?.viewerCanAccessPickupAddress && marketThreadContext.pickupAddress && !marketThreadContext.pickupCompletedAt,
+  )
+  const canMarkActiveMarketPickupComplete = Boolean(
+    (marketThreadContext?.viewerIsSeller || marketThreadContext?.viewerIsSelectedBuyer) &&
+      activeMarketThreadIsSelectedBuyer &&
+      activeMarketListingStatus === 'pending' &&
+      !marketThreadContext?.pickupCompletedAt,
+  )
+  const activeMarketPickupDirectionsHref = useMemo(() => {
+    if (!marketThreadContext?.pickupAddress) return null
+    return buildAddressesHrefFromAddress(marketThreadContext.pickupAddress, marketThreadContext.listing.title)
+  }, [marketThreadContext])
+  const [marketPickupCompleteSubmitting, setMarketPickupCompleteSubmitting] = useState(false)
+
+  const handleMarkActiveMarketPickupComplete = useCallback(async () => {
+    if (!marketThreadContext?.listing.id) return
+
+    setMarketPickupCompleteSubmitting(true)
+    setMarketHeaderActionError(null)
+    try {
+      const response = await authedFetch(`/market/chats/item/${encodeURIComponent(marketThreadContext.listing.id)}/pickup-complete`, {
+        method: 'POST',
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        setMarketHeaderActionError(payload?.error || 'Unable to mark this pickup complete right now.')
+        return
+      }
+
+      await Promise.all([loadActiveMarketThreadContext(), loadMarketInbox()])
+    } catch (error) {
+      console.error('Failed to mark market pickup complete', error)
+      setMarketHeaderActionError('Unable to mark this pickup complete right now.')
+    } finally {
+      setMarketPickupCompleteSubmitting(false)
+    }
+  }, [authedFetch, loadActiveMarketThreadContext, loadMarketInbox, marketThreadContext?.listing.id])
 
   const handleSelectActiveMarketBuyer = useCallback(async () => {
     if (!activeThread || !marketThreadContext?.listing.id) return
@@ -3185,10 +3266,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     return (
       <ul className="space-y-2">
         {marketInboxEntries.map((marketItem) => {
-          const thread = marketThreads.find((entry) => entry.id === marketItem.threadId) ?? null
+          const thread = marketThreadById.get(marketItem.threadId) ?? null
           const active = marketItem.threadId === selectedThreadId
-          const unread = thread ? threadHasUnread(thread) : false
-          const unreadCount = thread ? threadUnreadCount(thread) : 0
+          const unreadCount = Math.max(marketItem.unreadCount ?? 0, marketUnreadCountByThreadId.get(marketItem.threadId) ?? 0)
+          const unread = unreadCount > 0
           const primaryParticipant = thread ? getPrimaryOtherParticipant(thread, me?.id) : null
           const counterpart = marketItem.counterpart ?? primaryParticipant?.user ?? null
           const counterpartName = counterpart
@@ -3274,6 +3355,143 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     )
   }
 
+  const renderUnreadOverview = () => {
+    const hasUnreadConversations = unreadOverviewGroups.some((group) => ('threads' in group ? group.threads.length > 0 : (group.items?.length ?? 0) > 0))
+
+    if (!hasUnreadConversations) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center rounded-[32px] border border-dashed border-slate-200 bg-slate-50/80 p-8 text-center">
+          <p className="text-lg font-semibold text-slate-700">Unread messages</p>
+          <p className="mt-2 text-sm text-slate-500">All caught up right now.</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 p-5 shadow-[0_25px_70px_rgba(15,23,42,0.08)]">
+        <div className="border-b border-slate-100 pb-4">
+          <p className="text-lg font-semibold text-slate-900">Unread messages</p>
+          <p className="mt-1 text-sm text-slate-500">Conversations waiting for your reply, grouped by inbox.</p>
+        </div>
+        <div className="mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+          {unreadOverviewGroups.map((group) => {
+            const threadItems = 'threads' in group ? group.threads : []
+            const marketItems = 'items' in group ? group.items ?? [] : []
+            const count = threadItems.length + marketItems.length
+            if (count === 0) return null
+
+            return (
+              <section key={group.key} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{group.label}</p>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">{count}</span>
+                </div>
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {threadItems.map((thread) => {
+                    const title = getThreadTitle(thread)
+                    const primaryParticipant = getPrimaryOtherParticipant(thread, me?.id)
+                    const lastMessage = thread.lastMessage
+                    const lastSnippetBody = lastMessage?.body?.trim() || (lastMessage?.attachments.length ? 'Attachment' : 'Say hello!')
+                    const senderLabel = lastMessage
+                      ? lastMessage.isMine
+                        ? 'You'
+                        : formatUserDisplayName(lastMessage.sender.name, lastMessage.sender.handle) || lastMessage.sender.handle
+                      : null
+                    const lastSnippet = senderLabel ? `${senderLabel}: ${lastSnippetBody}` : lastSnippetBody
+                    const unreadCount = threadUnreadCount(thread)
+
+                    return (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        onClick={() => handleThreadSelect(thread.id)}
+                        className="flex min-w-[240px] max-w-[240px] items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300"
+                      >
+                        <div className="relative shrink-0">
+                          <VerifiedAvatar
+                            src={primaryParticipant?.user.avatarUrl ?? null}
+                            alt={title}
+                            initials={title}
+                            size={46}
+                            isVerified={Boolean(primaryParticipant?.user.isVerified)}
+                            isBusiness={Boolean(primaryParticipant?.user.isPremium)}
+                          />
+                          {unreadCount > 0 ? (
+                            <span className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-sm">
+                              {unreadCount > 99 ? '99+' : unreadCount}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900">{title}</p>
+                            <span className="text-xs text-slate-400">{formatTimestamp(thread.lastMessageAt)}</span>
+                          </div>
+                          <p className="mt-1 line-clamp-2 text-xs text-slate-500">{lastSnippet}</p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                  {marketItems.map((marketItem) => {
+                    const unreadCount = Math.max(marketItem.unreadCount ?? 0, marketUnreadCountByThreadId.get(marketItem.threadId) ?? 0)
+                    const counterpartName = marketItem.counterpart
+                      ? formatUserDisplayName(marketItem.counterpart.name, marketItem.counterpart.handle) || `@${marketItem.counterpart.handle}`
+                      : 'Marketplace contact'
+                    const lastSnippetBody = marketItem.lastMessage?.body?.trim() || 'Say hello!'
+                    const lastSnippet = `${marketItem.lastMessage?.isMine ? 'You' : counterpartName}: ${lastSnippetBody}`
+
+                    return (
+                      <button
+                        key={marketItem.threadId}
+                        type="button"
+                        onClick={() => handleThreadSelect(marketItem.threadId)}
+                        className="flex min-w-[280px] max-w-[280px] items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300"
+                      >
+                        <div className="relative h-16 w-16 shrink-0">
+                          <div className="h-16 w-16 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                            {marketItem.listingPhotoUrl ? (
+                              <img src={marketItem.listingPhotoUrl} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-400">No photo</div>
+                            )}
+                          </div>
+                          <div className="absolute -bottom-1 -right-1 rounded-full border-2 border-white bg-white p-[1px] shadow-sm">
+                            <VerifiedAvatar
+                              src={marketItem.counterpart?.avatarUrl ?? null}
+                              alt={counterpartName}
+                              initials={counterpartName}
+                              size={26}
+                            />
+                          </div>
+                          {unreadCount > 0 ? (
+                            <span className="absolute bottom-7 right-0 z-10 inline-flex min-h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
+                              {unreadCount > 99 ? '99+' : unreadCount}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900">{marketItem.listingTitle || 'Marketplace item'}</p>
+                            <span className="text-xs text-slate-400">{formatTimestamp(marketItem.lastMessageAt)}</span>
+                          </div>
+                          <p className="truncate text-xs text-slate-500">{counterpartName}</p>
+                          <p className="mt-0.5 truncate text-xs text-slate-500">
+                            {formatMoney(marketItem.listingPriceCents, marketItem.listingCurrency)} • {formatPickupLocation(marketItem.listingPickupCity, marketItem.listingPickupProvince)}
+                          </p>
+                          <p className="mt-1 line-clamp-2 text-xs text-slate-600">{lastSnippet}</p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   const renderMessages = () => {
     if (!activeThread && isFamilyParentThreadSelected) {
       return (
@@ -3333,13 +3551,17 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       )
     }
 
-    if (!activeThread) {
+    if (!activeThread && selectedThreadId) {
       return (
         <div className="flex h-full flex-col items-center justify-center rounded-[32px] border border-dashed border-slate-200 bg-slate-50/80 p-8 text-center">
-          <p className="text-lg font-semibold text-slate-700">Select a conversation</p>
-          <p className="mt-2 text-sm text-slate-500">Choose a thread on the right to start messaging.</p>
+          <p className="text-lg font-semibold text-slate-700">Opening conversation…</p>
+          <p className="mt-2 text-sm text-slate-500">Loading the selected thread.</p>
         </div>
       )
+    }
+
+    if (!activeThread) {
+      return renderUnreadOverview()
     }
 
     const otherParticipant = getPrimaryOtherParticipant(activeThread, me?.id)
@@ -3750,6 +3972,26 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                           Mark sold
                         </button>
                       ) : null}
+                      {canAccessActiveMarketPickupDirections && activeMarketPickupDirectionsHref ? (
+                        <Link
+                          href={activeMarketPickupDirectionsHref}
+                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                        >
+                          Directions for pickup
+                        </Link>
+                      ) : null}
+                      {canMarkActiveMarketPickupComplete ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleMarkActiveMarketPickupComplete()
+                          }}
+                          disabled={marketPickupCompleteSubmitting}
+                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {marketPickupCompleteSubmitting ? 'Marking…' : 'Mark picked up'}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   {marketThreadContext.viewerIsSeller && marketThreadContext.selectedThreadId && !activeMarketThreadIsSelectedBuyer ? (
@@ -4083,7 +4325,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         title="Select This Buyer"
         maxWidthClassName="max-w-lg"
       >
-        <p className="text-sm text-slate-700">This will mark the item as pending pickup or delivery and notify the other interested buyers.</p>
+        <p className="text-sm text-slate-700">The pickup address will now be shared with the buyer.</p>
         {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
         <div className="mt-5 flex items-center justify-end gap-2">
           <button
