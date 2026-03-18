@@ -9,6 +9,10 @@ import {
   HiOutlineArrowLongUp,
   HiOutlineArrowPath,
   HiOutlineArrowUturnLeft,
+  HiOutlineChartBar,
+  HiOutlineClock,
+  HiOutlineFlag,
+  HiOutlineMapPin,
   HiOutlineTruck,
   HiOutlineXMark,
 } from 'react-icons/hi2'
@@ -65,7 +69,10 @@ const IDLE_ZOOM_WITH_ORIGIN = 14
 const ACTIVE_NAV_ZOOM = 19.4
 const ACTIVE_NAV_PITCH = 58
 const ACTIVE_NAV_FALLBACK_BEARING = -18
-const ACTIVE_NAV_LOOKAHEAD_POINTS = 6
+const ACTIVE_NAV_LOOKAHEAD_POINTS = 2
+const ACTIVE_NAV_LOOKAHEAD_DISTANCE_METERS = 18
+const ACTIVE_NAV_BEARING_BLEND_FACTOR = 0.52
+const ACTIVE_NAV_FOLLOW_DURATION_MS = 220
 const LIVE_MARKER_ANIMATION_MS = 900
 
 function normalizeHeading(value: number) {
@@ -95,6 +102,14 @@ function formatRemainingDuration(durationSeconds: number) {
   const minutes = totalMinutes % 60
   if (hours > 0) return `${hours}h ${minutes}m`
   return `${totalMinutes} min`
+}
+
+function formatArrivalTime(durationSeconds: number) {
+  const arrival = new Date(Date.now() + durationSeconds * 1000)
+  return arrival.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function calculateDistanceMeters(origin: { latitude: number; longitude: number }, destination: { latitude: number; longitude: number }) {
@@ -157,12 +172,26 @@ function resolveRouteFollowBearing(point: { latitude: number; longitude: number 
 
   const closestIndex = findClosestRouteCoordinateIndex(routeCoordinates, point)
   const startIndex = Math.min(closestIndex, routeCoordinates.length - 2)
-  const endIndex = Math.min(startIndex + ACTIVE_NAV_LOOKAHEAD_POINTS, routeCoordinates.length - 1)
   const startCoordinate = routeCoordinates[startIndex]
+  if (!startCoordinate) return null
+
+  let endIndex = startIndex + 1
+  while (endIndex < routeCoordinates.length - 1 && endIndex - startIndex < ACTIVE_NAV_LOOKAHEAD_POINTS) {
+    const endCoordinate = routeCoordinates[endIndex]
+    if (!endCoordinate) break
+    const distanceAhead = calculateDistanceMeters(
+      { latitude: point.latitude, longitude: point.longitude },
+      { latitude: endCoordinate[1], longitude: endCoordinate[0] },
+    )
+    if (distanceAhead >= ACTIVE_NAV_LOOKAHEAD_DISTANCE_METERS) break
+    endIndex += 1
+  }
+
+  endIndex = Math.min(endIndex, routeCoordinates.length - 1)
   const endCoordinate = routeCoordinates[endIndex]
   if (!startCoordinate || !endCoordinate) return null
 
-  return calculateBearingDegrees(startCoordinate, endCoordinate)
+  return calculateBearingDegrees([point.longitude, point.latitude], endCoordinate)
 }
 
 function resolveHeadingCardinalLabel(heading: number | null, routeCoordinates: Array<[number, number]> | null | undefined) {
@@ -189,6 +218,36 @@ function summarizeTurnDirection(step: DrivingRouteStep) {
 function isTurnPreviewStep(step: DrivingRouteStep) {
   if (step.maneuverType === 'arrive') return false
   return summarizeTurnDirection(step) !== 'Continue'
+}
+
+function resolveTurnUrgency(distanceMeters: number) {
+  if (distanceMeters <= 80) {
+    return {
+      panelClassName: 'border-red-950 bg-red-600 text-white animate-pulse',
+      textClassName: 'text-white',
+      dividerClassName: 'border-white/70',
+      labelClassName: 'text-white/85',
+      iconClassName: 'text-white',
+    }
+  }
+
+  if (distanceMeters <= 250) {
+    return {
+      panelClassName: 'border-amber-950 bg-amber-300 text-amber-950',
+      textClassName: 'text-amber-950',
+      dividerClassName: 'border-amber-950/60',
+      labelClassName: 'text-amber-950/80',
+      iconClassName: 'text-amber-950',
+    }
+  }
+
+  return {
+    panelClassName: 'border-emerald-950 bg-emerald-500 text-emerald-950',
+    textClassName: 'text-emerald-950',
+    dividerClassName: 'border-emerald-950/45',
+    labelClassName: 'text-emerald-950/80',
+    iconClassName: 'text-emerald-950',
+  }
 }
 
 function resolveDirectionIcon(step: DrivingRouteStep | null): IconType {
@@ -246,6 +305,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   const [navigationNotice, setNavigationNotice] = useState<string | null>(null)
   const [routeOverviewActive, setRouteOverviewActive] = useState(false)
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null)
+  const [confirmExitOpen, setConfirmExitOpen] = useState(false)
   const viewerAvatarUrl = useViewerStore((state) => state.me?.avatarUrl ?? null)
 
   useEffect(() => {
@@ -266,7 +326,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     if (typeof activeOrigin?.latitude === 'number' && typeof activeOrigin.longitude === 'number') {
       const routeBearing = resolveRouteFollowBearing(activeOrigin, activeRouteCoordinates)
       if (typeof routeBearing === 'number' && Number.isFinite(routeBearing)) {
-        const blendedBearing = roadBearingRef.current === null ? routeBearing : blendBearing(roadBearingRef.current, routeBearing, 0.28)
+        const blendedBearing = roadBearingRef.current === null ? routeBearing : blendBearing(roadBearingRef.current, routeBearing, ACTIVE_NAV_BEARING_BLEND_FACTOR)
         roadBearingRef.current = blendedBearing
         return -blendedBearing
       }
@@ -300,6 +360,10 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   }, [navigationRoute])
   const nextTurnIcon = useMemo(() => resolveDirectionIcon(nextTurnPreview?.step ?? null), [nextTurnPreview])
   const NextTurnIcon = nextTurnIcon
+  const nextTurnUrgency = useMemo(
+    () => (nextTurnPreview ? resolveTurnUrgency(nextTurnPreview.distanceMeters) : null),
+    [nextTurnPreview],
+  )
   const currentStreetLabel = navigationStep?.streetName || 'Current street'
   const currentSegmentDistance = nextTurnPreview?.distanceMeters ?? navigationRoute?.distanceMeters ?? navigationStep?.distanceMeters ?? 0
 
@@ -379,6 +443,11 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     return Math.max(0, Math.min(100, Math.round(progress)))
   }, [initialNavigationDistanceMeters, navigationRoute])
 
+  const arrivalTimeLabel = useMemo(
+    () => (navigationRoute ? formatArrivalTime(navigationRoute.durationSeconds) : null),
+    [navigationRoute],
+  )
+
   const handleViewRouteToggle = useCallback(() => {
     setRouteOverviewActive((current) => {
       if (current) {
@@ -436,6 +505,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     setNavError(null)
     setRouteOverviewActive(false)
     setDeviceHeading(null)
+    setConfirmExitOpen(false)
 
     if (options?.arrived) {
       showNavigationNotice(destination ? `Arrived at ${destination.label}.` : 'Arrived at destination.')
@@ -978,7 +1048,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           zoom: targetZoom,
           pitch: ACTIVE_NAV_PITCH,
           bearing: activeBearing,
-          duration: 800,
+          duration: ACTIVE_NAV_FOLLOW_DURATION_MS,
         })
         map.triggerRepaint?.()
       }
@@ -1027,16 +1097,71 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
               </div>
             ) : null}
 
-            {navigationRoute && activeOrigin ? (
-              <div className="pointer-events-auto grid gap-3 rounded-[24px] border-4 border-black bg-white/92 px-4 py-4 text-slate-900 shadow-2xl backdrop-blur md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                <div>
-                  <p className="text-lg font-semibold text-slate-900">
-                    {formatRemainingDuration(navigationRoute.durationSeconds)} • {formatRemainingDistance(navigationRoute.distanceMeters)}
-                    {navigationProgressPercent !== null ? ` • ${navigationProgressPercent}%` : ''}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-700">Destination: {destination?.label}</p>
+            {navigationStep && navigationRoute ? (
+              <div className="pointer-events-auto rounded-[24px] border-4 border-black bg-white/92 px-4 py-4 text-slate-900 shadow-2xl backdrop-blur">
+                <div className={`grid gap-4 items-stretch ${nextTurnPreview ? 'grid-cols-[minmax(0,1fr)_132px]' : 'grid-cols-1'}`}>
+                  <div className="flex flex-col justify-center text-center">
+                    <p className="text-lg font-semibold text-slate-900">{headingCardinalLabel ? `Heading ${headingCardinalLabel} on` : 'Heading on'}</p>
+                    <p className="text-lg font-semibold text-slate-900">{currentStreetLabel}</p>
+                  </div>
+                  {nextTurnPreview && nextTurnUrgency ? (
+                    <div className={`rounded-[20px] border-2 px-4 py-3 text-center ${nextTurnUrgency.panelClassName}`}>
+                      <p className={`text-sm font-semibold uppercase tracking-[0.18em] ${nextTurnUrgency.labelClassName}`}>Next turn</p>
+                      <div className="mt-2 flex flex-col items-center gap-1">
+                        <NextTurnIcon className={`h-6 w-6 ${nextTurnUrgency.iconClassName}`} />
+                        <p className={`text-base font-semibold ${nextTurnUrgency.textClassName}`}>{nextTurnPreview.label}</p>
+                      </div>
+                      <div className={`my-3 border-t ${nextTurnUrgency.dividerClassName}`} />
+                      <p className={`text-lg font-semibold ${nextTurnUrgency.textClassName}`}>{formatRemainingDistance(nextTurnPreview.distanceMeters)}</p>
+                    </div>
+                  ) : null}
                 </div>
-                <div className="flex items-center gap-2">
+              </div>
+            ) : null}
+          </div>
+
+          <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="top-1/2 -translate-y-1/2" />
+
+          {navigationRoute && activeOrigin ? (
+            <div className="pointer-events-none absolute inset-x-4 bottom-4">
+              <div className="pointer-events-auto grid gap-3 rounded-[24px] border-4 border-black bg-white/92 px-4 py-4 text-slate-900 shadow-2xl backdrop-blur md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
+                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
+                      <HiOutlineClock className="h-5 w-5" />
+                    </span>
+                    <p className="text-base font-semibold text-slate-900">{formatRemainingDuration(navigationRoute.durationSeconds)}</p>
+                  </div>
+                  <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
+                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
+                      <HiOutlineMapPin className="h-5 w-5" />
+                    </span>
+                    <p className="text-base font-semibold text-slate-900">{formatRemainingDistance(navigationRoute.distanceMeters)}</p>
+                  </div>
+                  {arrivalTimeLabel ? (
+                    <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
+                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
+                        <HiOutlineFlag className="h-5 w-5" />
+                      </span>
+                      <p className="text-base font-semibold text-slate-900">{arrivalTimeLabel}</p>
+                    </div>
+                  ) : null}
+                  {navigationProgressPercent !== null ? (
+                    <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
+                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
+                        <HiOutlineChartBar className="h-5 w-5" />
+                      </span>
+                      <p className="text-base font-semibold text-slate-900">{navigationProgressPercent}%</p>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {destination?.label ? (
+                    <div className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-white px-3 py-2 text-xs font-semibold text-slate-900">
+                      <HiOutlineFlag className="h-4 w-4" />
+                      <span>{destination.label}</span>
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     onClick={handleViewRouteToggle}
@@ -1046,39 +1171,12 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      void stopNavigation()
-                    }}
+                    onClick={() => setConfirmExitOpen(true)}
                     className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-black bg-rose-100 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-rose-200"
                   >
                     <HiOutlineXMark className="h-4 w-4" />
                     End trip
                   </button>
-                </div>
-              </div>
-            ) : null}
-          </div>
-
-          <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="md:top-[6.5rem]" />
-
-          {navigationStep && navigationRoute ? (
-            <div className="pointer-events-none absolute inset-x-4 bottom-4">
-              <div className="pointer-events-auto rounded-[24px] border-4 border-black bg-white/92 px-4 py-4 text-slate-900 shadow-2xl backdrop-blur">
-                <div className={`grid gap-4 items-stretch ${nextTurnPreview ? 'grid-cols-[minmax(0,1fr)_132px]' : 'grid-cols-1'}`}>
-                  <div className="flex flex-col justify-center text-center">
-                    <p className="text-lg font-semibold text-slate-900">{headingCardinalLabel ? `Heading ${headingCardinalLabel} on` : 'Heading on'}</p>
-                    <p className="text-lg font-semibold text-slate-900">{currentStreetLabel}</p>
-                  </div>
-                  {nextTurnPreview ? (
-                    <div className="border-l-2 border-black/70 pl-4 text-center">
-                      <p className="text-lg font-semibold text-slate-900">Next turn</p>
-                      <div className="mt-2 flex flex-col items-center gap-1">
-                        <NextTurnIcon className="h-6 w-6 text-slate-900" />
-                        <p className="text-base font-semibold text-slate-900">{nextTurnPreview.label}</p>
-                      </div>
-                      <p className="mt-4 text-base font-semibold text-slate-900">{formatRemainingDistance(nextTurnPreview.distanceMeters)}</p>
-                    </div>
-                  ) : null}
                 </div>
               </div>
             </div>
@@ -1089,6 +1187,40 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
               <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-slate-950/85 px-5 py-3 text-sm font-semibold text-white shadow-lg backdrop-blur">
                 <HiOutlineArrowPath className="h-4 w-4 animate-spin" />
                 Starting navigation…
+              </div>
+            </div>
+          ) : null}
+
+          {confirmExitOpen ? (
+            <div className="pointer-events-auto absolute inset-0 z-[5] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-[2px]">
+              <div className="w-full max-w-sm rounded-[28px] border-4 border-black bg-white px-5 py-5 text-slate-900 shadow-2xl">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-rose-100 text-rose-700">
+                    <HiOutlineXMark className="h-6 w-6" />
+                  </span>
+                  <div>
+                    <p className="text-lg font-semibold">Exit trip?</p>
+                    <p className="text-sm text-slate-600">This will stop live navigation and close fullscreen mode.</p>
+                  </div>
+                </div>
+                <div className="mt-5 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmExitOpen(false)}
+                    className="inline-flex items-center rounded-full border-2 border-black bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void stopNavigation()
+                    }}
+                    className="inline-flex items-center rounded-full border-2 border-black bg-rose-100 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-rose-200"
+                  >
+                    End trip
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}

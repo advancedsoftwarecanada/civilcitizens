@@ -7,10 +7,10 @@ type MapZoomControlsProps = {
 }
 
 export function MapZoomControls({ onZoomIn, onZoomOut, className }: MapZoomControlsProps) {
-  const positionClassName = className?.trim() ? ` ${className.trim()}` : ''
+  const positionClassName = className?.trim() || 'top-4'
 
   return (
-    <div className={`pointer-events-none absolute right-4 top-4${positionClassName}`}>
+    <div className={`pointer-events-none absolute right-4 ${positionClassName}`}>
       <div className="pointer-events-auto overflow-hidden rounded-2xl border-2 border-black bg-white/92 shadow-lg backdrop-blur">
         <button
           type="button"
