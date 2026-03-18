@@ -391,6 +391,7 @@ export default function TopNav() {
   }, [dropdownOpen])
 
   const handleToggleDropdown = useCallback(() => {
+    collapseSearch()
     if (isFamilyLockedSession) {
       pushToast('Notifications are unavailable while this device is locked to a family account.', 'info')
       return
@@ -409,7 +410,7 @@ export default function TopNav() {
       await fetchNotifications()
       await acknowledgeNotifications()
     })()
-  }, [dropdownOpen, fetchNotifications, acknowledgeNotifications, isFamilyLockedSession])
+  }, [acknowledgeNotifications, collapseSearch, dropdownOpen, fetchNotifications, isFamilyLockedSession])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -471,6 +472,15 @@ export default function TopNav() {
     searchBlurTimeout.current = setTimeout(() => {
       setSearchFocused(false)
     }, 150)
+  }, [])
+
+  const collapseSearch = useCallback(() => {
+    if (searchBlurTimeout.current) {
+      clearTimeout(searchBlurTimeout.current)
+      searchBlurTimeout.current = null
+    }
+    setSearchFocused(false)
+    searchInputRef.current?.blur()
   }, [])
 
   const handleClearSearch = useCallback(() => {
@@ -636,7 +646,7 @@ export default function TopNav() {
                   <HiOutlineXMark className="h-4 w-4" />
                 </button>
               ) : null}
-              <SearchResults query={searchQuery} open={showSearchResults} />
+              <SearchResults query={searchQuery} open={showSearchResults} onResultSelect={collapseSearch} />
             </div>
           </div>
         ) : (
