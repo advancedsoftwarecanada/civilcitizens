@@ -391,6 +391,15 @@ export default function TopNav() {
     }
   }, [dropdownOpen])
 
+  const collapseSearch = useCallback(() => {
+    if (searchBlurTimeout.current) {
+      clearTimeout(searchBlurTimeout.current)
+      searchBlurTimeout.current = null
+    }
+    setSearchFocused(false)
+    searchInputRef.current?.blur()
+  }, [])
+
   const handleToggleDropdown = useCallback(() => {
     collapseSearch()
     if (isFamilyLockedSession) {
@@ -473,15 +482,6 @@ export default function TopNav() {
     searchBlurTimeout.current = setTimeout(() => {
       setSearchFocused(false)
     }, 150)
-  }, [])
-
-  const collapseSearch = useCallback(() => {
-    if (searchBlurTimeout.current) {
-      clearTimeout(searchBlurTimeout.current)
-      searchBlurTimeout.current = null
-    }
-    setSearchFocused(false)
-    searchInputRef.current?.blur()
   }, [])
 
   const handleClearSearch = useCallback(() => {
