@@ -30,7 +30,7 @@ import { readMarketCart } from '../market/_lib/cart'
 import { restoreParentAuthSession } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
-import { SearchResults } from './search/SearchResults'
+import { SearchResults, type SearchResultsLoadingState } from './search/SearchResults'
 import MessagesNavBlock from './MessagesNavBlock'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
@@ -175,6 +175,7 @@ export default function MobileDock() {
   const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
   const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const [menuSearchFocused, setMenuSearchFocused] = useState(false)
+  const [menuSearchLoadingState, setMenuSearchLoadingState] = useState<SearchResultsLoadingState>({ active: false, label: 'Searching Civil' })
   const [civilAiOpen, setCivilAiOpen] = useState(false)
   const menuSearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -431,6 +432,10 @@ export default function MobileDock() {
     setMenuSearchFocused(false)
     handleCloseMenu()
   }, [handleCloseMenu])
+
+  const handleMenuSearchLoadingStateChange = useCallback((state: SearchResultsLoadingState) => {
+    setMenuSearchLoadingState(state)
+  }, [])
 
   const handleButtonPress = useCallback(
     (key: NavButtonKey) => {
@@ -719,7 +724,11 @@ export default function MobileDock() {
             <div className="mt-[var(--drawer-top-gap)] flex-1 overflow-y-auto pb-[calc(var(--drawer-pad)*0.85)]">
               <div className="relative mb-3">
                 <div className="relative w-full rounded-full border border-slate-200 bg-white shadow-sm transition focus-within:border-[var(--cc-primary)]">
-                  <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  {menuSearchLoadingState.active ? (
+                    <span className="pointer-events-none absolute left-4 top-1/2 inline-flex h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--cc-primary)]" aria-hidden="true" />
+                  ) : (
+                    <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  )}
                   <form action="/search" method="GET" autoComplete="off">
                     <input
                       type="search"
@@ -736,6 +745,11 @@ export default function MobileDock() {
                       onBlur={handleMenuSearchBlur}
                     />
                   </form>
+                  {menuSearchLoadingState.active ? (
+                    <div className="pointer-events-none absolute inset-x-12 bottom-[-1.35rem] truncate px-2 text-center text-[11px] font-medium text-slate-500">
+                      {menuSearchLoadingState.label}
+                    </div>
+                  ) : null}
                   {menuSearchQuery.length > 0 ? (
                     <button
                       type="button"
@@ -751,6 +765,7 @@ export default function MobileDock() {
                     query={menuSearchQuery}
                     open={menuSearchFocused && menuSearchQuery.trim().length >= 2}
                     onResultSelect={handleDrawerSearchResultSelect}
+                    onLoadingStateChange={handleMenuSearchLoadingStateChange}
                   />
                 </div>
               </div>

@@ -829,7 +829,12 @@ export default function UserPostsPage({ params }: PageProps) {
       ]
     : []
   const canDirectlyReachProfile =
-    !isOwner && (resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected')
+    !isOwner &&
+    (
+      resolvedRelationship.friendshipStatus === 'friends' ||
+      resolvedRelationship.connectionStatus === 'connected' ||
+      Boolean(currentProfileFamilyRelationship)
+    )
 
   const closeDetailsMenu = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     const details = event.currentTarget.closest('details')
@@ -1462,7 +1467,10 @@ export default function UserPostsPage({ params }: PageProps) {
       })
       const payload = (await res.json().catch(() => null)) as { thread?: { id: string } | null; error?: string } | null
       if (!res.ok || !payload?.thread?.id) {
-        const message = payload?.error ?? (res.status === 400 ? 'Unable to start a conversation: invalid user id.' : 'Unable to start a conversation right now.')
+        const message =
+          payload?.error === 'not_friends'
+            ? 'Direct messages require a Friend, Family, or Network relationship.'
+            : payload?.error ?? (res.status === 400 ? 'Unable to start a conversation: invalid user id.' : 'Unable to start a conversation right now.')
         pushToast(message, 'error')
         return null
       }

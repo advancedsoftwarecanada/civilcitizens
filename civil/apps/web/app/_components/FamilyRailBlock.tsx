@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import Block from './Block'
 import CivilCard from './CivilCard'
 import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
+import { formatUserDisplayName } from '../_lib/text'
 
 export type SharedFamilyRailEntry =
   | {
@@ -68,14 +69,15 @@ export default function FamilyRailBlock({ entries, viewAllHref, loading = false,
       ) : (
         <ul className="space-y-3">
           {orderedEntries.map((entry) => {
+            const displayName = formatUserDisplayName(entry.displayName, entry.kind === 'profile' ? entry.handle : null) || entry.displayName
             const avatarSrc =
-              entry.kind === 'member' ? entry.avatarUrl ?? buildFamilyAvatarDataUrl(entry.displayName, entry.modeBand) : entry.avatarUrl ?? null
+              entry.kind === 'member' ? entry.avatarUrl ?? buildFamilyAvatarDataUrl(displayName, entry.modeBand) : entry.avatarUrl ?? null
             const card = (
               <CivilCard
                 size="md"
-                name={entry.displayName}
-                avatarAlt={entry.displayName}
-                avatarInitials={entry.displayName}
+                name={displayName}
+                avatarAlt={displayName}
+                avatarInitials={displayName}
                 avatarSrc={avatarSrc}
                 coverUrl={entry.coverUrl ?? null}
                 href={entry.kind === 'profile' ? `/u/${entry.handle}` : undefined}
