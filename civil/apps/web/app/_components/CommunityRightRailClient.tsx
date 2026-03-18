@@ -59,8 +59,10 @@ function shuffleOrganizations<T>(items: T[]): T[] {
   const next = [...items]
   for (let index = next.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(Math.random() * (index + 1))
-    const current = next[index]!
-    next[index] = next[swapIndex]!
+    const current = next[index]
+    const swap = next[swapIndex]
+    if (current === undefined || swap === undefined) continue
+    next[index] = swap
     next[swapIndex] = current
   }
   return next
