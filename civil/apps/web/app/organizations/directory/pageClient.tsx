@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl } from '../../_lib/api'
+import type { CanadianAddress } from '../../_lib/canadianAddresses'
 import { RightRail } from '../../_components/RightRail'
 import CivilCard from '../../_components/CivilCard'
+import OrganizationDirectoryMap from '../../com/_components/OrganizationDirectoryMap'
 
 type OrgDirectoryItem = {
   id: string
@@ -30,6 +32,7 @@ type OrgDirectoryItem = {
   phone?: string | null
   websiteUrl?: string | null
   address?: string | null
+  addressDetails?: CanadianAddress | null
   schedule?: string | null
 }
 
@@ -249,6 +252,8 @@ export default function OrganizationDirectoryPageClient() {
           </label>
         </div>
       </div>
+
+      <OrganizationDirectoryMap organizations={filteredItems} />
 
       <div className="surface-card p-5">
         {status === 'loading' ? <p className="text-sm text-slate-500">Loading…</p> : null}

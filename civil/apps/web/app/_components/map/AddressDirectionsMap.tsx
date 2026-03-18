@@ -1,7 +1,7 @@
 'use client'
 
 import type { IconType } from 'react-icons'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import {
   HiOutlineArrowLongDown,
   HiOutlineArrowLongLeft,
@@ -26,6 +26,11 @@ type AddressDirectionsMapProps = {
   destination: MapPoint | null
   origin?: MapPoint | null
   routeCoordinates?: Array<[number, number]> | null
+  onNavigationOriginChange?: ((origin: MapPoint | null) => void) | undefined
+}
+
+export type AddressDirectionsMapHandle = {
+  startNavigation: () => Promise<void>
 }
 
 type WakeLockSentinelLike = {
@@ -208,7 +213,10 @@ function resolveDirectionIcon(step: DrivingRouteStep | null): IconType {
   return HiOutlineArrowLongUp
 }
 
-export function AddressDirectionsMap({ destination, origin, routeCoordinates }: AddressDirectionsMapProps) {
+export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, AddressDirectionsMapProps>(function AddressDirectionsMap(
+  { destination, origin, routeCoordinates, onNavigationOriginChange }: AddressDirectionsMapProps,
+  ref,
+) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any>(null)
@@ -421,6 +429,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     setNavStatus('idle')
     setFullscreenActive(false)
     setNavigationOrigin(null)
+    onNavigationOriginChange?.(null)
     setNavigationStartPoint(null)
     setNavigationRoute(null)
     setInitialNavigationDistanceMeters(null)
@@ -439,7 +448,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
         // ignore
       }
     }
-  }, [destination, releaseWakeLock, showNavigationNotice, stopWatcher])
+  }, [destination, onNavigationOriginChange, releaseWakeLock, showNavigationNotice, stopWatcher])
 
   const refreshNavigationRoute = useCallback(async (nextOrigin: MapPoint, options?: { force?: boolean }) => {
     if (!destination) return
@@ -493,6 +502,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       label: 'Current Location',
     } satisfies MapPoint
 
+    onNavigationOriginChange?.(nextOrigin)
     setNavigationOrigin(nextOrigin)
     setNavigationStartPoint((current) => current ?? nextOrigin)
     setNavError(null)
@@ -500,7 +510,7 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       setDeviceHeading(normalizeHeading(position.coords.heading))
     }
     void refreshNavigationRoute(nextOrigin, { force: options?.forceRoute })
-  }, [refreshNavigationRoute])
+  }, [onNavigationOriginChange, refreshNavigationRoute])
 
   const handleStartNavigation = useCallback(async () => {
     if (!destination) return
@@ -558,11 +568,21 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       },
       () => {
         setNavStatus('idle')
+        setFullscreenActive(false)
+        onNavigationOriginChange?.(null)
         setNavError('Location permission was denied or unavailable.')
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
     )
-  }, [destination, handlePositionUpdate])
+  }, [destination, handlePositionUpdate, onNavigationOriginChange])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      startNavigation: handleStartNavigation,
+    }),
+    [handleStartNavigation],
+  )
 
   useEffect(() => {
     if (navStatus !== 'active' && navStatus !== 'starting') return undefined
@@ -982,8 +1002,6 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
     })
   }, [activeBearing, activeOrigin, activeRouteCoordinates, destination, mapReady, navStatus, routeOverviewActive, startPoint, viewerAvatarUrl])
 
-  const showStartButton = Boolean(destination && origin) && navStatus === 'idle'
-
   return (
     <div
       ref={wrapperRef}
@@ -1043,21 +1061,6 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
 
           <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="md:top-[6.5rem]" />
 
-          {showStartButton ? (
-            <div className="pointer-events-none absolute left-4 top-4 flex justify-start md:top-20">
-              <button
-                type="button"
-                onClick={() => {
-                  void handleStartNavigation()
-                }}
-                className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-emerald-950 bg-emerald-500 px-5 py-3 text-sm font-semibold text-emerald-950 shadow-lg transition hover:bg-emerald-400"
-              >
-                <HiOutlineTruck className="h-4 w-4" />
-                Start
-              </button>
-            </div>
-          ) : null}
-
           {navigationStep && navigationRoute ? (
             <div className="pointer-events-none absolute inset-x-4 bottom-4">
               <div className="pointer-events-auto rounded-[24px] border-4 border-black bg-white/92 px-4 py-4 text-slate-900 shadow-2xl backdrop-blur">
@@ -1093,4 +1096,6 @@ export function AddressDirectionsMap({ destination, origin, routeCoordinates }: 
       </div>
     </div>
   )
-}
+})
+
+AddressDirectionsMap.displayName = 'AddressDirectionsMap'
