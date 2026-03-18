@@ -2322,6 +2322,11 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     () => activeThread?.participants.find((participant) => participant.isViewer) ?? null,
     [activeThread],
   )
+  const activeThreadPrimaryUser = useMemo(
+    () => activeThread?.participants.find((participant) => !participant.isViewer)?.user ?? null,
+    [activeThread],
+  )
+  const activeThreadProfileHref = activeThreadPrimaryUser?.handle ? `/u/${encodeURIComponent(activeThreadPrimaryUser.handle)}` : null
   const isActiveGroupThread = activeThread?.type === 'group'
   const isActiveGroupOwner = isActiveGroupThread && activeViewerParticipant?.role === 'admin'
   const activeThreadSupportsCalling = Boolean(
