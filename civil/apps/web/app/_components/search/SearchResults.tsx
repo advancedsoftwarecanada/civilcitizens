@@ -31,7 +31,12 @@ import {
   type NominatimAddress,
 } from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
-import { normalizeCanadianAddress, readStoredMarketShippingAddress, type SavedShippingAddress } from '../../_lib/canadianAddresses'
+import {
+  normalizeCanadianAddress,
+  readStoredMarketShippingAddress,
+  type CanadianAddress,
+  type SavedShippingAddress,
+} from '../../_lib/canadianAddresses'
 import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import VerifiedAvatar from '../VerifiedAvatar'
@@ -76,8 +81,8 @@ function CompactSection({ title, href, children, onResultSelect }: { title: stri
   )
 }
 
-function hasCoordinates(value: SearchAnchor | null | undefined): value is SearchAnchor {
-  return Boolean(value) && Number.isFinite(value.latitude) && Number.isFinite(value.longitude)
+function hasCoordinates(value: SearchAnchor | CanadianAddress | null | undefined): value is SearchAnchor {
+  return value != null && Number.isFinite(value.latitude) && Number.isFinite(value.longitude)
 }
 
 function formatDistanceBadge(distanceKm: number) {
