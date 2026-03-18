@@ -6374,8 +6374,23 @@ function ensureCitizenMarketplaceTables() {
       `)
 
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS pickup_completed_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS pickup_completed_by_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_market_listing_scope_idx
         ON citizen_market_listing (listing_province_code, listing_community_slug, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_pickup_pending_idx
+        ON citizen_market_listing (status, pickup_completed_at, seller_user_id, selected_buyer_user_id);
       `)
 
       await prisma.$executeRawUnsafe(`

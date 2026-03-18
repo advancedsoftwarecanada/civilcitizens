@@ -35,6 +35,24 @@ type ShippingAddressListResponse = {
   items?: SavedShippingAddress[]
 }
 
+type MarketPickupItem = {
+  listingId: string
+  threadId?: string | null
+  role: 'seller' | 'buyer'
+  title: string
+  status: string
+  priceCents: number
+  currency: string
+  photoUrl: string | null
+  pickupCity?: string | null
+  pickupProvince?: string | null
+  pickupAddress?: SavedShippingAddress | null
+}
+
+type MarketPickupListResponse = {
+  items?: MarketPickupItem[]
+}
+
 type FavoriteAddress = {
   id: string
   label: string
@@ -181,13 +199,53 @@ function AddressPageRightRail({
   homeAddress,
   nextAddress,
   favoriteAddresses,
+  marketPickups,
 }: {
   homeAddress: SavedShippingAddress | null
   nextAddress: SavedShippingAddress | null
   favoriteAddresses: FavoriteAddress[]
+  marketPickups: MarketPickupItem[]
 }) {
   return (
     <>
+      <div className="mb-4 flex items-center justify-end">
+        <Link
+          href="/messages?inbox=market"
+          className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:border-[var(--cc-primary)]/35 hover:bg-[var(--cc-primary)]/5"
+        >
+          Messages
+        </Link>
+      </div>
+
+      <Block title="Market Pickups" className="mb-4">
+        <div className="space-y-3">
+          {marketPickups.length ? (
+            marketPickups.map((pickup) => (
+              <Link
+                key={pickup.listingId}
+                href={buildAddressesHrefFromAddress(pickup.pickupAddress ?? null, pickup.title)}
+                className="block rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 transition hover:border-[var(--cc-primary)]/30 hover:bg-white"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                    {pickup.photoUrl ? <img src={pickup.photoUrl} alt="" className="h-full w-full object-cover" /> : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="truncate text-sm font-semibold text-slate-900">{pickup.title}</p>
+                      <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{pickup.role}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">{formatSavedAddressDetail(pickup.pickupAddress ?? {}, { includeName: false }) || 'Open directions'}</p>
+                  </div>
+                </div>
+              </Link>
+            ))
+          ) : (
+            <p className="text-sm text-slate-500">No pending pickups right now.</p>
+          )}
+        </div>
+      </Block>
+
       <Block title="My Addresses" action={{ label: 'Manage', href: '/market/account' }} className="mb-4">
         <div className="space-y-3">
           {homeAddress ? (
@@ -285,6 +343,7 @@ export default function AddressSearchPageClient() {
   const [error, setError] = useState<string | null>(null)
   const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
   const [favoriteAddresses, setFavoriteAddresses] = useState<FavoriteAddress[]>([])
+  const [marketPickups, setMarketPickups] = useState<MarketPickupItem[]>([])
   const [favoriteAddModalOpen, setFavoriteAddModalOpen] = useState(false)
   const [favoriteRemoveModalOpen, setFavoriteRemoveModalOpen] = useState(false)
   const [favoriteNickname, setFavoriteNickname] = useState('')
@@ -299,6 +358,40 @@ export default function AddressSearchPageClient() {
 
   useEffect(() => {
     setFavoriteAddresses(readFavoriteAddresses())
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadMarketPickups = async () => {
+      const token = getStoredToken()
+      if (!token) {
+        if (!cancelled) setMarketPickups([])
+        return
+      }
+
+      try {
+        const response = await fetch(buildApiUrl('/market/pickups'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        if (!response.ok) {
+          if (!cancelled) setMarketPickups([])
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as MarketPickupListResponse | null
+        if (cancelled) return
+        setMarketPickups(Array.isArray(payload?.items) ? payload.items : [])
+      } catch {
+        if (!cancelled) setMarketPickups([])
+      }
+    }
+
+    void loadMarketPickups()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -652,8 +745,8 @@ export default function AddressSearchPageClient() {
   }, [canSaveFavorite, destinationLabel, isFavorite])
 
   const rightRail = useMemo(
-    () => <AddressPageRightRail homeAddress={homeAddress} nextAddress={nextAddress} favoriteAddresses={favoriteAddresses} />,
-    [favoriteAddresses, homeAddress, nextAddress],
+    () => <AddressPageRightRail homeAddress={homeAddress} nextAddress={nextAddress} favoriteAddresses={favoriteAddresses} marketPickups={marketPickups} />,
+    [favoriteAddresses, homeAddress, marketPickups, nextAddress],
   )
 
   return (
