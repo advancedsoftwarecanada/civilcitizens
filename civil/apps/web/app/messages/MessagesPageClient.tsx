@@ -25,6 +25,7 @@ import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { MarketChatsOverview } from '../market/chats/MarketChatsPageClient'
 import {
   HiOutlineArrowPath,
   HiOutlinePaperAirplane,
@@ -1126,7 +1127,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [callActionMode, setCallActionMode] = useState<'audio' | 'video' | null>(null)
   const [callPermissionModalOpen, setCallPermissionModalOpen] = useState(false)
   const [activeInboxSection, setActiveInboxSection] = useState<MessagesNavSection>(
-    initialInboxSection && initialInboxSection !== 'market' && (initialInboxSection !== 'family' || showFamilyInbox)
+    initialInboxSection && (initialInboxSection !== 'family' || showFamilyInbox)
       ? initialInboxSection
       : DEFAULT_MESSAGES_NAV_SECTION,
   )
@@ -1213,7 +1214,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }, [syncMobileKeyboardState])
 
   useEffect(() => {
-    if (initialInboxSection && initialInboxSection !== 'market' && (initialInboxSection !== 'family' || showFamilyInbox)) {
+    if (initialInboxSection && (initialInboxSection !== 'family' || showFamilyInbox)) {
       setActiveInboxSection(initialInboxSection)
       writeStoredMessagesNavSection(initialInboxSection)
       return
@@ -1224,7 +1225,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       return
     }
     const stored = readStoredMessagesNavSection()
-    if (!stored || stored === 'market') {
+    if (!stored) {
       setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
       return
     }
@@ -1509,11 +1510,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           base.sort((a, b) => new Date(b.lastMessageAt || b.updatedAt).getTime() - new Date(a.lastMessageAt || a.updatedAt).getTime())
           return base
         })
-        if (!selectedThreadRef.current && !isMobileMessagesViewport()) {
-          const nextSelection = initialThreadIdRef.current ?? payload.items[0]?.id ?? null
-          if (nextSelection) {
-            setSelectedThreadId(nextSelection)
-          }
+        if (!selectedThreadRef.current && initialThreadIdRef.current) {
+          setSelectedThreadId(initialThreadIdRef.current)
           initialThreadIdRef.current = null
         }
       } catch (err) {
@@ -2047,6 +2045,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     [categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadCount],
   )
   const filteredOrderedThreads = useMemo(() => {
+    if (activeInboxSection === 'market') return [] as ThreadSummary[]
     if (activeInboxSection === 'family') return categorizedThreads.family
     if (activeInboxSection === 'network') return categorizedThreads.network
     if (activeInboxSection === 'groups') return categorizedThreads.groups
@@ -2059,10 +2058,13 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     )
     return familyProfileContacts.filter((entry) => !threadedUserIds.has(entry.id))
   }, [categorizedThreads.family, familyProfileContacts, me?.id, showFamilyInbox])
-  const activeThread = useMemo(
-    () => filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null,
-    [filteredOrderedThreads, selectedThreadId],
-  )
+  const activeThread = useMemo(() => {
+    if (!selectedThreadId) return null
+    if (activeInboxSection === 'market') {
+      return threads.find((thread) => thread.id === selectedThreadId) ?? null
+    }
+    return filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null
+  }, [activeInboxSection, filteredOrderedThreads, selectedThreadId, threads])
   const isFamilyParentThreadSelected = Boolean(familyParentThreadId && selectedThreadId === familyParentThreadId)
 
   const syncMobileThreadLayout = useCallback(() => {
@@ -2136,6 +2138,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }, [syncMobileThreadLayout])
 
   useEffect(() => {
+    if (activeInboxSection === 'market') {
+      return
+    }
     if (filteredOrderedThreads.length === 0) {
       if (familyParentThreadId && selectedThreadId === familyParentThreadId) return
       if (threadsLoading || threads.length === 0) return
@@ -2151,7 +2156,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (selectedThreadId) {
       setSelectedThreadId(null)
     }
-  }, [familyParentThreadId, filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
+  }, [activeInboxSection, familyParentThreadId, filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
 
   useEffect(() => {
     if (!selectedThreadId) return
@@ -3423,6 +3428,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     ? 'Friends Inbox'
     : activeInboxSection === 'family'
       ? 'Family Inbox'
+      : activeInboxSection === 'market'
+        ? 'Market Inbox'
       : activeInboxSection === 'network'
         ? 'Network Inbox'
         : activeInboxSection === 'groups'
@@ -3430,6 +3437,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           : 'Friends Inbox'
   const activeContextUnreadCount = activeInboxSection === 'family'
     ? messagesNavUnreadCounts.family
+    : activeInboxSection === 'market'
+    ? messagesNavUnreadCounts.market
     : activeInboxSection === 'network'
     ? messagesNavUnreadCounts.network
     : activeInboxSection === 'groups'
@@ -3454,7 +3463,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         <MessagesNavBlock
           active={activeInboxSection}
           onActiveChange={(next) => {
-            if (next === 'market') return
             setActiveInboxSection(next)
           }}
           unreadCounts={messagesNavUnreadCounts}
@@ -3463,17 +3471,28 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           className="border border-slate-200/90 bg-slate-50/70"
         />
       </div>
-      <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-        <div className="mb-2 flex items-center justify-between px-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{activeContextLabel}</p>
-          <p className="text-[11px] text-slate-400">
-            {activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'} · {filteredOrderedThreads.length}{' '}
-            {filteredOrderedThreads.length === 1 ? 'thread' : 'threads'}
-          </p>
+      {activeInboxSection === 'market' ? (
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{activeContextLabel}</p>
+              <p className="text-[11px] text-slate-400">{activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'}</p>
+            </div>
+          </div>
         </div>
-        {renderThreadList()}
-        {threadsFooter}
-      </div>
+      ) : (
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{activeContextLabel}</p>
+            <p className="text-[11px] text-slate-400">
+              {activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'} · {filteredOrderedThreads.length}{' '}
+              {filteredOrderedThreads.length === 1 ? 'thread' : 'threads'}
+            </p>
+          </div>
+          {renderThreadList()}
+          {threadsFooter}
+        </div>
+      )}
     </div>
   )
 
@@ -3489,7 +3508,15 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       rightRailTopClassName="pt-0"
       mainClassName={keyboardAwareViewportClass}
     >
-      {isMobileViewport ? (
+      {activeInboxSection === 'market' ? (
+        selectedThreadId && activeThread ? (
+          <div className="h-full min-h-0">{renderMessages()}</div>
+        ) : (
+          <div className="h-full min-h-0 overflow-y-auto pr-0 md:pr-2">
+            <MarketChatsOverview embedded />
+          </div>
+        )
+      ) : isMobileViewport ? (
         <div className={clsx('h-full min-h-0', activeThread || isFamilyParentThreadSelected ? 'pt-2' : '')}>{activeThread || isFamilyParentThreadSelected ? renderMessages() : inboxPanel}</div>
       ) : (
         <div className="h-full min-h-0">{renderMessages()}</div>

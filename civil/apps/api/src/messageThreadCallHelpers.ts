@@ -222,7 +222,6 @@ export function createMessageThreadCallHelpers(deps: CreateMessageThreadCallHelp
     return prisma.messageThread.findFirst({
       where: {
         id: threadId,
-        OR: [{ contextType: null }, { contextType: { not: 'market_listing' } }],
         participants: {
           some: { userId },
         },

@@ -468,11 +468,17 @@ export function registerMessagesCoreRoutes(app: FastifyInstance, deps: MessageCo
         const counterpartId = otherIds[0]
         if (!counterpartId || otherIds.length !== 1) return reply.code(400).send({ error: 'invalid_direct_thread' })
 
-        const [friendStatus, connectionStatus] = await Promise.all([
+        const [friendStatus, connectionStatus, acceptedProfileFamilyRelationshipIds, familyAudienceStatus] = await Promise.all([
           deps.usersAreFriends(userId, counterpartId),
           deps.usersAreAcceptedConnections(userId, counterpartId),
+          deps.loadAcceptedProfileFamilyRelationshipIds(userId),
+          deps.canViewerAccessFamilyAudiencePost({ viewerId: userId, authorId: counterpartId }),
         ])
-        if (!friendStatus && !connectionStatus) return reply.code(403).send({ error: 'not_callable' })
+        const familyStatus =
+          Array.isArray(acceptedProfileFamilyRelationshipIds) && acceptedProfileFamilyRelationshipIds.includes(counterpartId)
+            ? true
+            : Boolean(familyAudienceStatus)
+        if (!friendStatus && !connectionStatus && !familyStatus) return reply.code(403).send({ error: 'not_callable' })
       }
 
       const existingCall = await deps.loadLiveThreadCall(thread.id, { expireStale: true, endedByUserId: userId })

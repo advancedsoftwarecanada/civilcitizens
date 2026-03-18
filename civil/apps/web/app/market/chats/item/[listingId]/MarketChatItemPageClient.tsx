@@ -310,7 +310,7 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
                 {relistSubmitting ? 'Relisting…' : 'Relist item'}
               </button>
             ) : null}
-            <Link href="/market/chats" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <Link href="/messages?inbox=market" className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
               Back
             </Link>
           </div>

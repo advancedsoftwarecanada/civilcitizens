@@ -10,6 +10,10 @@ import { buildApiUrl } from '../../_lib/api'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import MarketRightRail from '../_components/MarketRightRail'
 
+type MarketChatsOverviewProps = {
+  embedded?: boolean
+}
+
 type SellerSummary = {
   id: string
   handle: string | null
@@ -160,7 +164,7 @@ function CounterpartPreviewCard({
   )
 }
 
-export default function MarketChatsPageClient() {
+export function MarketChatsOverview({ embedded = false }: MarketChatsOverviewProps) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [yourListings, setYourListings] = useState<YourListingGroup[]>([])
   const [activeItems, setActiveItems] = useState<MarketChatItem[]>([])
@@ -228,7 +232,7 @@ export default function MarketChatsPageClient() {
   const renderBuyingItemCard = (item: MarketChatItem, muted = false, statusBadge?: string) => (
     <div key={item.threadId} className={clsx('rounded-2xl border p-3', muted ? 'border-slate-200 bg-slate-50' : 'border-slate-200 bg-white')}>
       <Link
-        href={`/market/chats/${encodeURIComponent(item.threadId)}`}
+        href={`/messages?inbox=market&thread=${encodeURIComponent(item.threadId)}`}
         className={clsx('flex items-start gap-3 rounded-xl p-1 transition', muted ? 'hover:bg-slate-100' : 'hover:bg-slate-50')}
       >
         <div className={clsx('h-16 w-16 flex-none overflow-hidden rounded-xl border', muted ? 'border-slate-200 bg-white' : 'border-slate-200 bg-slate-50')}>
@@ -306,7 +310,7 @@ export default function MarketChatsPageClient() {
           return (
             <Link
               key={preview.threadId}
-              href={`/market/chats/${encodeURIComponent(preview.threadId)}`}
+              href={`/messages?inbox=market&thread=${encodeURIComponent(preview.threadId)}`}
               className="block rounded-2xl hover:bg-transparent"
             >
               <CounterpartPreviewCard counterpart={counterpart} timestamp={formatTimestamp(preview.lastMessageAt)} snippet={snippet} />
@@ -337,9 +341,9 @@ export default function MarketChatsPageClient() {
       : 'Listings you have already closed out, with their chat history grouped underneath.'
 
   return (
-    <DashboardShell rightRail={<MarketRightRail />} showMobileRightRail mainClassName="space-y-5 pb-12">
+    <div className={clsx('space-y-5', embedded ? 'pb-4' : 'pb-12')}>
       <section className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
-        <h1 className="text-2xl font-semibold text-slate-900">Market Chats</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">{embedded ? 'Market Inbox' : 'Market Chats'}</h1>
         <p className="mt-1 text-sm text-slate-600">Messages about the items you are buying and the listings you are managing.</p>
       </section>
 
@@ -499,6 +503,14 @@ export default function MarketChatsPageClient() {
           </section>
         </>
       ) : null}
+    </div>
+  )
+}
+
+export default function MarketChatsPageClient() {
+  return (
+    <DashboardShell rightRail={<MarketRightRail />} showMobileRightRail mainClassName="space-y-5 pb-12">
+      <MarketChatsOverview />
     </DashboardShell>
   )
 }
