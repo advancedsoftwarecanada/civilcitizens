@@ -112,6 +112,14 @@ function formatArrivalTime(durationSeconds: number) {
   })
 }
 
+function blurActiveEditableElement() {
+  if (typeof document === 'undefined') return
+  const activeElement = document.activeElement
+  if (!(activeElement instanceof HTMLElement)) return
+  if (activeElement === document.body) return
+  activeElement.blur()
+}
+
 function calculateDistanceMeters(origin: { latitude: number; longitude: number }, destination: { latitude: number; longitude: number }) {
   return calculateDistanceKm(origin, destination) * 1000
 }
@@ -589,6 +597,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       return
     }
 
+    blurActiveEditableElement()
     setNavError(null)
     setNavigationNotice(null)
     setNavStatus('starting')
@@ -797,7 +806,10 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
 
     const handleFullscreenChange = () => {
       const isActive = document.fullscreenElement === wrapperRef.current
-      if (isActive) setFullscreenActive(true)
+      if (isActive) {
+        blurActiveEditableElement()
+        setFullscreenActive(true)
+      }
       window.setTimeout(() => {
         mapRef.current?.resize?.()
       }, 0)
@@ -1123,56 +1135,56 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="top-1/2 -translate-y-1/2" />
 
           {navigationRoute && activeOrigin ? (
-            <div className="pointer-events-none absolute inset-x-4 bottom-4">
-              <div className="pointer-events-auto grid gap-3 rounded-[24px] border-4 border-black bg-white/92 px-4 py-4 text-slate-900 shadow-2xl backdrop-blur md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
-                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
-                      <HiOutlineClock className="h-5 w-5" />
+            <div className="pointer-events-none absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4">
+              <div className="pointer-events-auto grid gap-2 rounded-[24px] border-4 border-black bg-white/92 px-3 py-3 text-slate-900 shadow-2xl backdrop-blur md:grid-cols-[minmax(0,1fr)_auto] md:gap-3 md:px-4 md:py-4 md:items-end">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                  <div className="flex items-center gap-2 rounded-[18px] border-2 border-black bg-white px-2.5 py-2.5 md:gap-3 md:rounded-[20px] md:px-3 md:py-3">
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-900 md:h-10 md:w-10">
+                      <HiOutlineClock className="h-4 w-4 md:h-5 md:w-5" />
                     </span>
-                    <p className="text-base font-semibold text-slate-900">{formatRemainingDuration(navigationRoute.durationSeconds)}</p>
+                    <p className="text-sm font-semibold text-slate-900 md:text-base">{formatRemainingDuration(navigationRoute.durationSeconds)}</p>
                   </div>
-                  <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
-                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
-                      <HiOutlineMapPin className="h-5 w-5" />
+                  <div className="flex items-center gap-2 rounded-[18px] border-2 border-black bg-white px-2.5 py-2.5 md:gap-3 md:rounded-[20px] md:px-3 md:py-3">
+                    <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-900 md:h-10 md:w-10">
+                      <HiOutlineMapPin className="h-4 w-4 md:h-5 md:w-5" />
                     </span>
-                    <p className="text-base font-semibold text-slate-900">{formatRemainingDistance(navigationRoute.distanceMeters)}</p>
+                    <p className="text-sm font-semibold text-slate-900 md:text-base">{formatRemainingDistance(navigationRoute.distanceMeters)}</p>
                   </div>
                   {arrivalTimeLabel ? (
-                    <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
-                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
-                        <HiOutlineFlag className="h-5 w-5" />
+                    <div className="flex items-center gap-2 rounded-[18px] border-2 border-black bg-white px-2.5 py-2.5 md:gap-3 md:rounded-[20px] md:px-3 md:py-3">
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-900 md:h-10 md:w-10">
+                        <HiOutlineFlag className="h-4 w-4 md:h-5 md:w-5" />
                       </span>
-                      <p className="text-base font-semibold text-slate-900">{arrivalTimeLabel}</p>
+                      <p className="text-sm font-semibold text-slate-900 md:text-base">{arrivalTimeLabel}</p>
                     </div>
                   ) : null}
                   {navigationProgressPercent !== null ? (
-                    <div className="flex items-center gap-3 rounded-[20px] border-2 border-black bg-white px-3 py-3">
-                      <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-900">
-                        <HiOutlineChartBar className="h-5 w-5" />
+                    <div className="flex items-center gap-2 rounded-[18px] border-2 border-black bg-white px-2.5 py-2.5 md:gap-3 md:rounded-[20px] md:px-3 md:py-3">
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-900 md:h-10 md:w-10">
+                        <HiOutlineChartBar className="h-4 w-4 md:h-5 md:w-5" />
                       </span>
-                      <p className="text-base font-semibold text-slate-900">{navigationProgressPercent}%</p>
+                      <p className="text-sm font-semibold text-slate-900 md:text-base">{navigationProgressPercent}%</p>
                     </div>
                   ) : null}
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
                   {destination?.label ? (
-                    <div className="inline-flex items-center gap-2 rounded-full border-2 border-black bg-white px-3 py-2 text-xs font-semibold text-slate-900">
+                    <div className="inline-flex max-w-full items-center gap-2 rounded-full border-2 border-black bg-white px-3 py-2 text-[11px] font-semibold text-slate-900 md:text-xs">
                       <HiOutlineFlag className="h-4 w-4" />
-                      <span>{destination.label}</span>
+                      <span className="truncate">{destination.label}</span>
                     </div>
                   ) : null}
                   <button
                     type="button"
                     onClick={handleViewRouteToggle}
-                    className="pointer-events-auto inline-flex items-center rounded-full border-2 border-black bg-white px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-slate-100"
+                    className="pointer-events-auto inline-flex items-center rounded-full border-2 border-black bg-white px-3 py-2 text-[11px] font-semibold text-slate-900 transition hover:bg-slate-100 md:text-xs"
                   >
                     {routeOverviewActive ? 'Follow trip' : 'View route'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setConfirmExitOpen(true)}
-                    className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-black bg-rose-100 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-rose-200"
+                    className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-black bg-rose-100 px-3 py-2 text-[11px] font-semibold text-slate-900 transition hover:bg-rose-200 md:text-xs"
                   >
                     <HiOutlineXMark className="h-4 w-4" />
                     End trip

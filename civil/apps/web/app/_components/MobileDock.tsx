@@ -336,6 +336,7 @@ export default function MobileDock() {
       clearTimeout(closeTimeoutRef.current)
       closeTimeoutRef.current = null
     }
+    setMenuSearchFocused(false)
     setMenuMounted(true)
     requestAnimationFrame(() => setMenuOpen(true))
   }, [])
@@ -378,6 +379,10 @@ export default function MobileDock() {
     handleCloseMore()
   }, [pathname, handleCloseMore])
 
+  useEffect(() => {
+    setMenuSearchFocused(false)
+  }, [pathname])
+
   useEffect(
     () => () => {
       if (closeTimeoutRef.current) {
@@ -417,6 +422,15 @@ export default function MobileDock() {
       setMenuSearchFocused(false)
     }, 120)
   }, [])
+
+  const handleClearMenuSearch = useCallback(() => {
+    setMenuSearchQuery('')
+  }, [])
+
+  const handleDrawerSearchResultSelect = useCallback(() => {
+    setMenuSearchFocused(false)
+    handleCloseMenu()
+  }, [handleCloseMenu])
 
   const handleButtonPress = useCallback(
     (key: NavButtonKey) => {
@@ -704,7 +718,7 @@ export default function MobileDock() {
             ) : null}
             <div className="mt-[var(--drawer-top-gap)] flex-1 overflow-y-auto pb-[calc(var(--drawer-pad)*0.85)]">
               <div className="relative mb-3">
-                <div className="relative w-full rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+                <div className="relative w-full rounded-full border border-slate-200 bg-white shadow-sm transition focus-within:border-[var(--cc-primary)]">
                   <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                   <form action="/search" method="GET" autoComplete="off">
                     <input
@@ -715,14 +729,29 @@ export default function MobileDock() {
                       autoCapitalize="off"
                       spellCheck={false}
                       placeholder="Search"
-                      className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
+                      className="w-full rounded-full bg-white py-2.5 pl-11 pr-11 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
                       value={menuSearchQuery}
                       onChange={(event) => setMenuSearchQuery(event.target.value)}
                       onFocus={handleMenuSearchFocus}
                       onBlur={handleMenuSearchBlur}
                     />
                   </form>
-                  <SearchResults query={menuSearchQuery} open={menuSearchFocused && menuSearchQuery.trim().length >= 2} />
+                  {menuSearchQuery.length > 0 ? (
+                    <button
+                      type="button"
+                      aria-label="Clear search"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => setMenuSearchQuery('')}
+                    >
+                      <HiOutlineXMark className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                  <SearchResults
+                    query={menuSearchQuery}
+                    open={menuSearchFocused && menuSearchQuery.trim().length >= 2}
+                    onResultSelect={handleDrawerSearchResultSelect}
+                  />
                 </div>
               </div>
               {navGroups.map((group, index) => (

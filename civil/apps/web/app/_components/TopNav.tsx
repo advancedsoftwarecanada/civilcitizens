@@ -10,6 +10,7 @@ import {
   HiOutlineChatBubbleOvalLeft,
   HiOutlineMagnifyingGlass,
   HiOutlineShoppingCart,
+  HiOutlineXMark,
 } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
@@ -79,6 +80,7 @@ export default function TopNav() {
   const [friendActionState, setFriendActionState] = useState<FriendActionState | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const trimmedSearchQuery = searchQuery.trim()
   const showSearchResults = searchFocused && trimmedSearchQuery.length >= 2
   const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
@@ -471,6 +473,12 @@ export default function TopNav() {
     }, 150)
   }, [])
 
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('')
+    setSearchFocused(false)
+    searchInputRef.current?.focus()
+  }, [])
+
   const handleNotificationRequestAction = useCallback(
     async (notification: NotificationItem, action: 'accept' | 'reject', options?: { reciprocalRelationship?: string }) => {
       const token = getStoredToken()
@@ -589,10 +597,11 @@ export default function TopNav() {
 
         {showSearch ? (
           <div className="flex flex-1 justify-center px-2">
-            <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white/90 shadow-sm transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+            <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white shadow-sm transition focus-within:border-[var(--cc-primary)]">
               <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
               <form action="/search" method="GET" autoComplete="off">
                 <input
+                  ref={searchInputRef}
                   type="search"
                   name="q"
                   autoComplete="off"
@@ -600,13 +609,24 @@ export default function TopNav() {
                   autoCapitalize="off"
                   spellCheck={false}
                   placeholder="Search"
-                  className="w-full bg-transparent py-2.5 pl-11 pr-4 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
+                  className="w-full rounded-full bg-white py-2.5 pl-11 pr-11 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   onFocus={handleSearchFocus}
                   onBlur={handleSearchBlur}
                 />
               </form>
+              {searchQuery.length > 0 ? (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={handleClearSearch}
+                >
+                  <HiOutlineXMark className="h-4 w-4" />
+                </button>
+              ) : null}
               <SearchResults query={searchQuery} open={showSearchResults} />
             </div>
           </div>
