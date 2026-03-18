@@ -66,6 +66,41 @@ const makeFriends = async (
   expect(acceptRes.statusCode).toBe(200)
 }
 
+const makeFamily = async (
+  app: FastifyInstance,
+  requester: { token: string; id: string },
+  addressee: { token: string; id: string },
+  relationship: string,
+  reciprocalRelationship: string,
+) => {
+  const requestRes = await app.inject({
+    method: 'POST',
+    url: '/profile/family-requests',
+    headers: authHeader(requester.token),
+    payload: { userId: addressee.id, targetUserId: addressee.id, relationship },
+  })
+  expect(requestRes.statusCode).toBe(201)
+
+  const notification = await prisma.notification.findFirst({
+    where: {
+      userId: addressee.id,
+      actorId: requester.id,
+      type: 'profile_family_invite',
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  })
+  expect(notification?.id).toBeTruthy()
+
+  const acceptRes = await app.inject({
+    method: 'POST',
+    url: `/notifications/${notification!.id}/respond`,
+    headers: authHeader(addressee.token),
+    payload: { action: 'accept', reciprocalRelationship },
+  })
+  expect(acceptRes.statusCode).toBe(200)
+}
+
 let app: FastifyInstance
 
 beforeAll(async () => {
@@ -196,6 +231,24 @@ describe('direct messaging flow', () => {
     const getCallPayload = getCallRes.json() as { call?: { id?: string } | null }
     expect(getCallPayload.call?.id).toBe(groupCallPayload.call?.id)
 
+
+  test('accepted profile family relationships can open direct threads', async () => {
+    const userA = await registerUser(app, 'Andre', 'Normore')
+    const userB = await registerUser(app, 'Taylor', 'Normore')
+
+    await makeFamily(app, userA, userB, 'wife', 'husband')
+
+    const dmRes = await app.inject({
+      method: 'POST',
+      url: '/messages/threads/direct',
+      headers: authHeader(userA.token),
+      payload: { userId: userB.id },
+    })
+
+    expect(dmRes.statusCode).toBe(200)
+    const dmPayload = dmRes.json() as { thread?: { id?: string } }
+    expect(dmPayload.thread?.id).toBeTruthy()
+  })
     const endCallRes = await app.inject({
       method: 'POST',
       url: `/messages/calls/${groupCallPayload.call?.id}/end`,

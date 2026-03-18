@@ -5579,6 +5579,7 @@ registerMessagesCoreRoutes(app, {
   isThreadMuted,
   isUserRealtimeOnline,
   issueMeetingRtcSession,
+  loadAcceptedProfileFamilyRelationshipIds,
   loadCallableMessageThreadForUser,
   loadFriendIdSet,
   loadLiveThreadCall,

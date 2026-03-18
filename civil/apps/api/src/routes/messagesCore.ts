@@ -164,11 +164,16 @@ export function registerMessagesCoreRoutes(app: FastifyInstance, deps: MessageCo
       const targetExists = await prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true } })
       if (!targetExists) return reply.code(404).send({ error: 'user_not_found' })
 
-      const [friendStatus, connectionStatus, familyStatus] = await Promise.all([
+      const [friendStatus, connectionStatus, acceptedProfileFamilyRelationshipIds, familyAudienceStatus] = await Promise.all([
         deps.usersAreFriends(userId, targetUserId),
         deps.usersAreAcceptedConnections(userId, targetUserId),
+        deps.loadAcceptedProfileFamilyRelationshipIds(userId),
         deps.canViewerAccessFamilyAudiencePost({ viewerId: userId, authorId: targetUserId }),
       ])
+      const familyStatus =
+        Array.isArray(acceptedProfileFamilyRelationshipIds) && acceptedProfileFamilyRelationshipIds.includes(targetUserId)
+          ? true
+          : Boolean(familyAudienceStatus)
       if (!friendStatus && !connectionStatus && !familyStatus) return reply.code(403).send({ error: 'not_friends' })
 
       const existingFamilyThread =
