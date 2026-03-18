@@ -67,6 +67,7 @@ const FAMILY_NAV_BUTTONS: Array<{
 ] as const
 
 const DRAWER_TRANSITION_MS = 320
+const MOBILE_MORE_DRAWER_CLOSE_EVENT = 'civil:mobile-more-close'
 
 type NavButtonKey = (typeof DEFAULT_NAV_BUTTONS)[number]['key']
 
@@ -411,6 +412,16 @@ export default function MobileDock() {
     window.addEventListener('civil-ai:state', handleCivilAiState)
     return () => window.removeEventListener('civil-ai:state', handleCivilAiState)
   }, [])
+
+  useEffect(() => {
+    const handleCloseMoreEvent = () => {
+      if (!moreMountedRef.current) return
+      handleCloseMore()
+    }
+
+    window.addEventListener(MOBILE_MORE_DRAWER_CLOSE_EVENT, handleCloseMoreEvent)
+    return () => window.removeEventListener(MOBILE_MORE_DRAWER_CLOSE_EVENT, handleCloseMoreEvent)
+  }, [handleCloseMore])
 
   const handleMenuSearchFocus = useCallback(() => {
     if (menuSearchBlurTimeoutRef.current) {
