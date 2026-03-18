@@ -38,6 +38,7 @@ import {
 
 const THREAD_PAGE_LIMIT = 20
 const MESSAGE_PAGE_LIMIT = 20
+const MOBILE_THREAD_COMPOSER_LIFT_PX = 12
 
 function isFamilyConversationThreadId(threadId: string) {
   return threadId.startsWith('family-parent-') || threadId.startsWith('family-member-')
@@ -656,6 +657,7 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
 
   const activeThreadTitle = activeThread ? getThreadTitle({ ...activeThread, lastMessage: null } as ThreadSummary) : ''
   const activeThreadPrimaryUser = activeThread?.participants.find((participant) => !participant.isViewer)?.user ?? null
+  const activeThreadProfileHref = activeThreadPrimaryUser?.handle ? `/u/${encodeURIComponent(activeThreadPrimaryUser.handle)}` : null
 
   const rightRail = (
     <div className="space-y-4">
@@ -837,24 +839,45 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
                   <div className="flex h-full flex-col gap-4">
                     <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.4rem] border border-slate-200 bg-white px-4 py-3 shadow-sm">
                       <div className="flex min-w-0 items-center gap-3">
-                        <VerifiedAvatar
-                          src={activeThreadPrimaryUser?.avatarUrl ?? buildFamilyAvatarDataUrl(activeThreadTitle, familySession?.modeBand ?? 'JUNIOR')}
-                          alt={activeThreadTitle}
-                          initials={activeThreadTitle}
-                          size={48}
-                          isVerified={Boolean(activeThreadPrimaryUser?.isVerified)}
-                          isBusiness={Boolean(activeThreadPrimaryUser?.isPremium)}
-                        />
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">{activeThreadTitle}</p>
-                          <p className="truncate text-xs text-slate-500">
-                            {activeThread.type === 'group'
-                              ? `${activeThread.participants.length} participants`
-                              : activeThreadPrimaryUser?.handle
-                                ? `@${activeThreadPrimaryUser.handle}`
-                                : 'Direct conversation'}
-                          </p>
-                        </div>
+                        {activeThread.type === 'group' || !activeThreadProfileHref ? (
+                          <>
+                            <VerifiedAvatar
+                              src={activeThreadPrimaryUser?.avatarUrl ?? buildFamilyAvatarDataUrl(activeThreadTitle, familySession?.modeBand ?? 'JUNIOR')}
+                              alt={activeThreadTitle}
+                              initials={activeThreadTitle}
+                              size={48}
+                              isVerified={Boolean(activeThreadPrimaryUser?.isVerified)}
+                              isBusiness={Boolean(activeThreadPrimaryUser?.isPremium)}
+                            />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-900">{activeThreadTitle}</p>
+                              <p className="truncate text-xs text-slate-500">
+                                {activeThread.type === 'group'
+                                  ? `${activeThread.participants.length} participants`
+                                  : activeThreadPrimaryUser?.handle
+                                    ? `@${activeThreadPrimaryUser.handle}`
+                                    : 'Direct conversation'}
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <Link href={activeThreadProfileHref} className="flex min-w-0 items-center gap-3 rounded-full transition hover:opacity-80">
+                            <VerifiedAvatar
+                              src={activeThreadPrimaryUser?.avatarUrl ?? buildFamilyAvatarDataUrl(activeThreadTitle, familySession?.modeBand ?? 'JUNIOR')}
+                              alt={activeThreadTitle}
+                              initials={activeThreadTitle}
+                              size={48}
+                              isVerified={Boolean(activeThreadPrimaryUser?.isVerified)}
+                              isBusiness={Boolean(activeThreadPrimaryUser?.isPremium)}
+                            />
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-slate-900">{activeThreadTitle}</p>
+                              <p className="truncate text-xs text-slate-500">
+                                {activeThreadPrimaryUser?.handle ? `@${activeThreadPrimaryUser.handle}` : 'Direct conversation'}
+                              </p>
+                            </div>
+                          </Link>
+                        )}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -1985,7 +2008,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     [filteredOrderedThreads, selectedThreadId],
   )
   const isFamilyParentThreadSelected = Boolean(familyParentThreadId && selectedThreadId === familyParentThreadId)
-  const hideGlobalMobileDockInThread = isMobileViewport && Boolean(activeThread)
 
   const syncMobileThreadLayout = useCallback(() => {
     if (typeof window === 'undefined') return
@@ -2020,19 +2042,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       return prev === next ? prev : next
     })
   }, [activeThread, isMobileViewport])
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    const root = document.documentElement
-    if (hideGlobalMobileDockInThread) {
-      root.classList.add('cc-messages-thread-context')
-    } else {
-      root.classList.remove('cc-messages-thread-context')
-    }
-    return () => {
-      root.classList.remove('cc-messages-thread-context')
-    }
-  }, [hideGlobalMobileDockInThread])
 
   useEffect(() => {
     syncMobileThreadLayout()
@@ -3034,7 +3043,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               })}
             </div>
           ) : otherUser ? (
-            <Link href={`/u/${otherUser.handle}`} className="shrink-0">
+            <Link href={activeThreadProfileHref ?? `/u/${encodeURIComponent(otherUser.handle)}`} className="shrink-0 transition hover:opacity-80">
               <VerifiedAvatar
                 src={otherUser.avatarUrl}
                 alt={title}
@@ -3049,13 +3058,23 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               <VerifiedAvatar src={null} alt={title} initials={title} size={40} />
             </div>
           )}
-          <div className="flex-1 min-w-0">
-            <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
-            <p className="text-xs text-slate-500">
-              {activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}
-              {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
-            </p>
-          </div>
+          {isActiveGroupThread || !activeThreadProfileHref ? (
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
+              <p className="text-xs text-slate-500">
+                {activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}
+                {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
+              </p>
+            </div>
+          ) : (
+            <Link href={activeThreadProfileHref} className="min-w-0 flex-1 rounded-2xl transition hover:opacity-80">
+              <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
+              <p className="text-xs text-slate-500">
+                Direct message
+                {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
+              </p>
+            </Link>
+          )}
           {activeThreadSupportsCalling ? (
             <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               {activeThreadCall ? (
@@ -3295,9 +3314,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                 ref={mobileComposerShellRef}
                 className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] xl:hidden"
                 style={{
-                  bottom: hideGlobalMobileDockInThread
-                    ? `calc(var(--mobile-dock-bottom-offset) + ${composerKeyboardOffset}px)`
-                    : `calc(var(--mobile-dock-clearance) + ${composerKeyboardOffset}px)`,
+                  bottom: `calc(var(--mobile-dock-clearance) + ${MOBILE_THREAD_COMPOSER_LIFT_PX}px + ${composerKeyboardOffset}px)`,
                 }}
               >
                 {composerNode}
@@ -3419,9 +3436,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     </div>
   )
 
-  const keyboardAwareViewportClass = hideGlobalMobileDockInThread
-    ? 'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap))] pb-2 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
-    : 'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
+  const keyboardAwareViewportClass =
+    'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
 
   return (
     <DashboardShell

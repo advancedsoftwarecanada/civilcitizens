@@ -588,12 +588,3 @@ html.cc-launch-pending #cc-app-root {
   }
 }
 
-@media (max-width: 1023px) {
-  html.cc-messages-thread-context [data-mobile-dock='true'] {
-    display: none !important;
-  }
-
-  html.cc-messages-thread-context [data-app-frame='true'] {
-    padding-bottom: 0 !important;
-  }
-}
