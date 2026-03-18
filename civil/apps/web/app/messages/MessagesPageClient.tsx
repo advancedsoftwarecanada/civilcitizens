@@ -38,8 +38,7 @@ import {
 
 const THREAD_PAGE_LIMIT = 20
 const MESSAGE_PAGE_LIMIT = 20
-const MOBILE_THREAD_COMPOSER_LIFT_PX = 12
-const MOBILE_THREAD_COMPOSER_GAP_PX = 12
+const MOBILE_MORE_DRAWER_CLOSE_EVENT = 'civil:mobile-more-close'
 
 function isFamilyConversationThreadId(threadId: string) {
   return threadId.startsWith('family-parent-') || threadId.startsWith('family-member-')
@@ -2029,8 +2028,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const panelRect = panel.getBoundingClientRect()
     const headerRect = header.getBoundingClientRect()
     const composerRect = mobileComposerShellRef.current?.getBoundingClientRect() ?? null
-    const listBottom = composerRect ? composerRect.top : viewportBottom - MOBILE_THREAD_COMPOSER_GAP_PX
-    const visiblePanelHeight = Math.max(260, Math.floor(listBottom - panelRect.top - MOBILE_THREAD_COMPOSER_GAP_PX))
+    const listBottom = composerRect ? composerRect.top : viewportBottom
+    const visiblePanelHeight = Math.max(260, Math.floor(listBottom - panelRect.top))
     const availableListHeight = Math.max(140, Math.floor(listBottom - headerRect.bottom - 16))
 
     setMobileThreadPanelHeight((prev) => {
@@ -2299,6 +2298,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
 
   const handleThreadSelect = useCallback(
     (threadId: string) => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(MOBILE_MORE_DRAWER_CLOSE_EVENT))
+      }
       failedThreadDetailRef.current.delete(threadId)
       shownThreadDetailErrorRef.current.delete(threadId)
       forceBottomScrollThreadRef.current = threadId
@@ -2558,6 +2560,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         }
 
         upsertThread(payload.thread)
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(MOBILE_MORE_DRAWER_CLOSE_EVENT))
+        }
         setSelectedThreadId(payload.thread.id)
         writeStoredMessagesNavSection('family')
       } catch (error) {
@@ -2821,9 +2826,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
     const composerKeyboardOffset = Math.max(0, Math.round(mobileKeyboardInset))
-    const mobileComposerBottomSpacer = showMobileDockComposer
-      ? `calc(var(--mobile-thread-composer-height) + ${MOBILE_THREAD_COMPOSER_LIFT_PX}px + ${MOBILE_THREAD_COMPOSER_GAP_PX}px)`
-      : undefined
+    const mobileComposerBottomSpacer = showMobileDockComposer ? 'var(--mobile-thread-composer-height)' : undefined
 
     const sendActiveThreadMessage = () => {
       if (activeThread) {
@@ -3330,7 +3333,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                 ref={mobileComposerShellRef}
                 className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] xl:hidden"
                 style={{
-                  bottom: `calc(var(--mobile-dock-clearance) + ${MOBILE_THREAD_COMPOSER_LIFT_PX}px + ${composerKeyboardOffset}px)`,
+                  bottom: `calc(var(--mobile-dock-clearance) + ${composerKeyboardOffset}px)`,
                 }}
               >
                 {composerNode}
@@ -3342,51 +3345,15 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     )
   }
 
-  const contextActions = useMemo(() => {
-    if (isFamilySession) {
-      return {
-        messagesHref: '/messages?inbox=friends',
-        messagesLabel: 'Friend Messages',
-        directoryHref: '/friends',
-        directoryLabel: 'My Friends',
-        contextLabel: 'Friends Inbox',
-      }
-    }
-    if (activeInboxSection === 'family') {
-      return {
-        messagesHref: '/messages?inbox=family',
-        messagesLabel: 'Family Messages',
-        directoryHref: '/family',
-        directoryLabel: 'Family',
-        contextLabel: 'Family Inbox',
-      }
-    }
-    if (activeInboxSection === 'network') {
-      return {
-        messagesHref: '/messages?inbox=network',
-        messagesLabel: 'Network Messages',
-        directoryHref: me?.handle ? `/u/${encodeURIComponent(me.handle)}/connections` : '/network/professionals',
-        directoryLabel: 'All Connections',
-        contextLabel: 'Network Inbox',
-      }
-    }
-    if (activeInboxSection === 'groups') {
-      return {
-        messagesHref: '/messages?inbox=groups',
-        messagesLabel: 'Group Messages',
-        directoryHref: '/messages/groups',
-        directoryLabel: 'All Group Chats',
-        contextLabel: 'Groups Inbox',
-      }
-    }
-    return {
-      messagesHref: '/messages?inbox=friends',
-      messagesLabel: 'Friend Messages',
-      directoryHref: me?.handle ? `/u/${encodeURIComponent(me.handle)}/friends` : '/friends',
-      directoryLabel: 'All Friends',
-      contextLabel: 'Friends Inbox',
-    }
-  }, [activeInboxSection, isFamilySession, me?.handle])
+  const activeContextLabel = isFamilySession
+    ? 'Friends Inbox'
+    : activeInboxSection === 'family'
+      ? 'Family Inbox'
+      : activeInboxSection === 'network'
+        ? 'Network Inbox'
+        : activeInboxSection === 'groups'
+          ? 'Groups Inbox'
+          : 'Friends Inbox'
   const activeContextUnreadCount = activeInboxSection === 'family'
     ? messagesNavUnreadCounts.family
     : activeInboxSection === 'network'
@@ -3421,26 +3388,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           footerAction={!isFamilySession && me?.handle ? { label: 'My Contacts', href: contactsHref } : undefined}
           className="border border-slate-200/90 bg-slate-50/70"
         />
-        <div className="grid grid-cols-2 gap-2">
-          <Link
-            href={contextActions.messagesHref}
-            onClick={() => writeStoredMessagesNavSection(activeInboxSection)}
-            className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:brightness-95"
-          >
-            {contextActions.messagesLabel}
-          </Link>
-          <Link
-            href={contextActions.directoryHref}
-            onClick={() => writeStoredMessagesNavSection(activeInboxSection)}
-            className="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-          >
-            {contextActions.directoryLabel}
-          </Link>
-        </div>
       </div>
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
         <div className="mb-2 flex items-center justify-between px-1">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{contextActions.contextLabel}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{activeContextLabel}</p>
           <p className="text-[11px] text-slate-400">
             {activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'} · {filteredOrderedThreads.length}{' '}
             {filteredOrderedThreads.length === 1 ? 'thread' : 'threads'}
