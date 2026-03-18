@@ -29,6 +29,7 @@ COPY --from=build /app/node_modules ../../node_modules
 COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/packages ../../packages
 COPY --from=build /app/apps/api/package.json ./package.json
+COPY apps/web/public/datasets ../../apps/web/public/datasets
 EXPOSE 3000
 # Add a resilient entrypoint that tries dist/index.js then dist/src/index.js
 COPY apps/api/entrypoint.sh ./entrypoint.sh
