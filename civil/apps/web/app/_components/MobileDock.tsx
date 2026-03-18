@@ -808,7 +808,7 @@ export default function MobileDock() {
       ) : null}
 
       {moreMounted ? (
-        <div className="fixed inset-0 z-50 xl:hidden" aria-modal="true" role="dialog">
+        <div className="fixed inset-0 z-[95] xl:hidden" aria-modal="true" role="dialog">
           <button
             type="button"
             aria-label="Close more panel"
