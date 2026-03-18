@@ -74,10 +74,24 @@ const ACTIVE_NAV_LOOKAHEAD_DISTANCE_METERS = 18
 const ACTIVE_NAV_BEARING_BLEND_FACTOR = 0.52
 const ACTIVE_NAV_FOLLOW_DURATION_MS = 220
 const LIVE_MARKER_ANIMATION_MS = 900
+const ROUTE_LINE_PULSE_DURATION_MS = 2200
+const ROUTE_LINE_BASE_RGB = { red: 37, green: 99, blue: 235 }
+const ROUTE_LINE_PULSE_RGB = { red: 96, green: 165, blue: 250 }
 
 function normalizeHeading(value: number) {
   const normalized = value % 360
   return normalized < 0 ? normalized + 360 : normalized
+}
+
+function interpolateChannel(start: number, end: number, progress: number) {
+  return Math.round(start + (end - start) * progress)
+}
+
+function resolveRouteLineColor(progress: number) {
+  const red = interpolateChannel(ROUTE_LINE_BASE_RGB.red, ROUTE_LINE_PULSE_RGB.red, progress)
+  const green = interpolateChannel(ROUTE_LINE_BASE_RGB.green, ROUTE_LINE_PULSE_RGB.green, progress)
+  const blue = interpolateChannel(ROUTE_LINE_BASE_RGB.blue, ROUTE_LINE_PULSE_RGB.blue, progress)
+  return `rgb(${red}, ${green}, ${blue})`
 }
 
 function readHeadingFromOrientationEvent(event: Event) {
@@ -295,6 +309,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   const noticeTimeoutRef = useRef<number | null>(null)
   const liveMarkerRef = useRef<any>(null)
   const liveMarkerAnimationRef = useRef<number | null>(null)
+  const routeLinePulseAnimationRef = useRef<number | null>(null)
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null)
   const navStatusRef = useRef<'idle' | 'starting' | 'active'>('idle')
   const routeOverviewActiveRef = useRef(false)
@@ -768,10 +783,9 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
             'line-join': 'round',
           },
           paint: {
-            'line-color': '#16a34a',
-            'line-width': 5,
-            'line-opacity': 0.92,
-            'line-dasharray': [2, 2],
+            'line-color': '#2563eb',
+            'line-width': 6,
+            'line-opacity': 0.96,
           },
         })
 
@@ -793,6 +807,10 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         window.cancelAnimationFrame(liveMarkerAnimationRef.current)
         liveMarkerAnimationRef.current = null
       }
+      if (routeLinePulseAnimationRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(routeLinePulseAnimationRef.current)
+        routeLinePulseAnimationRef.current = null
+      }
       liveMarkerRef.current?.remove?.()
       liveMarkerRef.current = null
       mapRef.current?.remove?.()
@@ -800,6 +818,32 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       mapLibreRef.current = null
     }
   }, [clearNavigationNotice, releaseWakeLock, stopWatcher])
+
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || typeof window === 'undefined') return undefined
+
+    const map = mapRef.current
+    let cancelled = false
+
+    const animateRouteLine = (timestamp: number) => {
+      if (cancelled) return
+
+      const cycleProgress = (Math.sin((timestamp / ROUTE_LINE_PULSE_DURATION_MS) * Math.PI * 2) + 1) / 2
+      map.setPaintProperty?.('address-route-line', 'line-color', resolveRouteLineColor(cycleProgress))
+      map.setPaintProperty?.('address-route-line', 'line-opacity', 0.88 + cycleProgress * 0.12)
+      routeLinePulseAnimationRef.current = window.requestAnimationFrame(animateRouteLine)
+    }
+
+    routeLinePulseAnimationRef.current = window.requestAnimationFrame(animateRouteLine)
+
+    return () => {
+      cancelled = true
+      if (routeLinePulseAnimationRef.current !== null) {
+        window.cancelAnimationFrame(routeLinePulseAnimationRef.current)
+        routeLinePulseAnimationRef.current = null
+      }
+    }
+  }, [mapReady])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
@@ -962,8 +1006,6 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       type: 'FeatureCollection',
       features: routeFeature,
     })
-
-    map.setPaintProperty('address-route-line', 'line-dasharray', navStatus === 'active' || navStatus === 'starting' ? [1, 0] : [2, 2])
 
     const mapLibre = mapLibreRef.current
     if (!mapLibre) return

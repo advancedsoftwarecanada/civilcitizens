@@ -33,7 +33,7 @@ import {
 } from './notifications/notificationEvents'
 import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from './notifications/notificationStream'
 import { pushNotificationToast, pushToast } from './useToasts'
-import { SearchResults } from './search/SearchResults'
+import { SearchResults, type SearchResultsLoadingState } from './search/SearchResults'
 const MAX_VISIBLE_NOTIFICATIONS = 7
 
 const NOTIFICATION_TOAST_DEDUPE_WINDOW_MS = 5000
@@ -80,6 +80,7 @@ export default function TopNav() {
   const [friendActionState, setFriendActionState] = useState<FriendActionState | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
+  const [searchLoadingState, setSearchLoadingState] = useState<SearchResultsLoadingState>({ active: false, label: 'Searching Civil' })
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const trimmedSearchQuery = searchQuery.trim()
   const showSearchResults = searchFocused && trimmedSearchQuery.length >= 2
@@ -489,12 +490,8 @@ export default function TopNav() {
     searchInputRef.current?.focus()
   }, [])
 
-  const collapseSearch = useCallback(() => {
-    if (searchBlurTimeout.current) {
-      clearTimeout(searchBlurTimeout.current)
-      searchBlurTimeout.current = null
-    }
-    setSearchFocused(false)
+  const handleSearchLoadingStateChange = useCallback((state: SearchResultsLoadingState) => {
+    setSearchLoadingState(state)
   }, [])
 
   const handleNotificationRequestAction = useCallback(
@@ -617,7 +614,11 @@ export default function TopNav() {
         {showSearch ? (
           <div className="flex flex-1 justify-center px-2">
             <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white shadow-sm transition focus-within:border-[var(--cc-primary)]">
-              <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              {searchLoadingState.active ? (
+                <span className="pointer-events-none absolute left-4 top-1/2 inline-flex h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--cc-primary)]" aria-hidden="true" />
+              ) : (
+                <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+              )}
               <form action="/search" method="GET" autoComplete="off">
                 <input
                   ref={searchInputRef}
@@ -635,6 +636,11 @@ export default function TopNav() {
                   onBlur={handleSearchBlur}
                 />
               </form>
+              {searchLoadingState.active ? (
+                <div className="pointer-events-none absolute inset-x-12 bottom-[-1.35rem] hidden truncate px-2 text-center text-[11px] font-medium text-slate-500 lg:block">
+                  {searchLoadingState.label}
+                </div>
+              ) : null}
               {searchQuery.length > 0 ? (
                 <button
                   type="button"
@@ -646,7 +652,12 @@ export default function TopNav() {
                   <HiOutlineXMark className="h-4 w-4" />
                 </button>
               ) : null}
-              <SearchResults query={searchQuery} open={showSearchResults} onResultSelect={collapseSearch} />
+              <SearchResults
+                query={searchQuery}
+                open={showSearchResults}
+                onResultSelect={collapseSearch}
+                onLoadingStateChange={handleSearchLoadingStateChange}
+              />
             </div>
           </div>
         ) : (

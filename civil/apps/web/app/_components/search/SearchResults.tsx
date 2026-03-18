@@ -50,11 +50,25 @@ const MARKET_LIMIT = 2
 const POST_LIMIT = 2
 const ADDRESS_FETCH_LIMIT = 8
 const ADDRESS_DISTANCE_LIMIT_KM = 1000
+const GENERAL_SEARCH_STEPS = [
+  'Searching people',
+  'Searching communities',
+  'Searching organizations',
+  'Searching events',
+  'Searching market',
+  'Searching posts',
+] as const
 
 type SearchResultsProps = {
   query: string
   open: boolean
   onResultSelect?: () => void
+  onLoadingStateChange?: (state: SearchResultsLoadingState) => void
+}
+
+export type SearchResultsLoadingState = {
+  active: boolean
+  label: string
 }
 
 type SearchAnchor = {
@@ -97,7 +111,7 @@ function formatDistanceBadge(distanceKm: number) {
   return `${Math.round(distanceKm)} km`
 }
 
-export function SearchResults({ query, open, onResultSelect }: SearchResultsProps) {
+export function SearchResults({ query, open, onResultSelect, onLoadingStateChange }: SearchResultsProps) {
   const trimmedQuery = query.trim()
   const [peopleResults, setPeopleResults] = useState<UserSearchResult[]>([])
   const [communityResults, setCommunityResults] = useState<CommunitySearchResult[]>([])
@@ -109,6 +123,7 @@ export function SearchResults({ query, open, onResultSelect }: SearchResultsProp
   const [addressSearchAnchor, setAddressSearchAnchor] = useState<SearchAnchor | null>(null)
   const [loading, setLoading] = useState(false)
   const [addressLoading, setAddressLoading] = useState(false)
+  const [loadingStepIndex, setLoadingStepIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const addressAbortRef = useRef<AbortController | null>(null)
@@ -331,6 +346,14 @@ export function SearchResults({ query, open, onResultSelect }: SearchResultsProp
       .slice(0, 4)
   }, [addressResults, addressSearchAnchor]) satisfies VisibleAddressResult[]
 
+  const anyLoading = loading || addressLoading
+  const loadingSteps = useMemo(() => {
+    const steps = isUsableAddressQuery(trimmedQuery)
+      ? ['Searching addresses', ...GENERAL_SEARCH_STEPS]
+      : [...GENERAL_SEARCH_STEPS]
+    return steps
+  }, [trimmedQuery])
+
   const showPanel = open && trimmedQuery.length >= MIN_QUERY_LENGTH
   const hasAnyResults =
     peopleResults.length > 0 ||
@@ -354,6 +377,32 @@ export function SearchResults({ query, open, onResultSelect }: SearchResultsProp
     [trimmedQuery],
   )
 
+  useEffect(() => {
+    if (!anyLoading) {
+      setLoadingStepIndex(0)
+      return undefined
+    }
+
+    setLoadingStepIndex(0)
+    const interval = window.setInterval(() => {
+      setLoadingStepIndex((current) => {
+        if (loadingSteps.length <= 1) return current
+        return (current + 1) % loadingSteps.length
+      })
+    }, 950)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [anyLoading, loadingSteps])
+
+  const loadingLabel = loadingSteps[Math.min(loadingStepIndex, Math.max(loadingSteps.length - 1, 0))] ?? 'Searching Civil'
+
+  useEffect(() => {
+    if (!onLoadingStateChange) return
+    onLoadingStateChange({ active: showPanel && anyLoading, label: loadingLabel })
+  }, [anyLoading, loadingLabel, onLoadingStateChange, showPanel])
+
   if (!showPanel) return null
 
   const renderHomeCommunity = (home: UserSearchResult['homeCommunity']) => {
@@ -368,10 +417,20 @@ export function SearchResults({ query, open, onResultSelect }: SearchResultsProp
       className="absolute left-0 top-[calc(100%+0.5rem)] z-40 w-full min-w-[18rem] rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-2xl shadow-slate-900/12"
       onMouseDown={(event) => event.preventDefault()}
     >
+      {anyLoading ? (
+        <div className="mb-3 flex items-center gap-3 rounded-2xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm text-sky-900">
+          <span className="inline-flex h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-sky-200 border-t-sky-600" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="font-semibold leading-5">{loadingLabel}</p>
+            <p className="text-xs text-sky-700/80">Civil is still fetching matches for "{trimmedQuery}".</p>
+          </div>
+        </div>
+      ) : null}
+
       {error ? (
         <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
-      ) : (loading || addressLoading) && !hasAnyResults ? (
-        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Searching…</div>
+      ) : anyLoading && !hasAnyResults ? (
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Still working on this search…</div>
       ) : !hasAnyResults && !addressLoading ? (
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil matches yet.</div>
       ) : (
