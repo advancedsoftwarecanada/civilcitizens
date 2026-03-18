@@ -8899,7 +8899,7 @@ const MarketDeliveryOptionsSchema = z
 
 const MarketListingUpdateBody = z.object({
   title: z.string().trim().min(1).max(140).optional(),
-  description: z.string().trim().max(4000).optional().nullable(),
+  description: z.string().trim().max(50000).optional().nullable(),
   priceCents: z.coerce.number().int().min(0).max(500000000).optional(),
   currency: z.string().trim().min(3).max(3).optional(),
   photoUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
@@ -8917,6 +8917,12 @@ const MarketListingUpdateBody = z.object({
   isDraft: z.boolean().optional(),
   status: z.enum(['draft', 'active', 'pending_sale', 'sold', 'canceled']).optional(),
 })
+
+const MarketListingRemoveBody = z
+  .object({
+    resolution: z.enum(['deleted', 'sold']).optional().default('deleted'),
+  })
+  .strict()
 
 const ModerationReportReasonValues = [
   'spam_or_scam',
@@ -9505,10 +9511,16 @@ registerMarketStorefrontRoutes(app, {
 
 registerMarketListingRoutes(app, {
   MarketListingParams,
+  MarketListingRemoveBody,
   MarketListingsQuery,
   MarketListingUpdateBody,
+  MESSAGE_SELECT,
+  MARKET_LISTING_CHAT_CONTEXT_TYPE,
+  THREAD_SUMMARY_INCLUDE,
+  dispatchRealtimeEvent,
   enqueueContentAiScanForMarketListing,
   ensureCitizenMarketplaceTables,
+  formatMessage,
   isVisibleModerationStatus,
   loadViewerBlockState,
   moderationLockedErrorCode,
@@ -9517,8 +9529,10 @@ registerMarketListingRoutes(app, {
   readGalleryUrls,
   readStringList,
   readViewerCommunityFollows,
+  normalizeRichTextHtml,
   resolveUserId,
-  sanitizePlainText,
+  sendMobilePushForMessageCreated,
+  stripHtmlToPlainText,
   withSchemaGuard,
 })
 

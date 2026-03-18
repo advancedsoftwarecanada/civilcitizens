@@ -318,6 +318,79 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
     }),
   )
 
+  app.get('/market/chats/:threadId/context', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.MarketChatThreadParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const thread = await prisma.messageThread.findFirst({
+        where: {
+          id: params.data.threadId,
+          contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+          participants: { some: { userId } },
+        },
+        select: { id: true, contextId: true },
+      })
+      if (!thread?.contextId) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+      const listingRows = await prisma.$queryRaw<Array<{
+        id: string
+        title: string
+        status: string
+        price_cents: number
+        currency: string
+        photo_urls: unknown
+        pickup_city: string | null
+        pickup_province: string | null
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+      }>>`
+        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, seller_user_id, selected_buyer_user_id
+        FROM citizen_market_listing
+        WHERE id = ${thread.contextId}
+        LIMIT 1
+      `
+
+      const listing = listingRows[0]
+      if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
+
+      const selectedBuyerUserId = listing.selected_buyer_user_id
+      let selectedThreadId: string | null = null
+      if (selectedBuyerUserId) {
+        const selectedThread = await prisma.messageThread.findFirst({
+          where: {
+            contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+            contextId: listing.id,
+            participants: { some: { userId: selectedBuyerUserId } },
+          },
+          select: { id: true },
+        })
+        selectedThreadId = selectedThread?.id ?? null
+      }
+
+      return reply.send({
+        listing: {
+          id: listing.id,
+          title: listing.title,
+          status: listing.status,
+          priceCents: Number(listing.price_cents) || 0,
+          currency: listing.currency,
+          photoUrl: deps.readGalleryUrls(listing.photo_urls)[0] ?? null,
+          pickupCity: listing.pickup_city,
+          pickupProvince: listing.pickup_province,
+        },
+        viewerIsSeller: listing.seller_user_id === userId,
+        selectedBuyerUserId,
+        selectedThreadId,
+      })
+    }),
+  )
+
   app.post('/market/chats/:threadId/no-longer-interested', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined

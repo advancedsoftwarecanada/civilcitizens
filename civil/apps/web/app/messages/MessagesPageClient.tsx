@@ -25,7 +25,6 @@ import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { MarketChatsOverview } from '../market/chats/MarketChatsPageClient'
 import {
   HiOutlineArrowPath,
   HiOutlinePaperAirplane,
@@ -143,6 +142,65 @@ type ThreadDetailResponse = {
   nextCursor?: string
 }
 
+type MarketListingHeaderSummary = {
+  id: string
+  title: string
+  status: string
+  priceCents: number
+  currency: string
+  photoUrl: string | null
+  pickupCity?: string | null
+  pickupProvince?: string | null
+}
+
+type MarketThreadContext = {
+  listing: MarketListingHeaderSummary
+  viewerIsSeller: boolean
+  selectedBuyerUserId: string | null
+  selectedThreadId: string | null
+}
+
+type MarketInboxCounterpart = {
+  id: string
+  handle: string
+  name: string | null
+  avatarUrl: string | null
+  coverUrl?: string | null
+}
+
+type MarketInboxItem = {
+  threadId: string
+  listingId: string
+  listingTitle: string
+  listingStatus: string
+  listingPriceCents: number
+  listingCurrency: string
+  listingPhotoUrl: string | null
+  listingPickupCity?: string | null
+  listingPickupProvince?: string | null
+  seller?: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+    coverUrl?: string | null
+  } | null
+  counterpart?: MarketInboxCounterpart | null
+  lastMessageAt: string
+  lastMessage?: {
+    body: string | null
+    senderId: string
+    isMine: boolean
+  } | null
+}
+
+type MarketInboxResponse = {
+  yourListingChats?: MarketInboxItem[]
+  activeItems?: MarketInboxItem[]
+  inactiveItems?: MarketInboxItem[]
+  soldItems?: MarketInboxItem[]
+}
+
 type MessageListResponse = {
   items: MessagePayload[]
   nextCursor?: string
@@ -255,6 +313,28 @@ const formatTimestamp = (value?: string | null) => {
     return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: 'numeric' })
   }
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function formatMoney(cents: number, currency: string) {
+  try {
+    return new Intl.NumberFormat('en-CA', { style: 'currency', currency: (currency || 'CAD').toUpperCase() }).format((cents || 0) / 100)
+  } catch {
+    return `${(cents || 0) / 100}`
+  }
+}
+
+function formatPickupLocation(city?: string | null, province?: string | null) {
+  const parts = [city?.trim(), province?.trim()].filter(Boolean)
+  return parts.length ? parts.join(', ') : 'Location unavailable'
+}
+
+function formatMarketListingStatus(status?: string | null) {
+  const normalized = (status || '').trim().toLowerCase()
+  if (!normalized) return 'Active'
+  if (normalized === 'pending') return 'Pending pickup/delivery'
+  if (normalized === 'sold') return 'Sold'
+  if (normalized === 'canceled') return 'Canceled'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1).replace(/_/g, ' ')
 }
 
 const getThreadTitle = (thread: ThreadSummary) => {
@@ -1136,6 +1216,18 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [familyProfileContacts, setFamilyProfileContacts] = useState<FamilyProfileListItem[]>([])
   const [startingFamilyThreadUserId, setStartingFamilyThreadUserId] = useState<string | null>(null)
   const [marketUnreadCount, setMarketUnreadCount] = useState(0)
+  const [marketInboxItemsByThreadId, setMarketInboxItemsByThreadId] = useState<Record<string, MarketInboxItem>>({})
+  const [marketInboxLoading, setMarketInboxLoading] = useState(false)
+  const [marketInboxError, setMarketInboxError] = useState<string | null>(null)
+  const [marketThreadContext, setMarketThreadContext] = useState<MarketThreadContext | null>(null)
+  const [marketThreadContextLoading, setMarketThreadContextLoading] = useState(false)
+  const [marketHeaderActionError, setMarketHeaderActionError] = useState<string | null>(null)
+  const [marketSelectBuyerConfirmOpen, setMarketSelectBuyerConfirmOpen] = useState(false)
+  const [marketSelectBuyerSubmitting, setMarketSelectBuyerSubmitting] = useState(false)
+  const [marketUnselectBuyerConfirmOpen, setMarketUnselectBuyerConfirmOpen] = useState(false)
+  const [marketUnselectBuyerSubmitting, setMarketUnselectBuyerSubmitting] = useState(false)
+  const [marketMarkSoldConfirmOpen, setMarketMarkSoldConfirmOpen] = useState(false)
+  const [marketMarkSoldSubmitting, setMarketMarkSoldSubmitting] = useState(false)
   const [contactsBucketReady, setContactsBucketReady] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const composerTextareaRef = useRef<HTMLInputElement | null>(null)
@@ -1316,6 +1408,46 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     } catch (error) {
       console.error('Failed to load supplemental message unread counts', error)
       setMarketUnreadCount(0)
+    }
+  }, [authedFetch, isFamilySession])
+
+  const loadMarketInbox = useCallback(async () => {
+    if (isFamilySession) {
+      setMarketInboxItemsByThreadId({})
+      setMarketInboxError(null)
+      setMarketInboxLoading(false)
+      return
+    }
+
+    setMarketInboxLoading(true)
+    setMarketInboxError(null)
+    try {
+      const response = await authedFetch('/market/chats', { cache: 'no-store' })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        throw new Error('failed_market_inbox')
+      }
+
+      const payload = (await response.json().catch(() => null)) as MarketInboxResponse | null
+      const items = [
+        ...(Array.isArray(payload?.yourListingChats) ? payload.yourListingChats : []),
+        ...(Array.isArray(payload?.activeItems) ? payload.activeItems : []),
+        ...(Array.isArray(payload?.inactiveItems) ? payload.inactiveItems : []),
+        ...(Array.isArray(payload?.soldItems) ? payload.soldItems : []),
+      ]
+      const nextByThreadId = items.reduce<Record<string, MarketInboxItem>>((acc, item) => {
+        if (item?.threadId) acc[item.threadId] = item
+        return acc
+      }, {})
+      setMarketInboxItemsByThreadId(nextByThreadId)
+    } catch (error) {
+      console.error('Failed to load market inbox', error)
+      setMarketInboxError('Unable to load marketplace chats.')
+    } finally {
+      setMarketInboxLoading(false)
     }
   }, [authedFetch, isFamilySession])
 
@@ -1955,7 +2087,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     void loadThreads()
     void loadContactBuckets()
     void loadSupplementalUnreadCounts()
-  }, [authReady, loadMe, loadThreads, loadContactBuckets, loadSupplementalUnreadCounts])
+    void loadMarketInbox()
+  }, [authReady, loadContactBuckets, loadMarketInbox, loadMe, loadSupplementalUnreadCounts, loadThreads])
 
   useEffect(() => {
     if (!authReady) return
@@ -1972,6 +2105,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (!authReady || typeof window === 'undefined') return undefined
     const refresh = () => {
       void loadSupplementalUnreadCounts()
+      void loadMarketInbox()
     }
     const interval = window.setInterval(refresh, 30000)
     window.addEventListener('message.read', refresh)
@@ -1979,7 +2113,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       window.clearInterval(interval)
       window.removeEventListener('message.read', refresh)
     }
-  }, [authReady, loadSupplementalUnreadCounts])
+  }, [authReady, loadMarketInbox, loadSupplementalUnreadCounts])
 
   const orderedThreads = useMemo(() => sortThreadsForInbox(threads), [threads])
   const friendContactIdSet = useMemo(() => new Set(friendContactIds), [friendContactIds])
@@ -1991,6 +2125,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       ? sortThreadsForInbox(
           orderedThreads.filter(
             (thread) =>
+              thread.contextType !== 'market_listing' &&
               thread.type !== 'group' &&
               (thread.inboxSection === 'family' ||
                 getOtherParticipants(thread, me?.id).some((participant) => familyProfileContactIdSet.has(participant.userId))),
@@ -1999,6 +2134,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       : ([] as ThreadSummary[])
     const directThreads = orderedThreads.filter(
       (thread) =>
+        thread.contextType !== 'market_listing' &&
         thread.type !== 'group' &&
         thread.inboxSection !== 'family' &&
         !getOtherParticipants(thread, me?.id).some((participant) => familyProfileContactIdSet.has(participant.userId)),
@@ -2066,6 +2202,87 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     return filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null
   }, [activeInboxSection, filteredOrderedThreads, selectedThreadId, threads])
   const isFamilyParentThreadSelected = Boolean(familyParentThreadId && selectedThreadId === familyParentThreadId)
+  const marketThreads = useMemo(
+    () => sortThreadsForInbox(threads.filter((thread) => thread.contextType === 'market_listing')),
+    [threads],
+  )
+  const marketInboxEntries = useMemo(() => {
+    const items = Object.values(marketInboxItemsByThreadId)
+    const itemByThreadId = new Map(items.map((item) => [item.threadId, item]))
+
+    for (const thread of marketThreads) {
+      if (itemByThreadId.has(thread.id)) continue
+      const primaryParticipant = getPrimaryOtherParticipant(thread, me?.id)
+      itemByThreadId.set(thread.id, {
+        threadId: thread.id,
+        listingId: thread.contextId ?? thread.id,
+        listingTitle: 'Marketplace item',
+        listingStatus: '',
+        listingPriceCents: 0,
+        listingCurrency: 'CAD',
+        listingPhotoUrl: null,
+        counterpart: primaryParticipant
+          ? {
+              id: primaryParticipant.user.id,
+              handle: primaryParticipant.user.handle,
+              name: primaryParticipant.user.name,
+              avatarUrl: primaryParticipant.user.avatarUrl,
+              coverUrl: primaryParticipant.user.coverUrl,
+            }
+          : null,
+        lastMessageAt: thread.lastMessageAt,
+        lastMessage: thread.lastMessage
+          ? {
+              body: thread.lastMessage.body,
+              senderId: thread.lastMessage.senderId,
+              isMine: thread.lastMessage.isMine,
+            }
+          : null,
+      })
+    }
+
+    return Array.from(itemByThreadId.values()).sort(
+      (left, right) => new Date(right.lastMessageAt).getTime() - new Date(left.lastMessageAt).getTime(),
+    )
+  }, [marketInboxItemsByThreadId, marketThreads, me?.id])
+
+  const loadActiveMarketThreadContext = useCallback(async () => {
+    if (!activeThread || activeThread.contextType !== 'market_listing') {
+      setMarketThreadContext(null)
+      setMarketThreadContextLoading(false)
+      return
+    }
+
+    setMarketThreadContextLoading(true)
+    try {
+      const response = await authedFetch(`/market/chats/${encodeURIComponent(activeThread.id)}/context`, { cache: 'no-store' })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        setMarketThreadContext(null)
+        return
+      }
+
+      const payload = (await response.json().catch(() => null)) as MarketThreadContext | null
+      if (!payload?.listing) {
+        setMarketThreadContext(null)
+        return
+      }
+
+      setMarketThreadContext(payload)
+    } catch (error) {
+      console.error('Failed to load market thread context', error)
+      setMarketThreadContext(null)
+    } finally {
+      setMarketThreadContextLoading(false)
+    }
+  }, [activeThread, authedFetch])
+
+  useEffect(() => {
+    void loadActiveMarketThreadContext()
+  }, [loadActiveMarketThreadContext])
 
   const syncMobileThreadLayout = useCallback(() => {
     if (typeof window === 'undefined') return
@@ -2405,6 +2622,125 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       activeThread.id !== familyParentThreadId,
   )
   const activeThreadCall = activeThread?.activeCall ?? null
+  const activeMarketListingHref = useMemo(() => {
+    if (!marketThreadContext?.listing) return null
+    if (marketThreadContext.viewerIsSeller) {
+      return `/market/chats/item/${encodeURIComponent(marketThreadContext.listing.id)}`
+    }
+    return `/market/listings/${encodeURIComponent(marketThreadContext.listing.id)}`
+  }, [marketThreadContext])
+  const activeMarketListingStatus = (marketThreadContext?.listing.status || '').trim().toLowerCase()
+  const activeMarketThreadIsSelectedBuyer = Boolean(
+    activeThread && marketThreadContext?.selectedThreadId && marketThreadContext.selectedThreadId === activeThread.id,
+  )
+  const canSelectActiveMarketBuyer = Boolean(
+    activeThread &&
+      marketThreadContext?.viewerIsSeller &&
+      !marketThreadContext.selectedThreadId &&
+      activeMarketListingStatus !== 'sold' &&
+      activeMarketListingStatus !== 'canceled',
+  )
+  const canUnselectActiveMarketBuyer = Boolean(
+    marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
+  )
+  const canMarkSoldFromActiveMarketThread = Boolean(
+    marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
+  )
+
+  const handleSelectActiveMarketBuyer = useCallback(async () => {
+    if (!activeThread || !marketThreadContext?.listing.id) return
+
+    setMarketSelectBuyerSubmitting(true)
+    setMarketHeaderActionError(null)
+    try {
+      const response = await authedFetch(`/market/chats/item/${encodeURIComponent(marketThreadContext.listing.id)}/select-buyer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ threadId: activeThread.id }),
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        setMarketHeaderActionError(payload?.error || 'Unable to select this buyer right now.')
+        return
+      }
+
+      setMarketSelectBuyerConfirmOpen(false)
+      await Promise.all([loadActiveMarketThreadContext(), loadThreads(), loadSupplementalUnreadCounts(), loadMarketInbox()])
+    } catch (error) {
+      console.error('Failed to select market buyer', error)
+      setMarketHeaderActionError('Unable to select this buyer right now.')
+    } finally {
+      setMarketSelectBuyerSubmitting(false)
+    }
+  }, [activeThread, authedFetch, loadActiveMarketThreadContext, loadMarketInbox, loadSupplementalUnreadCounts, loadThreads, marketThreadContext?.listing.id])
+
+  const handleUnselectActiveMarketBuyer = useCallback(async () => {
+    if (!marketThreadContext?.listing.id) return
+
+    setMarketUnselectBuyerSubmitting(true)
+    setMarketHeaderActionError(null)
+    try {
+      const response = await authedFetch(`/market/chats/item/${encodeURIComponent(marketThreadContext.listing.id)}/relist`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ notify: false }),
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        setMarketHeaderActionError(payload?.error || 'Unable to unselect this buyer right now.')
+        return
+      }
+
+      setMarketUnselectBuyerConfirmOpen(false)
+      await Promise.all([loadActiveMarketThreadContext(), loadThreads(), loadSupplementalUnreadCounts(), loadMarketInbox()])
+    } catch (error) {
+      console.error('Failed to unselect market buyer', error)
+      setMarketHeaderActionError('Unable to unselect this buyer right now.')
+    } finally {
+      setMarketUnselectBuyerSubmitting(false)
+    }
+  }, [authedFetch, loadActiveMarketThreadContext, loadMarketInbox, loadSupplementalUnreadCounts, loadThreads, marketThreadContext?.listing.id])
+
+  const handleMarkSoldFromActiveMarketThread = useCallback(async () => {
+    if (!marketThreadContext?.listing.id) return
+
+    setMarketMarkSoldSubmitting(true)
+    setMarketHeaderActionError(null)
+    try {
+      const response = await authedFetch(`/market/listings/${encodeURIComponent(marketThreadContext.listing.id)}/remove`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ resolution: 'sold' }),
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null
+        setMarketHeaderActionError(payload?.error || 'Unable to mark this item sold right now.')
+        return
+      }
+
+      setMarketMarkSoldConfirmOpen(false)
+      setSelectedThreadId(null)
+      await Promise.all([loadThreads(), loadSupplementalUnreadCounts(), loadMarketInbox()])
+      router.replace('/messages?inbox=market')
+    } catch (error) {
+      console.error('Failed to mark market item sold', error)
+      setMarketHeaderActionError('Unable to mark this item sold right now.')
+    } finally {
+      setMarketMarkSoldSubmitting(false)
+    }
+  }, [authedFetch, loadMarketInbox, loadSupplementalUnreadCounts, loadThreads, marketThreadContext?.listing.id, router])
 
   const filteredGroupCandidates = useMemo(() => {
     const q = groupCandidateFilter.trim().toLowerCase()
@@ -2830,6 +3166,114 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     )
   }
 
+  const renderMarketThreadList = () => {
+    if (marketInboxLoading && marketInboxEntries.length === 0) {
+      return <p className="text-sm text-slate-500">Loading marketplace chats…</p>
+    }
+    if (marketInboxError && marketInboxEntries.length === 0) {
+      return <p className="text-sm text-rose-600">{marketInboxError}</p>
+    }
+    if (marketInboxEntries.length === 0) {
+      return (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-white/70 p-4 text-center text-sm text-slate-500">
+          <p>No marketplace messages yet.</p>
+          <p className="mt-1">Open a listing chat to start a marketplace conversation.</p>
+        </div>
+      )
+    }
+
+    return (
+      <ul className="space-y-2">
+        {marketInboxEntries.map((marketItem) => {
+          const thread = marketThreads.find((entry) => entry.id === marketItem.threadId) ?? null
+          const active = marketItem.threadId === selectedThreadId
+          const unread = thread ? threadHasUnread(thread) : false
+          const unreadCount = thread ? threadUnreadCount(thread) : 0
+          const primaryParticipant = thread ? getPrimaryOtherParticipant(thread, me?.id) : null
+          const counterpart = marketItem.counterpart ?? primaryParticipant?.user ?? null
+          const counterpartName = counterpart
+            ? formatUserDisplayName(counterpart.name, counterpart.handle) || `@${counterpart.handle}`
+            : thread
+              ? getThreadTitle(thread)
+              : 'Marketplace contact'
+          const lastMessage = thread?.lastMessage
+          const lastSnippetBody = lastMessage?.body?.trim() || marketItem.lastMessage?.body?.trim() || (lastMessage?.attachments.length ? 'Attachment' : 'Say hello!')
+          const senderLabel = lastMessage
+            ? lastMessage.isMine
+              ? 'You'
+              : formatUserDisplayName(lastMessage.sender.name, lastMessage.sender.handle) || lastMessage.sender.handle
+            : marketItem.lastMessage
+              ? marketItem.lastMessage.isMine
+                ? 'You'
+                : counterpartName
+            : null
+          const lastSnippet = senderLabel ? `${senderLabel}: ${lastSnippetBody}` : lastSnippetBody
+
+          return (
+            <li key={marketItem.threadId}>
+              <button
+                type="button"
+                onClick={() => handleThreadSelect(marketItem.threadId)}
+                className={clsx(
+                  'w-full rounded-2xl border p-3 text-left transition',
+                  active
+                    ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/5 shadow-lg shadow-[var(--cc-primary)]/10'
+                    : unread
+                      ? 'border-red-300 bg-red-50/40 hover:border-red-400'
+                      : 'border-slate-200 bg-white/70 hover:border-slate-300 hover:bg-white',
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="relative h-16 w-16 shrink-0">
+                    <div className="h-16 w-16 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                      {marketItem?.listingPhotoUrl ? (
+                        <img src={marketItem.listingPhotoUrl} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-400">No photo</div>
+                      )}
+                    </div>
+                    <div className="absolute -bottom-1 -right-1 rounded-full border-2 border-white bg-white p-[1px] shadow-sm">
+                      <VerifiedAvatar
+                        src={counterpart?.avatarUrl ?? null}
+                        alt={counterpartName}
+                        initials={counterpartName}
+                        size={26}
+                        isVerified={Boolean(primaryParticipant?.user.isVerified)}
+                        isBusiness={Boolean(primaryParticipant?.user.isPremium)}
+                      />
+                    </div>
+                    {unreadCount > 0 ? (
+                      <span className="absolute bottom-7 right-0 z-10 inline-flex min-h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-sm ring-2 ring-white">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900">{marketItem.listingTitle || 'Marketplace item'}</p>
+                        <p className="truncate text-xs text-slate-500">{counterpartName}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400">{formatTimestamp(thread?.lastMessageAt ?? marketItem.lastMessageAt)}</span>
+                      </div>
+                    </div>
+                    {marketItem.listingPriceCents > 0 || marketItem.listingPickupCity || marketItem.listingPickupProvince ? (
+                      <p className="mt-0.5 truncate text-xs text-slate-500">
+                        {formatMoney(marketItem.listingPriceCents, marketItem.listingCurrency)} • {formatPickupLocation(marketItem.listingPickupCity, marketItem.listingPickupProvince)}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 line-clamp-2 text-xs text-slate-600">{lastSnippet}</p>
+                  </div>
+                </div>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    )
+  }
+
   const renderMessages = () => {
     if (!activeThread && isFamilyParentThreadSelected) {
       return (
@@ -3105,133 +3549,216 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 px-4 pb-4 pt-5 shadow-[0_25px_70px_rgba(15,23,42,0.08)] sm:p-4"
         style={isMobileViewport && mobileThreadPanelHeight ? { height: mobileThreadPanelHeight } : undefined}
       >
-        <header ref={threadHeaderRef} className="flex items-center gap-2 border-b border-slate-100 pb-3 sm:gap-3">
-          <button
-            type="button"
-            className="-ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] xl:hidden"
-            onClick={() => setSelectedThreadId(null)}
-          >
-            <HiOutlineChevronLeft className="h-5 w-5" />
-          </button>
-          {isActiveGroupThread ? (
-            <div className="relative h-10 w-20 shrink-0">
-              {headerGroupParticipants.map((participant, index) => {
-                const participantName = formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle
-                return (
-                  <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: headerGroupParticipants.length - index }}>
-                    <VerifiedAvatar
-                      src={participant.user.avatarUrl}
-                      alt={participantName}
-                      initials={participantName}
-                      size={36}
-                      isVerified={participant.user.isVerified}
-                      isBusiness={participant.user.isPremium}
-                      className="border-2 border-white"
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          ) : otherUser ? (
-            <Link href={threadProfileHref ?? `/u/${encodeURIComponent(otherUser.handle)}`} className="shrink-0 transition hover:opacity-80">
-              <VerifiedAvatar
-                src={otherUser.avatarUrl}
-                alt={title}
-                initials={title}
-                size={40}
-                isVerified={otherUser.isVerified}
-                isBusiness={otherUser.isPremium}
-              />
-            </Link>
-          ) : (
-            <div className="shrink-0">
-              <VerifiedAvatar src={null} alt={title} initials={title} size={40} />
-            </div>
-          )}
-          {isActiveGroupThread || !threadProfileHref ? (
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
-              <p className="text-xs text-slate-500">
-                {activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}
-                {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
-              </p>
-            </div>
-          ) : (
-            <Link href={threadProfileHref} className="min-w-0 flex-1 rounded-2xl transition hover:opacity-80">
-              <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
-              <p className="text-xs text-slate-500">
-                Direct message
-                {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
-              </p>
-            </Link>
-          )}
-          {activeThreadSupportsCalling ? (
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-              {activeThreadCall ? (
-                <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 sm:inline-flex">
-                  Active call
-                </span>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => {
-                  void startThreadCall('audio')
-                }}
-                disabled={callActionMode !== null}
-                className={clsx(
-                  'inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-9',
-                  isFamilyCallBlocked('audio')
-                    ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-                )}
-                title={activeThreadCall ? 'Join audio call' : 'Start audio call'}
-              >
-                <HiOutlinePhone className="h-4 w-4 sm:h-5 sm:w-5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void startThreadCall('video')
-                }}
-                disabled={callActionMode !== null}
-                className={clsx(
-                  'inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-9',
-                  isFamilyCallBlocked('video')
-                    ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-                )}
-                title={activeThreadCall ? 'Join video call' : 'Start video call'}
-              >
-                <HiOutlineVideoCamera className="h-4 w-4 sm:h-5 sm:w-5" />
-              </button>
-            </div>
-          ) : null}
-          {isActiveGroupThread ? (
-            <details className="group relative">
-              <summary className="inline-flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-                <HiOutlineCog6Tooth className="h-5 w-5" />
-              </summary>
-              <div className="absolute right-0 top-full z-20 mt-2 min-w-[190px] rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
-                {isActiveGroupOwner ? (
-                  <button
-                    type="button"
-                    className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-                    onClick={openManageMembersModal}
-                  >
-                    Manage members
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
-                    onClick={leaveActiveGroup}
-                    disabled={leavingGroup}
-                  >
-                    {leavingGroup ? 'Leaving…' : 'Leave group'}
-                  </button>
-                )}
+        <header ref={threadHeaderRef} className="border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              className="-ml-2 mr-1 flex h-10 w-10 items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] xl:hidden"
+              onClick={() => setSelectedThreadId(null)}
+            >
+              <HiOutlineChevronLeft className="h-5 w-5" />
+            </button>
+            {isActiveGroupThread ? (
+              <div className="relative h-10 w-20 shrink-0">
+                {headerGroupParticipants.map((participant, index) => {
+                  const participantName = formatUserDisplayName(participant.user.name, participant.user.handle) || participant.user.handle
+                  return (
+                    <div key={participant.userId} className="absolute" style={{ left: `${index * 12}px`, zIndex: headerGroupParticipants.length - index }}>
+                      <VerifiedAvatar
+                        src={participant.user.avatarUrl}
+                        alt={participantName}
+                        initials={participantName}
+                        size={36}
+                        isVerified={participant.user.isVerified}
+                        isBusiness={participant.user.isPremium}
+                        className="border-2 border-white"
+                      />
+                    </div>
+                  )
+                })}
               </div>
-            </details>
+            ) : otherUser ? (
+              <Link href={threadProfileHref ?? `/u/${encodeURIComponent(otherUser.handle)}`} className="shrink-0 transition hover:opacity-80">
+                <VerifiedAvatar
+                  src={otherUser.avatarUrl}
+                  alt={title}
+                  initials={title}
+                  size={40}
+                  isVerified={otherUser.isVerified}
+                  isBusiness={otherUser.isPremium}
+                />
+              </Link>
+            ) : (
+              <div className="shrink-0">
+                <VerifiedAvatar src={null} alt={title} initials={title} size={40} />
+              </div>
+            )}
+            {isActiveGroupThread || !threadProfileHref ? (
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
+                <p className="text-xs text-slate-500">
+                  {activeThread.participants.length > 2 ? `${activeThread.participants.length} participants` : 'Direct message'}
+                  {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
+                </p>
+              </div>
+            ) : (
+              <Link href={threadProfileHref} className="min-w-0 flex-1 rounded-2xl transition hover:opacity-80">
+                <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
+                <p className="text-xs text-slate-500">
+                  Direct message
+                  {activeThreadCall ? ` · ${activeThreadCall.mode === 'video' ? 'Video' : 'Audio'} call live` : ''}
+                </p>
+              </Link>
+            )}
+            {activeThreadSupportsCalling ? (
+              <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+                {activeThreadCall ? (
+                  <span className="hidden rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-700 sm:inline-flex">
+                    Active call
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    void startThreadCall('audio')
+                  }}
+                  disabled={callActionMode !== null}
+                  className={clsx(
+                    'inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-9',
+                    isFamilyCallBlocked('audio')
+                      ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                  )}
+                  title={activeThreadCall ? 'Join audio call' : 'Start audio call'}
+                >
+                  <HiOutlinePhone className="h-4 w-4 sm:h-5 sm:w-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void startThreadCall('video')
+                  }}
+                  disabled={callActionMode !== null}
+                  className={clsx(
+                    'inline-flex h-8 w-8 items-center justify-center rounded-full border transition disabled:opacity-50 sm:h-9 sm:w-9',
+                    isFamilyCallBlocked('video')
+                      ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                  )}
+                  title={activeThreadCall ? 'Join video call' : 'Start video call'}
+                >
+                  <HiOutlineVideoCamera className="h-4 w-4 sm:h-5 sm:w-5" />
+                </button>
+              </div>
+            ) : null}
+            {isActiveGroupThread ? (
+              <details className="group relative">
+                <summary className="inline-flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+                  <HiOutlineCog6Tooth className="h-5 w-5" />
+                </summary>
+                <div className="absolute right-0 top-full z-20 mt-2 min-w-[190px] rounded-2xl border border-slate-200 bg-white p-2 shadow-lg">
+                  {isActiveGroupOwner ? (
+                    <button
+                      type="button"
+                      className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                      onClick={openManageMembersModal}
+                    >
+                      Manage members
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-red-600 transition hover:bg-red-50"
+                      onClick={leaveActiveGroup}
+                      disabled={leavingGroup}
+                    >
+                      {leavingGroup ? 'Leaving…' : 'Leave group'}
+                    </button>
+                  )}
+                </div>
+              </details>
+            ) : null}
+          </div>
+          {activeThread.contextType === 'market_listing' ? (
+            <div className="mt-3">
+              {marketThreadContextLoading ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Loading item…</div>
+              ) : marketThreadContext?.listing && activeMarketListingHref ? (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <Link href={activeMarketListingHref} className="min-w-0 flex-1 rounded-2xl p-1 transition hover:bg-white/80">
+                      <div className="flex items-start gap-3">
+                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                          {marketThreadContext.listing.photoUrl ? (
+                            <img src={marketThreadContext.listing.photoUrl} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-400">No photo</div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-900">{marketThreadContext.listing.title}</p>
+                          <p className="truncate text-sm text-slate-600">
+                            {formatMoney(marketThreadContext.listing.priceCents, marketThreadContext.listing.currency)} •{' '}
+                            {formatPickupLocation(marketThreadContext.listing.pickupCity, marketThreadContext.listing.pickupProvince)}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {marketThreadContext.viewerIsSeller ? 'Open listing management' : 'Open listing'}
+                          </p>
+                        </div>
+                      </div>
+                    </Link>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
+                        {formatMarketListingStatus(marketThreadContext.listing.status)}
+                      </span>
+                      {canSelectActiveMarketBuyer ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMarketHeaderActionError(null)
+                            setMarketSelectBuyerConfirmOpen(true)
+                          }}
+                          disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
+                          className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Select This Buyer
+                        </button>
+                      ) : null}
+                      {canUnselectActiveMarketBuyer ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMarketHeaderActionError(null)
+                            setMarketUnselectBuyerConfirmOpen(true)
+                          }}
+                          disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
+                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Unselect buyer
+                        </button>
+                      ) : null}
+                      {canMarkSoldFromActiveMarketThread ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMarketHeaderActionError(null)
+                            setMarketMarkSoldConfirmOpen(true)
+                          }}
+                          disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
+                          className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          Mark sold
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {marketThreadContext.viewerIsSeller && marketThreadContext.selectedThreadId && !activeMarketThreadIsSelectedBuyer ? (
+                    <p className="mt-3 text-xs font-medium text-slate-500">A different buyer is currently selected for this item.</p>
+                  ) : null}
+                  {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </header>
         <div className="mt-4 min-h-0 flex-1 overflow-hidden">
@@ -3473,12 +4000,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       </div>
       {activeInboxSection === 'market' ? (
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-          <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{activeContextLabel}</p>
-              <p className="text-[11px] text-slate-400">{activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'}</p>
-            </div>
+          <div className="mb-2 flex items-center justify-between px-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{activeContextLabel}</p>
+            <p className="text-[11px] text-slate-400">
+              {activeContextUnreadCount > 0 ? `${activeContextUnreadCount} unread` : 'All caught up'} · {marketInboxEntries.length}{' '}
+              {marketInboxEntries.length === 1 ? 'chat' : 'chats'}
+            </p>
           </div>
+          {renderMarketThreadList()}
         </div>
       ) : (
         <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
@@ -3512,9 +4041,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         selectedThreadId && activeThread ? (
           <div className="h-full min-h-0">{renderMessages()}</div>
         ) : (
-          <div className="h-full min-h-0 overflow-y-auto pr-0 md:pr-2">
-            <MarketChatsOverview embedded />
-          </div>
+          <div className="h-full min-h-0">{renderMessages()}</div>
         )
       ) : isMobileViewport ? (
         <div className={clsx('h-full min-h-0', activeThread || isFamilyParentThreadSelected ? 'pt-2' : '')}>{activeThread || isFamilyParentThreadSelected ? renderMessages() : inboxPanel}</div>
@@ -3546,6 +4073,102 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         : null}
       <Modal open={callPermissionModalOpen} onClose={() => setCallPermissionModalOpen(false)} title="Call permissions" maxWidthClassName="max-w-md">
         <p className="text-sm leading-6 text-slate-600">You don't have permission from your parent or guardian for this feature</p>
+      </Modal>
+      <Modal
+        open={marketSelectBuyerConfirmOpen}
+        onClose={() => {
+          if (marketSelectBuyerSubmitting) return
+          setMarketSelectBuyerConfirmOpen(false)
+        }}
+        title="Select This Buyer"
+        maxWidthClassName="max-w-lg"
+      >
+        <p className="text-sm text-slate-700">This will mark the item as pending pickup or delivery and notify the other interested buyers.</p>
+        {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setMarketSelectBuyerConfirmOpen(false)}
+            disabled={marketSelectBuyerSubmitting}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleSelectActiveMarketBuyer()
+            }}
+            disabled={marketSelectBuyerSubmitting}
+            className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {marketSelectBuyerSubmitting ? 'Selecting…' : 'Select This Buyer'}
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={marketUnselectBuyerConfirmOpen}
+        onClose={() => {
+          if (marketUnselectBuyerSubmitting) return
+          setMarketUnselectBuyerConfirmOpen(false)
+        }}
+        title="Unselect buyer?"
+        maxWidthClassName="max-w-lg"
+      >
+        <p className="text-sm text-slate-700">This will return the item to active status so you can continue chatting with other buyers.</p>
+        {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setMarketUnselectBuyerConfirmOpen(false)}
+            disabled={marketUnselectBuyerSubmitting}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleUnselectActiveMarketBuyer()
+            }}
+            disabled={marketUnselectBuyerSubmitting}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {marketUnselectBuyerSubmitting ? 'Unselecting…' : 'Unselect buyer'}
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={marketMarkSoldConfirmOpen}
+        onClose={() => {
+          if (marketMarkSoldSubmitting) return
+          setMarketMarkSoldConfirmOpen(false)
+        }}
+        title="Mark item sold?"
+        maxWidthClassName="max-w-lg"
+      >
+        <p className="text-sm text-slate-700">This will remove the listing, send active buyer chats a message saying the item has been sold, and send a push notification to those buyers.</p>
+        {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setMarketMarkSoldConfirmOpen(false)}
+            disabled={marketMarkSoldSubmitting}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleMarkSoldFromActiveMarketThread()
+            }}
+            disabled={marketMarkSoldSubmitting}
+            className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {marketMarkSoldSubmitting ? 'Marking sold…' : 'Mark sold'}
+          </button>
+        </div>
       </Modal>
       {manageMembersOpen && activeThread && isActiveGroupOwner
         ? createPortal(

@@ -77,7 +77,6 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
         {allowedItems.map((item) => {
           const isActive = item.key === resolvedActive
           const unreadCount = Math.max(0, Number(unreadCounts?.[item.key] ?? 0) || 0)
-          const displayLabel = unreadCount > 0 ? `(${unreadCount > 99 ? '99+' : unreadCount}) ${item.label}` : item.label
           return (
             <Link
               key={item.key}
@@ -90,7 +89,17 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
                   : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:text-slate-900',
               )}
             >
-              {displayLabel}
+              <span>{item.label}</span>
+              {unreadCount > 0 ? (
+                <span
+                  className={clsx(
+                    'absolute -right-1 -top-1 inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white',
+                    isActive ? 'bg-[var(--cc-primary)]' : 'bg-red-500',
+                  )}
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              ) : null}
             </Link>
           )
         })}

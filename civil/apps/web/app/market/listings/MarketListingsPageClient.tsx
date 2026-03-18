@@ -116,8 +116,8 @@ export default function MarketListingsPageClient() {
                 const cover = item.photoUrls[0] ?? null
                 const href = `/market/listings/new?listing=${encodeURIComponent(item.id)}`
                 return (
-                  <li key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                    <div className="grid gap-3 p-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:p-4">
+                  <li key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 transition hover:border-slate-300 hover:bg-slate-100">
+                    <Link href={href} className="grid gap-3 p-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:p-4">
                       <div className="h-28 overflow-hidden rounded-xl bg-slate-200 sm:h-24">
                         {cover ? <img src={cover} alt={item.title} className="h-full w-full object-cover" loading="lazy" /> : null}
                       </div>
@@ -130,13 +130,8 @@ export default function MarketListingsPageClient() {
                         </div>
                         <p className="mt-1 text-sm font-semibold text-slate-900">{formatMoney(item.priceCents, item.currency)}</p>
                         <p className="mt-1 text-xs text-slate-600">Pickup area: {item.pickupCity ? `${item.pickupCity}${item.pickupProvince ? `, ${item.pickupProvince}` : ''}` : 'Not set'}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Link href={href} className="inline-flex items-center justify-center rounded-full bg-white px-4 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100">
-                            {item.isDraft ? 'Continue draft' : 'Edit listing'}
-                          </Link>
-                        </div>
                       </div>
-                    </div>
+                    </Link>
                   </li>
                 )
               })}
