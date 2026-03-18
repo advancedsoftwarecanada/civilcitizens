@@ -20,7 +20,7 @@ export default async function OrganizationSettingsDetailsPage({ params }: PagePr
   })
 
   return (
-    <OrganizationSection title="Details" description="Manage your organization profile, photos, and visibility.">
+    <OrganizationSection variant="plain">
       <OrganizationSettingsClient
         province={params.province}
         municipality={params.municipality}

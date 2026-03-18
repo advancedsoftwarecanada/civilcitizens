@@ -6418,74 +6418,304 @@ const CommunityOrgListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })
 
+const OrganizationDirectoryTypeValues = [
+  'INDIVIDUAL',
+  'SOLE_PROPRIETORSHIP',
+  'CORPORATION',
+  'NON_PROFIT',
+  'CHARITY',
+  'RELIGIOUS_ORGANIZATION',
+  'GOVERNMENT',
+  'COMMUNITY_GROUP',
+] as const
+
+type OrganizationDirectoryType = (typeof OrganizationDirectoryTypeValues)[number]
+
+const OrganizationCategorySpecializationMap = {
+  TRADES: [
+    'ELECTRICIAN',
+    'PLUMBER',
+    'CARPENTER',
+    'HVAC_TECHNICIAN',
+    'ROOFER',
+    'PAINTER',
+    'DRYWALL_INSTALLER',
+    'FLOORING_INSTALLER',
+    'WELDER',
+    'GENERAL_CONTRACTOR',
+    'HANDYMAN',
+    'APPLIANCE_REPAIR_TECHNICIAN',
+    'ELEVATOR_TECHNICIAN',
+    'MASONRY_BRICKLAYER',
+  ],
+  CONSTRUCTION_RENOVATION: [
+    'HOME_BUILDER',
+    'RENOVATION_SPECIALIST',
+    'DEMOLITION',
+    'FRAMING',
+    'CONCRETE_WORK',
+    'EXCAVATION',
+    'LANDSCAPING',
+    'FENCE_DECK_BUILDER',
+    'POOL_INSTALLATION',
+    'CABINET_MAKER',
+  ],
+  AUTOMOTIVE_MECHANICAL: [
+    'AUTO_REPAIR_MECHANIC',
+    'MOBILE_MECHANIC',
+    'AUTO_BODY_REPAIR',
+    'TIRE_SERVICES',
+    'OIL_CHANGE_SERVICES',
+    'CAR_DETAILING',
+    'VEHICLE_INSPECTION',
+    'SMALL_ENGINE_REPAIR',
+    'DIESEL_MECHANIC',
+  ],
+  TRANSPORTATION_DELIVERY: [
+    'COURIER_DELIVERY_DRIVER',
+    'MOVING_SERVICES',
+    'TRUCKING_FREIGHT',
+    'RIDESHARE_DRIVER',
+    'PERSONAL_DRIVER_CHAUFFEUR',
+    'LOGISTICS_COORDINATION',
+    'TOWING_SERVICES',
+  ],
+  FOOD_CATERING: [
+    'CATERING_SERVICES',
+    'PRIVATE_CHEF',
+    'MEAL_PREP_SERVICES',
+    'BAKERY',
+    'FOOD_TRUCK',
+    'RESTAURANT',
+    'BUTCHER',
+    'MEAL_DELIVERY',
+    'FARMERS_MARKET_VENDOR',
+  ],
+  AGRICULTURE_FARMING: [
+    'VEGETABLE_FARMING',
+    'FRUIT_FARMING',
+    'LIVESTOCK_FARMING',
+    'DAIRY_PRODUCTION',
+    'POULTRY_FARMING',
+    'GREENHOUSE_PRODUCTION',
+    'BEEKEEPING',
+    'AQUACULTURE',
+    'ORGANIC_FARMING',
+  ],
+  RETAIL_ECOMMERCE: [
+    'GENERAL_RETAIL',
+    'ONLINE_STORE',
+    'WHOLESALE_DISTRIBUTOR',
+    'DROPSHIPPING',
+    'SPECIALTY_SHOP',
+    'CONVENIENCE_STORE',
+    'MARKET_VENDOR',
+  ],
+  HEALTH_BEAUTY: [
+    'MASSAGE_THERAPIST',
+    'HAIR_STYLIST',
+    'BARBER',
+    'ESTHETICIAN',
+    'NAIL_TECHNICIAN',
+    'MAKEUP_ARTIST',
+    'SPA_SERVICES',
+    'TATTOO_ARTIST',
+    'PIERCING_SERVICES',
+  ],
+  HEALTHCARE: [
+    'NURSE',
+    'PERSONAL_SUPPORT_WORKER',
+    'PHYSIOTHERAPIST',
+    'CHIROPRACTOR',
+    'OCCUPATIONAL_THERAPIST',
+    'MENTAL_HEALTH_COUNSELOR',
+    'HOME_CARE_PROVIDER',
+    'MEDICAL_CLINIC',
+  ],
+  FITNESS_SPORTS: [
+    'PERSONAL_TRAINER',
+    'FITNESS_COACH',
+    'YOGA_INSTRUCTOR',
+    'MARTIAL_ARTS_INSTRUCTOR',
+    'SPORTS_COACH',
+    'GYM_FITNESS_FACILITY',
+  ],
+  EDUCATION_TUTORING: [
+    'TUTOR',
+    'LANGUAGE_INSTRUCTOR',
+    'MUSIC_TEACHER',
+    'DRIVING_INSTRUCTOR',
+    'EDUCATIONAL_CONSULTANT',
+    'PRIVATE_SCHOOL',
+    'ONLINE_COURSE_PROVIDER',
+  ],
+  CHILDCARE_FAMILY: [
+    'BABYSITTER',
+    'NANNY',
+    'DAYCARE_PROVIDER',
+    'FAMILY_SUPPORT_SERVICES',
+    'ELDER_CARE',
+  ],
+  CLEANING_MAINTENANCE: [
+    'RESIDENTIAL_CLEANING',
+    'COMMERCIAL_CLEANING',
+    'WINDOW_CLEANING',
+    'CARPET_CLEANING',
+    'PRESSURE_WASHING',
+    'JANITORIAL_SERVICES',
+    'PROPERTY_MAINTENANCE',
+  ],
+  PROFESSIONAL_SERVICES: [
+    'ACCOUNTANT',
+    'BOOKKEEPER',
+    'LAWYER',
+    'PARALEGAL',
+    'CONSULTANT',
+    'BUSINESS_ADVISOR',
+    'INSURANCE_AGENT',
+    'FINANCIAL_ADVISOR',
+  ],
+  TECHNOLOGY_IT: [
+    'SOFTWARE_DEVELOPER',
+    'WEB_DEVELOPER',
+    'MOBILE_APP_DEVELOPER',
+    'IT_SUPPORT',
+    'NETWORK_TECHNICIAN',
+    'CYBERSECURITY_SPECIALIST',
+    'AI_DEVELOPER',
+    'DATA_ANALYST',
+  ],
+  MEDIA_CREATIVE: [
+    'GRAPHIC_DESIGNER',
+    'WEB_DESIGNER',
+    'PHOTOGRAPHER',
+    'VIDEOGRAPHER',
+    'VIDEO_EDITOR',
+    'ANIMATOR',
+    'CONTENT_CREATOR',
+    'COPYWRITER',
+  ],
+  MARKETING_SALES: [
+    'DIGITAL_MARKETING',
+    'SEO_SPECIALIST',
+    'SOCIAL_MEDIA_MANAGER',
+    'ADVERTISING_SPECIALIST',
+    'SALES_REPRESENTATIVE',
+    'LEAD_GENERATION',
+  ],
+  EVENTS_ENTERTAINMENT: [
+    'EVENT_PLANNER',
+    'DJ',
+    'MUSICIAN',
+    'ENTERTAINER',
+    'WEDDING_SERVICES',
+    'PARTY_RENTALS',
+  ],
+  REAL_ESTATE_PROPERTY: [
+    'REAL_ESTATE_AGENT',
+    'PROPERTY_MANAGER',
+    'HOME_INSPECTOR',
+    'MORTGAGE_BROKER',
+    'APPRAISER',
+  ],
+  TRAVEL_HOSPITALITY: [
+    'TRAVEL_AGENT',
+    'TOUR_GUIDE',
+    'HOTEL_ACCOMMODATION',
+    'SHORT_TERM_RENTAL_HOST',
+  ],
+  SECURITY_SAFETY: [
+    'SECURITY_GUARD',
+    'PRIVATE_INVESTIGATOR',
+    'ALARM_SYSTEMS',
+    'FIRE_SAFETY_SERVICES',
+  ],
+  GOVERNMENT_PUBLIC_SERVICES: [
+    'MUNICIPAL_SERVICES',
+    'PROVINCIAL_SERVICES',
+    'FEDERAL_SERVICES',
+    'PUBLIC_ADMINISTRATION',
+  ],
+  NON_PROFIT_COMMUNITY: [
+    'COMMUNITY_ORGANIZATION',
+    'ADVOCACY_GROUP',
+    'VOLUNTEER_ORGANIZATION',
+    'FOOD_BANK',
+    'SHELTER_SERVICES',
+  ],
+  RELIGIOUS: ['CHURCH', 'MOSQUE', 'TEMPLE', 'SYNAGOGUE', 'FAITH_BASED_SERVICES'],
+  ARTS_CULTURE: ['ARTIST', 'GALLERY', 'CULTURAL_ORGANIZATION', 'MUSEUM', 'THEATER'],
+  MANUFACTURING_INDUSTRIAL: ['FABRICATION', 'ASSEMBLY', 'PACKAGING', 'CNC_MACHINING', 'THREE_D_PRINTING', 'TEXTILE_PRODUCTION'],
+  OTHER: ['OTHER_SERVICES', 'MISCELLANEOUS'],
+} as const
+
+const OrganizationCategoryValues = Object.keys(OrganizationCategorySpecializationMap) as Array<keyof typeof OrganizationCategorySpecializationMap>
+type OrganizationCategory = (typeof OrganizationCategoryValues)[number]
+
+const OrganizationSpecializationValues = Object.values(OrganizationCategorySpecializationMap).flat() as Array<
+  (typeof OrganizationCategorySpecializationMap)[OrganizationCategory][number]
+>
+type OrganizationSpecialization = (typeof OrganizationSpecializationValues)[number]
+
 const OrganizationsDirectoryQuery = z.object({
   q: z.string().trim().max(80).optional(),
-  type: z
-    .enum([
-      'LOCAL_BUSINESS',
-      'NON_PROFIT',
-      'COMMUNITY_GROUP',
-      'EDUCATIONAL',
-      'RELIGIOUS',
-      'GOVERNMENT',
-      'ARTS_CULTURE',
-      'SPORTS_RECREATION',
-    ])
-    .optional(),
+  type: z.enum(OrganizationDirectoryTypeValues).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 })
+
+const OrganizationCategorySchema = z.custom<OrganizationCategory>((value) => value == null || isOrganizationCategory(value))
+const OrganizationSpecializationSchema = z.custom<OrganizationSpecialization>((value) => value == null || isOrganizationSpecialization(value))
 
 const CommunityOrgCreateBody = z.object({
   name: z.string().trim().min(3).max(160),
   slug: z.string().trim().min(1).max(80).optional(),
-  type: z
-    .enum([
-      'LOCAL_BUSINESS',
-      'NON_PROFIT',
-      'COMMUNITY_GROUP',
-      'EDUCATIONAL',
-      'RELIGIOUS',
-      'GOVERNMENT',
-      'ARTS_CULTURE',
-      'SPORTS_RECREATION',
-    ])
-    .optional(),
+  type: z.enum(OrganizationDirectoryTypeValues).optional(),
+  category: OrganizationCategorySchema.optional().nullable(),
+  specialization: OrganizationSpecializationSchema.optional().nullable(),
   description: z.string().trim().max(2000).optional(),
+}).superRefine((value, ctx) => {
+  const hasCategory = Boolean(value.category)
+  const hasSpecialization = Boolean(value.specialization)
+  if (hasSpecialization && !hasCategory) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'category_required_for_specialization', path: ['category'] })
+    return
+  }
+  if (value.category && value.specialization) {
+    const allowed = OrganizationCategorySpecializationMap[value.category as OrganizationCategory] as readonly string[]
+    if (!allowed.includes(value.specialization)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'specialization_not_in_category', path: ['specialization'] })
+    }
+  }
 })
 
 const CommunityOrgDraftBody = z.object({
   name: z.string().trim().min(3).max(160).optional(),
   slug: z.string().trim().min(1).max(80).optional(),
-  type: z
-    .enum([
-      'LOCAL_BUSINESS',
-      'NON_PROFIT',
-      'COMMUNITY_GROUP',
-      'EDUCATIONAL',
-      'RELIGIOUS',
-      'GOVERNMENT',
-      'ARTS_CULTURE',
-      'SPORTS_RECREATION',
-    ])
-    .optional(),
+  type: z.enum(OrganizationDirectoryTypeValues).optional(),
+  category: OrganizationCategorySchema.optional().nullable(),
+  specialization: OrganizationSpecializationSchema.optional().nullable(),
   description: z.string().trim().max(2000).optional(),
+}).superRefine((value, ctx) => {
+  const hasCategory = Boolean(value.category)
+  const hasSpecialization = Boolean(value.specialization)
+  if (hasSpecialization && !hasCategory) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'category_required_for_specialization', path: ['category'] })
+    return
+  }
+  if (value.category && value.specialization) {
+    const allowed = OrganizationCategorySpecializationMap[value.category as OrganizationCategory] as readonly string[]
+    if (!allowed.includes(value.specialization)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'specialization_not_in_category', path: ['specialization'] })
+    }
+  }
 })
 
 const CommunityOrgSettingsBody = z.object({
   name: z.string().trim().min(3).max(160).optional(),
   slug: z.string().trim().min(1).max(80).optional(),
-  type: z
-    .enum([
-      'LOCAL_BUSINESS',
-      'NON_PROFIT',
-      'COMMUNITY_GROUP',
-      'EDUCATIONAL',
-      'RELIGIOUS',
-      'GOVERNMENT',
-      'ARTS_CULTURE',
-      'SPORTS_RECREATION',
-    ])
-    .optional(),
+  type: z.enum(OrganizationDirectoryTypeValues).optional(),
+  category: OrganizationCategorySchema.optional().nullable(),
+  specialization: OrganizationSpecializationSchema.optional().nullable(),
   headline: z.string().trim().max(60).optional().nullable(),
   description: z.string().trim().max(50000).optional().nullable(),
   logoMediaId: z.string().trim().min(3).optional(),
@@ -6513,6 +6743,19 @@ const CommunityOrgSettingsBody = z.object({
     .nullable(),
   schedule: z.string().trim().max(2000).optional().nullable(),
   isPublic: z.boolean().optional(),
+}).superRefine((value, ctx) => {
+  const hasCategory = Boolean(value.category)
+  const hasSpecialization = Boolean(value.specialization)
+  if (hasSpecialization && !hasCategory) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'category_required_for_specialization', path: ['category'] })
+    return
+  }
+  if (value.category && value.specialization) {
+    const allowed = OrganizationCategorySpecializationMap[value.category as OrganizationCategory] as readonly string[]
+    if (!allowed.includes(value.specialization)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'specialization_not_in_category', path: ['specialization'] })
+    }
+  }
 })
 
 const CommunityOrgMemberParams = CommunityOrgSlugParams.extend({
@@ -7246,6 +7489,100 @@ function readOrganizationHeadline(metadata: unknown): string | null {
   return trimmed ? trimmed.slice(0, 60) : null
 }
 
+function isOrganizationDirectoryType(value: unknown): value is OrganizationDirectoryType {
+  return typeof value === 'string' && (OrganizationDirectoryTypeValues as readonly string[]).includes(value)
+}
+
+function isOrganizationCategory(value: unknown): value is OrganizationCategory {
+  return typeof value === 'string' && (OrganizationCategoryValues as readonly string[]).includes(value)
+}
+
+function isOrganizationSpecialization(value: unknown): value is OrganizationSpecialization {
+  return typeof value === 'string' && (OrganizationSpecializationValues as readonly string[]).includes(value)
+}
+
+function mapBusinessTypeToOrganizationDirectoryType(value: BusinessType): OrganizationDirectoryType {
+  switch (value) {
+    case 'NON_PROFIT':
+      return 'NON_PROFIT'
+    case 'COMMUNITY_GROUP':
+    case 'EDUCATIONAL':
+    case 'ARTS_CULTURE':
+    case 'SPORTS_RECREATION':
+      return 'COMMUNITY_GROUP'
+    case 'RELIGIOUS':
+      return 'RELIGIOUS_ORGANIZATION'
+    case 'GOVERNMENT':
+      return 'GOVERNMENT'
+    case 'LOCAL_BUSINESS':
+    default:
+      return 'SOLE_PROPRIETORSHIP'
+  }
+}
+
+function mapOrganizationDirectoryTypeToBusinessType(value: OrganizationDirectoryType): BusinessType {
+  switch (value) {
+    case 'NON_PROFIT':
+    case 'CHARITY':
+      return 'NON_PROFIT'
+    case 'COMMUNITY_GROUP':
+      return 'COMMUNITY_GROUP'
+    case 'RELIGIOUS_ORGANIZATION':
+      return 'RELIGIOUS'
+    case 'GOVERNMENT':
+      return 'GOVERNMENT'
+    case 'INDIVIDUAL':
+    case 'SOLE_PROPRIETORSHIP':
+    case 'CORPORATION':
+    default:
+      return 'LOCAL_BUSINESS'
+  }
+}
+
+function readOrganizationDirectoryType(metadata: unknown, fallbackType: BusinessType): OrganizationDirectoryType {
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const value = (metadata as Record<string, unknown>).directoryType
+    if (isOrganizationDirectoryType(value)) return value
+  }
+  return mapBusinessTypeToOrganizationDirectoryType(fallbackType)
+}
+
+function readOrganizationCategory(metadata: unknown): OrganizationCategory | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const value = (metadata as Record<string, unknown>).directoryCategory
+  return isOrganizationCategory(value) ? value : null
+}
+
+function readOrganizationSpecialization(metadata: unknown): OrganizationSpecialization | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const value = (metadata as Record<string, unknown>).directorySpecialization
+  return isOrganizationSpecialization(value) ? value : null
+}
+
+function mergeOrganizationDirectorySettingsIntoMetadata(
+  metadata: unknown,
+  next: {
+    type?: OrganizationDirectoryType | null
+    category?: OrganizationCategory | null
+    specialization?: OrganizationSpecialization | null
+  },
+): Prisma.InputJsonValue {
+  const base = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? ({ ...(metadata as Record<string, unknown>) } as Record<string, unknown>) : {}
+  if ('type' in next) {
+    if (next.type) base.directoryType = next.type
+    else delete base.directoryType
+  }
+  if ('category' in next) {
+    if (next.category) base.directoryCategory = next.category
+    else delete base.directoryCategory
+  }
+  if ('specialization' in next) {
+    if (next.specialization) base.directorySpecialization = next.specialization
+    else delete base.directorySpecialization
+  }
+  return base as Prisma.InputJsonValue
+}
+
 type OrganizationShopPaymentsState = {
   stripeConnectAccountId: string | null
 }
@@ -7285,7 +7622,9 @@ function buildCommunityOrgPayload(org: CommunityOrgRecord, viewerFollowed: boole
     name: org.name,
     headline: readOrganizationHeadline(org.metadata),
     slug: org.slug,
-    type: org.type,
+    type: readOrganizationDirectoryType(org.metadata, org.type),
+    category: readOrganizationCategory(org.metadata),
+    specialization: readOrganizationSpecialization(org.metadata),
     description: org.description ? sanitizePlainText(org.description) : null,
     phone: org.phone ?? null,
     websiteUrl: org.websiteUrl ?? null,
@@ -8232,6 +8571,8 @@ registerOrganizationCoreRoutes(app, {
   appendOrganizationAuditLogEntry,
   applyVisibleModerationFiltersToBusinessWhere,
   buildCommunityOrgPayload,
+  mapOrganizationDirectoryTypeToBusinessType,
+  mergeOrganizationDirectorySettingsIntoMetadata,
   enqueueContentAiScanForOrganization,
   ensureUniqueCommunityOrgSlug,
   findCommunity,
@@ -8245,6 +8586,9 @@ registerOrganizationCoreRoutes(app, {
   normalizeMediaUrl,
   normalizeProvinceCode,
   normalizeStructuredAddressInput,
+  readOrganizationDirectoryType,
+  readOrganizationCategory,
+  readOrganizationSpecialization,
   readOrganizationSystemState,
   resolveUserId,
   sanitizePlainText,

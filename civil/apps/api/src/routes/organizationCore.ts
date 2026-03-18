@@ -90,8 +90,11 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
 
       const where: Prisma.BusinessWhereInput = {
         status: 'ACTIVE',
-        ...(query.data.type ? { type: query.data.type } : {}),
         ...(query.data.q ? { name: { contains: query.data.q, mode: 'insensitive' } } : {}),
+      }
+
+      if (query.data.type) {
+        where.type = deps.mapOrganizationDirectoryTypeToBusinessType(query.data.type)
       }
 
       deps.applyVisibleModerationFiltersToBusinessWhere(where, viewerBlockState)
@@ -105,6 +108,7 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
           name: true,
           slug: true,
           type: true,
+          metadata: true,
           provinceCode: true,
           communitySlug: true,
           isVerified: true,
@@ -120,6 +124,7 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
         name: string
         slug: string
         type: string
+        metadata: unknown
         provinceCode: string | null
         communitySlug: string | null
         isVerified: boolean | null
@@ -144,11 +149,15 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
             id: row.id,
             name: row.name,
             slug: row.slug,
-            type: row.type,
+            type: deps.readOrganizationDirectoryType(row.metadata, row.type),
+            category: deps.readOrganizationCategory(row.metadata),
+            specialization: deps.readOrganizationSpecialization(row.metadata),
             provinceCode: row.provinceCode as string,
             communitySlug: row.communitySlug as string,
             isVerified: Boolean(row.isVerified),
-          })),
+          }))
+          .filter((row: { type: string }) => !query.data.type || row.type === query.data.type)
+          .slice(0, query.data.limit),
       })
     }),
   )
@@ -252,7 +261,8 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       const baseSlug = desiredSlug || deps.trimSlugLength(deps.slugifyText(body.data.name), 80) || 'organization'
       const slug = await deps.ensureUniqueCommunityOrgSlug({ provinceCode: province, communitySlug: community.slug, baseSlug })
 
-      const type = (body.data.type ?? 'LOCAL_BUSINESS') as any
+      const directoryType = body.data.type ?? 'INDIVIDUAL'
+      const type = deps.mapOrganizationDirectoryTypeToBusinessType(directoryType)
       const initialOrgSystem = deps.readOrganizationSystemState(null)
       initialOrgSystem.members[userId] = {
         rankId: deps.SYSTEM_MANAGER_RANK_ID,
@@ -273,7 +283,14 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
             slug,
             type,
             description: body.data.description?.trim() ? deps.sanitizePlainText(body.data.description).trim() : null,
-            metadata: deps.mergeOrganizationSystemStateIntoMetadata(null, initialOrgSystem),
+            metadata: deps.mergeOrganizationDirectorySettingsIntoMetadata(
+              deps.mergeOrganizationSystemStateIntoMetadata(null, initialOrgSystem),
+              {
+                type: directoryType,
+                category: body.data.category ?? null,
+                specialization: body.data.specialization ?? null,
+              },
+            ),
             status: 'ACTIVE',
           },
           select: { id: true },
@@ -298,7 +315,15 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
           action: 'organization.created',
           reason: null,
           previousValue: null,
-          nextValue: { name: body.data.name.trim(), slug, type, provinceCode: province, communitySlug: community.slug },
+          nextValue: {
+            name: body.data.name.trim(),
+            slug,
+            type: directoryType,
+            category: body.data.category ?? null,
+            specialization: body.data.specialization ?? null,
+            provinceCode: province,
+            communitySlug: community.slug,
+          },
         })
 
         return tx.business.findUnique({
@@ -363,7 +388,8 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       const baseSlug = desiredSlug || deps.trimSlugLength(deps.slugifyText(draftName), 80) || 'organization'
       const slug = await deps.ensureUniqueCommunityOrgSlug({ provinceCode: province, communitySlug: community.slug, baseSlug })
 
-      const type = (body.data.type ?? 'LOCAL_BUSINESS') as any
+      const directoryType = body.data.type ?? 'INDIVIDUAL'
+      const type = deps.mapOrganizationDirectoryTypeToBusinessType(directoryType)
       const initialOrgSystem = deps.readOrganizationSystemState(null)
       initialOrgSystem.members[userId] = {
         rankId: deps.SYSTEM_MANAGER_RANK_ID,
@@ -384,7 +410,14 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
             slug,
             type,
             description: body.data.description?.trim() ? deps.sanitizePlainText(body.data.description).trim() : null,
-            metadata: deps.mergeOrganizationSystemStateIntoMetadata(null, initialOrgSystem),
+            metadata: deps.mergeOrganizationDirectorySettingsIntoMetadata(
+              deps.mergeOrganizationSystemStateIntoMetadata(null, initialOrgSystem),
+              {
+                type: directoryType,
+                category: body.data.category ?? null,
+                specialization: body.data.specialization ?? null,
+              },
+            ),
             status: 'DRAFT',
           },
           select: { id: true },
@@ -409,7 +442,16 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
           action: 'organization.draft_created',
           reason: null,
           previousValue: null,
-          nextValue: { name: draftName, slug, type, provinceCode: province, communitySlug: community.slug, status: 'DRAFT' },
+          nextValue: {
+            name: draftName,
+            slug,
+            type: directoryType,
+            category: body.data.category ?? null,
+            specialization: body.data.specialization ?? null,
+            provinceCode: province,
+            communitySlug: community.slug,
+            status: 'DRAFT',
+          },
         })
 
         return tx.business.findUnique({
@@ -553,7 +595,18 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       }
       if ('type' in body.data && body.data.type) {
         if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_type_change' })
-        if (body.data.type !== org.type) nextData.type = body.data.type
+        const currentDirectoryType = deps.readOrganizationDirectoryType(org.metadata, org.type)
+        if (body.data.type !== currentDirectoryType) {
+          nextData.type = deps.mapOrganizationDirectoryTypeToBusinessType(body.data.type)
+          nextMetadata = deps.mergeOrganizationDirectorySettingsIntoMetadata(nextMetadata, { type: body.data.type }) as Record<string, unknown>
+        }
+      }
+      if ('category' in body.data || 'specialization' in body.data) {
+        if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_type_change' })
+        nextMetadata = deps.mergeOrganizationDirectorySettingsIntoMetadata(nextMetadata, {
+          category: body.data.category ?? null,
+          specialization: body.data.specialization ?? null,
+        }) as Record<string, unknown>
       }
       if ('phone' in body.data) nextData.phone = body.data.phone ? body.data.phone : null
       if ('websiteUrl' in body.data) nextData.websiteUrl = body.data.websiteUrl ? body.data.websiteUrl : null
@@ -578,12 +631,18 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
             return reply.code(400).send({ error: 'organization_name_required_before_publish' })
           }
           if (/^organization(?:-\d+)?$/.test(effectiveSlug)) {
-            return reply.code(400).send({ error: 'organization_slug_required_before_publish' })
+            nextData.slug = await deps.ensureUniqueCommunityOrgSlug({
+              provinceCode: province,
+              communitySlug: resolvedCommunitySlug,
+              baseSlug: deps.trimSlugLength(deps.slugifyText(effectiveName), 80) || 'organization',
+            })
           }
         }
         nextData.status = body.data.isPublic ? 'ACTIVE' : 'DRAFT'
       }
-      if ('headline' in body.data || 'addressDetails' in body.data) nextData.metadata = nextMetadata as Prisma.InputJsonValue
+      if ('headline' in body.data || 'addressDetails' in body.data || 'type' in body.data || 'category' in body.data || 'specialization' in body.data) {
+        nextData.metadata = nextMetadata as Prisma.InputJsonValue
+      }
 
       if (body.data.logoMediaId) {
         const asset = await prisma.mediaAsset.findFirst({ where: { id: body.data.logoMediaId, ownerId: userId }, select: { id: true, category: true, status: true } })

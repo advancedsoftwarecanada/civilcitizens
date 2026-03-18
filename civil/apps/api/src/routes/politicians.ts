@@ -13,6 +13,7 @@ import {
 import { XMLParser } from 'fast-xml-parser'
 import { COMMUNITIES, PROVINCES, findCommunity, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 import { z } from 'zod'
+import { resolveCommunityElectoralDistrictContext } from '../geospatial.js'
 
 type CommunityLookupRecord = (typeof COMMUNITIES)[number]
 
@@ -1825,6 +1826,31 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
         })),
       },
     })
+  })
+
+  app.get('/communities/:province/:municipality/electoral-district', async (req: FastifyRequest, reply: FastifyReply) => {
+    const params = COMMUNITY_POLITICIANS_PARAMS.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const provinceCode = normalizeProvinceCode(params.data.province)
+    if (!provinceCode) return reply.code(404).send({ error: 'community_not_found' })
+
+    const community = findCommunity(provinceCode, params.data.municipality)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    try {
+      const payload = await resolveCommunityElectoralDistrictContext({
+        provinceCode,
+        communitySlug: community.slug,
+      })
+
+      return reply.send(payload)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'community_electoral_district_failed'
+      if (message === 'postgis_not_enabled') return reply.code(503).send({ error: message })
+      req.log.error({ err: error }, 'community_electoral_district_failed')
+      return reply.code(500).send({ error: 'community_electoral_district_failed' })
+    }
   })
 
   app.get('/politicians/federal', async (req: FastifyRequest, reply: FastifyReply) => {

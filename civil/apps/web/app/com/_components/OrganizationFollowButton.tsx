@@ -54,11 +54,11 @@ export default function OrganizationFollowButton({ province, municipality, slug,
       disabled={busy}
       className={
         following
-          ? 'inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 disabled:opacity-60'
-          : 'inline-flex items-center rounded-full border border-slate-200 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60'
+          ? 'inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:opacity-60'
+          : 'inline-flex items-center rounded-full border border-rose-600 bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:border-rose-700 hover:bg-rose-700 disabled:opacity-60'
       }
     >
-      {busy ? 'Please wait…' : following ? 'Following' : 'Follow'}
+      {busy ? 'Please wait…' : following ? 'Unfollow' : 'Follow'}
     </button>
   )
 }

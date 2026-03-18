@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import type { ElectoralDistrictContextResponse } from '@civil/shared'
 import Link from 'next/link'
 import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 import Block from './Block'
 import { buildApiUrl } from '../_lib/api'
 import CivilCard from './CivilCard'
 import OrganizationCreateButton from '../com/_components/OrganizationCreateButton'
+import { CivilDistrictMap } from './map/CivilDistrictMap'
 
 type CommunityOrganization = {
   id: string
@@ -53,6 +55,19 @@ type CommunityPoliticiansResponse = {
 
 type CommunityFederalSeat = NonNullable<NonNullable<CommunityPoliticiansResponse['federal']>['seat']>
 
+function canUseMapStyle(styleUrl: string | null | undefined) {
+  if (!styleUrl) return false
+  if (typeof window === 'undefined') return true
+
+  try {
+    const resolved = new URL(styleUrl, window.location.origin)
+    if (window.location.protocol === 'https:' && resolved.protocol === 'http:') return false
+    return true
+  } catch {
+    return false
+  }
+}
+
 const numberFormatter = new Intl.NumberFormat('en-CA')
 
 function shuffleOrganizations<T>(items: T[]): T[] {
@@ -80,6 +95,7 @@ export default function CommunityRightRailClient({
   const [organizations, setOrganizations] = useState<CommunityOrganization[]>([])
   const [feedActivity, setFeedActivity] = useState<{ eventCount: number; jobCount: number } | null>(null)
   const [federalSeat, setFederalSeat] = useState<CommunityFederalSeat | null>(null)
+  const [districtPreview, setDistrictPreview] = useState<ElectoralDistrictContextResponse | null>(null)
   const [loadingCommunityData, setLoadingCommunityData] = useState(true)
 
   const provinceName = useMemo(() => {
@@ -146,12 +162,28 @@ export default function CommunityRightRailClient({
           } else {
             setFederalSeat(null)
           }
+
+            try {
+              const districtRes = await fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/electoral-district`), {
+                cache: 'no-store',
+              })
+
+              if (districtRes.ok) {
+                const payload = (await districtRes.json().catch(() => null)) as ElectoralDistrictContextResponse | null
+                setDistrictPreview(payload?.district ? payload : null)
+              } else {
+              setDistrictPreview(null)
+            }
+            } catch {
+              setDistrictPreview(null)
+            }
         }
       } catch {
         if (!cancelled) {
           setOrganizations([])
           setFeedActivity(null)
           setFederalSeat(null)
+            setDistrictPreview(null)
         }
       } finally {
         if (!cancelled) {
@@ -181,6 +213,7 @@ export default function CommunityRightRailClient({
   }, [federalSeat])
 
   const dataLoaderDiv = <div className="mt-2 h-4 w-28 animate-pulse rounded bg-slate-200" />
+  const electoralDistrictName = districtPreview?.district?.name ?? communityName
 
   return (
     <div className="space-y-6">
@@ -211,6 +244,31 @@ export default function CommunityRightRailClient({
             </div>
           </div>
         </dl>
+      </Block>
+
+      <Block title="Electoral District">
+        {loadingCommunityData ? (
+          <div className="space-y-3">
+            <div className="h-44 animate-pulse rounded-[24px] border border-slate-200 bg-slate-100" />
+            <div className="h-4 w-36 animate-pulse rounded bg-slate-200" />
+          </div>
+        ) : districtPreview?.district ? (
+          <div className="space-y-3">
+            {canUseMapStyle(districtPreview.styleUrl) ? (
+              <CivilDistrictMap context={districtPreview} />
+            ) : (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                District data loaded, but the map preview is unavailable because the tile server is not usable from this page.
+              </div>
+            )}
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+              <p className="text-sm font-semibold text-slate-900">{electoralDistrictName}</p>
+              <p className="mt-1 text-xs text-slate-500">Federal electoral district boundary for this community.</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Sign in to load the electoral district boundary map.</p>
+        )}
       </Block>
 
       <Block title="Community Feed">
