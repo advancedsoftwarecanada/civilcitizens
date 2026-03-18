@@ -2,19 +2,27 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { HiOutlineBuildingOffice2, HiOutlineCalendarDays, HiOutlineCheckBadge, HiOutlineDocumentText, HiOutlineMapPin, HiOutlineShoppingBag } from 'react-icons/hi2'
+import {
+  HiOutlineBuildingOffice2,
+  HiOutlineCalendarDays,
+  HiOutlineCheckBadge,
+  HiOutlineDocumentText,
+  HiOutlineMapPin,
+  HiOutlineShoppingBag,
+} from 'react-icons/hi2'
 import {
   type CommunitySearchResult,
   type EventSearchResult,
   type MarketSearchResult,
-  type SearchResponse,
   type OrganizationSearchResult,
   type PostSearchResult,
+  type SearchResponse,
   type UserSearchResult,
 } from './searchTypes'
-import { buildApiUrl } from '../../_lib/api'
+import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import {
   buildAddressesHrefFromResult,
+  calculateDistanceKm,
   fetchAddressSearchResults,
   formatAddressPrimaryLabel,
   formatAddressSecondaryLabel,
@@ -23,6 +31,7 @@ import {
   type NominatimAddress,
 } from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
+import { normalizeCanadianAddress, readStoredMarketShippingAddress, type SavedShippingAddress } from '../../_lib/canadianAddresses'
 import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import VerifiedAvatar from '../VerifiedAvatar'
@@ -34,18 +43,31 @@ const ORGANIZATION_LIMIT = 2
 const EVENT_LIMIT = 2
 const MARKET_LIMIT = 2
 const POST_LIMIT = 2
+const ADDRESS_FETCH_LIMIT = 8
+const ADDRESS_DISTANCE_LIMIT_KM = 1000
 
 type SearchResultsProps = {
   query: string
   open: boolean
+  onResultSelect?: () => void
 }
 
-function CompactSection({ title, href, children }: { title: string; href: string; children: ReactNode }) {
+type SearchAnchor = {
+  latitude: number
+  longitude: number
+}
+
+type VisibleAddressResult = {
+  result: NominatimAddress
+  distanceKm: number | null
+}
+
+function CompactSection({ title, href, children, onResultSelect }: { title: string; href: string; children: ReactNode; onResultSelect?: () => void }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between gap-2 px-1">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">{title}</p>
-        <Link href={href} className="text-[11px] font-semibold text-[var(--cc-primary)] hover:underline">
+        <Link href={href} onClick={onResultSelect} className="text-[11px] font-semibold text-[var(--cc-primary)] hover:underline">
           View more
         </Link>
       </div>
@@ -54,7 +76,23 @@ function CompactSection({ title, href, children }: { title: string; href: string
   )
 }
 
-export function SearchResults({ query, open }: SearchResultsProps) {
+function hasCoordinates(value: SearchAnchor | null | undefined): value is SearchAnchor {
+  return Boolean(value) && Number.isFinite(value.latitude) && Number.isFinite(value.longitude)
+}
+
+function formatDistanceBadge(distanceKm: number) {
+  if (distanceKm < 1) {
+    return `${Math.max(100, Math.round(distanceKm * 1000 / 100) * 100)} m`
+  }
+
+  if (distanceKm < 10) {
+    return `${distanceKm.toFixed(1)} km`
+  }
+
+  return `${Math.round(distanceKm)} km`
+}
+
+export function SearchResults({ query, open, onResultSelect }: SearchResultsProps) {
   const trimmedQuery = query.trim()
   const [peopleResults, setPeopleResults] = useState<UserSearchResult[]>([])
   const [communityResults, setCommunityResults] = useState<CommunitySearchResult[]>([])
@@ -63,11 +101,91 @@ export function SearchResults({ query, open }: SearchResultsProps) {
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
   const [addressResults, setAddressResults] = useState<NominatimAddress[]>([])
+  const [addressSearchAnchor, setAddressSearchAnchor] = useState<SearchAnchor | null>(null)
   const [loading, setLoading] = useState(false)
   const [addressLoading, setAddressLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const addressAbortRef = useRef<AbortController | null>(null)
+  const addressAnchorAttemptedRef = useRef(false)
+
+  useEffect(() => {
+    if (open) return
+    addressAnchorAttemptedRef.current = false
+    setAddressSearchAnchor(null)
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !isUsableAddressQuery(trimmedQuery) || addressAnchorAttemptedRef.current) return
+
+    addressAnchorAttemptedRef.current = true
+    let cancelled = false
+
+    const resolveAnchor = async () => {
+      if (typeof navigator !== 'undefined' && navigator.geolocation) {
+        try {
+          const currentLocation = await new Promise<SearchAnchor>((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(
+              (position) => {
+                resolve({
+                  latitude: position.coords.latitude,
+                  longitude: position.coords.longitude,
+                })
+              },
+              reject,
+              { enableHighAccuracy: true, timeout: 5000, maximumAge: 300000 },
+            )
+          })
+          if (!cancelled) setAddressSearchAnchor(currentLocation)
+          return
+        } catch {
+          // fall through to saved home/default address
+        }
+      }
+
+      const storedAddress = readStoredMarketShippingAddress()
+      const normalizedStoredAddress = storedAddress ? normalizeCanadianAddress(storedAddress) : null
+      if (hasCoordinates(normalizedStoredAddress)) {
+        if (!cancelled) {
+          setAddressSearchAnchor({
+            latitude: normalizedStoredAddress.latitude,
+            longitude: normalizedStoredAddress.longitude,
+          })
+        }
+        return
+      }
+
+      const token = getStoredToken()
+      if (!token) return
+
+      try {
+        const response = await fetch(buildApiUrl('/market/account/shipping-addresses'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const { json } = await parseApiResponse<{ items?: SavedShippingAddress[] }>(response)
+        if (!response.ok || cancelled) return
+
+        const items = Array.isArray(json?.items) ? json.items : []
+        const fallbackAddress = items.find((entry) => entry.isDefault) ?? items[0] ?? null
+        const normalizedFallback = fallbackAddress ? normalizeCanadianAddress(fallbackAddress) : null
+        if (hasCoordinates(normalizedFallback) && !cancelled) {
+          setAddressSearchAnchor({
+            latitude: normalizedFallback.latitude,
+            longitude: normalizedFallback.longitude,
+          })
+        }
+      } catch {
+        // leave anchor unset if fallback lookup fails
+      }
+    }
+
+    void resolveAnchor()
+
+    return () => {
+      cancelled = true
+    }
+  }, [open, trimmedQuery])
 
   useEffect(() => {
     if (!open || !isUsableAddressQuery(trimmedQuery)) {
@@ -84,7 +202,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
     addressAbortRef.current = controller
     setAddressLoading(true)
 
-    void fetchAddressSearchResults(trimmedQuery, controller.signal, 4)
+    void fetchAddressSearchResults(trimmedQuery, controller.signal, ADDRESS_FETCH_LIMIT)
       .then((results) => {
         setAddressResults(results)
       })
@@ -189,6 +307,25 @@ export function SearchResults({ query, open }: SearchResultsProps) {
     }
   }, [open, trimmedQuery])
 
+  const visibleAddressResults = useMemo(() => {
+    if (!addressResults.length) return []
+    if (!hasCoordinates(addressSearchAnchor)) {
+      return addressResults.slice(0, 4).map((result) => ({ result, distanceKm: null }))
+    }
+
+    return addressResults
+      .map((result) => ({
+        result,
+        distanceKm: calculateDistanceKm(addressSearchAnchor, {
+          latitude: result.latitude,
+          longitude: result.longitude,
+        }),
+      }))
+      .filter((entry) => entry.distanceKm <= ADDRESS_DISTANCE_LIMIT_KM)
+      .sort((left, right) => left.distanceKm - right.distanceKm)
+      .slice(0, 4)
+  }, [addressResults, addressSearchAnchor]) satisfies VisibleAddressResult[]
+
   const showPanel = open && trimmedQuery.length >= MIN_QUERY_LENGTH
   const hasAnyResults =
     peopleResults.length > 0 ||
@@ -197,7 +334,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
     eventResults.length > 0 ||
     marketResults.length > 0 ||
     postResults.length > 0 ||
-    addressResults.length > 0
+    visibleAddressResults.length > 0
 
   const sectionHref = useMemo(
     () => ({
@@ -223,7 +360,7 @@ export function SearchResults({ query, open }: SearchResultsProps) {
 
   return (
     <div
-      className="absolute left-0 top-[calc(100%+0.5rem)] z-40 w-full min-w-[18rem] rounded-2xl border border-slate-200 bg-white/95 p-3 text-left shadow-2xl shadow-slate-900/10 backdrop-blur"
+      className="absolute left-0 top-[calc(100%+0.5rem)] z-40 w-full min-w-[18rem] rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-2xl shadow-slate-900/12"
       onMouseDown={(event) => event.preventDefault()}
     >
       {error ? (
@@ -234,26 +371,31 @@ export function SearchResults({ query, open }: SearchResultsProps) {
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil matches yet.</div>
       ) : (
         <div className="space-y-4">
-          {addressResults.length > 0 ? (
-            <CompactSection title="Addresses" href={sectionHref.addresses}>
+          {visibleAddressResults.length > 0 ? (
+            <CompactSection title="Addresses" href={sectionHref.addresses} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
-                {addressResults.map((result) => (
+                {visibleAddressResults.map(({ result, distanceKm }) => (
                   <li key={`${result.placeId ?? result.displayName}-${result.latitude}-${result.longitude}`}>
-                    <Link href={buildAddressesHrefFromResult(result, trimmedQuery)} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                    <Link href={buildAddressesHrefFromResult(result, trimmedQuery)} onClick={onResultSelect} className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
                         <HiOutlineMapPin className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2 truncate font-semibold text-slate-900">
-                          <span className="truncate">{formatAddressPrimaryLabel(result)}</span>
+                        <p className="break-words text-sm font-semibold leading-5 text-slate-900">{formatAddressPrimaryLabel(result)}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {distanceKm !== null ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                              {formatDistanceBadge(distanceKm)}
+                            </span>
+                          ) : null}
                           {isAddressPostalVerified(result) ? (
                             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
                               <HiOutlineCheckBadge className="h-3.5 w-3.5" />
                               Verified Address
                             </span>
                           ) : null}
-                        </span>
-                        <p className="truncate text-xs text-slate-500">{formatAddressSecondaryLabel(result)}</p>
+                        </div>
+                        <p className="mt-1 break-words text-xs leading-5 text-slate-500">{formatAddressSecondaryLabel(result)}</p>
                       </div>
                     </Link>
                   </li>
@@ -263,13 +405,13 @@ export function SearchResults({ query, open }: SearchResultsProps) {
           ) : null}
 
           {peopleResults.length > 0 ? (
-            <CompactSection title="People" href={sectionHref.people}>
+            <CompactSection title="People" href={sectionHref.people} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {peopleResults.map((person) => {
                   const displayName = formatUserDisplayName(person.name, person.handle) || person.handle
                   return (
                     <li key={person.id}>
-                      <Link href={`/u/${person.handle}`} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                      <Link href={`/u/${person.handle}`} onClick={onResultSelect} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
                         <VerifiedAvatar
                           src={person.avatarUrl}
                           alt={displayName}
@@ -294,12 +436,13 @@ export function SearchResults({ query, open }: SearchResultsProps) {
           ) : null}
 
           {communityResults.length > 0 ? (
-            <CompactSection title="Communities" href={sectionHref.communities}>
+            <CompactSection title="Communities" href={sectionHref.communities} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {communityResults.map((community) => (
                   <li key={`${community.provinceCode}:${community.slug}`}>
                     <Link
                       href={`/${community.provinceCode.toLowerCase()}/${encodeURIComponent(community.slug)}`}
+                      onClick={onResultSelect}
                       className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50"
                     >
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-500">
@@ -317,11 +460,11 @@ export function SearchResults({ query, open }: SearchResultsProps) {
           ) : null}
 
           {organizationResults.length > 0 ? (
-            <CompactSection title="Organizations" href={sectionHref.organizations}>
+            <CompactSection title="Organizations" href={sectionHref.organizations} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {organizationResults.map((organization) => (
                   <li key={organization.id}>
-                    <Link href={organization.href} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                    <Link href={organization.href} onClick={onResultSelect} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
                       {organization.logoUrl ? (
                         <img src={organization.logoUrl} alt={organization.name} className="h-10 w-10 rounded-full object-cover" />
                       ) : (
@@ -341,11 +484,11 @@ export function SearchResults({ query, open }: SearchResultsProps) {
           ) : null}
 
           {eventResults.length > 0 ? (
-            <CompactSection title="Events" href={sectionHref.events}>
+            <CompactSection title="Events" href={sectionHref.events} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {eventResults.map((event) => (
                   <li key={event.id}>
-                    <Link href={event.href} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                    <Link href={event.href} onClick={onResultSelect} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
                       {event.imageUrl ? (
                         <img src={event.imageUrl} alt={event.title} className="h-10 w-10 rounded-xl object-cover" />
                       ) : (
@@ -365,11 +508,11 @@ export function SearchResults({ query, open }: SearchResultsProps) {
           ) : null}
 
           {marketResults.length > 0 ? (
-            <CompactSection title="Market" href={sectionHref.market}>
+            <CompactSection title="Market" href={sectionHref.market} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {marketResults.map((listing) => (
                   <li key={listing.id}>
-                    <Link href={listing.href} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                    <Link href={listing.href} onClick={onResultSelect} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
                       {listing.imageUrl ? (
                         <img src={listing.imageUrl} alt={listing.title} className="h-10 w-10 rounded-xl object-cover" />
                       ) : (
@@ -392,13 +535,13 @@ export function SearchResults({ query, open }: SearchResultsProps) {
           ) : null}
 
           {postResults.length > 0 ? (
-            <CompactSection title="Posts" href={sectionHref.posts}>
+            <CompactSection title="Posts" href={sectionHref.posts} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {postResults.map((post) => {
                   const displayName = formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle
                   return (
                     <li key={post.id}>
-                      <Link href={post.href} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                      <Link href={post.href} onClick={onResultSelect} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
                         {post.imageUrl ? (
                           <img src={post.imageUrl} alt={post.title || 'Post'} className="h-10 w-10 rounded-xl object-cover" />
                         ) : (
