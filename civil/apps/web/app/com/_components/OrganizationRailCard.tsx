@@ -125,11 +125,13 @@ export default function OrganizationRailCard({
     <div className="space-y-6">
       <Block title="Organization">
         {org?.coverUrl ? (
-          <img
-            src={org.coverUrl}
-            alt={`${resolvedName} cover`}
-            className="mb-4 h-24 w-full rounded-2xl border border-slate-200 object-cover"
-          />
+          <Link href={basePath} onClick={onNavigate} className="mb-4 block">
+            <img
+              src={org.coverUrl}
+              alt={`${resolvedName} cover`}
+              className="h-24 w-full rounded-2xl border border-slate-200 object-cover transition-opacity hover:opacity-95"
+            />
+          </Link>
         ) : null}
 
         <div className="flex items-center justify-between gap-3">

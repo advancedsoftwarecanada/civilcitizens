@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { normalizeProvinceCode } from '@civil/shared'
 import {
   HiOutlineArrowLeftCircle,
-  HiOutlineBars3,
   HiOutlineBell,
   HiOutlineChatBubbleOvalLeft,
   HiOutlineComputerDesktop,
@@ -15,6 +14,8 @@ import {
   HiOutlineUsers,
   HiOutlineXMark,
 } from 'react-icons/hi2'
+import { AiOutlineHome } from 'react-icons/ai'
+import { MdOutlineReadMore } from 'react-icons/md'
 import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import CivilCard from './CivilCard'
@@ -41,13 +42,14 @@ const DEFAULT_NAV_BUTTONS: Array<{
   label: string
   icon?: IconType
   imageSrc?: string
+  text?: string
 }> = [
-  { key: 'home', label: 'Menu', icon: HiOutlineBars3 },
+  { key: 'home', label: 'Menu', icon: AiOutlineHome },
   { key: 'cart', label: 'Cart', icon: HiOutlineShoppingCart },
   { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
-  { key: 'ai', label: 'Civil AI', imageSrc: '/civil-ai.png' },
-  { key: 'more', label: 'More', icon: HiOutlineBars3 },
+  { key: 'ai', label: 'Civil AI', text: 'AI' },
+  { key: 'more', label: 'More', icon: MdOutlineReadMore },
 ] as const
 
 const FAMILY_NAV_BUTTONS: Array<{
@@ -55,12 +57,13 @@ const FAMILY_NAV_BUTTONS: Array<{
   label: string
   icon?: IconType
   imageSrc?: string
+  text?: string
 }> = [
-  { key: 'home', label: 'Menu', icon: HiOutlineBars3 },
+  { key: 'home', label: 'Menu', icon: AiOutlineHome },
   { key: 'friends', label: 'Friends', icon: HiOutlineUsers },
   { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
-  { key: 'more', label: 'More', icon: HiOutlineBars3 },
+  { key: 'more', label: 'More', icon: MdOutlineReadMore },
 ] as const
 
 const DRAWER_TRANSITION_MS = 320
@@ -635,7 +638,9 @@ export default function MobileDock() {
                 aria-label={item.label}
               >
                 <div className="relative">
-                  {item.imageSrc ? (
+                  {item.text ? (
+                    <span className="text-sm font-semibold leading-none tracking-[0.08em]">{item.text}</span>
+                  ) : item.imageSrc ? (
                     <img src={item.imageSrc} alt="" className="h-6 w-6 rounded-lg" />
                   ) : Icon ? (
                     <Icon className="text-xl leading-none" />

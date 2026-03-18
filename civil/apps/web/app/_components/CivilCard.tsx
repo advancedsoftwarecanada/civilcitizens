@@ -156,6 +156,37 @@ function clampStyle(lines?: number): CSSProperties | undefined {
   }
 }
 
+function normalizeCardNameSegment(segment: string) {
+  if (!segment) return segment
+
+  return segment
+    .split(/(['-])/)
+    .map((part) => {
+      if (!part || part === '-' || part === "'") return part
+      const hasLetters = /[A-Za-z]/.test(part)
+      if (!hasLetters) return part
+
+      const isAllUpper = part === part.toUpperCase() && part !== part.toLowerCase()
+      const hasMixedCase = part !== part.toLowerCase() && part !== part.toUpperCase()
+      if (isAllUpper || hasMixedCase) return part
+
+      return `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`
+    })
+    .join('')
+}
+
+function normalizeCardName(name: ReactNode) {
+  if (typeof name !== 'string') return name
+  const trimmed = name.trim()
+  if (!trimmed) return name
+
+  return trimmed
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((segment) => normalizeCardNameSegment(segment))
+    .join(' ')
+}
+
 function deriveCardInitials(source?: string | null) {
   if (!source) return 'C'
   const cleaned = source.trim()
@@ -210,6 +241,7 @@ export default function CivilCard({
   const overlayAvatarInitials = deriveCardInitials(avatarInitials ?? avatarAlt)
   const overlayAvatarFallbackSize = Math.max(16, Math.round((avatarSize ?? sizeStyles.avatar) / 1.3))
   const overlayMediaWidth = typeof overlayAvatarWidth === 'number' ? `${overlayAvatarWidth}px` : overlayAvatarWidth
+  const resolvedName = normalizeCardName(name)
   const centeredTitlePillClassName =
     'inline-flex max-w-full min-w-0 flex-col items-center justify-center rounded-[1.2rem] border border-white/18 bg-slate-950/20 px-5 py-3 text-center backdrop-blur-md shadow-[0_16px_36px_rgba(15,23,42,0.16)]'
 
@@ -232,7 +264,7 @@ export default function CivilCard({
       )}
       style={clampStyle(resolvedTitleLines)}
     >
-      {name}
+      {resolvedName}
     </Link>
   ) : (
     <p
@@ -246,7 +278,7 @@ export default function CivilCard({
       )}
       style={clampStyle(resolvedTitleLines)}
     >
-      {name}
+      {resolvedName}
     </p>
   )
 
@@ -272,7 +304,7 @@ export default function CivilCard({
       )}
       style={clampStyle(resolvedTitleLines)}
     >
-      {name}
+      {resolvedName}
     </p>
   )
 

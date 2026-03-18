@@ -6,7 +6,7 @@
   --cc-viewport-height: 100vh;
   --cc-top-nav-height: 4.5rem;
   --cc-top-nav-offset: var(--cc-top-nav-height);
-  --cc-native-safe-top-offset: 0px;
+  --cc-native-safe-top-offset: max(env(safe-area-inset-top, 0px), var(--cc-runtime-top-inset));
   --cc-native-shell-top-gap: 0px;
   --cc-runtime-top-inset: 0px;
   --cc-runtime-bottom-inset: 0px;

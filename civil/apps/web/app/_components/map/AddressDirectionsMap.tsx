@@ -1138,7 +1138,12 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         />
 
         <div className="pointer-events-none absolute inset-0">
-          <div className="pointer-events-none absolute inset-x-4 top-4 flex flex-col gap-3">
+          <div
+            className="pointer-events-none absolute inset-x-4 flex flex-col gap-3"
+            style={{
+              top: fullscreenActive ? 'calc(var(--cc-native-safe-top-offset) + 1rem)' : '1rem',
+            }}
+          >
             {navigationNotice ? (
               <div className="pointer-events-auto rounded-2xl border-4 border-black bg-emerald-50/95 px-4 py-3 text-sm font-semibold text-slate-900 shadow-lg backdrop-blur">
                 {navigationNotice}
@@ -1177,7 +1182,14 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="top-1/2 -translate-y-1/2" />
 
           {navigationRoute && activeOrigin ? (
-            <div className="pointer-events-none absolute inset-x-3 bottom-3 md:inset-x-4 md:bottom-4">
+            <div
+              className="pointer-events-none absolute inset-x-3 md:inset-x-4"
+              style={{
+                bottom: fullscreenActive
+                  ? 'calc(max(env(safe-area-inset-bottom), var(--cc-runtime-bottom-inset)) + 0.75rem)'
+                  : '0.75rem',
+              }}
+            >
               <div className="pointer-events-auto grid gap-2 rounded-[24px] border-4 border-black bg-white/92 px-3 py-3 text-slate-900 shadow-2xl backdrop-blur md:grid-cols-[minmax(0,1fr)_auto] md:gap-3 md:px-4 md:py-4 md:items-end">
                 <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
                   <div className="flex items-center gap-2 rounded-[18px] border-2 border-black bg-white px-2.5 py-2.5 md:gap-3 md:rounded-[20px] md:px-3 md:py-3">
@@ -1226,7 +1238,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                   <button
                     type="button"
                     onClick={() => setConfirmExitOpen(true)}
-                    className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-black bg-rose-100 px-3 py-2 text-[11px] font-semibold text-slate-900 transition hover:bg-rose-200 md:text-xs"
+                    className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-black bg-red-600 px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-red-700 md:text-xs"
                   >
                     <HiOutlineXMark className="h-4 w-4" />
                     End trip
@@ -1237,7 +1249,14 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           ) : null}
 
           {navStatus === 'starting' ? (
-            <div className="pointer-events-none absolute inset-x-4 bottom-4 flex justify-end">
+            <div
+              className="pointer-events-none absolute inset-x-4 flex justify-end"
+              style={{
+                bottom: fullscreenActive
+                  ? 'calc(max(env(safe-area-inset-bottom), var(--cc-runtime-bottom-inset)) + 1rem)'
+                  : '1rem',
+              }}
+            >
               <div className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-slate-950/85 px-5 py-3 text-sm font-semibold text-white shadow-lg backdrop-blur">
                 <HiOutlineArrowPath className="h-4 w-4 animate-spin" />
                 Starting navigation…
@@ -1270,7 +1289,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                     onClick={() => {
                       void stopNavigation()
                     }}
-                    className="inline-flex items-center rounded-full border-2 border-black bg-rose-100 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-rose-200"
+                    className="inline-flex items-center rounded-full border-2 border-black bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
                   >
                     End trip
                   </button>
