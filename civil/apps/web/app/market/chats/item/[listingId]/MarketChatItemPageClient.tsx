@@ -125,6 +125,9 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
   const [selectBuyerError, setSelectBuyerError] = useState<string | null>(null)
   const [relistSubmitting, setRelistSubmitting] = useState(false)
   const [relistError, setRelistError] = useState<string | null>(null)
+  const [markSoldConfirmOpen, setMarkSoldConfirmOpen] = useState(false)
+  const [markSoldSubmitting, setMarkSoldSubmitting] = useState(false)
+  const [markSoldError, setMarkSoldError] = useState<string | null>(null)
 
   const load = async (cancelledRef?: { cancelled: boolean }) => {
       const token = getStoredToken()
@@ -224,6 +227,11 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
     return Boolean(listing && statusValue === 'pending')
   }, [listing])
 
+  const canMarkSold = useMemo(() => {
+    const statusValue = (listing?.status || '').toLowerCase()
+    return Boolean(listing && statusValue === 'pending' && selectedThreadId)
+  }, [listing, selectedThreadId])
+
   const openThread = (threadId: string) => {
     router.push(`/market/chats/${encodeURIComponent(threadId)}`)
   }
@@ -291,6 +299,40 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
     }
   }
 
+  const onMarkSold = async () => {
+    if (!listing) return
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setMarkSoldSubmitting(true)
+    setMarkSoldError(null)
+    try {
+      const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(listing.id)}/remove`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ resolution: 'sold' }),
+      })
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        setMarkSoldError(payload?.error || 'Unable to mark item sold.')
+        return
+      }
+
+      setMarkSoldConfirmOpen(false)
+      router.push('/messages?inbox=market')
+    } catch {
+      setMarkSoldError('Unable to mark item sold.')
+    } finally {
+      setMarkSoldSubmitting(false)
+    }
+  }
+
   return (
     <DashboardShell rightRail={<MarketRightRail />} showMobileRightRail mainClassName="space-y-5 pb-12">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
@@ -300,6 +342,19 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
             <p className="mt-1 text-sm text-slate-600">Select a conversation to open the thread.</p>
           </div>
           <div className="flex items-center gap-2">
+            {canMarkSold ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setMarkSoldError(null)
+                  setMarkSoldConfirmOpen(true)
+                }}
+                disabled={markSoldSubmitting}
+                className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {markSoldSubmitting ? 'Marking sold…' : 'Mark sold'}
+              </button>
+            ) : null}
             {canRelist ? (
               <button
                 type="button"
@@ -316,6 +371,7 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
           </div>
         </div>
         {relistError ? <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{relistError}</div> : null}
+        {markSoldError && !markSoldConfirmOpen ? <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{markSoldError}</div> : null}
       </section>
 
       {status === 'loading' ? <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Loading…</div> : null}
@@ -405,6 +461,37 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
                 className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {selectBuyerSubmitting ? 'Selecting…' : 'Select Buyer'}
+              </button>
+            </div>
+          </Modal>
+
+          <Modal
+            open={markSoldConfirmOpen}
+            onClose={() => {
+              if (markSoldSubmitting) return
+              setMarkSoldConfirmOpen(false)
+            }}
+            title="Mark item sold?"
+            maxWidthClassName="max-w-lg"
+          >
+            <p className="text-sm text-slate-700">This will remove the listing, send active buyer chats a message saying the item has been sold, and send a push notification to those buyers.</p>
+            {markSoldError ? <p className="mt-3 text-sm text-rose-700">{markSoldError}</p> : null}
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setMarkSoldConfirmOpen(false)}
+                disabled={markSoldSubmitting}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void onMarkSold()}
+                disabled={markSoldSubmitting}
+                className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {markSoldSubmitting ? 'Marking sold…' : 'Mark sold'}
               </button>
             </div>
           </Modal>

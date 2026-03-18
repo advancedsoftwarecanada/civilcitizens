@@ -1,12 +1,15 @@
 'use client'
 
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { AddressDirectionsMap } from '../../../_components/map/AddressDirectionsMap'
 import DashboardShell from '../../../_components/DashboardShell'
 import Modal from '../../../_components/Modal'
+import RichTextEditor from '../../../_components/RichTextEditor'
 import { pushToast } from '../../../_components/useToasts'
 import { buildApiUrl } from '../../../_lib/api'
+import { fetchAddressSearchResults } from '../../../_lib/addressSearch'
+import { normalizeCanadianPostalCode, normalizeCanadianProvince, type SavedShippingAddress } from '../../../_lib/canadianAddresses'
 import MarketRightRail from '../../_components/MarketRightRail'
 
 type ListingDetail = {
@@ -48,6 +51,27 @@ type ProfileAddressResponse = {
     billingPostalCode?: string | null
     billingCountry?: string | null
   }
+}
+
+type ProfileHomeAddress = {
+  line1: string
+  line2: string
+  city: string
+  province: string
+  postalCode: string
+}
+
+type ShippingAddressListResponse = {
+  items?: SavedShippingAddress[]
+}
+
+type FavoriteAddress = {
+  id: string
+  label: string
+  address: string | null
+  latitude: number | null
+  longitude: number | null
+  savedAt: string
 }
 
 type DraftForm = {
@@ -134,6 +158,8 @@ const DELIVERY_RANGES: Array<{ key: 'short50km' | 'medium100km' | 'long250km'; l
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
+const ADDRESS_FAVORITES_STORAGE_KEY = 'civil_address_favorites'
+const MAX_LISTING_DESCRIPTION_LENGTH = 5000
 
 type MediaUploadInitResponse = {
   assetId: string
@@ -162,6 +188,61 @@ function getAuthHeaders(extra?: Record<string, string>): Record<string, string> 
 
 function formatMoneyInput(cents: number) {
   return (Math.max(0, Number(cents) || 0) / 100).toFixed(2)
+}
+
+function stripHtmlToPlainText(html: string) {
+  return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function readFavoriteAddresses() {
+  if (typeof window === 'undefined') return [] as FavoriteAddress[]
+  try {
+    const raw = window.localStorage.getItem(ADDRESS_FAVORITES_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+        const record = entry as Record<string, unknown>
+        const id = typeof record.id === 'string' ? record.id.trim() : ''
+        const label = typeof record.label === 'string' ? record.label.trim() : ''
+        if (!id || !label) return null
+        return {
+          id,
+          label,
+          address: typeof record.address === 'string' ? record.address.trim() || null : null,
+          latitude: typeof record.latitude === 'number' && Number.isFinite(record.latitude) ? record.latitude : null,
+          longitude: typeof record.longitude === 'number' && Number.isFinite(record.longitude) ? record.longitude : null,
+          savedAt: typeof record.savedAt === 'string' ? record.savedAt : new Date(0).toISOString(),
+        } satisfies FavoriteAddress
+      })
+      .filter((entry): entry is FavoriteAddress => Boolean(entry))
+  } catch {
+    return []
+  }
+}
+
+function isHomeAddress(address: SavedShippingAddress) {
+  const label = `${address.label ?? ''} ${address.name ?? ''}`.trim().toLowerCase()
+  return address.isDefault || label.includes('home')
+}
+
+function formatSavedAddressTitle(address: SavedShippingAddress, fallback: string) {
+  return address.label?.trim() || address.name?.trim() || fallback
+}
+
+function formatSavedAddressDetail(address: SavedShippingAddress, options?: { includeName?: boolean }) {
+  const includeName = options?.includeName ?? true
+  const lines = [includeName ? address.name?.trim() : '', address.line1?.trim(), address.line2?.trim()].filter(Boolean)
+  const locality = [address.city?.trim(), address.province?.trim(), address.postalCode?.trim()].filter(Boolean).join(', ')
+  if (locality) lines.push(locality)
+  return lines.join(', ')
+}
+
+function formatHomeAddressTitle(address: SavedShippingAddress) {
+  const nickname = address.name?.trim()
+  return nickname ? `Home, ${nickname}` : 'Home'
 }
 
 function toCents(value: string) {
@@ -217,7 +298,17 @@ export default function MarketNewListingPageClient() {
   const [statusLabel, setStatusLabel] = useState<'draft' | 'active'>('draft')
   const [uploadingPhotos, setUploadingPhotos] = useState(false)
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false)
+  const [deleteAsSold, setDeleteAsSold] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [communityOptions, setCommunityOptions] = useState<CommunityFollowOption[]>([])
+  const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
+  const [favoriteAddresses, setFavoriteAddresses] = useState<FavoriteAddress[]>([])
+  const [profileHomeAddress, setProfileHomeAddress] = useState<ProfileHomeAddress | null>(null)
+  const [quickSelectValue, setQuickSelectValue] = useState('')
+  const [addressMapPreview, setAddressMapPreview] = useState<{ latitude: number; longitude: number; label: string } | null>(null)
+  const [addressMapStatus, setAddressMapStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
   const loadListing = useCallback(async (id: string) => {
     const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(id)}`), {
@@ -315,6 +406,52 @@ export default function MarketNewListingPageClient() {
     }
   }, [])
 
+  const loadAddressQuickSelects = useCallback(async () => {
+    setFavoriteAddresses(readFavoriteAddresses())
+
+    try {
+      const profileRes = await fetch(buildApiUrl('/profile'), {
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      })
+      if (profileRes.ok) {
+        const payload = (await profileRes.json().catch(() => null)) as ProfileAddressResponse | null
+        const user = payload?.user
+        const nextHome = {
+          line1: typeof user?.billingAddress1 === 'string' ? user.billingAddress1.trim() : '',
+          line2: typeof user?.billingAddress2 === 'string' ? user.billingAddress2.trim() : '',
+          city: typeof user?.billingCity === 'string' ? user.billingCity.trim() : '',
+          province: normalizeCanadianProvince(typeof user?.billingState === 'string' ? user.billingState : ''),
+          postalCode: normalizeCanadianPostalCode(typeof user?.billingPostalCode === 'string' ? user.billingPostalCode : ''),
+        }
+        if (nextHome.line1 || nextHome.city || nextHome.province || nextHome.postalCode) {
+          setProfileHomeAddress(nextHome)
+        } else {
+          setProfileHomeAddress(null)
+        }
+      } else {
+        setProfileHomeAddress(null)
+      }
+    } catch {
+      setProfileHomeAddress(null)
+    }
+
+    try {
+      const res = await fetch(buildApiUrl('/market/account/shipping-addresses'), {
+        headers: getAuthHeaders(),
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        setSavedAddresses([])
+        return
+      }
+      const payload = (await res.json().catch(() => null)) as ShippingAddressListResponse | null
+      setSavedAddresses(Array.isArray(payload?.items) ? payload.items : [])
+    } catch {
+      setSavedAddresses([])
+    }
+  }, [])
+
   const createDraft = useCallback(async () => {
     const res = await fetch(buildApiUrl('/market/listings/draft'), {
       method: 'POST',
@@ -386,6 +523,143 @@ export default function MarketNewListingPageClient() {
   useEffect(() => {
     void loadCommunityOptions()
   }, [loadCommunityOptions])
+
+  useEffect(() => {
+    void loadAddressQuickSelects()
+  }, [loadAddressQuickSelects])
+
+  const quickSelectOptions = useMemo(() => {
+    const profileHome = profileHomeAddress
+      ? [
+          {
+            value: 'profile:home',
+            group: 'Saved addresses',
+            label: 'Home',
+            detail: [profileHomeAddress.line1, profileHomeAddress.line2, [profileHomeAddress.city, profileHomeAddress.province, profileHomeAddress.postalCode].filter(Boolean).join(', ')]
+              .filter(Boolean)
+              .join(', '),
+          },
+        ]
+      : []
+    const orderedSaved = [...savedAddresses].sort(
+      (left, right) => Number(right.isDefault) - Number(left.isDefault) || String(left.label ?? '').localeCompare(String(right.label ?? '')),
+    )
+    const saved = orderedSaved.map((address, index) => ({
+      value: `saved:${address.id}`,
+      group: 'Saved addresses',
+      label: isHomeAddress(address) ? formatHomeAddressTitle(address) : formatSavedAddressTitle(address, index === 0 ? 'Saved address' : `Saved address ${index + 1}`),
+      detail: formatSavedAddressDetail(address, { includeName: !isHomeAddress(address) }),
+    }))
+    const favorites = favoriteAddresses.map((favorite) => ({
+      value: `favorite:${favorite.id}`,
+      group: 'Favorites',
+      label: favorite.label,
+      detail: favorite.address,
+    }))
+    const combinedSaved = [...profileHome, ...saved]
+    return { saved: combinedSaved, favorites, all: [...combinedSaved, ...favorites] }
+  }, [favoriteAddresses, profileHomeAddress, savedAddresses])
+
+  const descriptionPlainText = useMemo(() => stripHtmlToPlainText(form.description), [form.description])
+  const descriptionTooLong = descriptionPlainText.length > MAX_LISTING_DESCRIPTION_LENGTH
+
+  const addressMapQuery = useMemo(() => {
+    const line1 = form.pickupAddressLine1.trim()
+    const city = form.pickupCity.trim()
+    const province = form.pickupProvince.trim()
+    const postalCode = form.pickupPostalCode.trim()
+    const line2 = form.pickupAddressLine2.trim()
+
+    if (!line1 || !city || !province) return ''
+    return [line1, line2, city, province, postalCode, 'Canada'].filter(Boolean).join(', ')
+  }, [form.pickupAddressLine1, form.pickupAddressLine2, form.pickupCity, form.pickupPostalCode, form.pickupProvince])
+
+  const applyQuickSelect = useCallback(
+    (value: string) => {
+      if (!value) return
+
+      if (value.startsWith('saved:')) {
+        const targetId = value.slice('saved:'.length)
+        const address = savedAddresses.find((entry) => entry.id === targetId)
+        if (!address) return
+        setForm((prev) => ({
+          ...prev,
+          pickupAddressLine1: address.line1?.trim() ?? '',
+          pickupAddressLine2: address.line2?.trim() ?? '',
+          pickupCity: address.city?.trim() ?? '',
+          pickupProvince: normalizeCanadianProvince(address.province),
+          pickupPostalCode: normalizeCanadianPostalCode(address.postalCode),
+        }))
+        return
+      }
+
+      if (value === 'profile:home' && profileHomeAddress) {
+        setForm((prev) => ({
+          ...prev,
+          pickupAddressLine1: profileHomeAddress.line1,
+          pickupAddressLine2: profileHomeAddress.line2,
+          pickupCity: profileHomeAddress.city,
+          pickupProvince: profileHomeAddress.province,
+          pickupPostalCode: profileHomeAddress.postalCode,
+        }))
+        return
+      }
+
+      if (value.startsWith('favorite:')) {
+        const targetId = value.slice('favorite:'.length)
+        const favorite = favoriteAddresses.find((entry) => entry.id === targetId)
+        if (!favorite) return
+        setForm((prev) => ({
+          ...prev,
+          pickupAddressLine1: favorite.address?.trim() || favorite.label,
+        }))
+      }
+    },
+    [favoriteAddresses, profileHomeAddress, savedAddresses],
+  )
+
+  useEffect(() => {
+    if (!addressMapQuery) {
+      setAddressMapPreview(null)
+      setAddressMapStatus('idle')
+      return
+    }
+
+    const controller = new AbortController()
+    let cancelled = false
+
+    setAddressMapStatus('loading')
+
+    void (async () => {
+      try {
+        const results = await fetchAddressSearchResults(addressMapQuery, controller.signal, 1)
+        if (cancelled) return
+        const result = results[0]
+        if (!result) {
+          setAddressMapPreview(null)
+          setAddressMapStatus('error')
+          return
+        }
+
+        setAddressMapPreview({
+          latitude: result.latitude,
+          longitude: result.longitude,
+          label: addressMapQuery,
+        })
+        setAddressMapStatus('ready')
+      } catch (error) {
+        if (cancelled) return
+        if (error instanceof Error && error.name === 'AbortError') return
+        setAddressMapPreview(null)
+        setAddressMapStatus('error')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [addressMapQuery])
 
   const togglePaymentType = useCallback((type: 'cash_pickup' | 'etransfer') => {
     setForm((prev) => {
@@ -554,10 +828,19 @@ export default function MarketNewListingPageClient() {
       const publish = mode === 'publish'
       const unpublish = mode === 'unpublish'
 
+      if (descriptionTooLong) {
+        pushToast(`Description must be ${MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters or fewer.`, 'error')
+        return
+      }
+
       const priceCents = toCents(form.price)
       if (publish) {
         if (!form.title.trim()) {
           pushToast('Title is required.', 'error')
+          return
+        }
+        if (form.photoUrls.length < 1) {
+          pushToast('Upload at least one photo before publishing.', 'error')
           return
         }
         if (priceCents <= 0) {
@@ -602,7 +885,7 @@ export default function MarketNewListingPageClient() {
           headers: getAuthHeaders({ 'content-type': 'application/json' }),
           body: JSON.stringify({
             title: form.title.trim() || 'Draft Listing',
-            description: form.description.trim() || null,
+            description: descriptionPlainText ? form.description : null,
             priceCents,
             currency: 'CAD',
             photoUrls: form.photoUrls,
@@ -629,14 +912,45 @@ export default function MarketNewListingPageClient() {
 
         setStatusLabel(nextStatus)
         pushToast(publish ? 'Listing is now active.' : unpublish ? 'Listing is now unpublished.' : 'Saved.', 'success')
+        if (publish) {
+          router.push(`/market/listings/${encodeURIComponent(listingId)}`)
+          return
+        }
       } catch {
         pushToast('Unable to save listing right now.', 'error')
       } finally {
         setSaving(false)
       }
     },
-    [form, listingId, statusLabel],
+    [descriptionPlainText, descriptionTooLong, form, listingId, router, statusLabel],
   )
+
+  const removeListing = useCallback(async () => {
+    if (!listingId) return
+
+    setDeleteSubmitting(true)
+    setDeleteError(null)
+    try {
+      const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(listingId)}/remove`), {
+        method: 'POST',
+        headers: getAuthHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ resolution: deleteAsSold ? 'sold' : 'deleted' }),
+      })
+
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        setDeleteError(payload?.error || 'Unable to remove listing right now.')
+        return
+      }
+
+      pushToast(deleteAsSold ? 'Listing marked sold and removed.' : 'Listing deleted.', 'success')
+      router.push('/market/listings')
+    } catch {
+      setDeleteError('Unable to remove listing right now.')
+    } finally {
+      setDeleteSubmitting(false)
+    }
+  }, [deleteAsSold, listingId, router])
 
   return (
     <DashboardShell rightRail={<MarketRightRail />} showMobileRightRail mainClassName="space-y-5 pb-12">
@@ -646,13 +960,49 @@ export default function MarketNewListingPageClient() {
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">Create Listing</h1>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
                 Status: {statusLabel === 'active' ? 'Active' : 'Draft'}
               </span>
-              <Link href="/market/listings" className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                View all listings
-              </Link>
+              <button
+                type="button"
+                disabled={!listingId || saving || initializing || deleteSubmitting}
+                onClick={() => {
+                  setDeleteError(null)
+                  setDeleteAsSold(false)
+                  setDeleteConfirmOpen(true)
+                }}
+                className="inline-flex items-center justify-center rounded-full border border-rose-200 bg-rose-50 px-5 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+              >
+                Delete listing
+              </button>
+              <button
+                type="button"
+                disabled={saving || initializing}
+                onClick={() => void saveListing('save')}
+                className="inline-flex items-center justify-center rounded-full bg-green-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+              {statusLabel === 'draft' ? (
+                <button
+                  type="button"
+                  disabled={saving || initializing}
+                  onClick={() => setPublishConfirmOpen(true)}
+                  className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+                >
+                  Publish listing
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={saving || initializing}
+                  onClick={() => void saveListing('unpublish')}
+                  className="inline-flex items-center justify-center rounded-full bg-rose-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
+                >
+                  Unpublish
+                </button>
+              )}
             </div>
           </div>
         </section>
@@ -686,13 +1036,18 @@ export default function MarketNewListingPageClient() {
 
             <label className="space-y-1.5">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
-              <textarea
-                value={form.description}
-                onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                className="min-h-[140px] w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
-                placeholder="Condition, details, pickup expectations, and anything buyers should know."
-                maxLength={4000}
-              />
+              <div className="rounded-xl border border-slate-200 bg-white p-2">
+                <RichTextEditor
+                  value={form.description}
+                  onChange={(value) => setForm((prev) => ({ ...prev, description: value }))}
+                  placeholder="Condition, details, pickup expectations, and anything buyers should know."
+                  minHeight={200}
+                  disabled={saving || initializing}
+                />
+              </div>
+              <p className={`text-xs ${descriptionTooLong ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>
+                {descriptionPlainText.length.toLocaleString()} / {MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters
+              </p>
             </label>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -750,18 +1105,19 @@ export default function MarketNewListingPageClient() {
                 </label>
               </div>
               {form.photoUrls.length ? (
-                <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                   {form.photoUrls.map((url) => (
-                    <li key={url} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      <div className="h-28 bg-slate-100">{url ? <img src={url} alt="Listing" className="h-full w-full object-cover" loading="lazy" /> : null}</div>
-                      <div className="flex items-center justify-between gap-2 px-3 py-2">
-                        <p className="min-w-0 truncate text-xs text-slate-500">{url}</p>
+                    <li key={url} className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      {url ? <img src={url} alt="Listing" className="h-full w-full object-cover" loading="lazy" /> : null}
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/35 to-transparent" />
+                      <div className="absolute right-2 top-2">
                         <button
                           type="button"
                           onClick={() => setForm((prev) => ({ ...prev, photoUrls: prev.photoUrls.filter((entry) => entry !== url) }))}
-                          className="text-xs font-semibold text-rose-600 hover:text-rose-700"
+                          aria-label="Remove photo"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-sm font-semibold text-white transition hover:bg-black/80"
                         >
-                          Remove
+                          X
                         </button>
                       </div>
                     </li>
@@ -775,6 +1131,42 @@ export default function MarketNewListingPageClient() {
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
                 Your address will remain private until you select a buyer for your item. Then it will be automaticaly shared for pickup.
               </div>
+
+              {quickSelectOptions.all.length ? (
+                <label className="mt-3 block space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick select</span>
+                  <select
+                    value={quickSelectValue}
+                    onChange={(event) => {
+                      const nextValue = event.target.value
+                      setQuickSelectValue(nextValue)
+                      applyQuickSelect(nextValue)
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Choose home or a saved favorite</option>
+                    {quickSelectOptions.saved.length ? (
+                      <optgroup label="Saved addresses">
+                        {quickSelectOptions.saved.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.detail ? `${option.label} • ${option.detail}` : option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    {quickSelectOptions.favorites.length ? (
+                      <optgroup label="Favorites">
+                        {quickSelectOptions.favorites.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.detail ? `${option.label} • ${option.detail}` : option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                  </select>
+                  <p className="text-xs text-slate-500">Use Home, another saved address, or a favorite location to prefill pickup details.</p>
+                </label>
+              ) : null}
 
               <div className="mt-3 grid gap-4 sm:grid-cols-2">
                 <label className="space-y-1.5">
@@ -827,6 +1219,17 @@ export default function MarketNewListingPageClient() {
                   />
                 </label>
               </div>
+
+              {addressMapQuery ? (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-slate-900">Map preview</p>
+                    {addressMapStatus === 'loading' ? <p className="text-xs text-slate-500">Locating address…</p> : null}
+                    {addressMapStatus === 'error' ? <p className="text-xs text-amber-700">We could not place this address on the map yet.</p> : null}
+                  </div>
+                  {addressMapPreview ? <AddressDirectionsMap destination={addressMapPreview} /> : null}
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -929,36 +1332,6 @@ export default function MarketNewListingPageClient() {
               ) : null}
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={saving || initializing}
-                onClick={() => void saveListing('save')}
-                className="inline-flex items-center justify-center rounded-full bg-green-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-              {statusLabel === 'draft' ? (
-                <button
-                  type="button"
-                  disabled={saving || initializing}
-                  onClick={() => setPublishConfirmOpen(true)}
-                  className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
-                >
-                  Publish listing
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={saving || initializing}
-                  onClick={() => void saveListing('unpublish')}
-                  className="inline-flex items-center justify-center rounded-full bg-rose-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
-                >
-                  Unpublish
-                </button>
-              )}
-            </div>
-
             <Modal
               open={publishConfirmOpen}
               onClose={() => {
@@ -987,6 +1360,54 @@ export default function MarketNewListingPageClient() {
                 >
                   {saving ? 'Publishing…' : 'Confirm publish'}
                 </button>
+              </div>
+            </Modal>
+
+            <Modal
+              open={deleteConfirmOpen}
+              onClose={() => {
+                if (deleteSubmitting) return
+                setDeleteConfirmOpen(false)
+              }}
+              title={deleteAsSold ? 'Mark item sold and remove listing?' : 'Delete listing?'}
+            >
+              <div className="space-y-4">
+                <p className="text-sm text-slate-600">
+                  {deleteAsSold
+                    ? 'This will remove the listing and tell active buyers that the item has been sold.'
+                    : 'This will remove the listing and tell active buyers that the item has been deleted.'}
+                </p>
+                <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={deleteAsSold}
+                    onChange={(event) => setDeleteAsSold(event.target.checked)}
+                    disabled={deleteSubmitting}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Mark this item as sold instead of deleted
+                  </span>
+                </label>
+                {deleteError ? <p className="text-sm text-rose-700">{deleteError}</p> : null}
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmOpen(false)}
+                    disabled={deleteSubmitting}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeListing()}
+                    disabled={deleteSubmitting}
+                    className={`rounded-full px-4 py-2 text-xs font-semibold text-white transition disabled:opacity-60 ${deleteAsSold ? 'bg-blue-600 hover:bg-blue-700' : 'bg-rose-600 hover:bg-rose-700'}`}
+                  >
+                    {deleteSubmitting ? (deleteAsSold ? 'Marking sold…' : 'Deleting…') : deleteAsSold ? 'Mark sold and remove' : 'Delete listing'}
+                  </button>
+                </div>
               </div>
             </Modal>
           </section>
