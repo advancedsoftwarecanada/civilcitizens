@@ -438,6 +438,14 @@ def start() -> int:
 
     env = _build_dev_env()
 
+    try:
+        _write_host_prisma_env(env["DATABASE_URL"])
+        print(f"📝 Synced host Prisma env: {CIVIL_DIR / 'packages' / 'db' / '.env'}")
+    except Exception as e:
+        print("❌ Unable to write host Prisma env.")
+        print(f"   Error: {e}")
+        return 1
+
     # Ensure CybertronDev infra is up (postgres/redis/nginx/minio)
     try:
         _ensure_cybertron_up()

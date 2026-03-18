@@ -55,6 +55,8 @@ packages/
 
 Create .env files in apps/api and apps/web.
 
+For repo-level workflows, use [../.env.dev](../.env.dev) for dev and [../.env.production](../.env.production) for production-style runs. The Prisma file at [packages/db/.env](packages/db/.env) is generated locally by [_DEV.py](../_DEV.py) for host-side Prisma commands and should not be treated as the source of truth.
+
 ```
 # shared
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/civil
