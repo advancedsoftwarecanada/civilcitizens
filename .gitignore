@@ -38,6 +38,9 @@ __pycache__/
 **/coverage/
 **/.nyc_output/
 
+# Generated local Prisma env
+civil/packages/db/.env
+
 # OS/editor misc
 .DS_Store
 Thumbs.db
