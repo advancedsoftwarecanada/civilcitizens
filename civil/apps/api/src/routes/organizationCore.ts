@@ -145,6 +145,7 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
             phone: row.phone ?? null,
             websiteUrl: row.websiteUrl ?? null,
             address: row.address ?? null,
+            addressDetails: deps.readOrganizationAddressDetails(row.metadata),
             schedule: row.schedule ?? null,
             id: row.id,
             name: row.name,

@@ -10,6 +10,7 @@ import SharePostModal from '../../_components/SharePostModal'
 import ShareSendModal from '../../_components/ShareSendModal'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import { buildApiUrl } from '../../_lib/api'
+import { buildAddressesHref, buildAddressesHrefFromAddress } from '../../_lib/addressSearch'
 import { type ShareTarget } from '../../_lib/shareTarget'
 import type { CommunityOrganization } from '../../_lib/organizations'
 import OrganizationFollowButton from './OrganizationFollowButton'
@@ -50,6 +51,17 @@ function formatTypeLabel(value?: CommunityOrganization['type']) {
     default:
       return null
   }
+}
+
+function appendSearchParamsToHref(href: string, params: Record<string, string | null | undefined>) {
+  const [pathname, search = ''] = href.split('?')
+  const nextParams = new URLSearchParams(search)
+  Object.entries(params).forEach(([key, value]) => {
+    const trimmed = value?.trim()
+    if (trimmed) nextParams.set(key, trimmed)
+  })
+  const nextSearch = nextParams.toString()
+  return `${pathname}${nextSearch ? `?${nextSearch}` : ''}`
 }
 
 export default function OrganizationHeader({
@@ -132,6 +144,7 @@ export default function OrganizationHeader({
       }
     : null
   const showModerationMenu = Boolean(resolvedOrg && !resolvedOrg.viewerRole)
+  const followLocked = resolvedOrg?.viewerRole === 'OWNER' || resolvedOrg?.viewerRole === 'MANAGER'
   const directoryTypeLabel = formatTypeLabel(resolvedOrg?.type)
   const directoryCategoryLabel = formatDirectoryLabel(resolvedOrg?.category)
   const directorySpecializationLabel = formatDirectoryLabel(resolvedOrg?.specialization)
@@ -141,6 +154,34 @@ export default function OrganizationHeader({
   const specializationDirectoryHref = resolvedOrg?.category && resolvedOrg?.specialization
     ? `/organizations/directory?category=${encodeURIComponent(resolvedOrg.category)}&specialization=${encodeURIComponent(resolvedOrg.specialization)}`
     : null
+  const directionsHref = resolvedOrg?.addressDetails
+    ? appendSearchParamsToHref(buildAddressesHrefFromAddress(resolvedOrg.addressDetails, resolvedOrg.name), {
+        organizationId: resolvedOrg.id,
+        organizationName: resolvedOrg.name,
+        organizationSlug: resolvedOrg.slug,
+        organizationProvince: province.toLowerCase(),
+        organizationCommunity: municipality.toLowerCase(),
+        organizationLogo: resolvedOrg.logoUrl ?? null,
+        organizationCover: resolvedOrg.coverUrl ?? null,
+      })
+    : resolvedOrg?.address
+      ? appendSearchParamsToHref(
+          buildAddressesHref({
+            query: resolvedOrg.address,
+            label: resolvedOrg.name,
+            address: resolvedOrg.address,
+          }),
+          {
+            organizationId: resolvedOrg.id,
+            organizationName: resolvedOrg.name,
+            organizationSlug: resolvedOrg.slug,
+            organizationProvince: province.toLowerCase(),
+            organizationCommunity: municipality.toLowerCase(),
+            organizationLogo: resolvedOrg.logoUrl ?? null,
+            organizationCover: resolvedOrg.coverUrl ?? null,
+          },
+        )
+      : null
 
   return (
     <div className="space-y-5">
@@ -210,6 +251,7 @@ export default function OrganizationHeader({
               municipality={municipality}
               slug={slug}
               initialFollowed={resolvedOrg.viewerFollowed ?? false}
+              lockedFollowing={followLocked}
             />
             <button
               type="button"
@@ -227,6 +269,14 @@ export default function OrganizationHeader({
               <LuShare className="h-4 w-4" />
               <span>Share</span>
             </button>
+            {directionsHref ? (
+              <Link
+                href={directionsHref}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+              >
+                <span>Directions</span>
+              </Link>
+            ) : null}
             {showModerationMenu ? (
               <ContentModerationMenu
                 reportTarget={{

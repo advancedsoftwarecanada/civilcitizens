@@ -8586,6 +8586,7 @@ registerOrganizationCoreRoutes(app, {
   normalizeMediaUrl,
   normalizeProvinceCode,
   normalizeStructuredAddressInput,
+  readOrganizationAddressDetails,
   readOrganizationDirectoryType,
   readOrganizationCategory,
   readOrganizationSpecialization,

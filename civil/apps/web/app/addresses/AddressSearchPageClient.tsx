@@ -3,11 +3,12 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { HiOutlineCheckBadge, HiOutlineChevronDown, HiOutlineHeart, HiOutlineSparkles } from 'react-icons/hi2'
+import { HiOutlineCheckBadge, HiOutlineHeart, HiOutlineSparkles } from 'react-icons/hi2'
 import Block from '../_components/Block'
+import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
 import Modal from '../_components/Modal'
-import { AddressDirectionsMap } from '../_components/map/AddressDirectionsMap'
+import { AddressDirectionsMap, type AddressDirectionsMapHandle } from '../_components/map/AddressDirectionsMap'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
 import {
   buildAddressSearchQueries,
@@ -96,14 +97,15 @@ function formatEstimate(distanceKm: number, travelMinutes: number) {
   return `${travelMinutes} min • ${distanceKm.toFixed(1)} km`
 }
 
-const ADDRESS_FAVORITES_STORAGE_KEY = 'civil_address_favorites'
-
-function formatSavedOriginFailureReason(attempts: Array<{ query: string; reason: string }>) {
-  if (!attempts.length) return 'Unable to resolve that saved address on the map.'
-
-  const lines = attempts.map((attempt) => `Tried "${attempt.query}": ${attempt.reason}.`)
-  return ['Unable to resolve that saved address on the map.', ...lines].join(' ')
+function formatCommunityLabel(value: string | null | undefined) {
+  return (value ?? '')
+    .split('-')
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
 }
+
+const ADDRESS_FAVORITES_STORAGE_KEY = 'civil_address_favorites'
 
 function readFavoriteAddresses() {
   if (typeof window === 'undefined') return [] as FavoriteAddress[]
@@ -150,6 +152,10 @@ function isHomeAddress(address: SavedShippingAddress) {
 
 function formatSavedAddressTitle(address: SavedShippingAddress, fallback: string) {
   return address.label?.trim() || address.name?.trim() || fallback
+}
+
+function formatOriginOptionLabel(address: SavedShippingAddress) {
+  return address.label?.trim() || address.name?.trim() || formatSavedAddressDetail(address, { includeName: false }) || 'Saved address'
 }
 
 function formatSavedAddressDetail(address: SavedShippingAddress, options?: { includeName?: boolean }) {
@@ -257,23 +263,39 @@ export default function AddressSearchPageClient() {
   const initialAddress = normalizeQueryValue(searchParams.get('address'))
   const initialLatitude = parseCoordinate(searchParams.get('lat'))
   const initialLongitude = parseCoordinate(searchParams.get('lon'))
+  const organizationId = normalizeQueryValue(searchParams.get('organizationId'))
+  const organizationName = normalizeQueryValue(searchParams.get('organizationName'))
+  const organizationSlug = normalizeQueryValue(searchParams.get('organizationSlug'))
+  const organizationProvince = normalizeQueryValue(searchParams.get('organizationProvince')).toLowerCase()
+  const organizationCommunity = normalizeQueryValue(searchParams.get('organizationCommunity')).toLowerCase()
+  const organizationLogo = normalizeQueryValue(searchParams.get('organizationLogo'))
+  const organizationCover = normalizeQueryValue(searchParams.get('organizationCover'))
   const query = initialQuery || initialLabel || initialAddress
+  const organizationHref =
+    organizationSlug && organizationProvince && organizationCommunity
+      ? `/com/${encodeURIComponent(organizationProvince)}/${encodeURIComponent(organizationCommunity)}/orgs/${encodeURIComponent(organizationSlug)}`
+      : null
+  const communityHref =
+    organizationProvince && organizationCommunity
+      ? `/${encodeURIComponent(organizationProvince)}/${encodeURIComponent(organizationCommunity)}`
+      : null
 
   const [results, setResults] = useState<NominatimAddress[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
   const [favoriteAddresses, setFavoriteAddresses] = useState<FavoriteAddress[]>([])
-  const [originMenuOpen, setOriginMenuOpen] = useState(false)
-  const [originLoading, setOriginLoading] = useState(false)
-  const [originError, setOriginError] = useState<string | null>(null)
   const [favoriteAddModalOpen, setFavoriteAddModalOpen] = useState(false)
   const [favoriteRemoveModalOpen, setFavoriteRemoveModalOpen] = useState(false)
   const [favoriteNickname, setFavoriteNickname] = useState('')
+  const [selectedOriginId, setSelectedOriginId] = useState('current')
+  const [originLoading, setOriginLoading] = useState(false)
+  const [originError, setOriginError] = useState<string | null>(null)
   const [resolvedOrigin, setResolvedOrigin] = useState<ResolvedOrigin | null>(null)
   const [travelSummary, setTravelSummary] = useState<TravelSummary | null>(null)
   const [routeCoordinates, setRouteCoordinates] = useState<Array<[number, number]> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const directionsMapRef = useRef<AddressDirectionsMapHandle | null>(null)
 
   useEffect(() => {
     setFavoriteAddresses(readFavoriteAddresses())
@@ -386,27 +408,120 @@ export default function AddressSearchPageClient() {
   const destinationLabel = selectedDestination ? formatAddressPrimaryLabel(selectedDestination) : initialLabel || initialQuery || 'Address'
   const destinationDetail = selectedDestination ? formatAddressSecondaryLabel(selectedDestination) : initialAddress || null
 
-  const originOptions = useMemo<OriginOption[]>(() => {
-    const items = savedAddresses.map((item) => ({
-      id: item.id,
-      label: item.label?.trim() || item.name?.trim() || 'Saved address',
-      detail: buildAddressSearchQueries(item)[0] || null,
-      address: item,
-      verified: isCanadianAddressPostalVerified(item),
-    }))
-    return [{ id: 'current', label: 'Current Location', detail: 'Use this device location', address: null, verified: false }, ...items]
-  }, [savedAddresses])
-
   const orderedSavedAddresses = useMemo(
     () => [...savedAddresses].sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || String(left.label ?? '').localeCompare(String(right.label ?? ''))),
     [savedAddresses],
   )
+
+  const originOptions = useMemo<OriginOption[]>(() => {
+    const saved = orderedSavedAddresses.map((address) => ({
+      id: address.id,
+      label: formatOriginOptionLabel(address),
+      detail: formatSavedAddressDetail(address, { includeName: false }),
+      address,
+      verified: isCanadianAddressPostalVerified(address),
+    }))
+    return [{ id: 'current', label: 'Current Location', detail: 'Use this device location', address: null, verified: false }, ...saved]
+  }, [orderedSavedAddresses])
 
   const homeAddress = useMemo(() => orderedSavedAddresses.find((address) => isHomeAddress(address)) ?? null, [orderedSavedAddresses])
   const nextAddress = useMemo(
     () => orderedSavedAddresses.find((address) => !homeAddress || address.id !== homeAddress.id) ?? null,
     [homeAddress, orderedSavedAddresses],
   )
+
+  const selectedOriginOption = useMemo(
+    () => originOptions.find((option) => option.id === selectedOriginId) ?? originOptions[0] ?? null,
+    [originOptions, selectedOriginId],
+  )
+
+  const resolveCurrentLocationOrigin = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setOriginError('Current location is not available on this device.')
+      setResolvedOrigin(null)
+      return
+    }
+
+    setOriginLoading(true)
+    setOriginError(null)
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setResolvedOrigin({
+          id: 'current',
+          label: 'Current Location',
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          detail: 'Using this device location',
+        })
+        setOriginLoading(false)
+      },
+      () => {
+        setOriginError('Location permission was denied or unavailable.')
+        setResolvedOrigin(null)
+        setOriginLoading(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    )
+  }, [])
+
+  const resolveSavedOrigin = useCallback(async (option: OriginOption) => {
+    if (!option.address) return
+
+    setOriginLoading(true)
+    setOriginError(null)
+
+    try {
+      if (typeof option.address.latitude === 'number' && typeof option.address.longitude === 'number') {
+        setResolvedOrigin({
+          id: option.id,
+          label: option.label,
+          latitude: option.address.latitude,
+          longitude: option.address.longitude,
+          detail: option.detail,
+        })
+        return
+      }
+
+      const geocodeQueries = buildAddressSearchQueries(option.address)
+      if (!geocodeQueries.length) {
+        setOriginError('That saved address does not have enough detail to geocode.')
+        setResolvedOrigin(null)
+        return
+      }
+
+      for (const geocodeQuery of geocodeQueries) {
+        const geocoded = await fetchAddressSearchResults(geocodeQuery, undefined, 1)
+        if (!geocoded[0]) continue
+
+        setResolvedOrigin({
+          id: option.id,
+          label: option.label,
+          latitude: geocoded[0].latitude,
+          longitude: geocoded[0].longitude,
+          detail: option.detail,
+        })
+        return
+      }
+
+      setOriginError('Unable to resolve that saved address on the map.')
+      setResolvedOrigin(null)
+    } catch {
+      setOriginError('Unable to resolve that saved address right now.')
+      setResolvedOrigin(null)
+    } finally {
+      setOriginLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (selectedOriginId !== 'current') return
+    resolveCurrentLocationOrigin()
+  }, [resolveCurrentLocationOrigin, selectedOriginId])
+
+  useEffect(() => {
+    if (selectedOriginId === 'current' || !selectedOriginOption) return
+    void resolveSavedOrigin(selectedOriginOption)
+  }, [resolveSavedOrigin, selectedOriginId, selectedOriginOption])
 
   useEffect(() => {
     if (!selectedDestination || !resolvedOrigin) {
@@ -471,100 +586,29 @@ export default function AddressSearchPageClient() {
     }
   }, [destinationLabel, favoriteAddModalOpen])
 
-  const resolveSavedOrigin = useCallback(async (option: OriginOption) => {
-    if (!option.address) return
-    setOriginLoading(true)
-    setOriginError(null)
-
-    try {
-      if (typeof option.address.latitude === 'number' && typeof option.address.longitude === 'number') {
-        setResolvedOrigin({
-          id: option.id,
-          label: option.label,
-          latitude: option.address.latitude,
-          longitude: option.address.longitude,
-          detail: option.detail,
-        })
-        return
-      }
-
-      const geocodeQueries = buildAddressSearchQueries(option.address)
-      if (!geocodeQueries.length) {
-        setOriginError('That saved address does not have enough detail to geocode.')
-        return
-      }
-
-      let firstResult: NominatimAddress | null = null
-      const attempts: Array<{ query: string; reason: string }> = []
-      for (const geocodeQuery of geocodeQueries) {
-        try {
-          const geocoded = await fetchAddressSearchResults(geocodeQuery, undefined, 1)
-          if (geocoded[0]) {
-            firstResult = geocoded[0]
-            break
-          }
-          attempts.push({ query: geocodeQuery, reason: 'no address match returned' })
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'unknown lookup failure'
-          attempts.push({ query: geocodeQuery, reason: message.replace(/^nominatim_search_failed:/, 'lookup failed with status ') })
-        }
-      }
-
-      if (!firstResult) {
-        setOriginError(formatSavedOriginFailureReason(attempts))
-        return
-      }
-
-      setResolvedOrigin({
-        id: option.id,
-        label: option.label,
-        latitude: firstResult.latitude,
-        longitude: firstResult.longitude,
-        detail: option.detail,
-      })
-    } catch {
-      setOriginError('Unable to resolve that saved address right now.')
-    } finally {
-      setOriginLoading(false)
-    }
+  const handleGetDirections = useCallback(() => {
+    void directionsMapRef.current?.startNavigation()
   }, [])
 
-  const handleOriginSelect = useCallback(
-    async (option: OriginOption) => {
-      setOriginMenuOpen(false)
-      setOriginError(null)
-
-      if (option.id === 'current') {
-        if (typeof navigator === 'undefined' || !navigator.geolocation) {
-          setOriginError('Current location is not available on this device.')
-          return
-        }
-
-        setOriginLoading(true)
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setResolvedOrigin({
-              id: 'current',
-              label: 'Current Location',
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              detail: 'Using this device location',
-            })
-            setOriginLoading(false)
-          },
-          () => {
-            setOriginError('Location permission was denied or unavailable.')
-            setOriginLoading(false)
-          },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-        )
-        return
+  const handleNavigationOriginChange = useCallback((origin: { latitude: number; longitude: number; label: string } | null) => {
+    if (!origin) {
+      if (selectedOriginId === 'current') {
+        resolveCurrentLocationOrigin()
+      } else if (selectedOriginOption) {
+        void resolveSavedOrigin(selectedOriginOption)
       }
+      return
+    }
 
-      await resolveSavedOrigin(option)
-    },
-    [resolveSavedOrigin],
-  )
+    setResolvedOrigin({
+      id: 'current',
+      label: origin.label,
+      latitude: origin.latitude,
+      longitude: origin.longitude,
+      detail: 'Using this device location',
+    })
+    setOriginError(null)
+  }, [resolveCurrentLocationOrigin, resolveSavedOrigin, selectedOriginId, selectedOriginOption])
 
   const handleFavoriteAddConfirm = useCallback(() => {
     const trimmedNickname = favoriteNickname.trim()
@@ -625,6 +669,28 @@ export default function AddressSearchPageClient() {
       ) : null}
 
       <div className="space-y-6">
+        {organizationId && organizationName && organizationHref ? (
+          <CivilCard
+            size="md"
+            name={organizationName}
+            avatarAlt={organizationName}
+            avatarInitials={organizationName}
+            avatarSrc={organizationLogo || null}
+            avatarHref={organizationHref}
+            titleHref={organizationHref}
+            coverUrl={organizationCover || null}
+            subtitle="Organization"
+            details={
+              communityHref ? (
+                <Link href={communityHref} className="inline-flex text-sm font-medium text-white/90 hover:text-white hover:underline">
+                  {formatCommunityLabel(organizationCommunity)} community
+                </Link>
+              ) : null
+            }
+            className="w-full"
+          />
+        ) : null}
+
         <section className="space-y-4 rounded-[28px] border border-white/60 bg-white/85 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)]">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -641,7 +707,7 @@ export default function AddressSearchPageClient() {
 
           {loading ? <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Searching…</div> : null}
 
-          {originLoading ? <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Resolving origin…</div> : null}
+          {originLoading ? <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Resolving route origin…</div> : null}
           {originError ? <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{originError}</div> : null}
 
           {travelSummary && resolvedOrigin ? (
@@ -671,48 +737,36 @@ export default function AddressSearchPageClient() {
               <span>{isFavorite ? 'Remove Favorite' : 'Save Favorite'}</span>
             </button>
 
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setOriginMenuOpen((current) => !current)}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-[var(--cc-primary)]/50 hover:text-[var(--cc-primary)]"
+            <label className="relative">
+              <span className="sr-only">Route from</span>
+              <select
+                value={selectedOriginId}
+                onChange={(event) => setSelectedOriginId(event.target.value)}
+                className="min-w-[220px] appearance-none rounded-full border border-slate-200 bg-white px-5 py-2.5 pr-10 text-sm font-semibold text-slate-900 shadow-sm outline-none transition focus:border-[var(--cc-primary)]/50"
+                aria-label="Route from"
               >
-                <span>Get Directions</span>
-                <HiOutlineChevronDown className={`h-4 w-4 transition ${originMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
+                {originOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute inset-y-0 right-4 flex items-center text-slate-500">▾</span>
+            </label>
 
-              {originMenuOpen ? (
-                <div className="absolute right-0 top-[calc(100%+0.75rem)] z-20 w-[min(calc(100vw-2rem),24rem)] max-w-[calc(100vw-2rem)] rounded-3xl border border-slate-200 bg-white/95 p-3 shadow-2xl shadow-slate-900/10 backdrop-blur sm:left-1/2 sm:right-auto sm:w-[min(92vw,24rem)] sm:max-w-none sm:-translate-x-1/2">
-                  <p className="px-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">Choose origin</p>
-                  <div className="mt-3 space-y-2">
-                    {originOptions.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => void handleOriginSelect(option)}
-                        className="w-full rounded-2xl border border-slate-100 bg-slate-50 px-3 py-3 text-left transition hover:border-[var(--cc-primary)]/30 hover:bg-white"
-                      >
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{option.label}</p>
-                          {option.verified ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                              <HiOutlineCheckBadge className="h-3.5 w-3.5" />
-                              Verified Address
-                            </span>
-                          ) : null}
-                        </div>
-                        {option.detail ? <p className="mt-1 text-xs text-slate-500">{option.detail}</p> : null}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
+            <button
+              type="button"
+              onClick={handleGetDirections}
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-700 bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500"
+            >
+              <span>Start Trip</span>
+            </button>
           </div>
         </section>
 
         <section>
           <AddressDirectionsMap
+            ref={directionsMapRef}
             destination={
               selectedDestination
                 ? {
@@ -732,6 +786,7 @@ export default function AddressSearchPageClient() {
                 : null
             }
             routeCoordinates={routeCoordinates}
+            onNavigationOriginChange={handleNavigationOriginChange}
           />
         </section>
       </div>
