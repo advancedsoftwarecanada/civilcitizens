@@ -588,6 +588,7 @@ export default function TopNav() {
       <div className="mx-auto flex w-full max-w-[1800px] items-center gap-2 px-4 py-3 sm:gap-4 sm:px-6 xl:px-10">
         <Link
           href="/home"
+          onClick={collapseSearch}
           className="inline-flex items-center gap-2 text-slate-800 transition hover:opacity-90"
           aria-label="Civil home"
         >
@@ -637,6 +638,7 @@ export default function TopNav() {
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <Link
             href="/market/cart"
+            onClick={collapseSearch}
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             aria-label="Cart"
           >
@@ -649,6 +651,7 @@ export default function TopNav() {
           </Link>
           <Link
             href="/messages"
+            onClick={collapseSearch}
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             aria-label="Messages"
           >
@@ -704,7 +707,10 @@ export default function TopNav() {
                 <Link
                   href="/notifications"
                   className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:border-[var(--cc-primary)]/60"
-                  onClick={() => setDropdownOpen(false)}
+                  onClick={() => {
+                    collapseSearch()
+                    setDropdownOpen(false)
+                  }}
                 >
                   View all notifications
                 </Link>
