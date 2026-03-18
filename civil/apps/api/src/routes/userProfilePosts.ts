@@ -411,7 +411,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           relationshipLabel: string
         } | null = null
 
-        if (authContext?.actor === 'user' && viewerId && viewerId !== user.id) {
+        if (viewerId && viewerId !== user.id) {
           try {
             const viewerUser = await prisma.user.findUnique({
               where: { id: viewerId },

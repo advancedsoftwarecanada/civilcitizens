@@ -835,6 +835,10 @@ export default function UserPostsPage({ params }: PageProps) {
       resolvedRelationship.connectionStatus === 'connected' ||
       Boolean(currentProfileFamilyRelationship)
     )
+  const hasAnyProfileRelationship =
+    Boolean(currentProfileFamilyRelationship) ||
+    ['friends', 'incoming', 'outgoing'].includes(resolvedRelationship.friendshipStatus) ||
+    ['connected', 'incoming', 'outgoing'].includes(resolvedRelationship.connectionStatus)
 
   const closeDetailsMenu = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     const details = event.currentTarget.closest('details')
@@ -1067,7 +1071,7 @@ export default function UserPostsPage({ params }: PageProps) {
     children: ReactNode
   }) => {
     const summaryClassName = clsx(
-      'inline-flex w-full cursor-pointer list-none items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-semibold shadow-sm transition sm:w-auto [&::-webkit-details-marker]:hidden',
+      'inline-flex shrink-0 cursor-pointer list-none items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-semibold shadow-sm transition [&::-webkit-details-marker]:hidden',
       tone === 'primary' && 'bg-[var(--cc-primary)] text-white hover:brightness-110',
       tone === 'success' && 'border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300',
       tone === 'neutral' && 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900',
@@ -1085,7 +1089,7 @@ export default function UserPostsPage({ params }: PageProps) {
     }
 
     return (
-      <details className="group relative w-full sm:w-auto profile-action-menu">
+      <details className="group relative shrink-0 profile-action-menu">
         <summary className={summaryClassName}>
           {icon}
           {label}
@@ -1237,37 +1241,19 @@ export default function UserPostsPage({ params }: PageProps) {
     })
   }
 
-  const renderMessageMenu = () =>
-    renderActionMenu({
-      label: 'Message',
-      icon: <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />,
-      disabled: !canDirectlyReachProfile || messageLoading || callActionMode !== null,
-      children: (
-        <>
-          <button type="button" className={menuItemClassName} onClick={(event) => {
-            closeDetailsMenu(event)
-            void handleStartDirectMessage()
-          }} disabled={messageLoading || callActionMode !== null}>
-            <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
-            {messageLoading ? 'Opening text…' : 'Text'}
-          </button>
-          <button type="button" className={menuItemClassName} onClick={(event) => {
-            closeDetailsMenu(event)
-            void handleStartDirectCall('audio')
-          }} disabled={messageLoading || callActionMode !== null}>
-            <HiOutlinePhone className="h-4 w-4" aria-hidden="true" />
-            {callActionMode === 'audio' ? 'Calling…' : 'Audio'}
-          </button>
-          <button type="button" className={menuItemClassName} onClick={(event) => {
-            closeDetailsMenu(event)
-            void handleStartDirectCall('video')
-          }} disabled={messageLoading || callActionMode !== null}>
-            <HiOutlineVideoCamera className="h-4 w-4" aria-hidden="true" />
-            {callActionMode === 'video' ? 'Starting video…' : 'Video'}
-          </button>
-        </>
-      ),
-    })
+  const renderMessageMenu = () => (
+    <button
+      type="button"
+      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-55"
+      onClick={() => {
+        void handleStartDirectMessage()
+      }}
+      disabled={!canDirectlyReachProfile || messageLoading || callActionMode !== null}
+    >
+      <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
+      {messageLoading ? 'Opening…' : 'Message'}
+    </button>
+  )
 
   const renderInviteMenu = () =>
     renderActionMenu({
@@ -2399,15 +2385,19 @@ export default function UserPostsPage({ params }: PageProps) {
 
           {profile && !isOwner ? (
             <div className="flex justify-center px-2">
-              <div className="flex flex-col items-stretch gap-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-center">
+              <div className="flex w-full flex-col items-center gap-2 text-sm">
                 {isFamilyMemberSession ? (
                   renderFamilyProfileActions()
                 ) : (
                   <>
-                    {renderFamilyRelationshipMenu()}
-                    {renderConnectMenu()}
-                    {renderMessageMenu()}
-                    {renderInviteMenu()}
+                    <div className="flex w-full max-w-full items-center justify-center gap-2 overflow-x-auto pb-1 sm:w-auto sm:max-w-none">
+                      {renderFamilyRelationshipMenu()}
+                      {!hasAnyProfileRelationship ? renderConnectMenu() : null}
+                      {renderMessageMenu()}
+                    </div>
+                    <div className="flex w-full justify-center">
+                      {renderInviteMenu()}
+                    </div>
                   </>
                 )}
               </div>
