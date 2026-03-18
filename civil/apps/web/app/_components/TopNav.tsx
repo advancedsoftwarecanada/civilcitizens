@@ -479,6 +479,14 @@ export default function TopNav() {
     searchInputRef.current?.focus()
   }, [])
 
+  const collapseSearch = useCallback(() => {
+    if (searchBlurTimeout.current) {
+      clearTimeout(searchBlurTimeout.current)
+      searchBlurTimeout.current = null
+    }
+    setSearchFocused(false)
+  }, [])
+
   const handleNotificationRequestAction = useCallback(
     async (notification: NotificationItem, action: 'accept' | 'reject', options?: { reciprocalRelationship?: string }) => {
       const token = getStoredToken()
