@@ -672,6 +672,9 @@ model ElectoralDistrict {
   centroidGeom  Unsupported("geometry(Point,4326)")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  politicalAssociations PoliticalDistrictAssociation[]
+  politicalSeats PoliticalSeat[]
+  politicians    Politician[]
   userLocations UserLocation[]
 
   @@index([provinceCode])
@@ -692,6 +695,129 @@ model UserLocation {
   electoralDistrict     ElectoralDistrict? @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
 
   @@index([electoralDistrictCode])
+}
+
+model PoliticalParty {
+  id           String                @id @default(cuid())
+  jurisdiction PoliticalJurisdiction
+  name         String
+  slug         String
+  shortName    String?
+  metadata     Json?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+  associations PoliticalDistrictAssociation[]
+  politicians  Politician[]
+  seats        PoliticalSeat[]
+
+  @@unique([jurisdiction, slug])
+  @@index([jurisdiction, name])
+}
+
+model PoliticalDistrictAssociation {
+  id                    String                @id @default(cuid())
+  jurisdiction          PoliticalJurisdiction
+  partyId               String
+  provinceCode          String
+  communitySlug         String
+  electoralDistrictCode Int?
+  associationName       String
+  registrationStatus    String?
+  sourceDataset         String
+  sourceRecordKey       String
+  registeredAt          DateTime?
+  deregisteredAt        DateTime?
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  party                 PoliticalParty        @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  electoralDistrict     ElectoralDistrict?    @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
+
+  @@unique([jurisdiction, partyId, provinceCode, communitySlug])
+  @@unique([sourceDataset, sourceRecordKey])
+  @@index([jurisdiction, provinceCode, communitySlug])
+  @@index([partyId, jurisdiction])
+  @@index([electoralDistrictCode])
+}
+
+model PoliticalSeat {
+  id                    String                @id @default(cuid())
+  jurisdiction          PoliticalJurisdiction
+  officeType            PoliticalOfficeType
+  provinceCode          String
+  communitySlug         String
+  electoralDistrictCode Int?
+  title                 String
+  currentPoliticianId   String?               @unique
+  currentPartyId        String?
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  electoralDistrict     ElectoralDistrict?    @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
+  currentPolitician     Politician?           @relation("PoliticalSeatCurrentPolitician", fields: [currentPoliticianId], references: [id], onDelete: SetNull)
+  currentParty          PoliticalParty?       @relation(fields: [currentPartyId], references: [id], onDelete: SetNull)
+
+  @@unique([jurisdiction, officeType, provinceCode, communitySlug])
+  @@index([jurisdiction, provinceCode, communitySlug])
+  @@index([currentPoliticianId])
+  @@index([currentPartyId])
+  @@index([electoralDistrictCode])
+}
+
+model Politician {
+  id                    String                @id @default(cuid())
+  jurisdiction          PoliticalJurisdiction
+  slug                  String
+  displayName           String
+  firstName             String?
+  lastName              String?
+  officeType            PoliticalOfficeType?
+  provinceCode          String?
+  communitySlug         String?
+  electoralDistrictCode Int?
+  partyId               String?
+  sourceSystem          String?
+  sourcePersonId        String?
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  electoralDistrict     ElectoralDistrict?    @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
+  party                 PoliticalParty?       @relation(fields: [partyId], references: [id], onDelete: SetNull)
+  currentSeat           PoliticalSeat?        @relation("PoliticalSeatCurrentPolitician")
+  scrapeJobs            PoliticianScrapeJob[]
+
+  @@unique([jurisdiction, slug])
+  @@unique([jurisdiction, sourceSystem, sourcePersonId])
+  @@index([jurisdiction, displayName])
+  @@index([jurisdiction, provinceCode, communitySlug])
+  @@index([partyId])
+  @@index([electoralDistrictCode])
+}
+
+model PoliticianScrapeJob {
+  id           String                     @id @default(cuid())
+  politicianId String
+  source       PoliticianScrapeJobSource
+  status       PoliticianScrapeJobStatus @default(QUEUED)
+  personId     String?
+  xmlUrl       String?
+  profileUrl   String?
+  queuedAt     DateTime                   @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+  nextRunAt    DateTime?
+  attempts     Int                        @default(0)
+  lastError    String?
+  payload      Json?
+  result       Json?
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+  politician   Politician                 @relation(fields: [politicianId], references: [id], onDelete: Cascade)
+
+  @@unique([politicianId, source])
+  @@index([status, queuedAt])
+  @@index([nextRunAt])
+  @@index([personId])
 }
 
 model AddressCorrection {
@@ -1135,6 +1261,26 @@ enum SupportRequestType {
 enum SupportRequestStatus {
   OPEN
   REVIEWED
+}
+
+enum PoliticalJurisdiction {
+  FEDERAL
+}
+
+enum PoliticalOfficeType {
+  MP
+}
+
+enum PoliticianScrapeJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PoliticianScrapeJobSource {
+  OUR_COMMONS_MEMBER_XML
+  OUR_COMMONS_MEMBER_HTML
 }
 
 enum BusinessStatus {

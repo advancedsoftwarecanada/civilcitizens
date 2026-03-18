@@ -31,6 +31,13 @@ const ACTIONS: AdminAction[] = [
     icon: HiOutlineGlobeAlt,
   },
   {
+    key: 'eda-data',
+    label: 'EDA data',
+    description: 'Import federal riding-party structures and prepare politician records for scraping.',
+    href: '/admin/eda',
+    icon: HiOutlineGlobeAlt,
+  },
+  {
     key: 'analytics',
     label: 'Platform analytics',
     description: 'Open dashboards for usage, engagement, and traffic trends.',

@@ -470,6 +470,7 @@ import { registerGeographyRoutes } from './routes/geography.js'
 import { registerOrgChannelRoutes } from './routes/orgChannels.js'
 import { registerOrganizationCollectionRoutes } from './routes/organizationCollections.js'
 import { registerOrganizationCoreRoutes } from './routes/organizationCore.js'
+import { registerPoliticianRoutes } from './routes/politicians.js'
 import { registerOrganizationGovernanceAdminRoutes } from './routes/organizationGovernanceAdmin.js'
 import { registerOrganizationGovernanceConfigRoutes } from './routes/organizationGovernanceConfig.js'
 import { registerOrganizationGovernanceEventsRoutes } from './routes/organizationGovernanceEvents.js'
@@ -1218,6 +1219,12 @@ const mediaQueue = new Queue('media', {
 })
 
 const contentAiScanQueue = new Queue('content-ai-scan', {
+  connection: {
+    url: REDIS_URL,
+  },
+})
+
+const politicianScrapeQueue = new Queue('politician-scrape', {
   connection: {
     url: REDIS_URL,
   },
@@ -5521,6 +5528,11 @@ registerAdminSystemRoutes(app, {
   isSuperAdminEmail,
   loadAdminUserOrReply,
   loadAuthenticatedUser,
+})
+
+registerPoliticianRoutes(app, {
+  loadAdminUserOrReply,
+  politicianScrapeQueue,
 })
 
 registerNotificationsSearchRoutes(app, {
