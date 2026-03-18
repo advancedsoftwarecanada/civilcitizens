@@ -39,6 +39,7 @@ import {
 const THREAD_PAGE_LIMIT = 20
 const MESSAGE_PAGE_LIMIT = 20
 const MOBILE_THREAD_COMPOSER_LIFT_PX = 12
+const MOBILE_THREAD_COMPOSER_GAP_PX = 12
 
 function isFamilyConversationThreadId(threadId: string) {
   return threadId.startsWith('family-parent-') || threadId.startsWith('family-member-')
@@ -2028,9 +2029,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const panelRect = panel.getBoundingClientRect()
     const headerRect = header.getBoundingClientRect()
     const composerRect = mobileComposerShellRef.current?.getBoundingClientRect() ?? null
-    const mobileHeightReduction = Math.max(72, Math.round(viewportHeight * 0.12))
-    const visiblePanelHeight = Math.max(260, Math.floor(viewportBottom - panelRect.top - mobileHeightReduction))
-    const listBottom = composerRect ? composerRect.top : viewportBottom
+    const listBottom = composerRect ? composerRect.top : viewportBottom - MOBILE_THREAD_COMPOSER_GAP_PX
+    const visiblePanelHeight = Math.max(260, Math.floor(listBottom - panelRect.top - MOBILE_THREAD_COMPOSER_GAP_PX))
     const availableListHeight = Math.max(140, Math.floor(listBottom - headerRect.bottom - 16))
 
     setMobileThreadPanelHeight((prev) => {
@@ -2817,10 +2817,13 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const otherParticipant = getPrimaryOtherParticipant(activeThread, me?.id)
     const otherUser = otherParticipant?.user
     const title = getThreadTitle(activeThread)
+    const threadProfileHref = otherUser?.handle ? `/u/${encodeURIComponent(otherUser.handle)}` : null
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
     const composerKeyboardOffset = Math.max(0, Math.round(mobileKeyboardInset))
-    const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_MESSAGE_CLEARANCE_PX}px` : undefined
+    const mobileComposerBottomSpacer = showMobileDockComposer
+      ? `calc(var(--mobile-thread-composer-height) + ${MOBILE_THREAD_COMPOSER_LIFT_PX}px + ${MOBILE_THREAD_COMPOSER_GAP_PX}px)`
+      : undefined
 
     const sendActiveThreadMessage = () => {
       if (activeThread) {
@@ -3048,7 +3051,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               })}
             </div>
           ) : otherUser ? (
-            <Link href={activeThreadProfileHref ?? `/u/${encodeURIComponent(otherUser.handle)}`} className="shrink-0 transition hover:opacity-80">
+            <Link href={threadProfileHref ?? `/u/${encodeURIComponent(otherUser.handle)}`} className="shrink-0 transition hover:opacity-80">
               <VerifiedAvatar
                 src={otherUser.avatarUrl}
                 alt={title}
@@ -3063,7 +3066,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               <VerifiedAvatar src={null} alt={title} initials={title} size={40} />
             </div>
           )}
-          {isActiveGroupThread || !activeThreadProfileHref ? (
+          {isActiveGroupThread || !threadProfileHref ? (
             <div className="min-w-0 flex-1">
               <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
               <p className="text-xs text-slate-500">
@@ -3072,7 +3075,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               </p>
             </div>
           ) : (
-            <Link href={activeThreadProfileHref} className="min-w-0 flex-1 rounded-2xl transition hover:opacity-80">
+            <Link href={threadProfileHref} className="min-w-0 flex-1 rounded-2xl transition hover:opacity-80">
               <p className="truncate text-lg font-semibold text-slate-900">{title}</p>
               <p className="text-xs text-slate-500">
                 Direct message
@@ -3165,7 +3168,15 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             <div
               ref={messagesViewportRef}
               className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-2"
-              style={mobileComposerBottomSpacer ? { scrollPaddingBottom: mobileComposerBottomSpacer } : undefined}
+              style={
+                mobileComposerBottomSpacer || mobileMessagesViewportHeight
+                  ? {
+                      scrollPaddingBottom: mobileComposerBottomSpacer,
+                      height: mobileMessagesViewportHeight ?? undefined,
+                      maxHeight: mobileMessagesViewportHeight ?? undefined,
+                    }
+                  : undefined
+              }
             >
               <div
                 className={clsx('flex min-h-full flex-col justify-end gap-4', showMobileDockComposer ? 'pb-0' : 'pb-1')}
