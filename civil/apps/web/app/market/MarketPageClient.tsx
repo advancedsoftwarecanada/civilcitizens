@@ -225,7 +225,7 @@ export default function MarketPageClient() {
       </div>
 
       <div className="mt-4 space-y-3">
-        <ListingTypePicker label="Section" value={listingSection} placeholder="Choose section" onClick={() => setActiveListingTypePicker('section')} />
+        <ListingTypePicker label="Type" value={listingSection} placeholder="Choose type" onClick={() => setActiveListingTypePicker('section')} />
         <ListingTypePicker
           label="Category"
           value={listingCategory}
@@ -374,10 +374,10 @@ export default function MarketPageClient() {
 
         <ListingTypePickerModal
           open={activeListingTypePicker === 'section'}
-          title="Choose section"
+          title="Choose type"
           options={listingTypeOptions.section}
           selectedValue={listingSection}
-          emptyLabel="No section selected"
+          emptyLabel="All"
           onClose={() => setActiveListingTypePicker(null)}
           onChoose={(value) => {
             setListingSection(value)
