@@ -6326,6 +6326,7 @@ function ensureCitizenMarketplaceTables() {
           listing_section TEXT,
           listing_category TEXT,
           listing_subcategory TEXT,
+          listing_detail TEXT,
           payment_types JSONB NOT NULL DEFAULT '[]'::jsonb,
           willing_to_deliver BOOLEAN NOT NULL DEFAULT FALSE,
           delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -6386,6 +6387,11 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_market_listing
         ADD COLUMN IF NOT EXISTS listing_subcategory TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS listing_detail TEXT;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -8958,6 +8964,7 @@ const MarketListingUpdateBody = z.object({
   listingSection: z.string().trim().min(1).max(120).optional().nullable(),
   listingCategory: z.string().trim().min(1).max(120).optional().nullable(),
   listingSubcategory: z.string().trim().min(1).max(120).optional().nullable(),
+  listingDetail: z.string().trim().min(1).max(180).optional().nullable(),
   pickupCity: z.string().trim().max(120).optional().nullable(),
   pickupProvince: z.string().trim().max(80).optional().nullable(),
   pickupAddressLine1: z.string().trim().max(180).optional().nullable(),

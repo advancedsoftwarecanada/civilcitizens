@@ -84,6 +84,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         listing_section: string | null
         listing_category: string | null
         listing_subcategory: string | null
+        listing_detail: string | null
         pickup_city: string | null
         pickup_province: string | null
         payment_types: unknown
@@ -108,6 +109,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listing_section,
           listing_category,
           listing_subcategory,
+          listing_detail,
           pickup_city,
           pickup_province,
           payment_types,
@@ -137,6 +139,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listingSection: row.listing_section,
           listingCategory: row.listing_category,
           listingSubcategory: row.listing_subcategory,
+          listingDetail: row.listing_detail,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           paymentTypes: deps.readStringList(row.payment_types),
@@ -173,6 +176,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         listing_section: string | null
         listing_category: string | null
         listing_subcategory: string | null
+        listing_detail: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_address_line1: string | null
@@ -201,6 +205,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listing_section,
           listing_category,
           listing_subcategory,
+          listing_detail,
           pickup_city,
           pickup_province,
           pickup_address_line1,
@@ -236,6 +241,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listingSection: row.listing_section,
           listingCategory: row.listing_category,
           listingSubcategory: row.listing_subcategory,
+          listingDetail: row.listing_detail,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           pickupAddressLine1: row.pickup_address_line1,
@@ -273,6 +279,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         listing_section: string | null
         listing_category: string | null
         listing_subcategory: string | null
+        listing_detail: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_postal_code: string | null
@@ -299,6 +306,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           l.listing_section,
           l.listing_category,
           l.listing_subcategory,
+          l.listing_detail,
           l.pickup_city,
           l.pickup_province,
           l.pickup_postal_code,
@@ -363,6 +371,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listingSection: row.listing_section,
           listingCategory: row.listing_category,
           listingSubcategory: row.listing_subcategory,
+          listingDetail: row.listing_detail,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           status: row.status,
@@ -509,6 +518,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
       const listingSectionProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSection')
       const listingCategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingCategory')
       const listingSubcategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSubcategory')
+      const listingDetailProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingDetail')
       const nextListingProvinceCode = listingProvinceCodeProvided ? (body.data.listingProvinceCode?.trim() ? body.data.listingProvinceCode.trim().toUpperCase() : null) : null
       const nextListingCommunitySlug = listingCommunitySlugProvided
         ? (body.data.listingCommunitySlug?.trim() ? body.data.listingCommunitySlug.trim().toLowerCase() : null)
@@ -518,6 +528,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
       const nextListingSubcategory = listingSubcategoryProvided
         ? (body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null)
         : null
+      const nextListingDetail = listingDetailProvided ? (body.data.listingDetail?.trim() ? body.data.listingDetail.trim() : null) : null
 
       const hasStatusUpdate = Object.prototype.hasOwnProperty.call(body.data, 'status')
       const hasDraftUpdate = Object.prototype.hasOwnProperty.call(body.data, 'isDraft')
@@ -553,6 +564,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
             listing_section = CASE WHEN ${listingSectionProvided} THEN ${nextListingSection} ELSE listing_section END,
             listing_category = CASE WHEN ${listingCategoryProvided} THEN ${nextListingCategory} ELSE listing_category END,
             listing_subcategory = CASE WHEN ${listingSubcategoryProvided} THEN ${nextListingSubcategory} ELSE listing_subcategory END,
+            listing_detail = CASE WHEN ${listingDetailProvided} THEN ${nextListingDetail} ELSE listing_detail END,
             payment_types = CASE WHEN ${hasPaymentTypesUpdate} THEN ${JSON.stringify(nextPaymentTypes)}::jsonb ELSE payment_types END,
             willing_to_deliver = COALESCE(${typeof body.data.willingToDeliver === 'boolean' ? body.data.willingToDeliver : null}, willing_to_deliver),
             delivery_options = CASE WHEN ${hasDeliveryOptionsUpdate} THEN ${JSON.stringify(nextDeliveryOptions)}::jsonb ELSE delivery_options END,
