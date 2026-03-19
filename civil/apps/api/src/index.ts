@@ -7363,6 +7363,8 @@ const CommunityOrgShopWarehouseCreateBody = z.object({
   }),
 })
 
+const CommunityOrgShopWarehouseUpdateBody = CommunityOrgShopWarehouseCreateBody
+
 const CommunityOrgShopCatalogCreateBody = z.object({
   title: z.string().trim().min(2).max(120),
   description: z.string().trim().max(240).optional().nullable(),
@@ -7387,6 +7389,10 @@ const CommunityOrgShopProductParams = CommunityOrgSlugParams.extend({
 
 const CommunityOrgShopCatalogParams = CommunityOrgSlugParams.extend({
   catalogId: z.string().trim().min(1).max(120),
+})
+
+const CommunityOrgShopWarehouseParams = CommunityOrgSlugParams.extend({
+  warehouseId: z.string().trim().min(1).max(120),
 })
 
 const CommunityOrgShopInventoryUpdateBody = z.object({
@@ -8874,6 +8880,8 @@ registerOrganizationShopRoutes(app, {
   CommunityOrgShopProductUpdateBody,
   CommunityOrgShopSettingsBody,
   CommunityOrgShopWarehouseCreateBody,
+  CommunityOrgShopWarehouseParams,
+  CommunityOrgShopWarehouseUpdateBody,
   CommunityOrgSlugParams,
   ModerationStatus,
   enqueueContentAiScanForMarketProduct,

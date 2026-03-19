@@ -142,6 +142,32 @@ const listingTypeSummary = (section?: string | null, category?: string | null, s
   return parts.length ? parts.join(' / ') : null
 }
 
+const parseWarehouseAddress = (value?: string | null): CanadianAddress => {
+  if (!value) return createEmptyCanadianAddress()
+
+  const lines = value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (!lines.length) return createEmptyCanadianAddress()
+
+  const countryLine = lines.length >= 2 ? lines[lines.length - 1] : 'CA'
+  const cityLine = lines.length >= 2 ? lines[lines.length - 2] : ''
+  const addressLines = lines.slice(0, Math.max(1, lines.length - 2))
+  const [line1 = '', line2 = ''] = addressLines
+  const [cityPart, provincePostal = ''] = cityLine.includes(',') ? cityLine.split(/,(.+)/).map((part) => part.trim()) : ['', cityLine]
+  const [province = '', ...postalParts] = provincePostal.split(/\s+/).filter(Boolean)
+
+  return normalizeCanadianAddress({
+    line1,
+    line2,
+    city: cityPart,
+    province,
+    postalCode: postalParts.join(' '),
+    country: countryLine || 'CA',
+  })
+}
+
 const formatCurrency = (priceCents: number, currency: string) =>
   new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'CAD' }).format((priceCents || 0) / 100)
 
@@ -242,6 +268,7 @@ export default function OrganizationShopClient({
   const [newCatalogDraft, setNewCatalogDraft] = useState<CatalogEditDraft>({ title: '', description: '', imageUrl: '', enabled: true })
   const [newWarehouseName, setNewWarehouseName] = useState('')
   const [newWarehouseAddress, setNewWarehouseAddress] = useState<CanadianAddress>(createEmptyCanadianAddress())
+  const [editingWarehouseId, setEditingWarehouseId] = useState<string | null>(null)
   const [showNewCatalogForm, setShowNewCatalogForm] = useState(false)
   const [showNewWarehouseForm, setShowNewWarehouseForm] = useState(false)
   const [catalogDrafts, setCatalogDrafts] = useState<Record<string, CatalogEditDraft>>({})
@@ -534,47 +561,6 @@ export default function OrganizationShopClient({
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    if (!showNewWarehouseForm || !warehouseAddressQuery) {
-      setWarehouseMapPreview(null)
-      setWarehouseMapStatus('idle')
-      return
-    }
-
-    const controller = new AbortController()
-    let cancelled = false
-    setWarehouseMapStatus('loading')
-
-    void (async () => {
-      try {
-        const results = await fetchAddressSearchResults(warehouseAddressQuery, controller.signal, 1)
-        if (cancelled) return
-        const result = results[0]
-        if (!result) {
-          setWarehouseMapPreview(null)
-          setWarehouseMapStatus('error')
-          return
-        }
-
-        setWarehouseMapPreview({
-          latitude: result.latitude,
-          longitude: result.longitude,
-          label: warehouseAddressQuery,
-        })
-        setWarehouseMapStatus('ready')
-      } catch (error) {
-        if (cancelled || controller.signal.aborted) return
-        setWarehouseMapPreview(null)
-        setWarehouseMapStatus('error')
-      }
-    })()
-
-    return () => {
-      cancelled = true
-      controller.abort()
-    }
-  }, [showNewWarehouseForm, warehouseAddressQuery])
 
   const buildRatesBySelection = useCallback(
     (selectionKey: string, existing: Record<string, string> | undefined): Record<string, string> => {
@@ -1155,6 +1141,72 @@ export default function OrganizationShopClient({
       setSaving(false)
     }
   }, [load, newWarehouseAddress, newWarehouseName, shopPath])
+
+  const resetWarehouseEditor = useCallback(() => {
+    setEditingWarehouseId(null)
+    setNewWarehouseName('')
+    setNewWarehouseAddress(createEmptyCanadianAddress())
+    setShowNewWarehouseForm(false)
+  }, [])
+
+  const startWarehouseEdit = useCallback((warehouse: ShopWarehouse) => {
+    setEditingWarehouseId(warehouse.id)
+    setNewWarehouseName(warehouse.name)
+    setNewWarehouseAddress(parseWarehouseAddress(warehouse.address))
+    setShowNewWarehouseForm(true)
+  }, [])
+
+  const updateWarehouse = useCallback(async () => {
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+    if (!editingWarehouseId) return
+    if (!newWarehouseName.trim()) {
+      pushToast('Warehouse name is required.', 'error')
+      return
+    }
+    const normalizedWarehouseAddress = normalizeCanadianAddress(newWarehouseAddress)
+    if (!normalizedWarehouseAddress.line1 || !normalizedWarehouseAddress.city || !normalizedWarehouseAddress.province || !normalizedWarehouseAddress.postalCode) {
+      pushToast('Complete the full warehouse shipping address.', 'error')
+      return
+    }
+
+    setSaving(true)
+    try {
+      const res = await fetch(buildApiUrl(`${shopPath}/warehouses/${encodeURIComponent(editingWarehouseId)}`), {
+        method: 'PUT',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newWarehouseName.trim(),
+          address: {
+            line1: normalizedWarehouseAddress.line1,
+            line2: normalizedWarehouseAddress.line2 || null,
+            city: normalizedWarehouseAddress.city,
+            province: normalizedWarehouseAddress.province,
+            postalCode: normalizedWarehouseAddress.postalCode,
+            country: normalizedWarehouseAddress.country || 'CA',
+          },
+        }),
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to update warehouse.', 'error')
+        return
+      }
+      pushToast('Warehouse updated.', 'success')
+      resetWarehouseEditor()
+      await load()
+    } catch {
+      pushToast('Unable to update warehouse.', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }, [editingWarehouseId, load, newWarehouseAddress, newWarehouseName, resetWarehouseEditor, shopPath])
 
   const saveCatalog = useCallback(
     async (catalogId: string) => {
@@ -2485,18 +2537,51 @@ export default function OrganizationShopClient({
                   <p className="text-sm font-semibold text-slate-900">Warehouses</p>
                   <p className="mt-1 text-xs text-slate-500">Add warehouses so inventory and fulfillment can be managed correctly.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowNewWarehouseForm((prev) => !prev)}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
-                >
-                  {showNewWarehouseForm ? 'Cancel' : 'Add Warehouse'}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {showNewWarehouseForm ? (
+                    <button
+                      type="button"
+                      onClick={resetWarehouseEditor}
+                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700"
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (showNewWarehouseForm) {
+                        if (editingWarehouseId) {
+                          void updateWarehouse()
+                        } else {
+                          void createWarehouse()
+                        }
+                        return
+                      }
+                      setEditingWarehouseId(null)
+                      setNewWarehouseName('')
+                      setNewWarehouseAddress(createEmptyCanadianAddress())
+                      setShowNewWarehouseForm(true)
+                    }}
+                    disabled={saving}
+                    className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    {showNewWarehouseForm
+                      ? saving
+                        ? editingWarehouseId
+                          ? 'Saving…'
+                          : 'Creating…'
+                        : editingWarehouseId
+                          ? 'Save Warehouse'
+                          : 'Create Warehouse'
+                      : 'Create Warehouse'}
+                  </button>
+                </div>
               </div>
 
               <div className={clsx('mt-4 overflow-hidden transition-all duration-200', showNewWarehouseForm ? 'max-h-[1100px] opacity-100' : 'max-h-0 opacity-0')}>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Create warehouse</p>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{editingWarehouseId ? 'Edit warehouse' : 'Create warehouse'}</p>
                   <div className="mt-3 grid gap-4">
                     <label className="space-y-1.5">
                       <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Warehouse name</span>
@@ -2516,16 +2601,6 @@ export default function OrganizationShopClient({
                       </div>
                     ) : null}
                   </div>
-                  <div className="mt-4 flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void createWarehouse()}
-                      disabled={saving}
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-60"
-                    >
-                      Create warehouse
-                    </button>
-                  </div>
                 </div>
               </div>
 
@@ -2535,17 +2610,25 @@ export default function OrganizationShopClient({
                 <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                   <div className="divide-y divide-slate-100">
                     {warehouses.map((warehouse) => (
-                      <article key={warehouse.id} className="flex items-center justify-between gap-4 px-4 py-3">
+                      <button
+                        key={warehouse.id}
+                        type="button"
+                        onClick={() => startWarehouseEdit(warehouse)}
+                        className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left transition hover:bg-slate-50"
+                      >
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-slate-900">{warehouse.name}</div>
                           {warehouse.address ? <div className="mt-1 truncate text-xs text-slate-600">{warehouse.address}</div> : null}
                         </div>
-                        {warehouse.isHeadOffice ? (
-                          <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
-                            Head Office
-                          </span>
-                        ) : null}
-                      </article>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {warehouse.isHeadOffice ? (
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                              Head Office
+                            </span>
+                          ) : null}
+                          <span className="text-xs font-semibold text-emerald-700">Edit</span>
+                        </div>
+                      </button>
                     ))}
                   </div>
                 </div>
