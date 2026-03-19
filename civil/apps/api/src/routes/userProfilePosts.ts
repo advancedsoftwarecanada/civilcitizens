@@ -12,6 +12,7 @@ import {
   slugifyCommunityName,
 } from '@civil/shared'
 import { z } from 'zod'
+import { readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type UserProfilePostDeps = Record<string, any>
 
@@ -450,9 +451,11 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           const canShareWithFamily = Boolean(profileFamilyRelationship) && Boolean(profileMeta?.wallet?.sharing?.family)
           const canShareWithFriends = relationship.friendshipStatus === 'friends' && Boolean(profileMeta?.wallet?.sharing?.friends)
           if (walletEnabled && walletEmail && (canShareWithFamily || canShareWithFriends)) {
+            const walletSummary = readWalletSummary(profileMeta)
             user.wallet = {
               label: 'Civil Wallet',
               eTransferEmail: walletEmail,
+              supportsCivilCredits: walletHasConnectPayoutsEnabled(walletSummary),
             }
           }
         }

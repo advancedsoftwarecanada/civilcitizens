@@ -2,8 +2,17 @@ import { prisma } from '@civil/db'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'crypto'
 import bcrypt from 'bcryptjs'
+import { FriendshipStatus } from '@prisma/client'
 import { buildHandleBase, LoginInput, RegisterInput } from '@civil/shared'
-import type { ZodTypeAny } from 'zod'
+import { z, type ZodTypeAny } from 'zod'
+import {
+  applyWalletTopUpFromPaymentIntent,
+  buildWalletMetaValue,
+  ensureCitizenWalletTables,
+  insertCivilCreditLedgerEntry,
+  readWalletSummary,
+  walletHasConnectPayoutsEnabled,
+} from '../walletHelpers.js'
 
 type AuthJwtPayload = {
   sub?: string
@@ -12,10 +21,14 @@ type AuthJwtPayload = {
 }
 
 type AuthRoutesDeps = {
+  CIVIL_PUBLIC_HOST: string
   RegisterInputApi: ZodTypeAny
+  STRIPE_PUBLISHABLE_KEY: string
   ensureCitizenMarketplaceTables: () => Promise<void>
+  ensureStripeCustomer: (userId: string) => Promise<{ customerId: string; user: { email?: string | null } }>
   getUpdateCivilStatusBody: () => ZodTypeAny
   getUpdateWalletBody: () => ZodTypeAny
+  getStripeClient: () => any
   applyOrganizationInviteRegistration: (token: string, newUserId: string) => Promise<void>
   buildFamilyMemberAuthMeResponse: (member: any, homeCommunity: any) => any
   buildHomeCommunitySummaryForUserId: (userId: string) => Promise<any>
@@ -23,6 +36,7 @@ type AuthRoutesDeps = {
   getStoredProfileFamilyRelationships: (value: any) => Array<{ relatedUserId?: string | null }>
   isAccountSuspended: (value: any) => boolean
   isFamilyMemberTableMissing: (error: unknown) => boolean
+  isStripeConfigured: () => boolean
   isPremium: (status: any) => boolean
   isSelfVerifiedCanadianCitizen: (meta: any) => boolean
   loadFamilyMemberAuthViewerById: (memberId: string, parentId?: string | null) => Promise<any>
@@ -32,33 +46,33 @@ type AuthRoutesDeps = {
   withSchemaGuard: (req: FastifyRequest, reply: FastifyReply, handler: () => Promise<any>) => Promise<any>
 }
 
-function readWalletSummary(communityMeta: any) {
-  const wallet = communityMeta?.wallet && typeof communityMeta.wallet === 'object' && !Array.isArray(communityMeta.wallet)
-    ? communityMeta.wallet
-    : null
-  const civilCreditsCents =
-    typeof wallet?.civilCreditsCents === 'number' && Number.isFinite(wallet.civilCreditsCents)
-      ? Math.max(0, Math.round(wallet.civilCreditsCents))
-      : 0
-  const eTransferEmail = typeof wallet?.eTransferEmail === 'string' && wallet.eTransferEmail.trim()
-    ? wallet.eTransferEmail.trim().toLowerCase()
-    : null
-  const enabled = typeof wallet?.enabled === 'boolean' ? Boolean(wallet.enabled) : Boolean(eTransferEmail)
-  const sharing = wallet?.sharing && typeof wallet.sharing === 'object' && !Array.isArray(wallet.sharing)
-    ? wallet.sharing
-    : null
-  const sharingSummary = {
-    family: typeof sharing?.family === 'boolean' ? Boolean(sharing.family) : false,
-    friends: typeof sharing?.friends === 'boolean' ? Boolean(sharing.friends) : false,
-    market: typeof sharing?.market === 'boolean' ? Boolean(sharing.market) : Boolean(eTransferEmail),
-  }
+function readStripeCustomerSessionClientSecret(value: unknown) {
+  if (!value || typeof value !== 'object') return null
+  const secret = (value as { client_secret?: unknown }).client_secret
+  return typeof secret === 'string' && secret.trim() ? secret.trim() : null
+}
 
-  return {
-    civilCreditsCents,
-    enabled,
-    eTransferEmail,
-    sharing: sharingSummary,
-  }
+const WalletAmountBody = z.object({
+  amountCents: z.number().int().min(100).max(1_000_000),
+})
+
+const WalletDepositConfirmBody = z.object({
+  paymentIntentId: z.string().trim().min(3).max(255),
+})
+
+const WalletUserTransferBody = z.object({
+  recipientUserId: z.string().trim().min(3).max(255),
+  amountCents: z.number().int().min(100).max(1_000_000),
+})
+
+function calculateWalletStripeProcessingFeeCents(amountCents: number) {
+  if (!Number.isFinite(amountCents) || amountCents <= 0) return 0
+  return Math.round(amountCents * 0.029) + 30
+}
+
+function isStripeConnectNotEnabledError(error: unknown) {
+  if (!(error instanceof Error)) return false
+  return /signed up for connect/i.test(error.message)
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
@@ -241,6 +255,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
         enabled: nextEnabled,
         eTransferEmail: nextETransferEmail,
         sharing: nextSharing,
+        stripeConnect: currentWallet.stripeConnect,
       }
 
       const marketplaceWalletEmail = nextEnabled && nextSharing.market && nextETransferEmail ? nextETransferEmail : null
@@ -263,10 +278,547 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
           enabled: nextEnabled,
           eTransferEmail: nextETransferEmail,
           sharing: nextSharing,
+          stripeConnect: currentWallet.stripeConnect,
         },
       })
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })
+    }
+  })
+
+  app.post('/auth/wallet/connect/account', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+      if (!deps.isStripeConfigured()) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+      const user = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, email: true, name: true, communityMeta: true },
+      })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const currentWallet = readWalletSummary(user.communityMeta)
+      if (currentWallet.stripeConnect.accountId) {
+        return reply.send({ accountId: currentWallet.stripeConnect.accountId })
+      }
+
+      const stripe = deps.getStripeClient()
+      const account = await stripe.accounts.create({
+        type: 'express',
+        country: 'CA',
+        email: user.email ?? undefined,
+        business_type: 'individual',
+        capabilities: { transfers: { requested: true } },
+        business_profile: {
+          name: user.name ?? undefined,
+          product_description: 'Civil wallet payouts',
+        },
+        metadata: { civilUserId: user.id, kind: 'wallet' },
+      })
+
+      const baseMeta = deps.readBaseCommunityMeta(user.communityMeta)
+      baseMeta.wallet = buildWalletMetaValue({
+        ...currentWallet,
+        stripeConnect: {
+          ...currentWallet.stripeConnect,
+          accountId: account.id,
+        },
+      })
+
+      await prisma.user.update({ where: { id: user.id }, data: { communityMeta: baseMeta } })
+
+      return reply.send({ accountId: account.id })
+    } catch (error) {
+      req.log.error({ err: error }, 'wallet_connect_account_failed')
+      if (isStripeConnectNotEnabledError(error)) {
+        return reply.code(503).send({ error: 'stripe_connect_not_enabled' })
+      }
+      return reply.code(400).send({ error: 'wallet_connect_account_failed' })
+    }
+  })
+
+  app.post('/auth/wallet/connect/onboard', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+      if (!deps.isStripeConfigured()) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+      const user = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, email: true, name: true, handle: true, communityMeta: true },
+      })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      let accountId = readWalletSummary(user.communityMeta).stripeConnect.accountId
+      if (!accountId) {
+        const stripe = deps.getStripeClient()
+        const account = await stripe.accounts.create({
+          type: 'express',
+          country: 'CA',
+          email: user.email ?? undefined,
+          business_type: 'individual',
+          capabilities: { transfers: { requested: true } },
+          business_profile: {
+            name: user.name ?? undefined,
+            product_description: 'Civil wallet payouts',
+          },
+          metadata: { civilUserId: user.id, kind: 'wallet' },
+        })
+
+        const currentWallet = readWalletSummary(user.communityMeta)
+        const baseMeta = deps.readBaseCommunityMeta(user.communityMeta)
+        baseMeta.wallet = buildWalletMetaValue({
+          ...currentWallet,
+          stripeConnect: {
+            ...currentWallet.stripeConnect,
+            accountId: account.id,
+          },
+        })
+        await prisma.user.update({ where: { id: user.id }, data: { communityMeta: baseMeta } })
+        accountId = account.id
+      }
+
+      if (!accountId) return reply.code(409).send({ error: 'connect_account_missing' })
+
+      const stripe = deps.getStripeClient()
+      const refreshUrl = `https://${deps.CIVIL_PUBLIC_HOST}/wallet?connect=refresh`
+      const returnUrl = `https://${deps.CIVIL_PUBLIC_HOST}/wallet?connect=return`
+      const link = await stripe.accountLinks.create({
+        account: accountId,
+        refresh_url: refreshUrl,
+        return_url: returnUrl,
+        type: 'account_onboarding',
+      })
+
+      return reply.send({ url: link.url })
+    } catch (error) {
+      req.log.error({ err: error }, 'wallet_connect_onboard_failed')
+      if (isStripeConnectNotEnabledError(error)) {
+        return reply.code(503).send({ error: 'stripe_connect_not_enabled' })
+      }
+      return reply.code(400).send({ error: 'wallet_connect_onboard_failed' })
+    }
+  })
+
+  app.get('/auth/wallet/connect/status', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+      if (!deps.isStripeConfigured()) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+      const user = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, handle: true, name: true, communityMeta: true },
+      })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const currentWallet = readWalletSummary(user.communityMeta)
+      if (!currentWallet.stripeConnect.accountId) {
+        return reply.send({ accountId: null, chargesEnabled: false, payoutsEnabled: false, detailsSubmitted: false })
+      }
+
+      const stripe = deps.getStripeClient()
+      const account = await stripe.accounts.retrieve(currentWallet.stripeConnect.accountId)
+      const stripeConnect = {
+        accountId: currentWallet.stripeConnect.accountId,
+        chargesEnabled: Boolean((account as any).charges_enabled),
+        payoutsEnabled: Boolean((account as any).payouts_enabled),
+        detailsSubmitted: Boolean((account as any).details_submitted),
+      }
+
+      const baseMeta = deps.readBaseCommunityMeta(user.communityMeta)
+      baseMeta.wallet = buildWalletMetaValue({
+        ...currentWallet,
+        stripeConnect,
+      })
+      await prisma.user.update({ where: { id: user.id }, data: { communityMeta: baseMeta } })
+
+      return reply.send(stripeConnect)
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+  })
+
+  app.post('/auth/wallet/deposits/intent', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+      if (!deps.isStripeConfigured() || !deps.STRIPE_PUBLISHABLE_KEY) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+      const body = WalletAmountBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const existingUser = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+      if (!existingUser) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(existingUser.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const { customerId, user } = await deps.ensureStripeCustomer(payload.sub)
+      const stripe = deps.getStripeClient()
+      const processingFeeCents = calculateWalletStripeProcessingFeeCents(body.data.amountCents)
+      const totalChargeCents = body.data.amountCents + processingFeeCents
+      const customerSession = await (stripe as any).customerSessions.create({
+        customer: customerId,
+        components: {
+          payment_element: {
+            enabled: true,
+            features: {
+              payment_method_save: 'enabled',
+              payment_method_save_usage: 'off_session',
+              payment_method_redisplay: 'enabled',
+              payment_method_remove: 'enabled',
+            },
+          },
+        },
+      })
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: totalChargeCents,
+        currency: 'cad',
+        customer: customerId,
+        automatic_payment_methods: { enabled: true },
+        setup_future_usage: 'off_session',
+        description: 'Civil Wallet top-up',
+        receipt_email: user.email ?? undefined,
+        metadata: {
+          kind: 'wallet_topup',
+          civilUserId: payload.sub,
+          civilCreditAmountCents: String(body.data.amountCents),
+          processingFeeCents: String(processingFeeCents),
+          totalChargeCents: String(totalChargeCents),
+        },
+      })
+
+      return reply.send({
+        clientSecret: paymentIntent.client_secret,
+        customerSessionClientSecret: readStripeCustomerSessionClientSecret(customerSession),
+        paymentIntentId: paymentIntent.id,
+        publishableKey: deps.STRIPE_PUBLISHABLE_KEY,
+      })
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+  })
+
+  app.post('/auth/wallet/deposits/confirm', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+      if (!deps.isStripeConfigured()) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+      const body = WalletDepositConfirmBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const existingUser = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+      if (!existingUser) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(existingUser.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const stripe = deps.getStripeClient()
+      const paymentIntent = await stripe.paymentIntents.retrieve(body.data.paymentIntentId)
+      if (paymentIntent.metadata?.kind !== 'wallet_topup' || paymentIntent.metadata?.civilUserId !== payload.sub) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+      if (paymentIntent.status !== 'succeeded') {
+        return reply.code(409).send({ error: 'payment_not_completed' })
+      }
+
+      await applyWalletTopUpFromPaymentIntent(paymentIntent)
+
+      const updated = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+      return reply.send({ wallet: readWalletSummary(updated?.communityMeta ?? null) })
+    } catch (error) {
+      req.log.error({ err: error }, 'wallet_deposit_confirm_failed')
+      return reply.code(500).send({ error: 'wallet_refresh_failed' })
+    }
+  })
+
+  app.post('/auth/wallet/payouts', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+      if (!deps.isStripeConfigured()) return reply.code(503).send({ error: 'stripe_not_configured' })
+
+      const body = WalletAmountBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const user = await prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, communityMeta: true },
+      })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const wallet = readWalletSummary(user.communityMeta)
+      if (!walletHasConnectPayoutsEnabled(wallet)) {
+        return reply.code(409).send({ error: 'wallet_connect_required' })
+      }
+      if (wallet.civilCreditsCents < body.data.amountCents) {
+        return reply.code(400).send({ error: 'insufficient_wallet_balance' })
+      }
+
+      await ensureCitizenWalletTables()
+
+      const stripe = deps.getStripeClient()
+      const transfer = await stripe.transfers.create({
+        amount: body.data.amountCents,
+        currency: 'cad',
+        destination: wallet.stripeConnect.accountId,
+        metadata: {
+          kind: 'wallet_payout',
+          civilUserId: payload.sub,
+        },
+      })
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          const freshUser = await tx.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+          if (!freshUser) throw new Error('unauthorized')
+          const freshWallet = readWalletSummary(freshUser.communityMeta)
+          if (freshWallet.civilCreditsCents < body.data.amountCents) {
+            throw new Error('insufficient_wallet_balance')
+          }
+
+          const baseMeta = deps.readBaseCommunityMeta(freshUser.communityMeta)
+          baseMeta.wallet = buildWalletMetaValue({
+            ...freshWallet,
+            civilCreditsCents: freshWallet.civilCreditsCents - body.data.amountCents,
+          })
+
+          const transactionId = randomUUID()
+          await tx.user.update({ where: { id: payload.sub }, data: { communityMeta: baseMeta } })
+          await tx.$executeRaw`
+            INSERT INTO citizen_wallet_transaction (
+              id,
+              kind,
+              status,
+              user_id,
+              amount_cents,
+              currency,
+              stripe_transfer_id,
+              stripe_connect_account_id,
+              metadata,
+              updated_at
+            )
+            VALUES (
+              ${transactionId},
+              ${'payout'},
+              ${'completed'},
+              ${payload.sub},
+              ${body.data.amountCents},
+              ${'cad'},
+              ${transfer.id},
+              ${wallet.stripeConnect.accountId},
+              ${JSON.stringify({ kind: 'wallet_payout' })}::jsonb,
+              NOW()
+            )
+          `
+
+          await insertCivilCreditLedgerEntry(tx, {
+            id: `withdrawal:${transactionId}`,
+            eventId: transactionId,
+            entryType: 'withdrawal',
+            status: 'completed',
+            amountCents: body.data.amountCents,
+            currency: 'cad',
+            from: {
+              entityType: 'user_wallet',
+              userId: user.id,
+              handle: user.handle ?? null,
+              name: user.name ?? null,
+              entityLabel: 'Civil Wallet',
+            },
+            to: {
+              entityType: 'external_bank',
+              entityLabel: 'Linked bank account',
+            },
+            sourceType: 'wallet_transaction',
+            sourceReferenceId: transactionId,
+            stripeTransferId: transfer.id,
+            stripeConnectAccountId: wallet.stripeConnect.accountId,
+            description: 'Wallet withdrawal to connected bank account',
+            metadata: {
+              kind: 'wallet_payout',
+            },
+          })
+        })
+      } catch (error) {
+        try {
+          await stripe.transfers.createReversal(transfer.id, {
+            amount: body.data.amountCents,
+            metadata: { kind: 'wallet_payout_reversal', civilUserId: payload.sub },
+          })
+        } catch {
+          // Ignore reversal failures and fall through to the original error.
+        }
+
+        if (error instanceof Error && error.message === 'insufficient_wallet_balance') {
+          return reply.code(400).send({ error: 'insufficient_wallet_balance' })
+        }
+        throw error
+      }
+
+      const updated = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+      return reply.send({ wallet: readWalletSummary(updated?.communityMeta ?? null) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message === 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable billing features.') {
+        return reply.code(503).send({ error: 'stripe_not_configured' })
+      }
+      return reply.code(400).send({ error: 'wallet_payout_failed' })
+    }
+  })
+
+  app.post('/auth/wallet/transfers', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') return reply.code(401).send({ error: 'unauthorized' })
+      if (payload.actor === 'family_member') return reply.code(403).send({ error: 'forbidden' })
+
+      const body = WalletUserTransferBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      if (body.data.recipientUserId === payload.sub) return reply.code(400).send({ error: 'cannot_transfer_to_self' })
+
+      await ensureCitizenWalletTables()
+
+      const [sender, recipient, friendship] = await Promise.all([
+        prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+        prisma.user.findUnique({ where: { id: body.data.recipientUserId }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+        prisma.friendship.findFirst({
+          where: {
+            status: FriendshipStatus.ACCEPTED,
+            OR: [
+              { requesterId: payload.sub, addresseeId: body.data.recipientUserId },
+              { requesterId: body.data.recipientUserId, addresseeId: payload.sub },
+            ],
+          },
+          select: { id: true },
+        }),
+      ])
+
+      if (!sender || !recipient) return reply.code(404).send({ error: 'user_not_found' })
+      if (deps.isAccountSuspended(sender.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const senderFamilyRelationship = deps
+        .getStoredProfileFamilyRelationships(sender.communityMeta)
+        .find((entry: { relatedUserId?: string | null }) => entry.relatedUserId === recipient.id)
+
+      const recipientWallet = readWalletSummary(recipient.communityMeta)
+      const canShareWithSender =
+        (Boolean(senderFamilyRelationship) && recipientWallet.sharing.family) ||
+        (Boolean(friendship?.id) && recipientWallet.sharing.friends)
+
+      if (!recipientWallet.enabled || !recipientWallet.eTransferEmail || !canShareWithSender || !walletHasConnectPayoutsEnabled(recipientWallet)) {
+        return reply.code(403).send({ error: 'wallet_not_available' })
+      }
+
+      await prisma.$transaction(async (tx) => {
+        const [freshSender, freshRecipient] = await Promise.all([
+          tx.user.findUnique({ where: { id: sender.id }, select: { communityMeta: true } }),
+          tx.user.findUnique({ where: { id: recipient.id }, select: { communityMeta: true } }),
+        ])
+        if (!freshSender || !freshRecipient) throw new Error('user_not_found')
+
+        const freshSenderWallet = readWalletSummary(freshSender.communityMeta)
+        const freshRecipientWallet = readWalletSummary(freshRecipient.communityMeta)
+        if (freshSenderWallet.civilCreditsCents < body.data.amountCents) {
+          throw new Error('insufficient_wallet_balance')
+        }
+        if (!walletHasConnectPayoutsEnabled(freshRecipientWallet)) {
+          throw new Error('wallet_not_available')
+        }
+
+        const senderMeta = deps.readBaseCommunityMeta(freshSender.communityMeta)
+        senderMeta.wallet = buildWalletMetaValue({
+          ...freshSenderWallet,
+          civilCreditsCents: freshSenderWallet.civilCreditsCents - body.data.amountCents,
+        })
+
+        const recipientMeta = deps.readBaseCommunityMeta(freshRecipient.communityMeta)
+        recipientMeta.wallet = buildWalletMetaValue({
+          ...freshRecipientWallet,
+          civilCreditsCents: freshRecipientWallet.civilCreditsCents + body.data.amountCents,
+        })
+
+        await Promise.all([
+          tx.user.update({ where: { id: sender.id }, data: { communityMeta: senderMeta } }),
+          tx.user.update({ where: { id: recipient.id }, data: { communityMeta: recipientMeta } }),
+        ])
+
+        const transactionId = randomUUID()
+        await tx.$executeRaw`
+          INSERT INTO citizen_wallet_transaction (
+            id,
+            kind,
+            status,
+            user_id,
+            counterparty_user_id,
+            amount_cents,
+            currency,
+            stripe_connect_account_id,
+            metadata,
+            updated_at
+          )
+          VALUES (
+            ${transactionId},
+            ${'user_transfer'},
+            ${'completed'},
+            ${sender.id},
+            ${recipient.id},
+            ${body.data.amountCents},
+            ${'cad'},
+            ${freshRecipientWallet.stripeConnect.accountId},
+            ${JSON.stringify({ kind: 'user_transfer' })}::jsonb,
+            NOW()
+          )
+        `
+
+        await insertCivilCreditLedgerEntry(tx, {
+          id: `transfer:${transactionId}`,
+          eventId: transactionId,
+          entryType: 'transfer',
+          status: 'completed',
+          amountCents: body.data.amountCents,
+          currency: 'cad',
+          from: {
+            entityType: 'user_wallet',
+            userId: sender.id,
+            handle: sender.handle ?? null,
+            name: sender.name ?? null,
+            entityLabel: 'Civil Wallet',
+          },
+          to: {
+            entityType: 'user_wallet',
+            userId: recipient.id,
+            handle: recipient.handle ?? null,
+            name: recipient.name ?? null,
+            entityLabel: 'Civil Wallet',
+          },
+          sourceType: 'wallet_transaction',
+          sourceReferenceId: transactionId,
+          stripeConnectAccountId: freshRecipientWallet.stripeConnect.accountId,
+          description: 'Civil Credit transfer between users',
+          metadata: {
+            kind: 'user_transfer',
+          },
+        })
+      })
+
+      const updated = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+      return reply.send({ wallet: readWalletSummary(updated?.communityMeta ?? null) })
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === 'insufficient_wallet_balance') return reply.code(400).send({ error: 'insufficient_wallet_balance' })
+        if (error.message === 'wallet_not_available') return reply.code(403).send({ error: 'wallet_not_available' })
+      }
+      return reply.code(400).send({ error: 'wallet_transfer_failed' })
     }
   })
 

@@ -76,10 +76,17 @@ export type CommunityMetaPayload = {
     civilCreditsCents?: number
     enabled?: boolean
     eTransferEmail?: string | null
+    stripeCustomerId?: string | null
     sharing?: {
       family?: boolean
       friends?: boolean
       market?: boolean
+    } | null
+    stripeConnect?: {
+      accountId?: string | null
+      chargesEnabled?: boolean
+      payoutsEnabled?: boolean
+      detailsSubmitted?: boolean
     } | null
   } | null
   dateOfBirth?: string
@@ -216,6 +223,10 @@ export function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): 
           typeof walletValue.eTransferEmail === 'string' && walletValue.eTransferEmail.trim()
             ? walletValue.eTransferEmail.trim().toLowerCase()
             : null,
+        stripeCustomerId:
+          typeof walletValue.stripeCustomerId === 'string' && walletValue.stripeCustomerId.trim()
+            ? walletValue.stripeCustomerId.trim()
+            : null,
         sharing:
           walletValue.sharing && typeof walletValue.sharing === 'object' && !Array.isArray(walletValue.sharing)
             ? {
@@ -233,6 +244,28 @@ export function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): 
                     : typeof walletValue.eTransferEmail === 'string' && walletValue.eTransferEmail.trim()
                       ? true
                       : undefined,
+              }
+            : null,
+        stripeConnect:
+          walletValue.stripeConnect && typeof walletValue.stripeConnect === 'object' && !Array.isArray(walletValue.stripeConnect)
+            ? {
+                accountId:
+                  typeof (walletValue.stripeConnect as Record<string, unknown>).accountId === 'string' &&
+                  (walletValue.stripeConnect as Record<string, unknown>).accountId?.toString().trim()
+                    ? (walletValue.stripeConnect as Record<string, unknown>).accountId?.toString().trim()
+                    : null,
+                chargesEnabled:
+                  typeof (walletValue.stripeConnect as Record<string, unknown>).chargesEnabled === 'boolean'
+                    ? Boolean((walletValue.stripeConnect as Record<string, unknown>).chargesEnabled)
+                    : undefined,
+                payoutsEnabled:
+                  typeof (walletValue.stripeConnect as Record<string, unknown>).payoutsEnabled === 'boolean'
+                    ? Boolean((walletValue.stripeConnect as Record<string, unknown>).payoutsEnabled)
+                    : undefined,
+                detailsSubmitted:
+                  typeof (walletValue.stripeConnect as Record<string, unknown>).detailsSubmitted === 'boolean'
+                    ? Boolean((walletValue.stripeConnect as Record<string, unknown>).detailsSubmitted)
+                    : undefined,
               }
             : null,
       }
