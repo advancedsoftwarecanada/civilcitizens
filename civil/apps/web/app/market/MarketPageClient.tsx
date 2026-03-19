@@ -3,16 +3,22 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Modal from '../_components/Modal'
 import ContentModerationMenu from '../_components/ContentModerationMenu'
 import DashboardShell from '../_components/DashboardShell'
 import { buildApiUrl } from '../_lib/api'
 import MarketRightRail from './_components/MarketRightRail'
+import { getMarketListingCategory, getMarketListingSection, getMarketListingSubcategory, MARKET_LISTING_SECTIONS } from './_lib/listingCategories'
 
 type MarketProduct = {
   id: string
   kind: 'organization_product' | 'citizen_listing'
   title: string
   description: string | null
+  listingSection?: string | null
+  listingCategory?: string | null
+  listingSubcategory?: string | null
+  listingDetail?: string | null
   priceCents: number
   currency: string
   primaryImageUrl: string | null
@@ -43,6 +49,24 @@ type MarketProductsResponse = {
   nextCursor?: string | null
 }
 
+type ListingTypePickerProps = {
+  label: string
+  value: string
+  placeholder: string
+  disabled?: boolean
+  onClick: () => void
+}
+
+type ListingTypePickerModalProps = {
+  open: boolean
+  title: string
+  options: string[]
+  selectedValue: string
+  emptyLabel: string
+  onChoose: (value: string) => void
+  onClose: () => void
+}
+
 const money = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' })
 
 function getAuthHeaders(): Record<string, string> {
@@ -69,17 +93,92 @@ function buildListingHref(product: MarketProduct): string {
   return buildProductHref(product)
 }
 
+function ListingTypePicker({ label, value, placeholder, disabled, onClick }: ListingTypePickerProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group block w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+    >
+      <span className="block min-w-0">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
+        <span className={`mt-1 block whitespace-normal break-words text-sm font-medium leading-6 ${value ? 'text-slate-900' : 'text-slate-400'}`}>{value || placeholder}</span>
+      </span>
+    </button>
+  )
+}
+
+function ListingTypePickerModal({ open, title, options, selectedValue, emptyLabel, onChoose, onClose }: ListingTypePickerModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title={title} maxWidthClassName="max-w-xl">
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => onChoose('')}
+          className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm transition ${!selectedValue ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+        >
+          <span>{emptyLabel}</span>
+          {!selectedValue ? <span className="text-xs font-semibold uppercase tracking-wide">Selected</span> : null}
+        </button>
+        <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+          {options.map((option) => {
+            const selected = option === selectedValue
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onChoose(option)}
+                className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm transition ${selected ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50'}`}
+              >
+                <span>{option}</span>
+                {selected ? <span className="text-xs font-semibold uppercase tracking-wide">Selected</span> : null}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export default function MarketPageClient() {
   const router = useRouter()
   const [items, setItems] = useState<MarketProduct[]>([])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [listingSection, setListingSection] = useState('')
+  const [listingCategory, setListingCategory] = useState('')
+  const [listingSubcategory, setListingSubcategory] = useState('')
+  const [listingDetail, setListingDetail] = useState('')
+  const [activeListingTypePicker, setActiveListingTypePicker] = useState<null | 'section' | 'category' | 'subcategory' | 'detail'>(null)
+
+  const selectedListingSection = useMemo(() => getMarketListingSection(listingSection), [listingSection])
+  const selectedListingCategory = useMemo(() => getMarketListingCategory(listingSection, listingCategory), [listingCategory, listingSection])
+  const selectedListingSubcategory = useMemo(
+    () => getMarketListingSubcategory(listingSection, listingCategory, listingSubcategory),
+    [listingCategory, listingSection, listingSubcategory],
+  )
+  const listingTypeOptions = useMemo(
+    () => ({
+      section: MARKET_LISTING_SECTIONS.map((section) => section.label),
+      category: (selectedListingSection?.categories ?? []).map((category) => category.label),
+      subcategory: (selectedListingCategory?.subcategories ?? []).map((subcategory) => subcategory.label),
+      detail: (selectedListingSubcategory?.details ?? []).map((detail) => detail.label),
+    }),
+    [selectedListingCategory, selectedListingSection, selectedListingSubcategory],
+  )
 
   const load = useCallback(async (cursor?: string | null) => {
     try {
+      if (!cursor) setStatus('loading')
       const params = new URLSearchParams()
       params.set('limit', '24')
       if (cursor) params.set('cursor', cursor)
+      if (listingSection) params.set('listingSection', listingSection)
+      if (listingCategory) params.set('listingCategory', listingCategory)
+      if (listingSubcategory) params.set('listingSubcategory', listingSubcategory)
+      if (listingDetail) params.set('listingDetail', listingDetail)
 
       const res = await fetch(buildApiUrl(`/market/feed?${params.toString()}`), {
         headers: getAuthHeaders(),
@@ -99,40 +198,66 @@ export default function MarketPageClient() {
     } catch {
       setStatus('error')
     }
-  }, [])
+  }, [listingCategory, listingDetail, listingSection, listingSubcategory])
 
   useEffect(() => {
     void load(null)
   }, [load])
 
   const hasItems = items.length > 0
-  const header = useMemo(
-    () => (
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Market</h1>
-          <p className="mt-1 text-sm text-slate-600">Browse listings from organizations and people in your communities.</p>
-        </div>
-        <Link
-          href="/market/cart"
-          className="shrink-0 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:border-slate-300"
+  const hasActiveFilters = Boolean(listingSection || listingCategory || listingSubcategory || listingDetail)
+  const marketFilterBlock = (
+    <section className="rounded-3xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-slate-900">Marketplace Filters</p>
+        <button
+          type="button"
+          onClick={() => {
+            setListingSection('')
+            setListingCategory('')
+            setListingSubcategory('')
+            setListingDetail('')
+          }}
+          className="rounded-full border border-rose-300 bg-white px-4 py-2 text-xs font-semibold text-rose-700 transition hover:border-rose-400 hover:bg-rose-50"
         >
-          Cart
-        </Link>
+          Clear Filters
+        </button>
       </div>
-    ),
-    [],
+
+      <div className="mt-4 space-y-3">
+        <ListingTypePicker label="Section" value={listingSection} placeholder="Choose section" onClick={() => setActiveListingTypePicker('section')} />
+        <ListingTypePicker
+          label="Category"
+          value={listingCategory}
+          placeholder={selectedListingSection ? 'Choose category' : 'Choose section first'}
+          disabled={!selectedListingSection}
+          onClick={() => setActiveListingTypePicker('category')}
+        />
+        <ListingTypePicker
+          label="Subcategory"
+          value={listingSubcategory}
+          placeholder={selectedListingCategory ? 'Choose subcategory' : 'Choose category first'}
+          disabled={!selectedListingCategory}
+          onClick={() => setActiveListingTypePicker('subcategory')}
+        />
+        <ListingTypePicker
+          label="Detail"
+          value={listingDetail}
+          placeholder={listingTypeOptions.detail.length ? 'Choose detail' : 'No detail options'}
+          disabled={!listingTypeOptions.detail.length}
+          onClick={() => setActiveListingTypePicker('detail')}
+        />
+      </div>
+    </section>
   )
 
   return (
     <DashboardShell
-      rightRail={<MarketRightRail />}
+      rightRail={<MarketRightRail filterBlock={marketFilterBlock} />}
       showMobileRightRail
       mainClassName="space-y-5 pb-12"
     >
       <div className="space-y-5">
-        {header}
-
         {status === 'error' ? (
           <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Unable to load market items.</div>
         ) : null}
@@ -246,6 +371,64 @@ export default function MarketPageClient() {
             </button>
           </div>
         ) : null}
+
+        <ListingTypePickerModal
+          open={activeListingTypePicker === 'section'}
+          title="Choose section"
+          options={listingTypeOptions.section}
+          selectedValue={listingSection}
+          emptyLabel="No section selected"
+          onClose={() => setActiveListingTypePicker(null)}
+          onChoose={(value) => {
+            setListingSection(value)
+            setListingCategory('')
+            setListingSubcategory('')
+            setListingDetail('')
+            setActiveListingTypePicker(null)
+          }}
+        />
+
+        <ListingTypePickerModal
+          open={activeListingTypePicker === 'category'}
+          title="Choose category"
+          options={listingTypeOptions.category}
+          selectedValue={listingCategory}
+          emptyLabel="No category selected"
+          onClose={() => setActiveListingTypePicker(null)}
+          onChoose={(value) => {
+            setListingCategory(value)
+            setListingSubcategory('')
+            setListingDetail('')
+            setActiveListingTypePicker(null)
+          }}
+        />
+
+        <ListingTypePickerModal
+          open={activeListingTypePicker === 'subcategory'}
+          title="Choose subcategory"
+          options={listingTypeOptions.subcategory}
+          selectedValue={listingSubcategory}
+          emptyLabel="No subcategory selected"
+          onClose={() => setActiveListingTypePicker(null)}
+          onChoose={(value) => {
+            setListingSubcategory(value)
+            setListingDetail('')
+            setActiveListingTypePicker(null)
+          }}
+        />
+
+        <ListingTypePickerModal
+          open={activeListingTypePicker === 'detail'}
+          title="Choose detail"
+          options={listingTypeOptions.detail}
+          selectedValue={listingDetail}
+          emptyLabel="No detail selected"
+          onClose={() => setActiveListingTypePicker(null)}
+          onChoose={(value) => {
+            setListingDetail(value)
+            setActiveListingTypePicker(null)
+          }}
+        />
       </div>
     </DashboardShell>
   )

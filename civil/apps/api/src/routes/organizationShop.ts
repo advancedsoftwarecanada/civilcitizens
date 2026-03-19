@@ -650,6 +650,49 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
     }),
   )
 
+  app.delete('/communities/:province/:municipality/orgs/:slug/shop/warehouses/:warehouseId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgShopWarehouseParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      const deletedRows = await prisma.$queryRaw<Array<{ id: string }>>`
+        DELETE FROM organization_shop_warehouse
+        WHERE business_id = ${org.id} AND id = ${params.data.warehouseId}
+        RETURNING id
+      `
+
+      if (!deletedRows[0]) return reply.code(404).send({ error: 'warehouse_not_found' })
+      return reply.send({ ok: true })
+    }),
+  )
+
   app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined

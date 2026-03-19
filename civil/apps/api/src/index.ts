@@ -8903,6 +8903,10 @@ registerOrganizationShopRoutes(app, {
 const MarketProductsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(24),
   cursor: z.string().trim().min(1).max(256).optional(),
+  listingSection: z.string().trim().min(1).max(180).optional(),
+  listingCategory: z.string().trim().min(1).max(180).optional(),
+  listingSubcategory: z.string().trim().min(1).max(180).optional(),
+  listingDetail: z.string().trim().min(1).max(180).optional(),
 })
 
 const MarketProductParams = z.object({

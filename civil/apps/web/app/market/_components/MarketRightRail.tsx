@@ -1,10 +1,11 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import Link from 'next/link'
 import YourListingsPanel from './YourListingsPanel'
 import YourOrdersPanel from './YourOrdersPanel'
 
-export default function MarketRightRail() {
+export default function MarketRightRail({ filterBlock }: { filterBlock?: ReactNode }) {
   return (
     <div className="space-y-6">
       <Link
@@ -13,6 +14,7 @@ export default function MarketRightRail() {
       >
         Create Listing
       </Link>
+      {filterBlock}
       <YourListingsPanel />
       <YourOrdersPanel title="Your Orders" limit={8} />
     </div>
