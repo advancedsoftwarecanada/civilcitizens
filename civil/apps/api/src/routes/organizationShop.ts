@@ -68,6 +68,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         catalog_id: string | null
         name: string
         description: string | null
+        listing_section: string | null
+        listing_category: string | null
+        listing_subcategory: string | null
         featured_homepage: boolean
         tax_collect: boolean
         tax_rates_by_region: unknown
@@ -139,6 +142,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.catalog_id,
                 p.name,
                 p.description,
+                p.listing_section,
+                p.listing_category,
+                p.listing_subcategory,
                 p.featured_homepage,
                 p.tax_collect,
                 p.tax_rates_by_region,
@@ -172,6 +178,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.catalog_id,
                 p.name,
                 p.description,
+                p.listing_section,
+                p.listing_category,
+                p.listing_subcategory,
                 p.featured_homepage,
                 p.tax_collect,
                 p.tax_rates_by_region,
@@ -270,6 +279,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           catalogId: row.catalog_id,
           name: row.name,
           description: row.description,
+          listingSection: row.listing_section,
+          listingCategory: row.listing_category,
+          listingSubcategory: row.listing_subcategory,
           featuredHomepage: row.featured_homepage,
           taxCollect: row.tax_collect,
           taxRatesByRegion:
@@ -853,6 +865,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       const fulfillmentProvided = Object.prototype.hasOwnProperty.call(body.data, 'fulfillmentType')
       const digitalUrlProvided = Object.prototype.hasOwnProperty.call(body.data, 'digitalDeliveryUrl')
       const hasDigitalUpdate = fulfillmentProvided || digitalUrlProvided
+      const listingSectionProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSection')
+      const listingCategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingCategory')
+      const listingSubcategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSubcategory')
 
       const existingFulfillment = String(productRows[0].fulfillment_type || 'physical').toLowerCase()
       const nextFulfillmentType = fulfillmentProvided ? String(body.data.fulfillmentType || 'physical').toLowerCase() : existingFulfillment
@@ -860,6 +875,12 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         ? (body.data.digitalDeliveryUrl?.trim() ? body.data.digitalDeliveryUrl.trim() : null)
         : (productRows[0].digital_delivery_url ?? null)
       if (nextFulfillmentType !== 'digital') nextDigitalDeliveryUrl = null
+
+      const nextListingSection = listingSectionProvided ? (body.data.listingSection?.trim() ? body.data.listingSection.trim() : null) : null
+      const nextListingCategory = listingCategoryProvided ? (body.data.listingCategory?.trim() ? body.data.listingCategory.trim() : null) : null
+      const nextListingSubcategory = listingSubcategoryProvided
+        ? (body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null)
+        : null
 
       if (typeof body.data.isDraft === 'boolean' && body.data.isDraft === false && nextFulfillmentType === 'digital' && !nextDigitalDeliveryUrl) {
         return reply.code(400).send({ error: 'digital_delivery_url_required' })
@@ -890,6 +911,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         SET catalog_id = CASE WHEN ${catalogProvided} THEN ${resolvedCatalogId ?? null} ELSE catalog_id END,
             name = COALESCE(${body.data.name?.trim() ?? null}, name),
             description = CASE WHEN ${'description' in body.data} THEN ${nextProductDescription} ELSE description END,
+            listing_section = CASE WHEN ${listingSectionProvided} THEN ${nextListingSection} ELSE listing_section END,
+            listing_category = CASE WHEN ${listingCategoryProvided} THEN ${nextListingCategory} ELSE listing_category END,
+            listing_subcategory = CASE WHEN ${listingSubcategoryProvided} THEN ${nextListingSubcategory} ELSE listing_subcategory END,
             featured_homepage = COALESCE(${typeof body.data.featuredHomepage === 'boolean' ? body.data.featuredHomepage : null}, featured_homepage),
             tax_collect = COALESCE(${typeof body.data.taxCollect === 'boolean' ? body.data.taxCollect : null}, tax_collect),
             tax_rates_by_region = CASE
@@ -1015,6 +1039,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       if (fulfillmentType === 'digital' && !digitalDeliveryUrl) return reply.code(400).send({ error: 'digital_delivery_url_required' })
 
       const productDescription = body.data.description?.trim() ? deps.sanitizePlainText(body.data.description).trim() : null
+      const listingSection = body.data.listingSection?.trim() ? body.data.listingSection.trim() : null
+      const listingCategory = body.data.listingCategory?.trim() ? body.data.listingCategory.trim() : null
+      const listingSubcategory = body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null
       const galleryImageUrls = body.data.galleryImageUrls ?? []
       let resolvedCatalogId: string | null = null
 
@@ -1031,12 +1058,12 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
 
       await prisma.$executeRaw`
         INSERT INTO organization_shop_product (
-          id, business_id, catalog_id, name, description, price_cents, currency, sku,
+          id, business_id, catalog_id, name, description, listing_section, listing_category, listing_subcategory, price_cents, currency, sku,
           primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
           allow_shipping_contracts, featured_homepage, tax_collect, tax_rates_by_region, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
         )
         VALUES (
-          ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
+          ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${listingSection}, ${listingCategory}, ${listingSubcategory}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
           ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
           ${body.data.allowShippingContracts}, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(body.data.taxRatesByRegion ?? {})}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
         )

@@ -111,7 +111,9 @@ export function registerAiTaskRoutes(app: FastifyInstance, deps: AiTaskRoutesDep
         })
       }
 
-      const normalizedOutput = definition.normalizeOutput ? definition.normalizeOutput(validatedOutput.data) : validatedOutput.data
+      const normalizedOutput = definition.normalizeOutput
+        ? definition.normalizeOutput(validatedOutput.data, { input: parsedInput.data, rawText })
+        : validatedOutput.data
       if (!normalizedOutput) {
         return reply.code(502).send({
           error: 'ai_task_invalid_output',

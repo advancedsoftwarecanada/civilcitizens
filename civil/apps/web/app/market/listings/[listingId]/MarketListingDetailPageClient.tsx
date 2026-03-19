@@ -50,6 +50,12 @@ type ListingDetailResponse = {
     priceCents: number
     currency: string
     photoUrls: string[]
+    foodSafetyClassification?: 'low_risk' | 'high_risk' | null
+    foodIngredients?: string | null
+    foodPreparationLocation?: 'home_kitchen' | 'certified_kitchen' | null
+    foodStorageMethod?: 'refrigerated' | 'frozen' | null
+    foodTags?: string[]
+    foodExpiryDate?: string | null
     pickupCity: string | null
     pickupProvince: string | null
     status?: string | null
@@ -99,6 +105,24 @@ function formatDistanceKm(distanceKm: number) {
   if (distanceKm >= 100) return `${Math.round(distanceKm)} km`
   if (distanceKm >= 10) return `${distanceKm.toFixed(1)} km`
   return `${distanceKm.toFixed(1)} km`
+}
+
+function formatFoodSafetyClassification(value: 'low_risk' | 'high_risk' | null | undefined) {
+  if (value === 'high_risk') return 'High Risk Food'
+  if (value === 'low_risk') return 'Low Risk Food'
+  return null
+}
+
+function formatPreparationLocation(value: 'home_kitchen' | 'certified_kitchen' | null | undefined) {
+  if (value === 'home_kitchen') return 'Seller states this item was prepared in a home kitchen.'
+  if (value === 'certified_kitchen') return 'Seller states this item was prepared in a certified kitchen.'
+  return null
+}
+
+function formatStorageMethod(value: 'refrigerated' | 'frozen' | null | undefined) {
+  if (value === 'refrigerated') return 'Seller states this item should be kept refrigerated.'
+  if (value === 'frozen') return 'Seller states this item should be kept frozen.'
+  return null
 }
 
 async function resolvePostalPoint(postalCode: string, token: string, label: string): Promise<MapPoint | null> {
@@ -438,6 +462,18 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
   const isSoldListing = listing?.status === 'sold'
   const galleryPhotos = listing?.photoUrls ?? []
   const activeGalleryPhoto = galleryIndex !== null ? galleryPhotos[galleryIndex] ?? null : null
+  const foodSafetyLabel = formatFoodSafetyClassification(listing?.foodSafetyClassification)
+  const preparationLocationText = formatPreparationLocation(listing?.foodPreparationLocation)
+  const storageMethodText = formatStorageMethod(listing?.foodStorageMethod)
+  const foodTags = Array.isArray(listing?.foodTags) ? listing.foodTags.filter((entry) => typeof entry === 'string' && entry.trim()) : []
+  const hasFoodSafetyDetails = Boolean(
+    foodSafetyLabel ||
+      listing?.foodIngredients?.trim() ||
+      preparationLocationText ||
+      storageMethodText ||
+      foodTags.length ||
+        listing?.foodExpiryDate?.trim(),
+  )
   const listingShareTarget = useMemo<ShareTarget | null>(() => {
     if (!listing) return null
     const location = listing.pickupCity ? `${listing.pickupCity}${listing.pickupProvince ? `, ${listing.pickupProvince}` : ''}` : null
@@ -501,6 +537,31 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                 </div>
 
                 {listing.description ? <div className="prose prose-slate max-w-none text-base" dangerouslySetInnerHTML={{ __html: listing.description }} /> : null}
+
+                {hasFoodSafetyDetails ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-900">Food safety</p>
+                      <p className="text-xs text-slate-500">Civil displays seller-provided food handling details and does not certify or regulate food listings.</p>
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm text-slate-700">
+                      {foodSafetyLabel ? <p><span className="font-semibold text-slate-900">Classification:</span> {foodSafetyLabel}</p> : null}
+                      {foodTags.length ? (
+                        <div className="flex flex-wrap gap-2">
+                          {foodTags.map((tag) => (
+                            <span key={tag} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                              {tag.replace(/_/g, ' ')}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {preparationLocationText ? <p>{preparationLocationText}</p> : null}
+                      {storageMethodText ? <p>{storageMethodText}</p> : null}
+                      {listing.foodIngredients?.trim() ? <p><span className="font-semibold text-slate-900">Ingredients:</span> {listing.foodIngredients.trim()}</p> : null}
+                      {listing.foodExpiryDate?.trim() ? <p><span className="font-semibold text-slate-900">Expiry / best before:</span> {listing.foodExpiryDate.trim()}</p> : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </section>
           ) : (
@@ -581,6 +642,31 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
             </div>
 
             {listing.description ? <div className="prose prose-slate max-w-none text-base" dangerouslySetInnerHTML={{ __html: listing.description }} /> : null}
+
+            {hasFoodSafetyDetails ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-900">Food safety</p>
+                  <p className="text-xs text-slate-500">Civil displays seller-provided food handling details and does not certify or regulate food listings.</p>
+                </div>
+                <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  {foodSafetyLabel ? <p><span className="font-semibold text-slate-900">Classification:</span> {foodSafetyLabel}</p> : null}
+                  {foodTags.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {foodTags.map((tag) => (
+                        <span key={tag} className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                          {tag.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {preparationLocationText ? <p>{preparationLocationText}</p> : null}
+                  {storageMethodText ? <p>{storageMethodText}</p> : null}
+                  {listing.foodIngredients?.trim() ? <p><span className="font-semibold text-slate-900">Ingredients:</span> {listing.foodIngredients.trim()}</p> : null}
+                  {listing.foodExpiryDate?.trim() ? <p><span className="font-semibold text-slate-900">Expiry / best before:</span> {listing.foodExpiryDate.trim()}</p> : null}
+                </div>
+              </div>
+            ) : null}
 
             {listing.seller ? (
               <CivilCard

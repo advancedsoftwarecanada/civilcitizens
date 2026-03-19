@@ -5,13 +5,16 @@ import clsx from 'clsx'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { HiOutlineArrowLeft } from 'react-icons/hi2'
+import { CanadianAddressEditor } from '../../_components/address/CanadianAddressEditor'
 import { buildApiUrl } from '../../_lib/api'
+import { createEmptyCanadianAddress, hasCanadianAddressValue, normalizeCanadianAddress, type CanadianAddress } from '../../_lib/canadianAddresses'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
 import { pushToast } from '../../_components/useToasts'
 import { addMarketCartItem, readMarketCart, writeMarketCart } from '../../market/_lib/cart'
+import { MARKET_LISTING_SECTIONS, getMarketListingCategory, getMarketListingSection } from '../../market/_lib/listingCategories'
 
 type ShopWarehouse = {
   id: string
@@ -25,6 +28,9 @@ type ShopProduct = {
   catalogId?: string | null
   name: string
   description: string | null
+  listingSection?: string | null
+  listingCategory?: string | null
+  listingSubcategory?: string | null
   featuredHomepage?: boolean
   taxCollect?: boolean
   taxRatesByRegion?: Record<string, string>
@@ -80,6 +86,9 @@ type CatalogEditDraft = {
 type ProductEditDraft = {
   catalogId: string
   featuredHomepage: boolean
+  listingSection: string
+  listingCategory: string
+  listingSubcategory: string
   name: string
   description: string
   priceDollars: string
@@ -127,6 +136,11 @@ const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 
 const TAX_REGION_CODES = ['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT'] as const
+
+const listingTypeSummary = (section?: string | null, category?: string | null, subcategory?: string | null) => {
+  const parts = [section, category, subcategory].map((value) => (value ?? '').trim()).filter(Boolean)
+  return parts.length ? parts.join(' / ') : null
+}
 
 const formatCurrency = (priceCents: number, currency: string) =>
   new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'CAD' }).format((priceCents || 0) / 100)
@@ -183,6 +197,9 @@ function toDraft(product: ShopProduct): ProductEditDraft {
   return {
     catalogId: product.catalogId ?? '',
     featuredHomepage: Boolean(product.featuredHomepage),
+    listingSection: product.listingSection ?? '',
+    listingCategory: product.listingCategory ?? '',
+    listingSubcategory: product.listingSubcategory ?? '',
     name: product.name,
     description: product.description ?? '',
     priceDollars: ((product.priceCents || 0) / 100).toFixed(2),
@@ -224,12 +241,7 @@ export default function OrganizationShopClient({
   const [products, setProducts] = useState<ShopProduct[]>([])
   const [newCatalogDraft, setNewCatalogDraft] = useState<CatalogEditDraft>({ title: '', description: '', imageUrl: '', enabled: true })
   const [newWarehouseName, setNewWarehouseName] = useState('')
-  const [newWarehouseLine1, setNewWarehouseLine1] = useState('')
-  const [newWarehouseLine2, setNewWarehouseLine2] = useState('')
-  const [newWarehouseCity, setNewWarehouseCity] = useState('')
-  const [newWarehouseProvince, setNewWarehouseProvince] = useState('')
-  const [newWarehousePostalCode, setNewWarehousePostalCode] = useState('')
-  const [newWarehouseCountry, setNewWarehouseCountry] = useState('CA')
+  const [newWarehouseAddress, setNewWarehouseAddress] = useState<CanadianAddress>(createEmptyCanadianAddress())
   const [showNewCatalogForm, setShowNewCatalogForm] = useState(false)
   const [showNewWarehouseForm, setShowNewWarehouseForm] = useState(false)
   const [catalogDrafts, setCatalogDrafts] = useState<Record<string, CatalogEditDraft>>({})
@@ -523,6 +535,47 @@ export default function OrganizationShopClient({
     }
   }, [])
 
+  useEffect(() => {
+    if (!showNewWarehouseForm || !warehouseAddressQuery) {
+      setWarehouseMapPreview(null)
+      setWarehouseMapStatus('idle')
+      return
+    }
+
+    const controller = new AbortController()
+    let cancelled = false
+    setWarehouseMapStatus('loading')
+
+    void (async () => {
+      try {
+        const results = await fetchAddressSearchResults(warehouseAddressQuery, controller.signal, 1)
+        if (cancelled) return
+        const result = results[0]
+        if (!result) {
+          setWarehouseMapPreview(null)
+          setWarehouseMapStatus('error')
+          return
+        }
+
+        setWarehouseMapPreview({
+          latitude: result.latitude,
+          longitude: result.longitude,
+          label: warehouseAddressQuery,
+        })
+        setWarehouseMapStatus('ready')
+      } catch (error) {
+        if (cancelled || controller.signal.aborted) return
+        setWarehouseMapPreview(null)
+        setWarehouseMapStatus('error')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [showNewWarehouseForm, warehouseAddressQuery])
+
   const buildRatesBySelection = useCallback(
     (selectionKey: string, existing: Record<string, string> | undefined): Record<string, string> => {
       const nextRates: Record<string, string> = { ...(existing ?? {}) }
@@ -741,6 +794,9 @@ export default function OrganizationShopClient({
           body: JSON.stringify({
             catalogId: draft.catalogId || null,
             featuredHomepage: draft.featuredHomepage,
+            listingSection: draft.listingSection.trim() || null,
+            listingCategory: draft.listingCategory.trim() || null,
+            listingSubcategory: draft.listingSubcategory.trim() || null,
             taxCollect: taxDraft.collectTax,
             taxRatesByRegion: taxDraft.ratesByRegion,
             name: draft.name.trim(),
@@ -1057,7 +1113,8 @@ export default function OrganizationShopClient({
       pushToast('Warehouse name is required.', 'error')
       return
     }
-    if (!newWarehouseLine1.trim() || !newWarehouseCity.trim() || !newWarehouseProvince.trim() || !newWarehousePostalCode.trim()) {
+    const normalizedWarehouseAddress = normalizeCanadianAddress(newWarehouseAddress)
+    if (!normalizedWarehouseAddress.line1 || !normalizedWarehouseAddress.city || !normalizedWarehouseAddress.province || !normalizedWarehouseAddress.postalCode) {
       pushToast('Complete the full warehouse shipping address.', 'error')
       return
     }
@@ -1073,12 +1130,12 @@ export default function OrganizationShopClient({
         body: JSON.stringify({
           name: newWarehouseName.trim(),
           address: {
-            line1: newWarehouseLine1.trim(),
-            line2: newWarehouseLine2.trim() || null,
-            city: newWarehouseCity.trim(),
-            province: newWarehouseProvince.trim(),
-            postalCode: newWarehousePostalCode.trim(),
-            country: (newWarehouseCountry.trim() || 'CA').toUpperCase(),
+            line1: normalizedWarehouseAddress.line1,
+            line2: normalizedWarehouseAddress.line2 || null,
+            city: normalizedWarehouseAddress.city,
+            province: normalizedWarehouseAddress.province,
+            postalCode: normalizedWarehouseAddress.postalCode,
+            country: normalizedWarehouseAddress.country || 'CA',
           },
         }),
       })
@@ -1088,12 +1145,7 @@ export default function OrganizationShopClient({
         return
       }
       setNewWarehouseName('')
-      setNewWarehouseLine1('')
-      setNewWarehouseLine2('')
-      setNewWarehouseCity('')
-      setNewWarehouseProvince('')
-      setNewWarehousePostalCode('')
-      setNewWarehouseCountry('CA')
+      setNewWarehouseAddress(createEmptyCanadianAddress())
       setShowNewWarehouseForm(false)
       pushToast('Warehouse created.', 'success')
       await load()
@@ -1102,7 +1154,7 @@ export default function OrganizationShopClient({
     } finally {
       setSaving(false)
     }
-  }, [load, newWarehouseCity, newWarehouseCountry, newWarehouseLine1, newWarehouseLine2, newWarehouseName, newWarehousePostalCode, newWarehouseProvince, shopPath])
+  }, [load, newWarehouseAddress, newWarehouseName, shopPath])
 
   const saveCatalog = useCallback(
     async (catalogId: string) => {
@@ -1498,6 +1550,9 @@ export default function OrganizationShopClient({
 
         const currentStatus: 'DRAFT' | 'PUBLISHED' = focusedProduct.isDraft ? 'DRAFT' : 'PUBLISHED'
         const taxDraft = taxDrafts[focusedProduct.id] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
+        const selectedSection = getMarketListingSection(draft.listingSection)
+        const selectedCategory = getMarketListingCategory(draft.listingSection, draft.listingCategory)
+        const currentListingSummary = listingTypeSummary(draft.listingSection, draft.listingCategory, draft.listingSubcategory)
 
         return (
           <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -1554,8 +1609,8 @@ export default function OrganizationShopClient({
 
             <section className="surface-card space-y-4 p-4 shadow-subtle">
               <div>
-                <h4 className="text-sm font-semibold text-slate-900">Product Information</h4>
-                <p className="mt-1 text-xs text-slate-500">Core details shown to customers.</p>
+                <h4 className="text-sm font-semibold text-slate-900">Media</h4>
+                <p className="mt-1 text-xs text-slate-500">Primary product visuals shown across the storefront.</p>
               </div>
 
               {draft.primaryImageUrl ? (
@@ -1614,6 +1669,13 @@ export default function OrganizationShopClient({
                   </label>
                 </div>
               ) : null}
+            </section>
+
+            <section className="surface-card space-y-4 p-4 shadow-subtle">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Product Details</h4>
+                <p className="mt-1 text-xs text-slate-500">Core product information shown to customers.</p>
+              </div>
 
               <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Name
@@ -1678,6 +1740,87 @@ export default function OrganizationShopClient({
                   onChange={(event) => updateProductDraft(focusedProduct.id, (current) => ({ ...current, featuredHomepage: event.target.checked }))}
                 />
                 Feature product on shop homepage
+              </label>
+            </section>
+
+            <section className="surface-card space-y-4 p-4 shadow-subtle">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Listing Type</h4>
+                <p className="mt-1 text-xs text-slate-500">Use the same marketplace taxonomy so customers can find the right kind of product.</p>
+              </div>
+
+              {currentListingSummary ? (
+                <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-900">{currentListingSummary}</div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">Select a section, category, and product type for this item.</div>
+              )}
+
+              <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Section
+                <select
+                  value={draft.listingSection}
+                  onChange={(event) =>
+                    updateProductDraft(focusedProduct.id, (current) => ({
+                      ...current,
+                      listingSection: event.target.value,
+                      listingCategory: '',
+                      listingSubcategory: '',
+                    }))
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                >
+                  <option value="">Select section</option>
+                  {MARKET_LISTING_SECTIONS.map((section) => (
+                    <option key={section.label} value={section.label}>
+                      {section.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Category
+                <select
+                  value={draft.listingCategory}
+                  disabled={!selectedSection}
+                  onChange={(event) =>
+                    updateProductDraft(focusedProduct.id, (current) => ({
+                      ...current,
+                      listingCategory: event.target.value,
+                      listingSubcategory: '',
+                    }))
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900 disabled:opacity-60"
+                >
+                  <option value="">{selectedSection ? 'Select category' : 'Select section first'}</option>
+                  {(selectedSection?.categories ?? []).map((category) => (
+                    <option key={category.label} value={category.label}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Product type
+                <select
+                  value={draft.listingSubcategory}
+                  disabled={!selectedCategory}
+                  onChange={(event) =>
+                    updateProductDraft(focusedProduct.id, (current) => ({
+                      ...current,
+                      listingSubcategory: event.target.value,
+                    }))
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900 disabled:opacity-60"
+                >
+                  <option value="">{selectedCategory ? 'Select product type' : 'Select category first'}</option>
+                  {(selectedCategory?.subcategories ?? []).map((subcategory) => (
+                    <option key={subcategory.label} value={subcategory.label}>
+                      {subcategory.label}
+                    </option>
+                  ))}
+                </select>
               </label>
             </section>
 
@@ -2351,55 +2494,29 @@ export default function OrganizationShopClient({
                 </button>
               </div>
 
-              <div className={clsx('mt-4 overflow-hidden transition-all duration-200', showNewWarehouseForm ? 'max-h-[520px] opacity-100' : 'max-h-0 opacity-0')}>
-                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <div className={clsx('mt-4 overflow-hidden transition-all duration-200', showNewWarehouseForm ? 'max-h-[1100px] opacity-100' : 'max-h-0 opacity-0')}>
+                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Create warehouse</p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                    <input
-                      value={newWarehouseName}
-                      onChange={(event) => setNewWarehouseName(event.target.value)}
-                      placeholder="Warehouse name"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
-                    <input
-                      value={newWarehouseLine1}
-                      onChange={(event) => setNewWarehouseLine1(event.target.value)}
-                      placeholder="Address line 1"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
-                    <input
-                      value={newWarehouseLine2}
-                      onChange={(event) => setNewWarehouseLine2(event.target.value)}
-                      placeholder="Address line 2 (optional)"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
-                    <input
-                      value={newWarehouseCity}
-                      onChange={(event) => setNewWarehouseCity(event.target.value)}
-                      placeholder="City"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
-                    <input
-                      value={newWarehouseProvince}
-                      onChange={(event) => setNewWarehouseProvince(event.target.value)}
-                      placeholder="Province"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
-                    <input
-                      value={newWarehousePostalCode}
-                      onChange={(event) => setNewWarehousePostalCode(event.target.value)}
-                      placeholder="Postal code"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
-                    <input
-                      value={newWarehouseCountry}
-                      onChange={(event) => setNewWarehouseCountry(event.target.value.toUpperCase())}
-                      placeholder="Country (CA)"
-                      maxLength={2}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                    />
+                  <div className="mt-3 grid gap-4">
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Warehouse name</span>
+                      <input
+                        value={newWarehouseName}
+                        onChange={(event) => setNewWarehouseName(event.target.value)}
+                        placeholder="Main warehouse"
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                      />
+                    </label>
+
+                    <CanadianAddressEditor value={newWarehouseAddress} onChange={setNewWarehouseAddress} required mode="organization" disabled={saving} />
+
+                    {hasCanadianAddressValue(newWarehouseAddress) ? (
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                        Search for the warehouse address above, then choose the correct result to autofill the verified address fields.
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-4 flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => void createWarehouse()}
@@ -2583,6 +2700,7 @@ export default function OrganizationShopClient({
           {editableProducts.map((product) => {
             const draft = productDrafts[product.id]
             if (!draft) return null
+            const productListingSummary = listingTypeSummary(draft.listingSection, draft.listingCategory, draft.listingSubcategory)
 
             return (
               <article key={product.id} className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -2598,6 +2716,7 @@ export default function OrganizationShopClient({
                       {product.inventoryTotal} in stock
                     </span>
                   ) : null}
+                  {productListingSummary ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 font-semibold text-sky-700">{productListingSummary}</span> : null}
                 </div>
 
                 {draft.primaryImageUrl ? (
