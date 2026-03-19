@@ -114,6 +114,7 @@ import {
   type CivilAiPostDataItem,
 } from './civilAiSources.js'
 import { createAuthViewerHelpers } from './authViewer.js'
+import { applyWalletTopUpFromPaymentIntent, buildWalletMetaValue, readWalletSummary } from './walletHelpers.js'
 const TrackViewInput = z.object({
   path: z.string().min(1),
   postId: z.string().optional(),
@@ -5325,10 +5326,14 @@ registerUserProfilePostRoutes(app, {
 })
 
 registerAuthRoutes(app, {
+  CIVIL_PUBLIC_HOST,
   RegisterInputApi,
+  STRIPE_PUBLISHABLE_KEY,
   ensureCitizenMarketplaceTables,
+  ensureStripeCustomer,
   getUpdateCivilStatusBody: () => UpdateCivilStatusBody,
   getUpdateWalletBody: () => UpdateWalletBody,
+  getStripeClient,
   applyOrganizationInviteRegistration,
   buildFamilyMemberAuthMeResponse,
   buildHomeCommunitySummaryForUserId,
@@ -5336,6 +5341,7 @@ registerAuthRoutes(app, {
   getStoredProfileFamilyRelationships,
   isAccountSuspended,
   isFamilyMemberTableMissing,
+  isStripeConfigured,
   isPremium,
   isSelfVerifiedCanadianCitizen,
   loadFamilyMemberAuthViewerById,
@@ -10145,6 +10151,7 @@ async function ensureStripeCustomer(userId: string) {
     select: {
       id: true,
       name: true,
+      communityMeta: true,
       stripeCustomerId: true,
       premiumStatus: true,
       premiumSince: true,
@@ -10153,14 +10160,44 @@ async function ensureStripeCustomer(userId: string) {
     },
   })
   if (!user) throw new Error('user_not_found')
-  if (user.stripeCustomerId) {
-    return { customerId: user.stripeCustomerId, user }
+  const wallet = readWalletSummary(user.communityMeta)
+  const metaStripeCustomerId = wallet.stripeCustomerId
+  const persistedStripeCustomerId = user.stripeCustomerId ?? metaStripeCustomerId
+
+  if (persistedStripeCustomerId) {
+    if (user.stripeCustomerId !== persistedStripeCustomerId || metaStripeCustomerId !== persistedStripeCustomerId) {
+      const baseMeta = readBaseCommunityMeta(user.communityMeta)
+      baseMeta.wallet = buildWalletMetaValue({
+        ...wallet,
+        stripeCustomerId: persistedStripeCustomerId,
+      })
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          stripeCustomerId: persistedStripeCustomerId,
+          communityMeta: baseMeta,
+        },
+      })
+    }
+    return { customerId: persistedStripeCustomerId, user: { ...user, stripeCustomerId: persistedStripeCustomerId } }
   }
+
   const stripe = getStripeClient()
   if (user.email) {
     const existing = await findStripeCustomerByEmail(stripe, user.email)
     if (existing) {
-      await prisma.user.update({ where: { id: userId }, data: { stripeCustomerId: existing.id } })
+      const baseMeta = readBaseCommunityMeta(user.communityMeta)
+      baseMeta.wallet = buildWalletMetaValue({
+        ...wallet,
+        stripeCustomerId: existing.id,
+      })
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          stripeCustomerId: existing.id,
+          communityMeta: baseMeta,
+        },
+      })
       return { customerId: existing.id, user: { ...user, stripeCustomerId: existing.id } }
     }
   }
@@ -10169,7 +10206,18 @@ async function ensureStripeCustomer(userId: string) {
     name: user.name ?? undefined,
     metadata: { userId },
   })
-  await prisma.user.update({ where: { id: userId }, data: { stripeCustomerId: customer.id } })
+  const baseMeta = readBaseCommunityMeta(user.communityMeta)
+  baseMeta.wallet = buildWalletMetaValue({
+    ...wallet,
+    stripeCustomerId: customer.id,
+  })
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      stripeCustomerId: customer.id,
+      communityMeta: baseMeta,
+    },
+  })
   return { customerId: customer.id, user: { ...user, stripeCustomerId: customer.id } }
 }
 
@@ -10536,6 +10584,8 @@ async function processStripeEvent(stripe: Stripe, event: Stripe.Event): Promise<
       const paymentIntent = event.data.object as Stripe.PaymentIntent
       if (paymentIntent.metadata?.kind === 'shop_order') {
         await handleShopPaymentIntentSucceeded(paymentIntent)
+      } else if (paymentIntent.metadata?.kind === 'wallet_topup') {
+        await applyWalletTopUpFromPaymentIntent(paymentIntent)
       }
       return { type: 'ignored' }
     }

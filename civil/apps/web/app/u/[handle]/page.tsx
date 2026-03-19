@@ -66,6 +66,22 @@ type Viewer = {
     allowChildAudioCalls?: boolean
     allowChildVideoCalls?: boolean
   } | null
+  wallet?: {
+    civilCreditsCents: number
+    enabled?: boolean
+    eTransferEmail?: string | null
+    sharing?: {
+      family?: boolean
+      friends?: boolean
+      market?: boolean
+    } | null
+    stripeConnect?: {
+      accountId?: string | null
+      chargesEnabled?: boolean
+      payoutsEnabled?: boolean
+      detailsSubmitted?: boolean
+    } | null
+  } | null
 }
 
 type UserProfile = {
@@ -92,6 +108,7 @@ type UserProfile = {
   wallet?: {
     label: string
     eTransferEmail: string
+    supportsCivilCredits?: boolean
   } | null
   homeShippingAddress?: SavedShippingAddress | null
   homeChamber?: {
@@ -454,6 +471,16 @@ function formatCount(value?: number | null) {
   return value.toLocaleString()
 }
 
+function formatCredits(cents?: number | null) {
+  return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`
+}
+
+function parseMoneyInputToCents(value: string) {
+  const amount = Number(String(value ?? '').replace(/[^0-9.]/g, '').trim())
+  if (!Number.isFinite(amount) || amount <= 0) return 0
+  return Math.round(amount * 100)
+}
+
 function getDateMs(value?: string | null) {
   if (!value) return null
   const date = new Date(value)
@@ -546,6 +573,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const [familyInviteRelationship, setFamilyInviteRelationship] = useState<FamilyInviteRelationshipValue | null>(null)
   const [familyInviteSending, setFamilyInviteSending] = useState(false)
   const [sendMoneyModalOpen, setSendMoneyModalOpen] = useState(false)
+  const [sendMoneyAmount, setSendMoneyAmount] = useState('25.00')
+  const [sendingMoney, setSendingMoney] = useState(false)
   const [removingFamilyRelationship, setRemovingFamilyRelationship] = useState(false)
   const [inviteSurface, setInviteSurface] = useState<InviteSurface>('event')
   const [inviteOrganizations, setInviteOrganizations] = useState<InviteableOrganization[]>([])
@@ -850,6 +879,10 @@ export default function UserPostsPage({ params }: PageProps) {
       (resolvedRelationship.friendshipStatus === 'friends' || Boolean(currentProfileFamilyRelationship)),
   )
   const canSendMoneyToProfile = Boolean(!isOwner && profile?.wallet?.eTransferEmail)
+  const canTransferCivilCreditsToProfile = Boolean(!isOwner && profile?.wallet?.supportsCivilCredits)
+  const senderWalletBalanceCents = resolvedViewer?.wallet?.civilCreditsCents ?? 0
+  const senderWalletBalanceLabel = formatCredits(senderWalletBalanceCents)
+  const sendMoneyAmountCents = parseMoneyInputToCents(sendMoneyAmount)
   const profileDirectionsHref = useMemo(() => {
     if (!profile?.homeShippingAddress) return null
     return buildAddressesHrefFromAddress(profile.homeShippingAddress, profileDisplayName)
@@ -858,6 +891,58 @@ export default function UserPostsPage({ params }: PageProps) {
     Boolean(currentProfileFamilyRelationship) ||
     ['friends', 'incoming', 'outgoing'].includes(resolvedRelationship.friendshipStatus) ||
     ['connected', 'incoming', 'outgoing'].includes(resolvedRelationship.connectionStatus)
+
+  const handleSendCivilCredits = async () => {
+    if (!profile?.id || !canTransferCivilCreditsToProfile) return
+    const token = requireAuthToken()
+    if (!token) return
+
+    if (sendMoneyAmountCents < 100) {
+      pushToast('Enter at least $1.00 to transfer Civil Credits.', 'error')
+      return
+    }
+
+    if (sendMoneyAmountCents > senderWalletBalanceCents) {
+      pushToast('That amount is larger than your Civil Credits balance.', 'error')
+      return
+    }
+
+    setSendingMoney(true)
+    try {
+      const response = await fetch(buildApiUrl('/auth/wallet/transfers'), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipientUserId: profile.id,
+          amountCents: sendMoneyAmountCents,
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      if (!response.ok) {
+        if (payload?.error === 'insufficient_wallet_balance') {
+          pushToast('That amount is larger than your Civil Credits balance.', 'error')
+        } else if (payload?.error === 'wallet_not_available') {
+          pushToast('This wallet is not available for Civil Credit transfers.', 'error')
+        } else {
+          pushToast('Unable to transfer Civil Credits right now.', 'error')
+        }
+        return
+      }
+
+      await ensureViewerMe({ token, refresh: true })
+      setSendMoneyAmount('25.00')
+      setSendMoneyModalOpen(false)
+      pushToast(`Transferred ${formatCredits(sendMoneyAmountCents)} to ${profileDisplayName}.`, 'success')
+    } catch (error) {
+      console.error('Failed to transfer Civil Credits', error)
+      pushToast('Unable to transfer Civil Credits right now.', 'error')
+    } finally {
+      setSendingMoney(false)
+    }
+  }
 
   const closeDetailsMenu = (event: MouseEvent<HTMLButtonElement | HTMLAnchorElement>) => {
     const details = event.currentTarget.closest('details')
@@ -2725,7 +2810,10 @@ export default function UserPostsPage({ params }: PageProps) {
 
         <Modal
           open={sendMoneyModalOpen}
-          onClose={() => setSendMoneyModalOpen(false)}
+          onClose={() => {
+            setSendMoneyModalOpen(false)
+            setSendMoneyAmount('25.00')
+          }}
           title="Send Money"
           maxWidthClassName="max-w-lg"
         >
@@ -2748,10 +2836,49 @@ export default function UserPostsPage({ params }: PageProps) {
                 </button>
               </div>
             </div>
+
+            {canTransferCivilCreditsToProfile ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700">Civil Credits</p>
+                <p className="mt-2 text-sm text-slate-700">Transfer Civil Credits directly to {profileDisplayName} because their wallet has Stripe Connect payouts enabled.</p>
+                <div className="mt-3 rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-slate-700">
+                  Your available balance: <span className="font-semibold text-slate-900">{senderWalletBalanceLabel}</span>
+                </div>
+                <label className="mt-3 block space-y-2">
+                  <span className="text-sm font-semibold text-slate-800">Amount to transfer</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={sendMoneyAmount}
+                    onChange={(event) => setSendMoneyAmount(event.target.value)}
+                    placeholder="25.00"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none"
+                  />
+                </label>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void handleSendCivilCredits()}
+                    disabled={sendingMoney || sendMoneyAmountCents < 100 || sendMoneyAmountCents > senderWalletBalanceCents}
+                    className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {sendingMoney ? 'Sending…' : 'Transfer Civil Credits'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+                Civil Credit transfers appear here once this wallet has Stripe Connect payouts enabled.
+              </div>
+            )}
+
             <div className="flex justify-end">
               <button
                 type="button"
-                onClick={() => setSendMoneyModalOpen(false)}
+                onClick={() => {
+                  setSendMoneyModalOpen(false)
+                  setSendMoneyAmount('25.00')
+                }}
                 className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
               >
                 Close

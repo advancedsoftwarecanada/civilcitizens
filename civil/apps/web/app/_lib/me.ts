@@ -66,6 +66,12 @@ export type MeResponse = {
       friends?: boolean
       market?: boolean
     } | null
+    stripeConnect?: {
+      accountId?: string | null
+      chargesEnabled?: boolean
+      payoutsEnabled?: boolean
+      detailsSubmitted?: boolean
+    } | null
   } | null
   familyMode?: FamilyModeSummary | null
   accountType?: 'user' | 'family_member'
