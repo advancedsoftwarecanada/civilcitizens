@@ -203,3 +203,35 @@ Marketplace taxonomy:
     - Repair
     - Detailing
     - Inspection
+- Food & Grocery
+  - Raw Ingredients
+    - Meat
+    - Poultry
+    - Fish & Seafood
+    - Dairy & Eggs
+    - Fruits
+    - Vegetables
+    - Grains & Flour
+    - Herbs & Spices
+    - Oils & Sauces
+  - Prepared Food
+    - Home Cooked Meals
+    - Ready To Eat Meals
+    - Baked Goods
+    - Catering Trays
+    - Restaurant Takeout
+    - Preserves (Jams, Pickles)
+  - Frozen Foods
+    - Frozen Meat
+    - Frozen Meals
+    - Frozen Vegetables
+    - Frozen Desserts
+  - Beverages
+    - Juices
+    - Coffee & Tea
+    - Soft Drinks
+    - Homemade Drinks
+  - Bulk & Farm Direct
+    - Farm Produce Boxes
+    - Bulk Meat Orders
+    - Wholesale Produce

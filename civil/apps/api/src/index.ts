@@ -6239,6 +6239,21 @@ function ensureOrganizationShopTables() {
 
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS listing_section TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS listing_category TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS listing_subcategory TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
         ADD COLUMN IF NOT EXISTS moderation_status TEXT NOT NULL DEFAULT 'visible';
       `)
 
@@ -6338,6 +6353,13 @@ function ensureCitizenMarketplaceTables() {
           listing_category TEXT,
           listing_subcategory TEXT,
           listing_detail TEXT,
+          food_safety_classification TEXT,
+          food_ingredients TEXT,
+          food_preparation_location TEXT,
+          food_storage_method TEXT,
+          food_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+          food_expiry_date TEXT,
+          food_handling_instructions TEXT,
           payment_types JSONB NOT NULL DEFAULT '[]'::jsonb,
           willing_to_deliver BOOLEAN NOT NULL DEFAULT FALSE,
           delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -6403,6 +6425,41 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_market_listing
         ADD COLUMN IF NOT EXISTS listing_detail TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_safety_classification TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_ingredients TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_preparation_location TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_storage_method TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_expiry_date TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS food_handling_instructions TEXT;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -7243,6 +7300,9 @@ const CommunityOrgServerNotificationBody = z
 const CommunityOrgShopProductCreateBody = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(5000).optional().nullable(),
+  listingSection: z.string().trim().min(1).max(120).optional().nullable(),
+  listingCategory: z.string().trim().min(1).max(120).optional().nullable(),
+  listingSubcategory: z.string().trim().min(1).max(120).optional().nullable(),
   catalogId: z.string().trim().min(1).max(120).optional().nullable(),
   featuredHomepage: z.boolean().default(false),
   taxCollect: z.boolean().default(false),
@@ -7264,6 +7324,9 @@ const CommunityOrgShopProductCreateBody = z.object({
 const CommunityOrgShopProductUpdateBody = z.object({
   name: z.string().trim().min(2).max(160).optional(),
   description: z.string().trim().max(5000).optional().nullable(),
+  listingSection: z.string().trim().min(1).max(120).optional().nullable(),
+  listingCategory: z.string().trim().min(1).max(120).optional().nullable(),
+  listingSubcategory: z.string().trim().min(1).max(120).optional().nullable(),
   catalogId: z.string().trim().min(1).max(120).optional().nullable(),
   featuredHomepage: z.boolean().optional(),
   taxCollect: z.boolean().optional(),
@@ -8976,6 +9039,13 @@ const MarketListingUpdateBody = z.object({
   listingCategory: z.string().trim().min(1).max(120).optional().nullable(),
   listingSubcategory: z.string().trim().min(1).max(120).optional().nullable(),
   listingDetail: z.string().trim().min(1).max(180).optional().nullable(),
+  foodSafetyClassification: z.enum(['low_risk', 'high_risk']).optional().nullable(),
+  foodIngredients: z.string().trim().max(4000).optional().nullable(),
+  foodPreparationLocation: z.enum(['home_kitchen', 'certified_kitchen']).optional().nullable(),
+  foodStorageMethod: z.enum(['refrigerated', 'frozen']).optional().nullable(),
+  foodTags: z.array(z.enum(['organic', 'grass_fed', 'free_range', 'non_gmo', 'local'])).max(5).optional(),
+  foodExpiryDate: z.string().trim().max(32).optional().nullable(),
+  foodHandlingInstructions: z.string().trim().max(2000).optional().nullable(),
   pickupCity: z.string().trim().max(120).optional().nullable(),
   pickupProvince: z.string().trim().max(80).optional().nullable(),
   pickupAddressLine1: z.string().trim().max(180).optional().nullable(),

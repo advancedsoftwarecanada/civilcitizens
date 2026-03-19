@@ -148,6 +148,33 @@ export const MARKET_LISTING_SECTIONS: MarketListingSection[] = [
       category('Automotive Services', [leaf('Repair'), leaf('Detailing'), leaf('Inspection')]),
     ],
   },
+  {
+    label: 'Food & Grocery',
+    categories: [
+      category('Raw Ingredients', [
+        leaf('Meat'),
+        leaf('Poultry'),
+        leaf('Fish & Seafood'),
+        leaf('Dairy & Eggs'),
+        leaf('Fruits'),
+        leaf('Vegetables'),
+        leaf('Grains & Flour'),
+        leaf('Herbs & Spices'),
+        leaf('Oils & Sauces'),
+      ]),
+      category('Prepared Food', [
+        leaf('Home Cooked Meals'),
+        leaf('Ready To Eat Meals'),
+        leaf('Baked Goods'),
+        leaf('Catering Trays'),
+        leaf('Restaurant Takeout'),
+        leaf('Preserves (Jams, Pickles)'),
+      ]),
+      category('Frozen Foods', [leaf('Frozen Meat'), leaf('Frozen Meals'), leaf('Frozen Vegetables'), leaf('Frozen Desserts')]),
+      category('Beverages', [leaf('Juices'), leaf('Coffee & Tea'), leaf('Soft Drinks'), leaf('Homemade Drinks')]),
+      category('Bulk & Farm Direct', [leaf('Farm Produce Boxes'), leaf('Bulk Meat Orders'), leaf('Wholesale Produce')]),
+    ],
+  },
 ]
 
 export function getMarketListingSection(sectionLabel: string | null | undefined) {

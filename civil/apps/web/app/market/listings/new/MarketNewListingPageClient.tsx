@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AddressDirectionsMap } from '../../../_components/map/AddressDirectionsMap'
@@ -14,6 +15,11 @@ import MarketRightRail from '../../_components/MarketRightRail'
 import { getMarketListingCategory, getMarketListingSection, getMarketListingSubcategory, MARKET_LISTING_SECTIONS } from '../../_lib/listingCategories'
 
 type ListingTypeFieldKey = 'section' | 'category' | 'subcategory' | 'detail'
+
+type FoodSafetyClassification = 'low_risk' | 'high_risk'
+type FoodPreparationLocation = 'home_kitchen' | 'certified_kitchen'
+type FoodStorageMethod = 'refrigerated' | 'frozen'
+type FoodTag = 'organic' | 'grass_fed' | 'free_range' | 'non_gmo' | 'local'
 
 type ListingTypeSuggestion = {
   section?: string | null
@@ -59,6 +65,12 @@ type ListingDetail = {
   listingCategory?: string | null
   listingSubcategory?: string | null
   listingDetail?: string | null
+  foodSafetyClassification?: FoodSafetyClassification | null
+  foodIngredients?: string | null
+  foodPreparationLocation?: FoodPreparationLocation | null
+  foodStorageMethod?: FoodStorageMethod | null
+  foodTags?: FoodTag[]
+  foodExpiryDate?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupAddressLine1: string | null
@@ -122,6 +134,12 @@ type DraftForm = {
   listingCategory: string
   listingSubcategory: string
   listingDetail: string
+  foodSafetyClassification: FoodSafetyClassification | ''
+  foodIngredients: string
+  foodPreparationLocation: FoodPreparationLocation | ''
+  foodStorageMethod: FoodStorageMethod | ''
+  foodTags: FoodTag[]
+  foodExpiryDate: string
   pickupCity: string
   pickupProvince: string
   pickupAddressLine1: string
@@ -145,6 +163,12 @@ type DraftForm = {
 
 type ListingEditorStatus = 'draft' | 'active' | 'pending' | 'sold' | 'canceled'
 
+const DEFAULT_DELIVERY_PRICES = {
+  short50km: '10.00',
+  medium100km: '20.00',
+  long250km: '80.00',
+} as const
+
 const EMPTY_FORM: DraftForm = {
   title: 'Draft Listing',
   description: '',
@@ -155,6 +179,12 @@ const EMPTY_FORM: DraftForm = {
   listingCategory: '',
   listingSubcategory: '',
   listingDetail: '',
+  foodSafetyClassification: '',
+  foodIngredients: '',
+  foodPreparationLocation: '',
+  foodStorageMethod: '',
+  foodTags: [],
+  foodExpiryDate: '',
   pickupCity: '',
   pickupProvince: '',
   pickupAddressLine1: '',
@@ -167,9 +197,9 @@ const EMPTY_FORM: DraftForm = {
     long250km: false,
   },
   deliveryPrices: {
-    short50km: '0.00',
-    medium100km: '0.00',
-    long250km: '0.00',
+    short50km: DEFAULT_DELIVERY_PRICES.short50km,
+    medium100km: DEFAULT_DELIVERY_PRICES.medium100km,
+    long250km: DEFAULT_DELIVERY_PRICES.long250km,
   },
   eTransferEmail: '',
   paymentTypes: ['cash_pickup'],
@@ -197,6 +227,14 @@ type CommunityFollowsResponse = {
   }>
 }
 
+type OrganizationsOwnedResponse = {
+  items?: Array<{ id: string }>
+}
+
+type OrganizationsMembershipsResponse = {
+  items?: Array<{ id: string }>
+}
+
 const DELIVERY_RANGES: Array<{ key: 'short50km' | 'medium100km' | 'long250km'; label: string; distance: string }> = [
   { key: 'short50km', label: 'Short', distance: '50km' },
   { key: 'medium100km', label: 'Medium', distance: '100km' },
@@ -208,6 +246,79 @@ const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 const ADDRESS_FAVORITES_STORAGE_KEY = 'civil_address_favorites'
 const MAX_LISTING_DESCRIPTION_LENGTH = 5000
+const FOOD_GROCERY_SECTION = 'Food & Grocery'
+const HIGH_RISK_FOOD_SUBCATEGORIES = new Set(['Prepared Food', 'Frozen Foods'])
+const HIGH_RISK_FOOD_DETAILS = new Set([
+  'Meat',
+  'Poultry',
+  'Fish & Seafood',
+  'Dairy & Eggs',
+  'Home Cooked Meals',
+  'Ready To Eat Meals',
+  'Catering Trays',
+  'Restaurant Takeout',
+  'Frozen Meat',
+  'Frozen Meals',
+  'Frozen Desserts',
+  'Juices',
+  'Homemade Drinks',
+  'Bulk Meat Orders',
+])
+const FOOD_TAG_OPTIONS: Array<{ value: FoodTag; label: string }> = [
+  { value: 'organic', label: 'Organic' },
+  { value: 'grass_fed', label: 'Grass Fed' },
+  { value: 'free_range', label: 'Free Range' },
+  { value: 'non_gmo', label: 'Non GMO' },
+  { value: 'local', label: 'Local' },
+]
+const LOW_RISK_FOOD_DETAILS = new Set([
+  'Fruits',
+  'Vegetables',
+  'Grains & Flour',
+  'Herbs & Spices',
+  'Oils & Sauces',
+  'Baked Goods',
+  'Preserves (Jams, Pickles)',
+  'Frozen Vegetables',
+  'Coffee & Tea',
+  'Soft Drinks',
+  'Farm Produce Boxes',
+  'Wholesale Produce',
+])
+
+function normalizeFoodField(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function normalizeLegacyFoodListingPath(path: Pick<DraftForm, 'listingSection' | 'listingCategory' | 'listingSubcategory' | 'listingDetail'>) {
+  if (
+    normalizeFoodField(path.listingSection) === 'items' &&
+    normalizeFoodField(path.listingCategory) === normalizeFoodField(FOOD_GROCERY_SECTION)
+  ) {
+    return {
+      listingSection: FOOD_GROCERY_SECTION,
+      listingCategory: path.listingSubcategory,
+      listingSubcategory: path.listingDetail,
+      listingDetail: '',
+    }
+  }
+
+  return path
+}
+
+function inferFoodSafetyClassification(
+  sectionLabel: string | null | undefined,
+  categoryLabel: string | null | undefined,
+  subcategoryLabel: string | null | undefined,
+) {
+  if (normalizeFoodField(sectionLabel) !== normalizeFoodField(FOOD_GROCERY_SECTION)) return ''
+
+  if (HIGH_RISK_FOOD_SUBCATEGORIES.has(categoryLabel ?? '') || HIGH_RISK_FOOD_DETAILS.has(subcategoryLabel ?? '')) return 'high_risk' satisfies FoodSafetyClassification
+  if (LOW_RISK_FOOD_DETAILS.has(subcategoryLabel ?? '')) return 'low_risk' satisfies FoodSafetyClassification
+
+  return ''
+}
+
 function extractFirstJsonObject(input: string) {
   const trimmed = input.trim()
   if (!trimmed) return null
@@ -365,6 +476,23 @@ function formatHomeAddressTitle(address: SavedShippingAddress) {
   return nickname ? `Home, ${nickname}` : 'Home'
 }
 
+function normalizeAddressPart(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function matchesSavedAddress(
+  form: Pick<DraftForm, 'pickupAddressLine1' | 'pickupAddressLine2' | 'pickupCity' | 'pickupProvince' | 'pickupPostalCode'>,
+  address: Pick<SavedShippingAddress, 'line1' | 'line2' | 'city' | 'province' | 'postalCode'>,
+) {
+  return (
+    normalizeAddressPart(form.pickupAddressLine1) === normalizeAddressPart(address.line1) &&
+    normalizeAddressPart(form.pickupAddressLine2) === normalizeAddressPart(address.line2) &&
+    normalizeAddressPart(form.pickupCity) === normalizeAddressPart(address.city) &&
+    normalizeAddressPart(form.pickupProvince) === normalizeAddressPart(normalizeCanadianProvince(address.province)) &&
+    normalizeAddressPart(form.pickupPostalCode) === normalizeAddressPart(normalizeCanadianPostalCode(address.postalCode))
+  )
+}
+
 function toCents(value: string) {
   const normalized = String(value || '').replace(/[^0-9.]/g, '')
   if (!normalized) return 0
@@ -431,6 +559,7 @@ export default function MarketNewListingPageClient() {
   const [addressMapStatus, setAddressMapStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [activeListingTypePicker, setActiveListingTypePicker] = useState<ListingTypeFieldKey | null>(null)
   const [aiCategorizing, setAiCategorizing] = useState(false)
+  const [hasOrganization, setHasOrganization] = useState<boolean | null>(null)
 
   const loadListing = useCallback(async (id: string) => {
     const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(id)}`), {
@@ -448,16 +577,31 @@ export default function MarketNewListingPageClient() {
     const hasLong = typeof deliveryOptions.long250km === 'number'
 
     setListingId(listing.id)
+    const normalizedFoodPath = normalizeLegacyFoodListingPath({
+      listingSection: listing.listingSection ?? '',
+      listingCategory: listing.listingCategory ?? '',
+      listingSubcategory: listing.listingSubcategory ?? '',
+      listingDetail: listing.listingDetail ?? '',
+    })
+
     setForm({
       title: listing.title || 'Draft Listing',
       description: listing.description ?? '',
       price: formatMoneyInput(listing.priceCents),
       listingProvinceCode: listing.listingProvinceCode ?? '',
       listingCommunitySlug: listing.listingCommunitySlug ?? '',
-      listingSection: listing.listingSection ?? '',
-      listingCategory: listing.listingCategory ?? '',
-      listingSubcategory: listing.listingSubcategory ?? '',
-      listingDetail: listing.listingDetail ?? '',
+      listingSection: normalizedFoodPath.listingSection,
+      listingCategory: normalizedFoodPath.listingCategory,
+      listingSubcategory: normalizedFoodPath.listingSubcategory,
+      listingDetail: normalizedFoodPath.listingDetail,
+      foodSafetyClassification: listing.foodSafetyClassification ?? '',
+      foodIngredients: listing.foodIngredients ?? '',
+      foodPreparationLocation: listing.foodPreparationLocation ?? '',
+      foodStorageMethod: listing.foodStorageMethod ?? '',
+      foodTags: Array.isArray(listing.foodTags)
+        ? listing.foodTags.filter((entry): entry is FoodTag => FOOD_TAG_OPTIONS.some((option) => option.value === entry))
+        : [],
+      foodExpiryDate: listing.foodExpiryDate ?? '',
       pickupCity: listing.pickupCity ?? '',
       pickupProvince: listing.pickupProvince ?? '',
       pickupAddressLine1: listing.pickupAddressLine1 ?? '',
@@ -470,9 +614,9 @@ export default function MarketNewListingPageClient() {
         long250km: hasLong,
       },
       deliveryPrices: {
-        short50km: formatMoneyInput(hasShort ? Number(deliveryOptions.short50km) || 0 : 0),
-        medium100km: formatMoneyInput(hasMedium ? Number(deliveryOptions.medium100km) || 0 : 0),
-        long250km: formatMoneyInput(hasLong ? Number(deliveryOptions.long250km) || 0 : 0),
+        short50km: hasShort ? formatMoneyInput(Number(deliveryOptions.short50km) || 0) : DEFAULT_DELIVERY_PRICES.short50km,
+        medium100km: hasMedium ? formatMoneyInput(Number(deliveryOptions.medium100km) || 0) : DEFAULT_DELIVERY_PRICES.medium100km,
+        long250km: hasLong ? formatMoneyInput(Number(deliveryOptions.long250km) || 0) : DEFAULT_DELIVERY_PRICES.long250km,
       },
       eTransferEmail: listing.eTransferEmail ?? '',
       paymentTypes: (Array.isArray(listing.paymentTypes) ? listing.paymentTypes : []).filter(
@@ -684,6 +828,44 @@ export default function MarketNewListingPageClient() {
     void loadAddressQuickSelects()
   }, [loadAddressQuickSelects])
 
+  useEffect(() => {
+    let cancelled = false
+
+    const loadOrganizationState = async () => {
+      try {
+        const [ownedRes, membershipsRes] = await Promise.all([
+          fetch(buildApiUrl('/organizations/owned'), {
+            headers: getAuthHeaders(),
+            cache: 'no-store',
+          }),
+          fetch(buildApiUrl('/organizations/memberships'), {
+            headers: getAuthHeaders(),
+            cache: 'no-store',
+          }),
+        ])
+
+        if (cancelled) return
+
+        const ownedPayload = ownedRes.ok ? ((await ownedRes.json().catch(() => null)) as OrganizationsOwnedResponse | null) : null
+        const membershipsPayload = membershipsRes.ok
+          ? ((await membershipsRes.json().catch(() => null)) as OrganizationsMembershipsResponse | null)
+          : null
+
+        const ownedCount = Array.isArray(ownedPayload?.items) ? ownedPayload.items.length : 0
+        const membershipCount = Array.isArray(membershipsPayload?.items) ? membershipsPayload.items.length : 0
+        setHasOrganization(ownedCount + membershipCount > 0)
+      } catch {
+        if (!cancelled) setHasOrganization(null)
+      }
+    }
+
+    void loadOrganizationState()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const quickSelectOptions = useMemo(() => {
     const profileHome = profileHomeAddress
       ? [
@@ -715,6 +897,14 @@ export default function MarketNewListingPageClient() {
     const combinedSaved = [...profileHome, ...saved]
     return { saved: combinedSaved, favorites, all: [...combinedSaved, ...favorites] }
   }, [favoriteAddresses, profileHomeAddress, savedAddresses])
+  const defaultSavedAddress = useMemo(() => {
+    const orderedSaved = [...savedAddresses].sort(
+      (left, right) => Number(right.isDefault) - Number(left.isDefault) || String(left.label ?? '').localeCompare(String(right.label ?? '')),
+    )
+    return orderedSaved.find((address) => Boolean(address.line1?.trim() || address.city?.trim() || address.province?.trim() || address.postalCode?.trim())) ?? null
+  }, [savedAddresses])
+  const defaultQuickSelectValue = profileHomeAddress ? 'profile:home' : defaultSavedAddress ? `saved:${defaultSavedAddress.id}` : ''
+  const selectedStructuredQuickSelect = quickSelectValue === 'profile:home' || quickSelectValue.startsWith('saved:')
 
   const descriptionPlainText = useMemo(() => stripHtmlToPlainText(form.description), [form.description])
   const descriptionTooLong = descriptionPlainText.length > MAX_LISTING_DESCRIPTION_LENGTH
@@ -738,6 +928,12 @@ export default function MarketNewListingPageClient() {
     }),
     [selectedListingCategory, selectedListingDetails, selectedListingSection],
   )
+  const isFoodListing = selectedListingSection?.label === FOOD_GROCERY_SECTION
+  const suggestedFoodSafetyClassification = useMemo(
+    () => inferFoodSafetyClassification(selectedListingSection?.label, selectedListingCategory?.label, selectedListingSubcategory?.label),
+    [selectedListingCategory?.label, selectedListingSection?.label, selectedListingSubcategory?.label],
+  )
+  const requiresHighRiskFoodFields = isFoodListing && form.foodSafetyClassification === 'high_risk'
 
   const applyListingTypeSuggestion = useCallback((suggestion: ListingTypeSuggestion) => {
     const section = getMarketListingSection(suggestion.section)
@@ -825,6 +1021,47 @@ export default function MarketNewListingPageClient() {
     }
   }, [form.listingDetail, requiresListingDetail, selectedListingDetails])
 
+  useEffect(() => {
+    if (!isFoodListing) {
+      if (
+        form.foodSafetyClassification ||
+        form.foodIngredients ||
+        form.foodPreparationLocation ||
+        form.foodStorageMethod ||
+        form.foodTags.length ||
+        form.foodExpiryDate
+      ) {
+        setForm((prev) => ({
+          ...prev,
+          foodSafetyClassification: '',
+          foodIngredients: '',
+          foodPreparationLocation: '',
+          foodStorageMethod: '',
+          foodTags: [],
+          foodExpiryDate: '',
+        }))
+      }
+      return
+    }
+
+    if (suggestedFoodSafetyClassification === 'high_risk' && form.foodSafetyClassification !== 'high_risk') {
+      setForm((prev) => ({ ...prev, foodSafetyClassification: 'high_risk' }))
+      return
+    }
+
+    if (suggestedFoodSafetyClassification && !form.foodSafetyClassification) {
+      setForm((prev) => ({ ...prev, foodSafetyClassification: suggestedFoodSafetyClassification }))
+    }
+  }, [
+    form.foodExpiryDate,
+    form.foodIngredients,
+    form.foodPreparationLocation,
+    form.foodSafetyClassification,
+    form.foodStorageMethod,
+    isFoodListing,
+    suggestedFoodSafetyClassification,
+  ])
+
   const addressMapQuery = useMemo(() => {
     const line1 = form.pickupAddressLine1.trim()
     const city = form.pickupCity.trim()
@@ -879,6 +1116,52 @@ export default function MarketNewListingPageClient() {
     },
     [favoriteAddresses, profileHomeAddress, savedAddresses],
   )
+
+  useEffect(() => {
+    const formMatchesHome = profileHomeAddress
+      ? matchesSavedAddress(form, {
+          line1: profileHomeAddress.line1,
+          line2: profileHomeAddress.line2,
+          city: profileHomeAddress.city,
+          province: profileHomeAddress.province,
+          postalCode: profileHomeAddress.postalCode,
+        })
+      : false
+    const matchingSavedAddress = savedAddresses.find((address) => matchesSavedAddress(form, address)) ?? null
+
+    const formHasAddress = Boolean(
+      form.pickupAddressLine1.trim() || form.pickupAddressLine2.trim() || form.pickupCity.trim() || form.pickupProvince.trim() || form.pickupPostalCode.trim(),
+    )
+
+    if (!formHasAddress && defaultQuickSelectValue) {
+      setQuickSelectValue(defaultQuickSelectValue)
+      applyQuickSelect(defaultQuickSelectValue)
+      return
+    }
+
+    if (formMatchesHome && quickSelectValue !== 'profile:home') {
+      setQuickSelectValue('profile:home')
+      return
+    }
+
+    if (matchingSavedAddress) {
+      const nextValue = `saved:${matchingSavedAddress.id}`
+      if (quickSelectValue !== nextValue) {
+        setQuickSelectValue(nextValue)
+      }
+    }
+  }, [
+    applyQuickSelect,
+    defaultQuickSelectValue,
+    form.pickupAddressLine1,
+    form.pickupAddressLine2,
+    form.pickupCity,
+    form.pickupPostalCode,
+    form.pickupProvince,
+    profileHomeAddress,
+    quickSelectValue,
+    savedAddresses,
+  ])
 
   useEffect(() => {
     if (!addressMapQuery) {
@@ -1129,6 +1412,28 @@ export default function MarketNewListingPageClient() {
           pushToast('Choose the final listing type before publishing.', 'error')
           return
         }
+        if (isFoodListing && !form.foodSafetyClassification) {
+          pushToast('Choose whether this food listing is low risk or high risk before publishing.', 'error')
+          return
+        }
+        if (isFoodListing && suggestedFoodSafetyClassification === 'high_risk' && form.foodSafetyClassification !== 'high_risk') {
+          pushToast('This food selection must be marked as high risk before publishing.', 'error')
+          return
+        }
+        if (requiresHighRiskFoodFields) {
+          if (!form.foodIngredients.trim()) {
+            pushToast('Ingredients are required for high-risk food listings.', 'error')
+            return
+          }
+          if (!form.foodPreparationLocation) {
+            pushToast('Preparation location is required for high-risk food listings.', 'error')
+            return
+          }
+          if (!form.foodStorageMethod) {
+            pushToast('Storage method is required for high-risk food listings.', 'error')
+            return
+          }
+        }
         if (form.willingToDeliver) {
           const hasDeliveryRange = Object.values(form.deliverySelection).some(Boolean)
           if (!hasDeliveryRange) {
@@ -1165,6 +1470,12 @@ export default function MarketNewListingPageClient() {
             listingCategory: form.listingCategory.trim() || null,
             listingSubcategory: form.listingSubcategory.trim() || null,
             listingDetail: requiresListingDetail ? form.listingDetail.trim() || null : null,
+            foodSafetyClassification: isFoodListing ? form.foodSafetyClassification || null : null,
+            foodIngredients: requiresHighRiskFoodFields ? form.foodIngredients.trim() || null : null,
+            foodPreparationLocation: requiresHighRiskFoodFields ? form.foodPreparationLocation || null : null,
+            foodStorageMethod: requiresHighRiskFoodFields ? form.foodStorageMethod || null : null,
+            foodTags: isFoodListing ? form.foodTags : [],
+            foodExpiryDate: requiresHighRiskFoodFields ? form.foodExpiryDate.trim() || null : null,
             pickupCity: form.pickupCity.trim() || null,
             pickupProvince: form.pickupProvince.trim() || null,
             pickupAddressLine1: form.pickupAddressLine1.trim() || null,
@@ -1285,6 +1596,23 @@ export default function MarketNewListingPageClient() {
           ) : null}
         </section>
 
+        {hasOrganization === false ? (
+          <section className={editorCardClassName}>
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 sm:p-5">
+              <p className="text-sm font-semibold text-slate-900">Did you know? If you'd like to create an E-Commerce store, it's free on Civil!</p>
+              <p className="mt-2 text-sm text-slate-700">Get access to features like inventory management, free local delivery, repeat customers and grow your business!</p>
+              <div className="mt-4">
+                <Link
+                  href="/organizations/manager"
+                  className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                >
+                  Create an organization
+                </Link>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {initializing ? <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">{initializingText}</div> : null}
 
         {!initializing ? (
@@ -1388,7 +1716,7 @@ export default function MarketNewListingPageClient() {
                   disabled={aiCategorizing || saving || initializing || !canEditActiveDraftListing}
                   className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] bg-white px-4 py-2 text-xs font-semibold text-[var(--cc-primary)] shadow-sm transition hover:bg-[var(--cc-primary)]/5 disabled:opacity-60"
                 >
-                  {aiCategorizing ? 'Civil AI is classifying…' : 'Civil AI'}
+                  {aiCategorizing ? 'Autodetecting with Civil AI…' : 'Autodetect with Civil AI'}
                 </button>
               </div>
               <p className="mt-2 text-xs text-slate-500">Use Civil AI to automatically detect the appropriate category.</p>
@@ -1423,6 +1751,145 @@ export default function MarketNewListingPageClient() {
               </div>
             </div>
             </section>
+
+            {isFoodListing ? (
+              <section className={editorCardClassName}>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-slate-900">Food safety</p>
+                    <p className="text-xs text-slate-600">Civil collects seller-provided food handling details for buyers. Civil does not certify or regulate food listings.</p>
+                  </div>
+
+                  <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${suggestedFoodSafetyClassification === 'high_risk' ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-white text-slate-700'}`}>
+                    {suggestedFoodSafetyClassification === 'high_risk'
+                      ? 'This looks like a high-risk food item. Additional seller-provided details are required before publishing.'
+                      : 'Every food listing must choose a safety classification so buyers can review seller-provided handling details.'}
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      disabled={saving || initializing || !canEditActiveDraftListing || suggestedFoodSafetyClassification === 'high_risk'}
+                      onClick={() => setForm((prev) => ({ ...prev, foodSafetyClassification: 'low_risk' }))}
+                      className={`rounded-2xl border px-4 py-3 text-left transition ${form.foodSafetyClassification === 'low_risk' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'} disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <span className="block text-sm font-semibold">Low Risk Food</span>
+                      <span className="mt-1 block text-xs text-slate-500">Examples: bread, cookies, dry goods, whole fruits, whole vegetables.</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving || initializing || !canEditActiveDraftListing}
+                      onClick={() => setForm((prev) => ({ ...prev, foodSafetyClassification: 'high_risk' }))}
+                      className={`rounded-2xl border px-4 py-3 text-left transition ${form.foodSafetyClassification === 'high_risk' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+                    >
+                      <span className="block text-sm font-semibold">High Risk Food</span>
+                      <span className="mt-1 block text-xs text-slate-500">Examples: meat, dairy, cooked meals, perishable beverages, frozen prepared food.</span>
+                    </button>
+                  </div>
+
+                  {requiresHighRiskFoodFields ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      Please ensure to package your food with an expire or best before date and handling instructions.
+                    </div>
+                  ) : null}
+
+                  {requiresHighRiskFoodFields ? (
+                    <div className="mt-4 space-y-4">
+
+                      <label className="block space-y-1.5">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ingredients list</span>
+                        <textarea
+                          value={form.foodIngredients}
+                          onChange={(event) => setForm((prev) => ({ ...prev, foodIngredients: event.target.value }))}
+                          rows={4}
+                          disabled={saving || initializing || !canEditActiveDraftListing}
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)]"
+                          placeholder="List ingredients and major allergens exactly as the seller wants buyers to read them."
+                        />
+                      </label>
+
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Food tags</span>
+                          <div className="flex flex-wrap gap-2">
+                            {FOOD_TAG_OPTIONS.map((option) => {
+                              const selected = form.foodTags.includes(option.value)
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  disabled={saving || initializing || !canEditActiveDraftListing}
+                                  onClick={() =>
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      foodTags: prev.foodTags.includes(option.value)
+                                        ? prev.foodTags.filter((entry) => entry !== option.value)
+                                        : [...prev.foodTags, option.value],
+                                    }))
+                                  }
+                                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${selected ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+                                >
+                                  {option.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Preparation location</span>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              disabled={saving || initializing || !canEditActiveDraftListing}
+                              onClick={() => setForm((prev) => ({ ...prev, foodPreparationLocation: 'home_kitchen' }))}
+                              className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${form.foodPreparationLocation === 'home_kitchen' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+                            >
+                              Home kitchen
+                            </button>
+                            <button
+                              type="button"
+                              disabled={saving || initializing || !canEditActiveDraftListing}
+                              onClick={() => setForm((prev) => ({ ...prev, foodPreparationLocation: 'certified_kitchen' }))}
+                              className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${form.foodPreparationLocation === 'certified_kitchen' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+                            >
+                              Certified kitchen
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage method</span>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <button
+                              type="button"
+                              disabled={saving || initializing || !canEditActiveDraftListing}
+                              onClick={() => setForm((prev) => ({ ...prev, foodStorageMethod: 'refrigerated' }))}
+                              className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${form.foodStorageMethod === 'refrigerated' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+                            >
+                              Refrigerated
+                            </button>
+                            <button
+                              type="button"
+                              disabled={saving || initializing || !canEditActiveDraftListing}
+                              onClick={() => setForm((prev) => ({ ...prev, foodStorageMethod: 'frozen' }))}
+                              className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${form.foodStorageMethod === 'frozen' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+                            >
+                              Frozen
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                        Please ensure to package your food with an expire or best before date and handling instructions.
+                      </div>
+
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
 
             <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -1468,6 +1935,12 @@ export default function MarketNewListingPageClient() {
                 Your address will remain private until you select a buyer for your item. Then it will be automaticaly shared for pickup.
               </div>
 
+              {!quickSelectOptions.saved.length ? (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  In order for you to create listing, please add an address by clicking <Link href="/market/account" className="font-semibold underline underline-offset-2">here</Link>.
+                </div>
+              ) : null}
+
               {quickSelectOptions.all.length ? (
                 <label className="mt-3 block space-y-1.5">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick select</span>
@@ -1504,6 +1977,7 @@ export default function MarketNewListingPageClient() {
                 </label>
               ) : null}
 
+              {!selectedStructuredQuickSelect ? (
               <div className="mt-3 grid gap-4 sm:grid-cols-2">
                 <label className="space-y-1.5">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pickup city</span>
@@ -1555,6 +2029,7 @@ export default function MarketNewListingPageClient() {
                   />
                 </label>
               </div>
+              ) : null}
 
               {addressMapQuery ? (
                 <div className="mt-4 space-y-2">

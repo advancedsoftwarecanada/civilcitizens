@@ -59,7 +59,7 @@ export type AiTaskDefinition = {
   inputSchema: z.ZodTypeAny
   outputSchema: z.ZodTypeAny
   buildInputText: (input: any) => string
-  normalizeOutput?: (output: any) => any | null
+  normalizeOutput?: (output: any, context?: { input?: any; rawText?: string }) => any | null
 }
 
 type MarketplaceTaxonomySubcategory = {
@@ -122,6 +122,112 @@ function pickCanonicalLabel(input: string | null | undefined, options: string[])
   }
 
   return bestScore >= Math.max(1, Math.ceil(inputTokens.size / 2)) ? bestOption : null
+}
+
+function recoverShiftedMarketplaceOutput(output: z.infer<typeof MarketplaceCategoryOutput>) {
+  for (const section of MARKETPLACE_TAXONOMY) {
+    for (const category of section.categories) {
+      const categoryMatch = pickCanonicalLabel(output.section, [category.label])
+      if (!categoryMatch) continue
+
+      for (const subcategory of category.subcategories) {
+        const subcategoryMatch = pickCanonicalLabel(output.category, [subcategory.label])
+        if (!subcategoryMatch) continue
+
+        if (subcategory.details?.length) {
+          const detailMatch = pickCanonicalLabel(output.subcategory, subcategory.details)
+          if (!detailMatch) continue
+          return {
+            section: section.label,
+            category: category.label,
+            subcategory: subcategory.label,
+            detail: detailMatch,
+          }
+        }
+
+        return {
+          section: section.label,
+          category: category.label,
+          subcategory: subcategory.label,
+          detail: null,
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function recoverLegacyNestedFoodOutput(output: z.infer<typeof MarketplaceCategoryOutput>) {
+  const isLegacyFoodRoot =
+    normalizeTaskLabel(output.section) === 'items' && normalizeTaskLabel(output.category) === normalizeTaskLabel('Food & Grocery')
+
+  if (!isLegacyFoodRoot) return null
+
+  const foodSection = MARKETPLACE_TAXONOMY.find((section) => section.label === 'Food & Grocery')
+  if (!foodSection) return null
+
+  const categoryLabel = pickCanonicalLabel(output.subcategory, foodSection.categories.map((entry) => entry.label))
+  if (!categoryLabel) return null
+  const category = foodSection.categories.find((entry) => entry.label === categoryLabel) ?? null
+  if (!category) return null
+
+  const subcategoryLabel = pickCanonicalLabel(output.detail, category.subcategories.map((entry) => entry.label))
+  if (!subcategoryLabel) return null
+
+  return {
+    section: foodSection.label,
+    category: category.label,
+    subcategory: subcategoryLabel,
+    detail: null,
+  }
+}
+
+function inferFoodMarketplaceCategoryFromInput(input: z.infer<typeof MarketplaceCategoryInput> | null | undefined) {
+  const haystack = normalizeTaskLabel([input?.title ?? '', input?.description ?? ''].join(' '))
+  if (!haystack) return null
+
+  const keywordGroups: Array<{ category: string; subcategory: string; terms: string[] }> = [
+    { category: 'Raw Ingredients', subcategory: 'Dairy & Eggs', terms: ['egg', 'eggs', 'dairy', 'milk', 'cheese', 'butter', 'cream', 'yogurt', 'yoghurt'] },
+    { category: 'Raw Ingredients', subcategory: 'Meat', terms: ['beef', 'steak', 'pork', 'lamb', 'meat'] },
+    { category: 'Raw Ingredients', subcategory: 'Poultry', terms: ['chicken', 'turkey', 'duck', 'poultry'] },
+    { category: 'Raw Ingredients', subcategory: 'Fish & Seafood', terms: ['fish', 'salmon', 'trout', 'shrimp', 'prawn', 'lobster', 'crab', 'seafood'] },
+    { category: 'Prepared Food', subcategory: 'Home Cooked Meals', terms: ['home cooked', 'homemade meal', 'prepared meal', 'meal prep'] },
+    { category: 'Prepared Food', subcategory: 'Ready To Eat Meals', terms: ['ready to eat', 'ready meal', 'prepared lunch', 'prepared dinner'] },
+    { category: 'Prepared Food', subcategory: 'Baked Goods', terms: ['bread', 'cookie', 'cookies', 'cake', 'muffin', 'pie', 'baked'] },
+    { category: 'Prepared Food', subcategory: 'Catering Trays', terms: ['catering', 'party tray', 'party platter'] },
+    { category: 'Prepared Food', subcategory: 'Restaurant Takeout', terms: ['takeout', 'take out', 'restaurant'] },
+    { category: 'Prepared Food', subcategory: 'Preserves (Jams, Pickles)', terms: ['jam', 'jams', 'pickle', 'pickles', 'preserve', 'preserves'] },
+    { category: 'Frozen Foods', subcategory: 'Frozen Meat', terms: ['frozen beef', 'frozen chicken', 'frozen meat'] },
+    { category: 'Frozen Foods', subcategory: 'Frozen Meals', terms: ['frozen meal', 'frozen dinner', 'frozen entree'] },
+    { category: 'Frozen Foods', subcategory: 'Frozen Vegetables', terms: ['frozen vegetables', 'frozen veg'] },
+    { category: 'Frozen Foods', subcategory: 'Frozen Desserts', terms: ['ice cream', 'frozen dessert', 'gelato', 'sorbet'] },
+    { category: 'Beverages', subcategory: 'Juices', terms: ['juice', 'cider'] },
+    { category: 'Beverages', subcategory: 'Coffee & Tea', terms: ['coffee', 'tea'] },
+    { category: 'Beverages', subcategory: 'Soft Drinks', terms: ['soft drink', 'soda', 'pop'] },
+    { category: 'Beverages', subcategory: 'Homemade Drinks', terms: ['homemade drink', 'kombucha', 'lemonade'] },
+    { category: 'Bulk & Farm Direct', subcategory: 'Farm Produce Boxes', terms: ['produce box', 'farm box', 'csa box', 'vegetable box'] },
+    { category: 'Bulk & Farm Direct', subcategory: 'Bulk Meat Orders', terms: ['bulk meat', 'half cow', 'quarter cow', 'meat order'] },
+    { category: 'Bulk & Farm Direct', subcategory: 'Wholesale Produce', terms: ['wholesale produce', 'bulk produce'] },
+    { category: 'Raw Ingredients', subcategory: 'Fruits', terms: ['fruit', 'fruits', 'apple', 'apples', 'berry', 'berries'] },
+    { category: 'Raw Ingredients', subcategory: 'Vegetables', terms: ['vegetable', 'vegetables', 'tomato', 'tomatoes', 'lettuce', 'carrot', 'carrots', 'potato', 'potatoes'] },
+    { category: 'Raw Ingredients', subcategory: 'Grains & Flour', terms: ['grain', 'grains', 'flour', 'oats', 'wheat'] },
+    { category: 'Raw Ingredients', subcategory: 'Herbs & Spices', terms: ['herb', 'herbs', 'spice', 'spices'] },
+    { category: 'Raw Ingredients', subcategory: 'Oils & Sauces', terms: ['oil', 'sauce', 'sauces', 'vinaigrette'] },
+  ]
+
+  for (const entry of keywordGroups) {
+    if (entry.terms.some((term) => haystack.includes(normalizeTaskLabel(term)))) {
+      return {
+        section: 'Food & Grocery',
+        category: entry.category,
+        subcategory: entry.subcategory,
+        detail: null,
+      }
+    }
+  }
+
+  return null
 }
 
 const MARKETPLACE_TAXONOMY: MarketplaceTaxonomySection[] = [
@@ -200,9 +306,30 @@ const MARKETPLACE_TAXONOMY: MarketplaceTaxonomySection[] = [
       { label: 'Automotive Services', subcategories: [{ label: 'Repair' }, { label: 'Detailing' }, { label: 'Inspection' }] },
     ],
   },
+  {
+    label: 'Food & Grocery',
+    categories: [
+      { label: 'Raw Ingredients', subcategories: [{ label: 'Meat' }, { label: 'Poultry' }, { label: 'Fish & Seafood' }, { label: 'Dairy & Eggs' }, { label: 'Fruits' }, { label: 'Vegetables' }, { label: 'Grains & Flour' }, { label: 'Herbs & Spices' }, { label: 'Oils & Sauces' }] },
+      { label: 'Prepared Food', subcategories: [{ label: 'Home Cooked Meals' }, { label: 'Ready To Eat Meals' }, { label: 'Baked Goods' }, { label: 'Catering Trays' }, { label: 'Restaurant Takeout' }, { label: 'Preserves (Jams, Pickles)' }] },
+      { label: 'Frozen Foods', subcategories: [{ label: 'Frozen Meat' }, { label: 'Frozen Meals' }, { label: 'Frozen Vegetables' }, { label: 'Frozen Desserts' }] },
+      { label: 'Beverages', subcategories: [{ label: 'Juices' }, { label: 'Coffee & Tea' }, { label: 'Soft Drinks' }, { label: 'Homemade Drinks' }] },
+      { label: 'Bulk & Farm Direct', subcategories: [{ label: 'Farm Produce Boxes' }, { label: 'Bulk Meat Orders' }, { label: 'Wholesale Produce' }] },
+    ],
+  },
 ]
 
-function normalizeMarketplaceCategoryOutput(output: z.infer<typeof MarketplaceCategoryOutput>) {
+function normalizeMarketplaceCategoryOutput(
+  output: z.infer<typeof MarketplaceCategoryOutput>,
+  context?: { input?: z.infer<typeof MarketplaceCategoryInput>; rawText?: string },
+) {
+  const fallbackFromInput = () => inferFoodMarketplaceCategoryFromInput(context?.input)
+
+  const legacyFoodRecovery = recoverLegacyNestedFoodOutput(output)
+  if (legacyFoodRecovery) return legacyFoodRecovery
+
+  const shiftedRecovery = recoverShiftedMarketplaceOutput(output)
+  if (shiftedRecovery) return shiftedRecovery
+
   const sectionLabel = pickCanonicalLabel(output.section, MARKETPLACE_TAXONOMY.map((section) => section.label))
   const sectionFromPrompt = sectionLabel ? MARKETPLACE_TAXONOMY.find((entry) => entry.label === sectionLabel) ?? null : null
 
@@ -221,11 +348,11 @@ function normalizeMarketplaceCategoryOutput(output: z.infer<typeof MarketplaceCa
     : null
 
   if (!category) {
-    if (globalCategoryMatches.length !== 1) return null
+    if (globalCategoryMatches.length !== 1) return fallbackFromInput()
     categorySection = globalCategoryMatches[0]?.section ?? null
     category = globalCategoryMatches[0]?.category ?? null
   }
-  if (!categorySection || !category) return null
+  if (!categorySection || !category) return fallbackFromInput()
 
   const globalSubcategoryMatches = MARKETPLACE_TAXONOMY.flatMap((section) =>
     section.categories.flatMap((categoryEntry) =>
@@ -240,17 +367,17 @@ function normalizeMarketplaceCategoryOutput(output: z.infer<typeof MarketplaceCa
 
   if (!subcategory) {
     const categoryScopedSubcategoryMatches = globalSubcategoryMatches.filter((entry) => entry.category.label === category.label)
-    if (categoryScopedSubcategoryMatches.length !== 1) return null
+    if (categoryScopedSubcategoryMatches.length !== 1) return fallbackFromInput()
     categorySection = categoryScopedSubcategoryMatches[0]?.section ?? categorySection
     category = categoryScopedSubcategoryMatches[0]?.category ?? category
     subcategory = categoryScopedSubcategoryMatches[0]?.subcategory ?? null
   }
-  if (!subcategory) return null
+  if (!subcategory) return fallbackFromInput()
 
   let detailLabel: string | null = null
   if (subcategory.details?.length) {
     detailLabel = pickCanonicalLabel(output.detail, subcategory.details)
-    if (!detailLabel) return null
+    if (!detailLabel) return fallbackFromInput()
   }
 
   return {

@@ -85,6 +85,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         listing_category: string | null
         listing_subcategory: string | null
         listing_detail: string | null
+        food_safety_classification: string | null
+        food_ingredients: string | null
+        food_preparation_location: string | null
+        food_storage_method: string | null
+        food_tags: unknown
+        food_expiry_date: string | null
+        food_handling_instructions: string | null
         pickup_city: string | null
         pickup_province: string | null
         payment_types: unknown
@@ -110,6 +117,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listing_category,
           listing_subcategory,
           listing_detail,
+          food_safety_classification,
+          food_ingredients,
+          food_preparation_location,
+          food_storage_method,
+          food_tags,
+          food_expiry_date,
+          food_handling_instructions,
           pickup_city,
           pickup_province,
           payment_types,
@@ -140,6 +154,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listingCategory: row.listing_category,
           listingSubcategory: row.listing_subcategory,
           listingDetail: row.listing_detail,
+          foodSafetyClassification: row.food_safety_classification,
+          foodIngredients: row.food_ingredients,
+          foodPreparationLocation: row.food_preparation_location,
+          foodStorageMethod: row.food_storage_method,
+          foodTags: deps.readStringList(row.food_tags),
+          foodExpiryDate: row.food_expiry_date,
+          foodHandlingInstructions: row.food_handling_instructions,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           paymentTypes: deps.readStringList(row.payment_types),
@@ -177,6 +198,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         listing_category: string | null
         listing_subcategory: string | null
         listing_detail: string | null
+        food_safety_classification: string | null
+        food_ingredients: string | null
+        food_preparation_location: string | null
+        food_storage_method: string | null
+        food_tags: unknown
+        food_expiry_date: string | null
+        food_handling_instructions: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_address_line1: string | null
@@ -206,6 +234,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listing_category,
           listing_subcategory,
           listing_detail,
+          food_safety_classification,
+          food_ingredients,
+          food_preparation_location,
+          food_storage_method,
+          food_tags,
+          food_expiry_date,
+          food_handling_instructions,
           pickup_city,
           pickup_province,
           pickup_address_line1,
@@ -242,6 +277,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listingCategory: row.listing_category,
           listingSubcategory: row.listing_subcategory,
           listingDetail: row.listing_detail,
+          foodSafetyClassification: row.food_safety_classification,
+          foodIngredients: row.food_ingredients,
+          foodPreparationLocation: row.food_preparation_location,
+          foodStorageMethod: row.food_storage_method,
+          foodTags: deps.readStringList(row.food_tags),
+          foodExpiryDate: row.food_expiry_date,
+          foodHandlingInstructions: row.food_handling_instructions,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           pickupAddressLine1: row.pickup_address_line1,
@@ -280,6 +322,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         listing_category: string | null
         listing_subcategory: string | null
         listing_detail: string | null
+        food_safety_classification: string | null
+        food_ingredients: string | null
+        food_preparation_location: string | null
+        food_storage_method: string | null
+        food_tags: unknown
+        food_expiry_date: string | null
+        food_handling_instructions: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_postal_code: string | null
@@ -307,6 +356,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           l.listing_category,
           l.listing_subcategory,
           l.listing_detail,
+          l.food_safety_classification,
+          l.food_ingredients,
+          l.food_preparation_location,
+          l.food_storage_method,
+          l.food_tags,
+          l.food_expiry_date,
+          l.food_handling_instructions,
           l.pickup_city,
           l.pickup_province,
           l.pickup_postal_code,
@@ -372,6 +428,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           listingCategory: row.listing_category,
           listingSubcategory: row.listing_subcategory,
           listingDetail: row.listing_detail,
+          foodSafetyClassification: row.food_safety_classification,
+          foodIngredients: row.food_ingredients,
+          foodPreparationLocation: row.food_preparation_location,
+          foodStorageMethod: row.food_storage_method,
+          foodTags: deps.readStringList(row.food_tags),
+          foodExpiryDate: row.food_expiry_date,
+          foodHandlingInstructions: row.food_handling_instructions,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           status: row.status,
@@ -519,6 +582,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
       const listingCategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingCategory')
       const listingSubcategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSubcategory')
       const listingDetailProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingDetail')
+      const foodSafetyClassificationProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodSafetyClassification')
+      const foodIngredientsProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodIngredients')
+      const foodPreparationLocationProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodPreparationLocation')
+      const foodStorageMethodProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodStorageMethod')
+      const foodTagsProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodTags')
+      const foodExpiryDateProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodExpiryDate')
+      const foodHandlingInstructionsProvided = Object.prototype.hasOwnProperty.call(body.data, 'foodHandlingInstructions')
       const nextListingProvinceCode = listingProvinceCodeProvided ? (body.data.listingProvinceCode?.trim() ? body.data.listingProvinceCode.trim().toUpperCase() : null) : null
       const nextListingCommunitySlug = listingCommunitySlugProvided
         ? (body.data.listingCommunitySlug?.trim() ? body.data.listingCommunitySlug.trim().toLowerCase() : null)
@@ -529,6 +599,15 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         ? (body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null)
         : null
       const nextListingDetail = listingDetailProvided ? (body.data.listingDetail?.trim() ? body.data.listingDetail.trim() : null) : null
+      const nextFoodSafetyClassification = foodSafetyClassificationProvided ? body.data.foodSafetyClassification ?? null : null
+      const nextFoodIngredients = foodIngredientsProvided ? (body.data.foodIngredients?.trim() ? body.data.foodIngredients.trim() : null) : null
+      const nextFoodPreparationLocation = foodPreparationLocationProvided ? body.data.foodPreparationLocation ?? null : null
+      const nextFoodStorageMethod = foodStorageMethodProvided ? body.data.foodStorageMethod ?? null : null
+      const nextFoodTags = foodTagsProvided ? (Array.isArray(body.data.foodTags) ? body.data.foodTags : []) : []
+      const nextFoodExpiryDate = foodExpiryDateProvided ? (body.data.foodExpiryDate?.trim() ? body.data.foodExpiryDate.trim() : null) : null
+      const nextFoodHandlingInstructions = foodHandlingInstructionsProvided
+        ? (body.data.foodHandlingInstructions?.trim() ? body.data.foodHandlingInstructions.trim() : null)
+        : null
 
       const hasStatusUpdate = Object.prototype.hasOwnProperty.call(body.data, 'status')
       const hasDraftUpdate = Object.prototype.hasOwnProperty.call(body.data, 'isDraft')
@@ -565,6 +644,13 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
             listing_category = CASE WHEN ${listingCategoryProvided} THEN ${nextListingCategory} ELSE listing_category END,
             listing_subcategory = CASE WHEN ${listingSubcategoryProvided} THEN ${nextListingSubcategory} ELSE listing_subcategory END,
             listing_detail = CASE WHEN ${listingDetailProvided} THEN ${nextListingDetail} ELSE listing_detail END,
+            food_safety_classification = CASE WHEN ${foodSafetyClassificationProvided} THEN ${nextFoodSafetyClassification} ELSE food_safety_classification END,
+            food_ingredients = CASE WHEN ${foodIngredientsProvided} THEN ${nextFoodIngredients} ELSE food_ingredients END,
+            food_preparation_location = CASE WHEN ${foodPreparationLocationProvided} THEN ${nextFoodPreparationLocation} ELSE food_preparation_location END,
+            food_storage_method = CASE WHEN ${foodStorageMethodProvided} THEN ${nextFoodStorageMethod} ELSE food_storage_method END,
+            food_tags = CASE WHEN ${foodTagsProvided} THEN ${JSON.stringify(nextFoodTags)}::jsonb ELSE food_tags END,
+            food_expiry_date = CASE WHEN ${foodExpiryDateProvided} THEN ${nextFoodExpiryDate} ELSE food_expiry_date END,
+            food_handling_instructions = CASE WHEN ${foodHandlingInstructionsProvided} THEN ${nextFoodHandlingInstructions} ELSE food_handling_instructions END,
             payment_types = CASE WHEN ${hasPaymentTypesUpdate} THEN ${JSON.stringify(nextPaymentTypes)}::jsonb ELSE payment_types END,
             willing_to_deliver = COALESCE(${typeof body.data.willingToDeliver === 'boolean' ? body.data.willingToDeliver : null}, willing_to_deliver),
             delivery_options = CASE WHEN ${hasDeliveryOptionsUpdate} THEN ${JSON.stringify(nextDeliveryOptions)}::jsonb ELSE delivery_options END,
