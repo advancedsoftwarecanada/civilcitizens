@@ -3369,7 +3369,11 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }
 
   const renderUnreadOverview = () => {
-    const hasUnreadConversations = unreadOverviewGroups.some((group) => ('threads' in group ? group.threads.length > 0 : (group.items?.length ?? 0) > 0))
+    const hasUnreadConversations = unreadOverviewGroups.some((group) => {
+      const threadItems = 'threads' in group ? group.threads ?? [] : []
+      const marketItems = 'items' in group ? group.items ?? [] : []
+      return threadItems.length + marketItems.length > 0
+    })
 
     if (!hasUnreadConversations) {
       return (
@@ -3388,7 +3392,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         </div>
         <div className="mt-5 min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
           {unreadOverviewGroups.map((group) => {
-            const threadItems = 'threads' in group ? group.threads : []
+            const threadItems = 'threads' in group ? group.threads ?? [] : []
             const marketItems = 'items' in group ? group.items ?? [] : []
             const count = threadItems.length + marketItems.length
             if (count === 0) return null

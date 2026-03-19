@@ -108,7 +108,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           }
         }
 
-        const unreadRows = await prisma.$queryRaw<Array<{ threadId: string; count: number }>>(Prisma.sql`
+        const unreadRows = await prisma.$queryRaw<Array<{ threadId: string; count: number }>>`
           SELECT m."threadId" as "threadId", COUNT(*)::int as count
           FROM "Message" m
           JOIN "MessageParticipant" mp ON mp."threadId" = m."threadId"
@@ -118,7 +118,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
             AND m."deletedAt" IS NULL
             AND (mp."lastReadAt" IS NULL OR m."createdAt" > mp."lastReadAt")
           GROUP BY m."threadId"
-        `)
+        `
 
         for (const row of unreadRows) {
           unreadCountByThreadId.set(String(row.threadId), Number(row.count) || 0)
@@ -310,7 +310,22 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       `
 
       const items = await Promise.all(
-        rows.map(async (row) => {
+        rows.map(async (row: {
+          id: string
+          title: string
+          status: string
+          price_cents: number
+          currency: string
+          photo_urls: unknown
+          pickup_city: string | null
+          pickup_province: string | null
+          pickup_address_line1: string | null
+          pickup_address_line2: string | null
+          pickup_postal_code: string | null
+          seller_user_id: string
+          selected_buyer_user_id: string | null
+          pickup_completed_at: Date | null
+        }) => {
           const selectedThread = row.selected_buyer_user_id
             ? await prisma.messageThread.findFirst({
                 where: {

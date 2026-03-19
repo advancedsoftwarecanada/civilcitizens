@@ -225,7 +225,7 @@ function AddressPageRightRail({
                       <p className="truncate text-sm font-semibold text-slate-900">{pickup.title}</p>
                       <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{pickup.role}</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{formatSavedAddressDetail(pickup.pickupAddress ?? {}, { includeName: false }) || 'Open directions'}</p>
+                    <p className="mt-1 text-xs text-slate-500">{pickup.pickupAddress ? formatSavedAddressDetail(pickup.pickupAddress, { includeName: false }) || 'Open directions' : 'Open directions'}</p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Link
                         href={buildAddressesHrefFromAddress(pickup.pickupAddress ?? null, pickup.title)}

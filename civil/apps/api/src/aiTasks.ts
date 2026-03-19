@@ -354,6 +354,8 @@ function normalizeMarketplaceCategoryOutput(
   }
   if (!categorySection || !category) return fallbackFromInput()
 
+  const resolvedCategory = category
+
   const globalSubcategoryMatches = MARKETPLACE_TAXONOMY.flatMap((section) =>
     section.categories.flatMap((categoryEntry) =>
       categoryEntry.subcategories
@@ -362,14 +364,14 @@ function normalizeMarketplaceCategoryOutput(
     ),
   )
 
-  const subcategoryLabel = pickCanonicalLabel(output.subcategory, category.subcategories.map((subcategoryEntry) => subcategoryEntry.label))
-  let subcategory = subcategoryLabel ? category.subcategories.find((entry) => entry.label === subcategoryLabel) ?? null : null
+  const subcategoryLabel = pickCanonicalLabel(output.subcategory, resolvedCategory.subcategories.map((subcategoryEntry) => subcategoryEntry.label))
+  let subcategory = subcategoryLabel ? resolvedCategory.subcategories.find((entry) => entry.label === subcategoryLabel) ?? null : null
 
   if (!subcategory) {
-    const categoryScopedSubcategoryMatches = globalSubcategoryMatches.filter((entry) => entry.category.label === category.label)
+    const categoryScopedSubcategoryMatches = globalSubcategoryMatches.filter((entry) => entry.category.label === resolvedCategory.label)
     if (categoryScopedSubcategoryMatches.length !== 1) return fallbackFromInput()
     categorySection = categoryScopedSubcategoryMatches[0]?.section ?? categorySection
-    category = categoryScopedSubcategoryMatches[0]?.category ?? category
+    category = categoryScopedSubcategoryMatches[0]?.category ?? resolvedCategory
     subcategory = categoryScopedSubcategoryMatches[0]?.subcategory ?? null
   }
   if (!subcategory) return fallbackFromInput()
