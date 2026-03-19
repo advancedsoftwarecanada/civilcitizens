@@ -299,6 +299,8 @@ export default function OrganizationShopClient({
   const [showProductUnpublishModal, setShowProductUnpublishModal] = useState(false)
   const [pendingDeleteProductId, setPendingDeleteProductId] = useState<string | null>(null)
   const [showProductDeleteModal, setShowProductDeleteModal] = useState(false)
+  const [pendingDeleteWarehouseId, setPendingDeleteWarehouseId] = useState<string | null>(null)
+  const [showWarehouseDeleteModal, setShowWarehouseDeleteModal] = useState(false)
 
   const [showInventoryAdjustModal, setShowInventoryAdjustModal] = useState(false)
   const [inventoryAdjustProductId, setInventoryAdjustProductId] = useState<string | null>(null)
@@ -1207,6 +1209,45 @@ export default function OrganizationShopClient({
       setSaving(false)
     }
   }, [editingWarehouseId, load, newWarehouseAddress, newWarehouseName, resetWarehouseEditor, shopPath])
+
+  const deleteWarehouse = useCallback(
+    async (warehouseId: string) => {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return false
+      }
+
+      setSaving(true)
+      try {
+        const res = await fetch(buildApiUrl(`${shopPath}/warehouses/${encodeURIComponent(warehouseId)}`), {
+          method: 'DELETE',
+          headers: { authorization: `Bearer ${token}` },
+        })
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        if (!res.ok) {
+          pushToast(payload?.error ?? 'Unable to delete warehouse.', 'error')
+          return false
+        }
+
+        pushToast('Warehouse deleted.', 'success')
+        resetWarehouseEditor()
+        await load()
+        return true
+      } catch {
+        pushToast('Unable to delete warehouse.', 'error')
+        return false
+      } finally {
+        setSaving(false)
+      }
+    },
+    [load, resetWarehouseEditor, shopPath],
+  )
+
+  const requestDeleteWarehouse = useCallback((warehouseId: string) => {
+    setPendingDeleteWarehouseId(warehouseId)
+    setShowWarehouseDeleteModal(true)
+  }, [])
 
   const saveCatalog = useCallback(
     async (catalogId: string) => {
@@ -2581,7 +2622,19 @@ export default function OrganizationShopClient({
 
               <div className={clsx('mt-4 overflow-hidden transition-all duration-200', showNewWarehouseForm ? 'max-h-[1100px] opacity-100' : 'max-h-0 opacity-0')}>
                 <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{editingWarehouseId ? 'Edit warehouse' : 'Create warehouse'}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{editingWarehouseId ? 'Edit warehouse' : 'Create warehouse'}</p>
+                    {editingWarehouseId ? (
+                      <button
+                        type="button"
+                        onClick={() => requestDeleteWarehouse(editingWarehouseId)}
+                        disabled={saving}
+                        className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-60"
+                      >
+                        Delete Warehouse
+                      </button>
+                    ) : null}
+                  </div>
                   <div className="mt-3 grid gap-4">
                     <label className="space-y-1.5">
                       <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Warehouse name</span>
@@ -2630,6 +2683,49 @@ export default function OrganizationShopClient({
                         </div>
                       </button>
                     ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {showWarehouseDeleteModal ? (
+                <div
+                  className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4"
+                  onClick={() => {
+                    setShowWarehouseDeleteModal(false)
+                    setPendingDeleteWarehouseId(null)
+                  }}
+                >
+                  <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                    <h4 className="text-base font-semibold text-slate-900">Delete warehouse?</h4>
+                    <p className="mt-2 text-sm text-slate-600">This will remove the warehouse and its inventory records.</p>
+                    <div className="mt-4 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowWarehouseDeleteModal(false)
+                          setPendingDeleteWarehouseId(null)
+                        }}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const warehouseId = pendingDeleteWarehouseId
+                          if (!warehouseId) return
+                          const ok = await deleteWarehouse(warehouseId)
+                          if (ok) {
+                            setShowWarehouseDeleteModal(false)
+                            setPendingDeleteWarehouseId(null)
+                          }
+                        }}
+                        disabled={saving}
+                        className="rounded-full bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
+                      >
+                        {saving ? 'Deleting…' : 'Delete warehouse'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : null}

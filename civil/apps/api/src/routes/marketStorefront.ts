@@ -22,6 +22,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       const useCommunityScope = follows.length > 0
       const provinceCodes = Array.from(new Set(follows.map((entry: { provinceCode: string }) => entry.provinceCode)))
       const communitySlugs = Array.from(new Set(follows.map((entry: { communitySlug: string }) => entry.communitySlug)))
+      const listingSection = query.data.listingSection?.trim() || null
+      const listingCategory = query.data.listingCategory?.trim() || null
+      const listingSubcategory = query.data.listingSubcategory?.trim() || null
+      const listingDetail = query.data.listingDetail?.trim() || null
 
       type OrgFeedRow = {
         id: string
@@ -38,6 +42,9 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         currency: string
         primary_image_url: string | null
         gallery_image_urls: unknown
+        listing_section: string | null
+        listing_category: string | null
+        listing_subcategory: string | null
         created_at: Date
       }
 
@@ -57,6 +64,9 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           p.currency,
           p.primary_image_url,
           p.gallery_image_urls,
+          p.listing_section,
+          p.listing_category,
+          p.listing_subcategory,
           p.created_at
         FROM organization_shop_product p
         INNER JOIN "Business" b ON b.id = p.business_id
@@ -69,6 +79,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           AND (${blockedBusinessIds.length ? Prisma.sql`p.business_id NOT IN (${Prisma.join(blockedBusinessIds)})` : Prisma.sql`TRUE`})
           AND (${useCommunityScope ? Prisma.sql`(UPPER(COALESCE(b."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(b."communitySlug", '')) IN (${Prisma.join(communitySlugs)}))` : Prisma.sql`TRUE`})
           AND (p.catalog_id IS NULL OR c.enabled = TRUE)
+          AND (${listingSection ? Prisma.sql`COALESCE(p.listing_section, '') = ${listingSection}` : Prisma.sql`TRUE`})
+          AND (${listingCategory ? Prisma.sql`COALESCE(p.listing_category, '') = ${listingCategory}` : Prisma.sql`TRUE`})
+          AND (${listingSubcategory ? Prisma.sql`COALESCE(p.listing_subcategory, '') = ${listingSubcategory}` : Prisma.sql`TRUE`})
+          AND (${listingDetail ? Prisma.sql`FALSE` : Prisma.sql`TRUE`})
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT ${query.data.limit * 2}
       `
@@ -82,6 +96,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         photo_urls: unknown
         pickup_city: string | null
         pickup_province: string | null
+        listing_section: string | null
+        listing_category: string | null
+        listing_subcategory: string | null
+        listing_detail: string | null
         created_at: Date
         seller_user_id: string
         seller_handle: string | null
@@ -100,6 +118,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           l.photo_urls,
           l.pickup_city,
           l.pickup_province,
+          l.listing_section,
+          l.listing_category,
+          l.listing_subcategory,
+          l.listing_detail,
           l.created_at,
           l.seller_user_id,
           u.handle AS seller_handle,
@@ -120,6 +142,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           AND l.status = 'active'
           AND l.moderation_status = ${'visible'}
           AND (${blockedUserIds.length ? Prisma.sql`l.seller_user_id NOT IN (${Prisma.join(blockedUserIds)})` : Prisma.sql`TRUE`})
+          AND (${listingSection ? Prisma.sql`COALESCE(l.listing_section, '') = ${listingSection}` : Prisma.sql`TRUE`})
+          AND (${listingCategory ? Prisma.sql`COALESCE(l.listing_category, '') = ${listingCategory}` : Prisma.sql`TRUE`})
+          AND (${listingSubcategory ? Prisma.sql`COALESCE(l.listing_subcategory, '') = ${listingSubcategory}` : Prisma.sql`TRUE`})
+          AND (${listingDetail ? Prisma.sql`COALESCE(l.listing_detail, '') = ${listingDetail}` : Prisma.sql`TRUE`})
           AND (${useCommunityScope
             ? Prisma.sql`((UPPER(COALESCE(l.listing_province_code, cf_scope."provinceCode", '')) IN (${Prisma.join(provinceCodes)}) AND LOWER(COALESCE(l.listing_community_slug, cf_scope."communitySlug", '')) IN (${Prisma.join(communitySlugs)})) OR l.seller_user_id = ${userId})`
             : Prisma.sql`TRUE`})
@@ -140,6 +166,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
             currency: row.currency,
             primaryImageUrl: row.primary_image_url,
             galleryImageUrls: deps.readGalleryUrls(row.gallery_image_urls),
+            listingSection: row.listing_section,
+            listingCategory: row.listing_category,
+            listingSubcategory: row.listing_subcategory,
+            listingDetail: null,
             createdAt: row.created_at.toISOString(),
             organization: {
               id: row.business_id,
@@ -166,6 +196,10 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
               currency: row.currency,
               primaryImageUrl: photoUrls[0] ?? null,
               galleryImageUrls: photoUrls,
+              listingSection: row.listing_section,
+              listingCategory: row.listing_category,
+              listingSubcategory: row.listing_subcategory,
+              listingDetail: row.listing_detail,
               createdAt: row.created_at.toISOString(),
               pickupCity: row.pickup_city,
               pickupProvince: row.pickup_province,
