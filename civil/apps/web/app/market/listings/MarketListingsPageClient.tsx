@@ -59,6 +59,10 @@ function getListingStatusLabel(item: ListingItem) {
   return item.status
 }
 
+function supportsCivilPay(paymentTypes: string[] | null | undefined) {
+  return Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')
+}
+
 function ListingSection({
   title,
   items,
@@ -93,7 +97,10 @@ function ListingSection({
                       {getListingStatusLabel(item)}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{formatMoney(item.priceCents, item.currency)}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-900">{formatMoney(item.priceCents, item.currency)}</p>
+                    {supportsCivilPay(item.paymentTypes) ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Civil Pay</span> : null}
+                  </div>
                   <p className="mt-1 text-xs text-slate-600">Pickup area: {item.pickupCity ? `${item.pickupCity}${item.pickupProvince ? `, ${item.pickupProvince}` : ''}` : 'Not set'}</p>
                 </div>
               </Link>

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { HiCheck } from 'react-icons/hi2'
 import { AddressDirectionsMap } from '../../../_components/map/AddressDirectionsMap'
 import DashboardShell from '../../../_components/DashboardShell'
 import Modal from '../../../_components/Modal'
@@ -158,7 +159,7 @@ type DraftForm = {
     medium100km: string
     long250km: string
   }
-  paymentTypes: Array<'cash_pickup' | 'etransfer'>
+  paymentTypes: Array<'cash_pickup' | 'etransfer' | 'civil_wallet'>
   photoUrls: string[]
 }
 
@@ -625,7 +626,7 @@ export default function MarketNewListingPageClient() {
         long250km: hasLong ? formatMoneyInput(Number(deliveryOptions.long250km) || 0) : DEFAULT_DELIVERY_PRICES.long250km,
       },
       paymentTypes: (Array.isArray(listing.paymentTypes) ? listing.paymentTypes : []).filter(
-        (entry): entry is 'cash_pickup' | 'etransfer' => entry === 'cash_pickup' || entry === 'etransfer',
+        (entry): entry is 'cash_pickup' | 'etransfer' | 'civil_wallet' => entry === 'cash_pickup' || entry === 'etransfer' || entry === 'civil_wallet',
       ),
       photoUrls: Array.isArray(listing.photoUrls) ? listing.photoUrls : [],
     })
@@ -1230,7 +1231,19 @@ export default function MarketNewListingPageClient() {
     return resolvedEmail && resolvedEnabled && resolvedMarketSharing ? resolvedEmail : ''
   }, [])
 
-  const togglePaymentType = useCallback(async (type: 'cash_pickup' | 'etransfer') => {
+  const walletETransferEmail = normalizeEmail(viewerMe?.wallet?.eTransferEmail)
+  const walletMarketEnabled = Boolean(
+    walletETransferEmail &&
+      (viewerMe?.wallet?.enabled == null ? true : viewerMe.wallet.enabled) &&
+      (viewerMe?.wallet?.sharing?.market == null ? true : viewerMe.wallet.sharing.market),
+  )
+  const walletCivilPayEnabled = Boolean(
+    (viewerMe?.wallet?.enabled == null ? true : viewerMe.wallet.enabled) &&
+      viewerMe?.wallet?.stripeConnect?.accountId &&
+      viewerMe?.wallet?.stripeConnect?.payoutsEnabled,
+  )
+
+  const togglePaymentType = useCallback(async (type: 'cash_pickup' | 'etransfer' | 'civil_wallet') => {
     const exists = form.paymentTypes.includes(type)
     if (exists) {
       setForm((prev) => {
@@ -1248,8 +1261,13 @@ export default function MarketNewListingPageClient() {
       }
     }
 
+    if (type === 'civil_wallet' && !walletCivilPayEnabled) {
+      pushToast('Set up Civil Wallet payouts before enabling Civil Wallet on this listing.', 'error')
+      return
+    }
+
     setForm((prev) => ({ ...prev, paymentTypes: [...prev.paymentTypes, type] }))
-  }, [form.paymentTypes, resolveWalletETransferEmail])
+  }, [form.paymentTypes, resolveWalletETransferEmail, walletCivilPayEnabled])
 
   const uploadMediaFile = useCallback(async (file: File) => {
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
@@ -1398,13 +1416,6 @@ export default function MarketNewListingPageClient() {
       }
     },
     [form.photoUrls, uploadMediaFile],
-  )
-
-  const walletETransferEmail = normalizeEmail(viewerMe?.wallet?.eTransferEmail)
-  const walletMarketEnabled = Boolean(
-    walletETransferEmail &&
-      (viewerMe?.wallet?.enabled == null ? true : viewerMe.wallet.enabled) &&
-      (viewerMe?.wallet?.sharing?.market == null ? true : viewerMe.wallet.sharing.market),
   )
 
   const saveListing = useCallback(
@@ -2139,19 +2150,39 @@ export default function MarketNewListingPageClient() {
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void togglePaymentType('cash_pickup')}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('cash_pickup') ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'}`}
+                  onClick={() => void togglePaymentType('civil_wallet')}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('civil_wallet') ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-700'}`}
                 >
+                  {form.paymentTypes.includes('civil_wallet') ? <HiCheck className="h-3.5 w-3.5" /> : null}
+                  Civil Wallet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void togglePaymentType('cash_pickup')}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('cash_pickup') ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-700'}`}
+                >
+                  {form.paymentTypes.includes('cash_pickup') ? <HiCheck className="h-3.5 w-3.5" /> : null}
                   Cash on pickup
                 </button>
                 <button
                   type="button"
                   onClick={() => void togglePaymentType('etransfer')}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('etransfer') ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('etransfer') ? 'border-emerald-600 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-700'}`}
                 >
+                  {form.paymentTypes.includes('etransfer') ? <HiCheck className="h-3.5 w-3.5" /> : null}
                   eTransfer
                 </button>
               </div>
+
+              {form.paymentTypes.includes('civil_wallet') ? (
+                <div className={`mt-4 rounded-2xl border p-4 ${walletCivilPayEnabled ? 'border-emerald-200 bg-emerald-50/70' : 'border-amber-200 bg-amber-50'}`}>
+                  <p className="text-sm font-semibold text-slate-900">Civil Pay enabled</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Buyers can complete the sale with Civil Wallet after you select them. Civil records the fee in the global ledger and keeps the funds on the platform until you withdraw later.
+                  </p>
+                  {!walletCivilPayEnabled ? <p className="mt-2 text-sm text-amber-700">Enable wallet payouts in Wallet before using Civil Wallet on listings.</p> : null}
+                </div>
+              ) : null}
 
               {form.paymentTypes.includes('etransfer') ? (
                 <div className={`mt-4 rounded-2xl border p-4 ${walletMarketEnabled ? 'border-slate-200 bg-white' : 'border-amber-200 bg-amber-50'}`}>

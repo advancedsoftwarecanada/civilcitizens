@@ -59,6 +59,9 @@ export type MeResponse = {
   statusUpdatedAt?: string | null
   wallet?: {
     civilCreditsCents: number
+    availableCreditsCents?: number
+    pendingCreditsCents?: number
+    settlementHoldDays?: number
     enabled?: boolean
     eTransferEmail?: string | null
     sharing?: {
@@ -66,6 +69,18 @@ export type MeResponse = {
       friends?: boolean
       market?: boolean
     } | null
+    recentTransactions?: Array<{
+      id: string
+      entryType: 'deposit' | 'withdrawal' | 'transfer' | 'adjustment'
+      status: string
+      amountCents: number
+      currency: string
+      occurredAt: string
+      availableAt?: string | null
+      direction: 'credit' | 'debit'
+      title: string
+      detail?: string | null
+    }> | null
     stripeConnect?: {
       accountId?: string | null
       chargesEnabled?: boolean
