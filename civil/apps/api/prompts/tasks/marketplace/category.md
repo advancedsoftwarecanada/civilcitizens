@@ -1,0 +1,205 @@
+You are tasked with taking the TITLE and DESCRIPTION of this item and from it, determining the Section, Category, Subcategory and Detail.
+
+Rules:
+- Use only the taxonomy in this prompt.
+- Do not search marketplace listings.
+- Do not explain your reasoning.
+- Return JSON only.
+- Use this exact shape:
+  {"section":"...","category":"...","subcategory":"...","detail":null}
+- If the chosen subcategory has a matching detail option, return that exact detail label.
+- If the chosen subcategory has no detail layer, return `null` for detail.
+- Do not invent labels.
+
+Marketplace taxonomy:
+- Items
+  - Clothing & Accessories
+    - Men's Clothing
+      - Tops (T Shirts, Polos, Dress Shirts, Hoodies, Sweaters)
+      - Outerwear (Jackets, Coats, Blazers, Vests)
+      - Bottoms (Jeans, Pants, Shorts, Joggers)
+      - Suits & Formalwear (Suits, Tuxedos)
+      - Activewear
+      - Sleepwear & Loungewear
+      - Workwear
+      - Swimwear
+      - Underwear & Socks
+    - Women's Clothing
+      - Tops (Blouses, Tank Tops, Sweaters)
+      - Dresses (Casual, Formal, Maxi, Mini)
+      - Skirts
+      - Bottoms (Jeans, Leggings, Shorts)
+      - Outerwear (Coats, Jackets, Cardigans)
+      - Activewear
+      - Intimates
+      - Maternity
+      - Swimwear
+    - Kids Clothing
+      - Baby (0-12 Months)
+      - Toddler (1-3 Years)
+      - Kids (4-9 Years)
+      - Pre-Teen (10-12 Years)
+      - Teen (13-17 Years)
+    - Shoes
+      - Men's Shoes (Sneakers, Boots, Dress Shoes)
+      - Women's Shoes (Heels, Flats, Boots)
+      - Kids Shoes
+    - Bags & Luggage
+      - Handbags
+      - Backpacks
+      - Wallets
+      - Travel Bags
+    - Jewellery & Watches
+      - Necklaces
+      - Rings
+      - Watches
+    - Fashion Accessories
+      - Hats
+      - Belts
+      - Scarves
+      - Sunglasses
+    - Costumes
+    - Wedding & Formal
+    - Uniforms & Workwear
+    - Vintage Clothing
+    - Plus Size Clothing
+    - Seasonal Clothing
+    - Multi Item Clothing Lots
+  - Home & Living
+    - Furniture
+      - Living Room
+      - Bedroom
+      - Dining
+      - Office
+      - Outdoor Furniture
+    - Home Decor
+      - Wall Art
+      - Mirrors
+      - Rugs
+      - Curtains
+    - Kitchen & Dining
+      - Cookware
+      - Small Appliances
+      - Dishes & Utensils
+    - Bedding & Linens
+    - Storage & Organization
+    - Lighting
+  - Electronics & Technology
+    - Phones
+      - Smartphones
+      - Accessories
+    - Computers
+      - Desktops
+      - Laptops
+      - Tablets
+      - Parts
+    - Computer Accessories
+      - Monitors
+      - Keyboards
+      - Networking
+    - Audio
+      - Headphones
+      - Speakers
+    - TVs & Video
+    - Cameras & Camcorders
+    - Video Games & Consoles
+    - Smart Home Devices
+  - Appliances
+    - Kitchen Appliances
+    - Laundry Machines
+    - Small Appliances
+  - Outdoor & Garden
+    - Patio Furniture
+    - Gardening Supplies
+    - BBQ & Outdoor Cooking
+    - Outdoor Decor
+  - Tools & Renovation
+    - Tools
+      - Hand Tools
+      - Power Tools
+    - Building Materials
+      - Lumber
+      - Flooring
+      - Fixtures
+      - Paint
+  - Sports & Recreation
+    - Fitness Equipment
+    - Team Sports
+    - Outdoor Sports
+    - Bikes
+  - Toys, Games & Hobbies
+    - Toys
+    - Board Games
+    - Hobbies & Crafts
+    - Models & DIY
+  - Books & Media
+    - Books
+    - CDs / DVDs / Blu-ray
+    - Vinyl
+  - Musical Instruments
+    - Guitars
+    - Keyboards
+    - Drums
+    - Band Instruments
+  - Baby & Kids Items
+    - Strollers
+    - Cribs
+    - Car Seats
+    - Toys
+    - Feeding Supplies
+  - Health & Wellness
+    - Medical Equipment
+    - Mobility Aids
+    - Wellness Products
+  - Business & Industrial
+    - Equipment
+    - Supplies
+    - Inventory
+  - Tickets & Events
+    - Concerts
+    - Sports
+    - Local Events
+  - Free & Community
+    - Free Items
+    - Garage Sales
+- Vehicles
+  - Cars & Trucks
+    - Sedans
+    - SUVs
+    - Pickup Trucks
+    - Vans
+    - Hatchbacks
+  - Vehicle Parts & Accessories
+    - Tires
+    - Rims
+    - Engine Parts
+    - Interior Parts
+    - Exterior Parts
+  - Heavy Equipment
+    - Excavators
+    - Loaders
+    - Skid Steers
+  - Motorcycles
+    - Sport Bikes
+    - Cruisers
+    - Dirt Bikes
+  - ATVs & Snowmobiles
+    - ATVs & Snowmobiles
+  - RVs & Trailers
+    - Motorhomes
+    - Travel Trailers
+    - Utility Trailers
+  - Boats & Watercraft
+    - Fishing Boats
+    - Speed Boats
+    - Jet Skis
+  - Farming Equipment
+    - Tractors
+    - Implements
+    - Attachments
+  - Classic Cars
+    - Classic Cars
+  - Automotive Services
+    - Repair
+    - Detailing
+    - Inspection

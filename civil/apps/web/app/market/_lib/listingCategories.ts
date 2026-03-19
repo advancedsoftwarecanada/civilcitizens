@@ -25,9 +25,13 @@ const branch = (label: string, details: string[]): MarketListingSubcategory => (
 })
 const category = (label: string, subcategories: MarketListingSubcategory[]): MarketListingCategory => ({ label, subcategories })
 
+function normalizeListingLabel(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase()
+}
+
 export const MARKET_LISTING_SECTIONS: MarketListingSection[] = [
   {
-    label: 'ITEMS',
+    label: 'Items',
     categories: [
       category('Clothing & Accessories', [
         branch("Men's Clothing", [
@@ -130,7 +134,7 @@ export const MARKET_LISTING_SECTIONS: MarketListingSection[] = [
     ],
   },
   {
-    label: 'VEHICLES',
+    label: 'Vehicles',
     categories: [
       category('Cars & Trucks', [leaf('Sedans'), leaf('SUVs'), leaf('Pickup Trucks'), leaf('Vans'), leaf('Hatchbacks')]),
       category('Vehicle Parts & Accessories', [leaf('Tires'), leaf('Rims'), leaf('Engine Parts'), leaf('Interior Parts'), leaf('Exterior Parts')]),
@@ -147,13 +151,15 @@ export const MARKET_LISTING_SECTIONS: MarketListingSection[] = [
 ]
 
 export function getMarketListingSection(sectionLabel: string | null | undefined) {
-  return MARKET_LISTING_SECTIONS.find((section) => section.label === (sectionLabel ?? '').trim()) ?? null
+  const normalizedSection = normalizeListingLabel(sectionLabel)
+  return MARKET_LISTING_SECTIONS.find((section) => normalizeListingLabel(section.label) === normalizedSection) ?? null
 }
 
 export function getMarketListingCategory(sectionLabel: string | null | undefined, categoryLabel: string | null | undefined) {
   const section = getMarketListingSection(sectionLabel)
   if (!section) return null
-  return section.categories.find((category) => category.label === (categoryLabel ?? '').trim()) ?? null
+  const normalizedCategory = normalizeListingLabel(categoryLabel)
+  return section.categories.find((category) => normalizeListingLabel(category.label) === normalizedCategory) ?? null
 }
 
 export function getMarketListingSubcategory(
@@ -163,5 +169,6 @@ export function getMarketListingSubcategory(
 ) {
   const category = getMarketListingCategory(sectionLabel, categoryLabel)
   if (!category) return null
-  return category.subcategories.find((subcategory) => subcategory.label === (subcategoryLabel ?? '').trim()) ?? null
+  const normalizedSubcategory = normalizeListingLabel(subcategoryLabel)
+  return category.subcategories.find((subcategory) => normalizeListingLabel(subcategory.label) === normalizedSubcategory) ?? null
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AddressDirectionsMap } from '../../../_components/map/AddressDirectionsMap'
 import DashboardShell from '../../../_components/DashboardShell'
@@ -12,6 +12,39 @@ import { fetchAddressSearchResults } from '../../../_lib/addressSearch'
 import { normalizeCanadianPostalCode, normalizeCanadianProvince, type SavedShippingAddress } from '../../../_lib/canadianAddresses'
 import MarketRightRail from '../../_components/MarketRightRail'
 import { getMarketListingCategory, getMarketListingSection, getMarketListingSubcategory, MARKET_LISTING_SECTIONS } from '../../_lib/listingCategories'
+
+type ListingTypeFieldKey = 'section' | 'category' | 'subcategory' | 'detail'
+
+type ListingTypeSuggestion = {
+  section?: string | null
+  category?: string | null
+  subcategory?: string | null
+  detail?: string | null
+}
+
+type AiTaskResponse = {
+  result?: ListingTypeSuggestion | null
+  error?: string | null
+  detail?: string | null
+}
+
+type ListingTypePickerProps = {
+  label: string
+  value: string
+  placeholder: string
+  disabled?: boolean
+  onClick: () => void
+}
+
+type ListingTypePickerModalProps = {
+  open: boolean
+  title: string
+  options: string[]
+  selectedValue: string
+  emptyLabel: string
+  onChoose: (value: string) => void
+  onClose: () => void
+}
 
 type ListingDetail = {
   id: string
@@ -175,6 +208,78 @@ const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 const ADDRESS_FAVORITES_STORAGE_KEY = 'civil_address_favorites'
 const MAX_LISTING_DESCRIPTION_LENGTH = 5000
+function extractFirstJsonObject(input: string) {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fencedMatch?.[1]?.trim() || trimmed
+  const objectMatch = candidate.match(/\{[\s\S]*\}/)
+  return objectMatch?.[0] ?? null
+}
+
+function normalizeListingTypeSuggestion(input: unknown): ListingTypeSuggestion | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const record = input as Record<string, unknown>
+  const read = (key: string) => (typeof record[key] === 'string' ? record[key].trim() || null : null)
+  return {
+    section: read('section'),
+    category: read('category'),
+    subcategory: read('subcategory'),
+    detail: read('detail'),
+  }
+}
+
+function ListingTypePicker({ label, value, placeholder, disabled, onClick }: ListingTypePickerProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group flex w-full items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</span>
+        <span className={`mt-1 block whitespace-normal break-words text-sm font-medium leading-6 ${value ? 'text-slate-900' : 'text-slate-400'}`}>{value || placeholder}</span>
+      </span>
+      <span className="mt-0.5 shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 group-hover:border-slate-300 group-hover:bg-white">
+        Choose
+      </span>
+    </button>
+  )
+}
+
+function ListingTypePickerModal({ open, title, options, selectedValue, emptyLabel, onChoose, onClose }: ListingTypePickerModalProps) {
+  return (
+    <Modal open={open} onClose={onClose} title={title} maxWidthClassName="max-w-xl">
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => onChoose('')}
+          className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm transition ${!selectedValue ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
+        >
+          <span>{emptyLabel}</span>
+          {!selectedValue ? <span className="text-xs font-semibold uppercase tracking-wide">Selected</span> : null}
+        </button>
+        <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+          {options.map((option) => {
+            const selected = option === selectedValue
+            return (
+              <button
+                key={option}
+                type="button"
+                onClick={() => onChoose(option)}
+                className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm transition ${selected ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50'}`}
+              >
+                <span>{option}</span>
+                {selected ? <span className="text-xs font-semibold uppercase tracking-wide">Selected</span> : null}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </Modal>
+  )
+}
 
 type MediaUploadInitResponse = {
   assetId: string
@@ -324,6 +429,8 @@ export default function MarketNewListingPageClient() {
   const [quickSelectValue, setQuickSelectValue] = useState('')
   const [addressMapPreview, setAddressMapPreview] = useState<{ latitude: number; longitude: number; label: string } | null>(null)
   const [addressMapStatus, setAddressMapStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [activeListingTypePicker, setActiveListingTypePicker] = useState<ListingTypeFieldKey | null>(null)
+  const [aiCategorizing, setAiCategorizing] = useState(false)
 
   const loadListing = useCallback(async (id: string) => {
     const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(id)}`), {
@@ -622,6 +729,87 @@ export default function MarketNewListingPageClient() {
   )
   const selectedListingDetails = selectedListingSubcategory?.details ?? []
   const requiresListingDetail = selectedListingDetails.length > 0
+  const listingTypeOptions = useMemo(
+    () => ({
+      section: MARKET_LISTING_SECTIONS.map((section) => section.label),
+      category: (selectedListingSection?.categories ?? []).map((category) => category.label),
+      subcategory: (selectedListingCategory?.subcategories ?? []).map((subcategory) => subcategory.label),
+      detail: selectedListingDetails.map((detail) => detail.label),
+    }),
+    [selectedListingCategory, selectedListingDetails, selectedListingSection],
+  )
+
+  const applyListingTypeSuggestion = useCallback((suggestion: ListingTypeSuggestion) => {
+    const section = getMarketListingSection(suggestion.section)
+    if (!section) return false
+    const category = getMarketListingCategory(section.label, suggestion.category)
+    if (!category) return false
+    const subcategory = getMarketListingSubcategory(section.label, category.label, suggestion.subcategory)
+    if (!subcategory) return false
+
+    let detail = ''
+    if (subcategory.details?.length) {
+      const nextDetail = (suggestion.detail ?? '').trim()
+      if (!subcategory.details.some((entry) => entry.label === nextDetail)) return false
+      detail = nextDetail
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      listingSection: section.label,
+      listingCategory: category.label,
+      listingSubcategory: subcategory.label,
+      listingDetail: detail,
+    }))
+    return true
+  }, [])
+
+  const classifyListingTypeWithAi = useCallback(async () => {
+    const title = form.title.trim()
+    const description = descriptionPlainText.trim()
+    if (!title && !description) {
+      pushToast('Add a title or description before asking Civil AI to classify the listing.', 'error')
+      return
+    }
+
+    setAiCategorizing(true)
+    try {
+      const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+      const response = await fetch(buildApiUrl('/ai/task/marketplace/category'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          input: {
+            title: title || '(empty)',
+            description: description || '(empty)',
+          },
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as AiTaskResponse | null
+      if (!response.ok || !payload?.result) {
+        const rawContent = payload?.detail?.trim() || payload?.error?.trim() || ''
+        const jsonText = extractFirstJsonObject(rawContent)
+        const parsed = jsonText ? normalizeListingTypeSuggestion(JSON.parse(jsonText)) : null
+        if (parsed && applyListingTypeSuggestion(parsed)) {
+          pushToast('Civil AI selected a listing type.', 'success')
+          return
+        }
+        throw new Error(payload?.detail || payload?.error || 'Civil AI could not classify this listing right now.')
+      }
+
+      if (!applyListingTypeSuggestion(payload.result)) {
+        throw new Error('Civil AI returned a category path that does not match the marketplace taxonomy.')
+      }
+      pushToast('Civil AI selected a listing type.', 'success')
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : 'Civil AI could not classify this listing right now.', 'error')
+    } finally {
+      setAiCategorizing(false)
+    }
+  }, [applyListingTypeSuggestion, descriptionPlainText, form.title])
 
   useEffect(() => {
     if (requiresListingDetail) {
@@ -1190,98 +1378,48 @@ export default function MarketNewListingPageClient() {
 
             <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Listing type</p>
-              <p className="mt-1 text-xs text-slate-600">Use the exact marketplace path so buyers can understand what kind of listing this is.</p>
-              <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
-                  <select
-                    value={form.listingSection}
-                    onChange={(event) => {
-                      const nextSection = event.target.value
-                      setForm((prev) => ({
-                        ...prev,
-                        listingSection: nextSection,
-                        listingCategory: '',
-                        listingSubcategory: '',
-                        listingDetail: '',
-                      }))
-                    }}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                  >
-                    <option value="">Select section…</option>
-                    {MARKET_LISTING_SECTIONS.map((section) => (
-                      <option key={section.label} value={section.label}>
-                        {section.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</span>
-                  <select
-                    value={form.listingCategory}
-                    onChange={(event) => {
-                      const nextCategory = event.target.value
-                      setForm((prev) => ({
-                        ...prev,
-                        listingCategory: nextCategory,
-                        listingSubcategory: '',
-                        listingDetail: '',
-                      }))
-                    }}
-                    disabled={!selectedListingSection}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">Select category…</option>
-                    {(selectedListingSection?.categories ?? []).map((category) => (
-                      <option key={category.label} value={category.label}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</span>
-                  <select
-                    value={form.listingSubcategory}
-                    onChange={(event) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        listingSubcategory: event.target.value,
-                        listingDetail: '',
-                      }))
-                    }
-                    disabled={!selectedListingCategory}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">Select subcategory…</option>
-                    {(selectedListingCategory?.subcategories ?? []).map((subcategory) => (
-                      <option key={subcategory.label} value={subcategory.label}>
-                        {subcategory.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Detail</span>
-                  <select
-                    value={form.listingDetail}
-                    onChange={(event) => setForm((prev) => ({ ...prev, listingDetail: event.target.value }))}
-                    disabled={!requiresListingDetail}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">{requiresListingDetail ? 'Select detail…' : 'No detail needed'}</option>
-                    {selectedListingDetails.map((detail) => (
-                      <option key={detail.label} value={detail.label}>
-                        {detail.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Listing type</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void classifyListingTypeWithAi()}
+                  disabled={aiCategorizing || saving || initializing || !canEditActiveDraftListing}
+                  className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] bg-white px-4 py-2 text-xs font-semibold text-[var(--cc-primary)] shadow-sm transition hover:bg-[var(--cc-primary)]/5 disabled:opacity-60"
+                >
+                  {aiCategorizing ? 'Civil AI is classifying…' : 'Civil AI'}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">Use Civil AI to automatically detect the appropriate category.</p>
+              <div className="mt-4 space-y-3">
+                <ListingTypePicker
+                  label="Section"
+                  value={form.listingSection}
+                  placeholder="Select section…"
+                  onClick={() => setActiveListingTypePicker('section')}
+                />
+                <ListingTypePicker
+                  label="Category"
+                  value={form.listingCategory}
+                  placeholder="Select category…"
+                  disabled={!selectedListingSection}
+                  onClick={() => setActiveListingTypePicker('category')}
+                />
+                <ListingTypePicker
+                  label="Subcategory"
+                  value={form.listingSubcategory}
+                  placeholder="Select subcategory…"
+                  disabled={!selectedListingCategory}
+                  onClick={() => setActiveListingTypePicker('subcategory')}
+                />
+                <ListingTypePicker
+                  label="Detail"
+                  value={form.listingDetail}
+                  placeholder={requiresListingDetail ? 'Select detail…' : 'No detail needed'}
+                  disabled={!requiresListingDetail}
+                  onClick={() => setActiveListingTypePicker('detail')}
+                />
               </div>
             </div>
             </section>
@@ -1568,6 +1706,73 @@ export default function MarketNewListingPageClient() {
                 </button>
               </div>
             </Modal>
+
+            <ListingTypePickerModal
+              open={activeListingTypePicker === 'section'}
+              title="Choose section"
+              options={listingTypeOptions.section}
+              selectedValue={form.listingSection}
+              emptyLabel="No section selected"
+              onClose={() => setActiveListingTypePicker(null)}
+              onChoose={(value) => {
+                setForm((prev) => ({
+                  ...prev,
+                  listingSection: value,
+                  listingCategory: '',
+                  listingSubcategory: '',
+                  listingDetail: '',
+                }))
+                setActiveListingTypePicker(null)
+              }}
+            />
+
+            <ListingTypePickerModal
+              open={activeListingTypePicker === 'category'}
+              title="Choose category"
+              options={listingTypeOptions.category}
+              selectedValue={form.listingCategory}
+              emptyLabel="No category selected"
+              onClose={() => setActiveListingTypePicker(null)}
+              onChoose={(value) => {
+                setForm((prev) => ({
+                  ...prev,
+                  listingCategory: value,
+                  listingSubcategory: '',
+                  listingDetail: '',
+                }))
+                setActiveListingTypePicker(null)
+              }}
+            />
+
+            <ListingTypePickerModal
+              open={activeListingTypePicker === 'subcategory'}
+              title="Choose subcategory"
+              options={listingTypeOptions.subcategory}
+              selectedValue={form.listingSubcategory}
+              emptyLabel="No subcategory selected"
+              onClose={() => setActiveListingTypePicker(null)}
+              onChoose={(value) => {
+                setForm((prev) => ({
+                  ...prev,
+                  listingSubcategory: value,
+                  listingDetail: '',
+                }))
+                setActiveListingTypePicker(null)
+              }}
+            />
+
+            <ListingTypePickerModal
+              open={activeListingTypePicker === 'detail'}
+              title="Choose detail"
+              options={listingTypeOptions.detail}
+              selectedValue={form.listingDetail}
+              emptyLabel="No detail selected"
+              onClose={() => setActiveListingTypePicker(null)}
+              onChoose={(value) => {
+                setForm((prev) => ({ ...prev, listingDetail: value }))
+                setActiveListingTypePicker(null)
+              }}
+            />
 
             <Modal
               open={deleteConfirmOpen}
