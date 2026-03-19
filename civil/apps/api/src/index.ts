@@ -488,6 +488,7 @@ import { registerProfileMediaRoutes } from './routes/profileMedia.js'
 import { registerSupportRoutes } from './routes/support.js'
 import { registerUserProfilePostRoutes } from './routes/userProfilePosts.js'
 import { registerAiRoutes } from './routes/ai.js'
+import { registerAiTaskRoutes } from './routes/aiTasks.js'
 import { registerPushRoutes } from './routes/push.js'
 import { registerSocialGraphRoutes } from './routes/socialGraph.js'
 import { registerUserConnectionsRoutes } from './routes/userConnections.js'
@@ -5463,6 +5464,16 @@ registerAiRoutes(app, {
   toCivilAiMarketReference: (item) => toCivilAiMarketReference(item as any),
   toCivilAiOrganizationReference: (item) => toCivilAiOrganizationReference(item as any),
   toCivilAiPostReference: (item) => toCivilAiPostReference(item as any),
+  withSchemaGuard,
+})
+
+registerAiTaskRoutes(app, {
+  buildCivilAiPromptInput,
+  callCivilAiServerWithPathFallback: (args) => callCivilAiServerWithPathFallback(args as any),
+  extractCivilAiMessageContent,
+  loadViewerAuthContext,
+  resolveCivilAiModel,
+  resolveCivilAiServer,
   withSchemaGuard,
 })
 
