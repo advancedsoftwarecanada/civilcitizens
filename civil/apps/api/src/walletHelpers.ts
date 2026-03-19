@@ -24,6 +24,28 @@ export type WalletSummary = {
   stripeConnect: WalletConnectSummary
 }
 
+export type WalletTransactionSummary = {
+  id: string
+  entryType: 'deposit' | 'withdrawal' | 'transfer' | 'adjustment'
+  status: string
+  amountCents: number
+  currency: string
+  occurredAt: string
+  availableAt: string | null
+  direction: 'credit' | 'debit'
+  title: string
+  detail: string | null
+}
+
+export type WalletView = WalletSummary & {
+  availableCreditsCents: number
+  pendingCreditsCents: number
+  settlementHoldDays: number
+  recentTransactions: WalletTransactionSummary[]
+}
+
+export const WALLET_SETTLEMENT_HOLD_DAYS = 7
+
 let citizenWalletTablesReady: Promise<void> | null = null
 
 type WalletDbClient = typeof prisma | Prisma.TransactionClient
@@ -58,6 +80,25 @@ type CivilCreditLedgerEntry = {
   stripeConnectAccountId?: string | null
   description?: string | null
   metadata?: Record<string, unknown> | null
+}
+
+type WalletLedgerRow = {
+  id: string
+  entry_type: 'deposit' | 'withdrawal' | 'transfer' | 'adjustment'
+  status: string
+  amount_cents: number
+  currency: string
+  occurred_at: Date
+  description: string | null
+  processing_provider: string | null
+  from_user_id: string | null
+  from_user_handle: string | null
+  from_user_name: string | null
+  from_entity_label: string | null
+  to_user_id: string | null
+  to_user_handle: string | null
+  to_user_name: string | null
+  to_entity_label: string | null
 }
 
 export function readBaseJsonObject(value: unknown): Record<string, any> {
@@ -128,6 +169,112 @@ export function buildWalletMetaValue(wallet: WalletSummary) {
 
 export function walletHasConnectPayoutsEnabled(wallet: WalletSummary | null | undefined) {
   return Boolean(wallet?.stripeConnect.accountId && wallet.stripeConnect.payoutsEnabled)
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000)
+}
+
+function isPendingStripeDeposit(row: WalletLedgerRow, userId: string, now: Date) {
+  if (row.entry_type !== 'deposit') return false
+  if (row.processing_provider !== 'stripe') return false
+  if (row.to_user_id !== userId) return false
+  if (row.status !== 'completed') return false
+  return addDays(new Date(row.occurred_at), WALLET_SETTLEMENT_HOLD_DAYS) > now
+}
+
+function buildWalletTransactionTitle(row: WalletLedgerRow, userId: string) {
+  if (row.entry_type === 'deposit') return 'Added funds'
+  if (row.entry_type === 'withdrawal') return 'Deposit to bank account'
+  if (row.entry_type === 'transfer') {
+    return row.to_user_id === userId ? 'Received Civil Credits' : 'Sent Civil Credits'
+  }
+  return 'Wallet adjustment'
+}
+
+function buildWalletTransactionDetail(row: WalletLedgerRow, userId: string) {
+  if (row.entry_type === 'deposit') return row.from_entity_label ?? 'Stripe'
+  if (row.entry_type === 'withdrawal') return row.to_entity_label ?? 'Linked bank account'
+  if (row.entry_type === 'transfer') {
+    if (row.to_user_id === userId) {
+      return row.from_user_name ?? row.from_user_handle ?? row.from_entity_label ?? 'Civil Wallet'
+    }
+    return row.to_user_name ?? row.to_user_handle ?? row.to_entity_label ?? 'Civil Wallet'
+  }
+  return row.description ?? null
+}
+
+function buildWalletTransactionSummary(row: WalletLedgerRow, userId: string, now: Date): WalletTransactionSummary {
+  const pendingDeposit = isPendingStripeDeposit(row, userId, now)
+  const availableAt = pendingDeposit ? addDays(new Date(row.occurred_at), WALLET_SETTLEMENT_HOLD_DAYS) : null
+  const direction = row.to_user_id === userId && row.entry_type !== 'withdrawal' ? 'credit' : 'debit'
+
+  return {
+    id: row.id,
+    entryType: row.entry_type,
+    status: pendingDeposit ? 'pending' : row.entry_type === 'deposit' ? 'available' : row.status,
+    amountCents: Math.max(0, Math.round(row.amount_cents || 0)),
+    currency: normalizeLedgerText(row.currency)?.toLowerCase() ?? 'cad',
+    occurredAt: new Date(row.occurred_at).toISOString(),
+    availableAt: availableAt ? availableAt.toISOString() : null,
+    direction,
+    title: buildWalletTransactionTitle(row, userId),
+    detail: buildWalletTransactionDetail(row, userId),
+  }
+}
+
+export async function buildWalletView(userId: string, communityMeta: any, transactionLimit = 12): Promise<WalletView> {
+  const wallet = readWalletSummary(communityMeta)
+  await ensureCitizenWalletTables()
+
+  const now = new Date()
+  const pendingRows = await prisma.$queryRaw<Array<{ amount_cents: number }>>`
+    SELECT amount_cents
+    FROM civil_credit_ledger
+    WHERE entry_type = 'deposit'
+      AND processing_provider = 'stripe'
+      AND to_user_id = ${userId}
+      AND status = 'completed'
+      AND occurred_at > NOW() - (${WALLET_SETTLEMENT_HOLD_DAYS} * INTERVAL '1 day')
+  `
+  const pendingCreditsCents = Math.min(
+    wallet.civilCreditsCents,
+    pendingRows.reduce((sum, row) => sum + Math.max(0, Math.round(row.amount_cents || 0)), 0),
+  )
+  const availableCreditsCents = Math.max(0, wallet.civilCreditsCents - pendingCreditsCents)
+
+  const recentRows = await prisma.$queryRaw<Array<WalletLedgerRow>>`
+    SELECT
+      id,
+      entry_type,
+      status,
+      amount_cents,
+      currency,
+      occurred_at,
+      description,
+      processing_provider,
+      from_user_id,
+      from_user_handle,
+      from_user_name,
+      from_entity_label,
+      to_user_id,
+      to_user_handle,
+      to_user_name,
+      to_entity_label
+    FROM civil_credit_ledger
+    WHERE from_user_id = ${userId}
+       OR to_user_id = ${userId}
+    ORDER BY occurred_at DESC
+    LIMIT ${Math.max(1, Math.min(transactionLimit, 50))}
+  `
+
+  return {
+    ...wallet,
+    availableCreditsCents,
+    pendingCreditsCents,
+    settlementHoldDays: WALLET_SETTLEMENT_HOLD_DAYS,
+    recentTransactions: recentRows.map((row) => buildWalletTransactionSummary(row, userId, now)),
+  }
 }
 
 function normalizeLedgerText(value: string | null | undefined) {

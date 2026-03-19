@@ -20,6 +20,9 @@ type ListingSummary = {
   photoUrl: string | null
   pickupCity?: string | null
   pickupProvince?: string | null
+  paymentTypes?: string[]
+  civilPayStatus?: string | null
+  civilPayPaidAt?: string | null
 }
 
 type ThreadPreview = {
@@ -63,6 +66,10 @@ function formatTimestamp(value?: string | null) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function supportsCivilPay(paymentTypes: string[] | null | undefined) {
+  return Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')
 }
 
 function ConversationCard({
@@ -205,7 +212,11 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
                 <div className="truncate text-sm text-slate-600">
                   {formatMoney(listing.priceCents, listing.currency)} • {formatPickupLocation(listing.pickupCity, listing.pickupProvince)}
                 </div>
-                <div className="mt-1 text-xs font-medium text-slate-500">Click to edit listing</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs font-medium text-slate-500">
+                  <span>Click to edit listing</span>
+                  {supportsCivilPay(listing.paymentTypes) ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Civil Pay</span> : null}
+                  {listing.civilPayStatus === 'completed' ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-sky-700">Paid</span> : null}
+                </div>
               </div>
             </div>
             <span className="mt-0.5 rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600">{listing.status}</span>

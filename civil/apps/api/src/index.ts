@@ -6372,6 +6372,12 @@ function ensureCitizenMarketplaceTables() {
           willing_to_deliver BOOLEAN NOT NULL DEFAULT FALSE,
           delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb,
           e_transfer_email TEXT,
+          civil_pay_status TEXT,
+          civil_pay_transaction_id TEXT,
+          civil_pay_paid_by_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          civil_pay_amount_cents INTEGER,
+          civil_pay_fee_cents INTEGER,
+          civil_pay_paid_at TIMESTAMPTZ,
           status TEXT NOT NULL DEFAULT 'draft',
           selected_buyer_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
           sale_expires_at TIMESTAMPTZ,
@@ -6477,6 +6483,36 @@ function ensureCitizenMarketplaceTables() {
 
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS civil_pay_status TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS civil_pay_transaction_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS civil_pay_paid_by_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS civil_pay_amount_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS civil_pay_fee_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS civil_pay_paid_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
         ADD COLUMN IF NOT EXISTS pickup_completed_at TIMESTAMPTZ;
       `)
 
@@ -6508,6 +6544,11 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_market_listing_pickup_pending_idx
         ON citizen_market_listing (status, pickup_completed_at, seller_user_id, selected_buyer_user_id);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_civil_pay_status_idx
+        ON citizen_market_listing (civil_pay_status, civil_pay_paid_at DESC);
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -9071,7 +9112,7 @@ const MarketListingUpdateBody = z.object({
   pickupAddressLine1: z.string().trim().max(180).optional().nullable(),
   pickupAddressLine2: z.string().trim().max(180).optional().nullable(),
   pickupPostalCode: z.string().trim().max(32).optional().nullable(),
-  paymentTypes: z.array(z.enum(['cash_pickup', 'etransfer'])).max(2).optional(),
+  paymentTypes: z.array(z.enum(['cash_pickup', 'etransfer', 'civil_wallet'])).max(3).optional(),
   willingToDeliver: z.boolean().optional(),
   deliveryOptions: MarketDeliveryOptionsSchema.optional().nullable(),
   eTransferEmail: z.string().trim().email().max(320).optional().nullable(),
@@ -10163,26 +10204,33 @@ async function ensureStripeCustomer(userId: string) {
   const wallet = readWalletSummary(user.communityMeta)
   const metaStripeCustomerId = wallet.stripeCustomerId
   const persistedStripeCustomerId = user.stripeCustomerId ?? metaStripeCustomerId
+  const stripe = getStripeClient()
 
   if (persistedStripeCustomerId) {
-    if (user.stripeCustomerId !== persistedStripeCustomerId || metaStripeCustomerId !== persistedStripeCustomerId) {
-      const baseMeta = readBaseCommunityMeta(user.communityMeta)
-      baseMeta.wallet = buildWalletMetaValue({
-        ...wallet,
-        stripeCustomerId: persistedStripeCustomerId,
-      })
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          stripeCustomerId: persistedStripeCustomerId,
-          communityMeta: baseMeta,
-        },
-      })
+    try {
+      const existingCustomer = await stripe.customers.retrieve(persistedStripeCustomerId)
+      if (!('deleted' in existingCustomer && existingCustomer.deleted)) {
+        if (user.stripeCustomerId !== persistedStripeCustomerId || metaStripeCustomerId !== persistedStripeCustomerId) {
+          const baseMeta = readBaseCommunityMeta(user.communityMeta)
+          baseMeta.wallet = buildWalletMetaValue({
+            ...wallet,
+            stripeCustomerId: persistedStripeCustomerId,
+          })
+          await prisma.user.update({
+            where: { id: userId },
+            data: {
+              stripeCustomerId: persistedStripeCustomerId,
+              communityMeta: baseMeta,
+            },
+          })
+        }
+        return { customerId: persistedStripeCustomerId, user: { ...user, stripeCustomerId: persistedStripeCustomerId } }
+      }
+    } catch (error: any) {
+      if (error?.code !== 'resource_missing') throw error
     }
-    return { customerId: persistedStripeCustomerId, user: { ...user, stripeCustomerId: persistedStripeCustomerId } }
   }
 
-  const stripe = getStripeClient()
   if (user.email) {
     const existing = await findStripeCustomerByEmail(stripe, user.email)
     if (existing) {

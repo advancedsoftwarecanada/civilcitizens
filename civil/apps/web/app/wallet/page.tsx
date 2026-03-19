@@ -33,6 +33,9 @@ type WalletRouteErrorPayload = {
 
 type WalletSummaryPayload = {
   civilCreditsCents?: number
+  availableCreditsCents?: number
+  pendingCreditsCents?: number
+  settlementHoldDays?: number
   enabled?: boolean
   eTransferEmail?: string | null
   stripeCustomerId?: string | null
@@ -41,6 +44,18 @@ type WalletSummaryPayload = {
     friends?: boolean
     market?: boolean
   } | null
+  recentTransactions?: Array<{
+    id: string
+    entryType: 'deposit' | 'withdrawal' | 'transfer' | 'adjustment'
+    status: string
+    amountCents: number
+    currency: string
+    occurredAt: string
+    availableAt?: string | null
+    direction: 'credit' | 'debit'
+    title: string
+    detail?: string | null
+  }> | null
   stripeConnect?: {
     accountId?: string | null
     chargesEnabled?: boolean
@@ -66,6 +81,18 @@ function isValidEmail(value: string) {
 
 function formatCredits(cents: number) {
   return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`
+}
+
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('en-CA', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
 }
 
 function parseMoneyInputToCents(value: string) {
@@ -110,6 +137,45 @@ function getWalletConnectErrorMessage(errorCode: string | null | undefined) {
   }
 }
 
+function getWalletPayoutErrorMessage(
+  errorCode: string | null | undefined,
+  availableBalanceCents?: number | null,
+  pendingBalanceCents?: number | null,
+) {
+  switch (errorCode) {
+    case 'wallet_connect_required':
+      return 'Finish Stripe payout setup before depositing to your bank account.'
+    case 'insufficient_available_wallet_balance': {
+      const availableLabel = typeof availableBalanceCents === 'number' ? formatCredits(availableBalanceCents) : '$0.00'
+      const pendingLabel = typeof pendingBalanceCents === 'number' ? formatCredits(pendingBalanceCents) : '$0.00'
+      return `Only ${availableLabel} is available to deposit right now. ${pendingLabel} is still pending settlement.`
+    }
+    case 'insufficient_wallet_balance':
+      return 'That amount is larger than your Civil Credits balance.'
+    case 'stripe_balance_insufficient': {
+      const availableLabel = typeof availableBalanceCents === 'number' ? formatCredits(availableBalanceCents) : '$0.00'
+      const pendingLabel = typeof pendingBalanceCents === 'number' ? formatCredits(pendingBalanceCents) : '$0.00'
+      return `Stripe cannot send this payout yet because only ${availableLabel} is available right now. ${pendingLabel} is still pending in Stripe. The charge worked, but standard test card funds do not become payout-available immediately. In test mode, use Stripe's special available-balance card 4000 0000 0000 0077 when adding funds.`
+    }
+    case 'stripe_not_configured':
+      return 'Stripe payouts are not configured in this environment yet.'
+    default:
+      return 'Unable to start the bank deposit right now.'
+  }
+}
+
+function getTransactionStatusTone(status: string) {
+  if (status === 'pending') return 'border-amber-200 bg-amber-50 text-amber-800'
+  if (status === 'available') return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  return 'border-slate-200 bg-slate-50 text-slate-700'
+}
+
+function getTransactionStatusLabel(status: string) {
+  if (status === 'pending') return 'Pending'
+  if (status === 'available') return 'Available'
+  return 'Completed'
+}
+
 function normalizeConnectStatus(status: Partial<WalletConnectStatus> | null | undefined): WalletConnectStatus {
   return {
     accountId: typeof status?.accountId === 'string' ? status.accountId : null,
@@ -150,6 +216,10 @@ export default function WalletPage() {
   )
   const civilCreditsLabel = useMemo(() => formatCredits(wallet?.civilCreditsCents ?? 0), [wallet?.civilCreditsCents])
   const balanceCents = wallet?.civilCreditsCents ?? 0
+  const availableCreditsCents = wallet?.availableCreditsCents ?? balanceCents
+  const pendingCreditsCents = wallet?.pendingCreditsCents ?? 0
+  const settlementHoldDays = wallet?.settlementHoldDays ?? 7
+  const recentTransactions = wallet?.recentTransactions ?? []
   const normalizedInput = normalizeEmail(eTransferEmail)
   const hasChanges =
     normalizedInput !== storedEmail ||
@@ -379,34 +449,6 @@ export default function WalletPage() {
       : connectStatus?.accountId
         ? 'Finish Payout Setup'
         : 'Set Up Payouts'
-  const bankActionHint = stripeReady
-    ? 'Move Civil Credits back to your connected bank account through Stripe Connect.'
-    : needsMoreStripeDetails
-      ? 'Stripe still needs a few details before payouts can be enabled. Continue the secure setup to finish.'
-      : 'First click opens Stripe-hosted onboarding. It is a secure setup flow, not a Stripe login.'
-  const connectStatusTone = stripeReady
-    ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-    : needsMoreStripeDetails
-      ? 'border-amber-200 bg-amber-50 text-amber-900'
-      : 'border-slate-200 bg-slate-50 text-slate-700'
-  const connectStatusTitle = stripeReady
-    ? 'Bank payouts are ready.'
-    : needsMoreStripeDetails
-      ? 'Your payout account needs more information.'
-      : 'Set up Stripe payouts once to withdraw Civil Credits.'
-  const connectStatusBody = stripeReady
-    ? 'You can deposit Civil Credits to your connected bank account whenever you are ready.'
-    : needsMoreStripeDetails
-      ? 'Stripe Connect handles identity checks and bank details in a hosted flow, then brings the user back here.'
-      : 'The setup is hosted by Stripe and usually takes a couple of minutes.'
-  const manageStripeButtonLabel = connectLoading
-    ? 'Working…'
-    : stripeReady
-      ? 'Manage Stripe Setup'
-      : connectStatus?.accountId
-        ? 'Continue Stripe Setup'
-        : 'Start Stripe Setup'
-
   const rightRail = (
     <div className="space-y-4">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -431,13 +473,25 @@ export default function WalletPage() {
   return (
     <DashboardShell rightRail={rightRail} showMobileRightRail mainClassName="space-y-5 pb-12">
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-start gap-4">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
           <div className="inline-flex h-14 w-14 items-center justify-center rounded-3xl border border-emerald-200 bg-emerald-50 text-emerald-700">
             <FaWallet className="h-6 w-6" />
           </div>
           <div>
             <h1 className="text-3xl font-semibold text-slate-900">Civil Wallet</h1>
           </div>
+          </div>
+          <a
+            href="https://stripe.com/"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex shrink-0 items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 transition hover:border-emerald-300 hover:bg-emerald-100"
+            aria-label="Learn more about Stripe"
+            title="Learn more about Stripe"
+          >
+            <img src="/stripe-secure-badge.png" alt="Stripe secure payments" className="h-5 w-auto" />
+          </a>
         </div>
       </section>
 
@@ -446,6 +500,11 @@ export default function WalletPage() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Balance</p>
             <p className="mt-2 text-2xl font-semibold text-slate-900">Civil Credits: {civilCreditsLabel}</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Available: <span className="font-semibold text-slate-900">{formatCredits(availableCreditsCents)}</span>
+              <span className="mx-2 text-slate-300">|</span>
+              Pending: <span className="font-semibold text-slate-900">{formatCredits(pendingCreditsCents)}</span>
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -464,58 +523,67 @@ export default function WalletPage() {
                 }
                 setPayoutModalOpen(true)
               }}
-              disabled={connectLoading || (stripeReady && balanceCents < 100)}
+              disabled={connectLoading || (stripeReady && availableCreditsCents < 100)}
               className="inline-flex items-center justify-center rounded-full border border-emerald-700 bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {bankActionLabel}
             </button>
           </div>
         </div>
-        <div className={`mt-3 rounded-2xl border px-4 py-3 text-sm ${connectStatusTone}`}>
-          <p className="font-semibold">{connectStatusTitle}</p>
-          <p className="mt-1 text-sm/6 opacity-90">{bankActionHint}</p>
-        </div>
       </section>
 
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Stripe Connect</p>
-            <h2 className="mt-1 text-xl font-semibold text-slate-900">Bank payouts</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Your Transactions</p>
+            <h2 className="mt-1 text-xl font-semibold text-slate-900">Recent wallet activity</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Stripe Connect handles identity verification and bank account collection in a hosted onboarding flow. Civil should feel like setup, not a Stripe login.
+              New Stripe deposits stay pending for {settlementHoldDays} days before they become available for bank withdrawal.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadConnectStatus()}
-              disabled={connectLoading}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:opacity-60"
-            >
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={() => void startConnectOnboarding()}
-              disabled={connectLoading}
-              className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60"
-            >
-              {manageStripeButtonLabel}
-            </button>
-          </div>
         </div>
 
-        <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${connectStatusTone}`}>
-          <p className="font-semibold">{connectStatusTitle}</p>
-          <p className="mt-1 leading-6 opacity-90">{connectStatusBody}</p>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-600">
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Account: {connectStatus?.accountId ? 'Connected' : 'Not connected'}</span>
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Details: {connectStatus?.detailsSubmitted ? 'Submitted' : 'Missing'}</span>
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Charges: {connectStatus?.chargesEnabled ? 'Enabled' : 'Disabled'}</span>
-          <span className="rounded-full border border-slate-200 bg-white px-3 py-1">Payouts: {connectStatus?.payoutsEnabled ? 'Enabled' : 'Disabled'}</span>
+        <div className="mt-5">
+          {recentTransactions.length ? (
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-left">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Transaction</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Date</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Available</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {recentTransactions.map((transaction) => (
+                      <tr key={transaction.id}>
+                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">{transaction.title}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getTransactionStatusTone(transaction.status)}`}>
+                            {getTransactionStatusLabel(transaction.status)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-slate-600">{transaction.detail ?? 'Civil Wallet'}</td>
+                        <td className="px-4 py-3 text-sm text-slate-600">{formatDateLabel(transaction.occurredAt) || ' '}</td>
+                        <td className="px-4 py-3 text-sm text-slate-600">{transaction.availableAt ? formatDateLabel(transaction.availableAt) : 'Now'}</td>
+                        <td className={`px-4 py-3 text-right text-sm font-semibold ${transaction.direction === 'credit' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                          {transaction.direction === 'credit' ? '+' : '-'}{formatCredits(transaction.amountCents)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              No wallet transactions yet.
+            </div>
+          )}
         </div>
       </section>
 
@@ -621,7 +689,7 @@ export default function WalletPage() {
       <WalletPayoutModal
         open={payoutModalOpen}
         token={getAuthToken()}
-        balanceCents={balanceCents}
+        balanceCents={availableCreditsCents}
         onClose={() => setPayoutModalOpen(false)}
         onComplete={async () => {
           await refreshWallet()
@@ -1020,15 +1088,21 @@ function WalletPayoutModal({
         },
         body: JSON.stringify({ amountCents }),
       })
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+        availableBalanceCents?: number | null
+        pendingBalanceCents?: number | null
+      } | null
       if (!response.ok) {
-        if (payload?.error === 'wallet_connect_required') {
-          pushToast('Finish Stripe Connect before depositing to your bank account.', 'error')
-        } else if (payload?.error === 'insufficient_wallet_balance') {
-          pushToast('That amount is larger than your Civil Credits balance.', 'error')
-        } else {
-          pushToast('Unable to start the bank deposit right now.', 'error')
-        }
+        pushToast(
+          getWalletPayoutErrorMessage(
+            payload?.error,
+            payload?.availableBalanceCents ?? null,
+            payload?.pendingBalanceCents ?? null,
+          ),
+          'error',
+          10000,
+        )
         return
       }
 

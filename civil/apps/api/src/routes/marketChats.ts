@@ -1,8 +1,30 @@
+import { randomUUID } from 'node:crypto'
+
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
+import { buildWalletMetaValue, insertCivilCreditLedgerEntry, readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type MarketChatDeps = Record<string, any>
+
+const CIVIL_LEDGER_ACCOUNT_ID = 'CIVIL'
+
+function computeCivilPayFeeCents(amountCents: number) {
+  if (amountCents <= 0) return 0
+  if (amountCents <= 10000) return 50
+  if (amountCents <= 20000) return 65
+  if (amountCents <= 50000) return 85
+  if (amountCents <= 100000) return 125
+  return 200
+}
+
+function buildCivilPayLink(listingId: string, threadId: string) {
+  const host = String(process.env.CIVIL_PUBLIC_HOST ?? '').trim()
+  const pathname = `/market/listings/${encodeURIComponent(listingId)}/civil-pay?thread=${encodeURIComponent(threadId)}`
+  if (!host) return `http://localhost:3000${pathname}`
+  const scheme = host.includes('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
+  return `${scheme}://${host}${pathname}`
+}
 
 export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatDeps) {
   app.post('/market/chats/listings/:listingId/thread', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -375,8 +397,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       await deps.ensureCitizenMarketplaceTables()
 
-      const listingRows = await prisma.$queryRaw<Array<{ id: string; title: string; status: string; price_cents: number; currency: string; photo_urls: unknown; pickup_city: string | null; pickup_province: string | null; seller_user_id: string; selected_buyer_user_id: string | null }>>`
-        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, seller_user_id, selected_buyer_user_id
+      const listingRows = await prisma.$queryRaw<Array<{ id: string; title: string; status: string; price_cents: number; currency: string; photo_urls: unknown; pickup_city: string | null; pickup_province: string | null; payment_types: unknown; seller_user_id: string; selected_buyer_user_id: string | null; civil_pay_status: string | null; civil_pay_amount_cents: number | null; civil_pay_fee_cents: number | null; civil_pay_paid_at: Date | null }>>`
+        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, payment_types, seller_user_id, selected_buyer_user_id, civil_pay_status, civil_pay_amount_cents, civil_pay_fee_cents, civil_pay_paid_at
         FROM citizen_market_listing
         WHERE id = ${params.data.listingId}
         LIMIT 1
@@ -430,6 +452,11 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           photoUrl: deps.readGalleryUrls(listing.photo_urls)[0] ?? null,
           pickupCity: listing.pickup_city,
           pickupProvince: listing.pickup_province,
+          paymentTypes: deps.readStringList(listing.payment_types),
+          civilPayStatus: listing.civil_pay_status,
+          civilPayAmountCents: typeof listing.civil_pay_amount_cents === 'number' ? Number(listing.civil_pay_amount_cents) : null,
+          civilPayFeeCents: typeof listing.civil_pay_fee_cents === 'number' ? Number(listing.civil_pay_fee_cents) : null,
+          civilPayPaidAt: listing.civil_pay_paid_at ? listing.civil_pay_paid_at.toISOString() : null,
         },
         threads: formattedThreads,
         selectedBuyerUserId,
@@ -470,13 +497,18 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         pickup_address_line1: string | null
         pickup_address_line2: string | null
         pickup_postal_code: string | null
+        payment_types: unknown
         seller_user_id: string
         selected_buyer_user_id: string | null
+        civil_pay_status: string | null
+        civil_pay_amount_cents: number | null
+        civil_pay_fee_cents: number | null
+        civil_pay_paid_at: Date | null
         pickup_completed_at: Date | null
         buyer_picked_up_at: Date | null
         seller_picked_up_at: Date | null
       }>>`
-        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, seller_user_id, selected_buyer_user_id, pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
+        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, payment_types, seller_user_id, selected_buyer_user_id, civil_pay_status, civil_pay_amount_cents, civil_pay_fee_cents, civil_pay_paid_at, pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
         FROM citizen_market_listing
         WHERE id = ${thread.contextId}
         LIMIT 1
@@ -513,6 +545,11 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           photoUrl: deps.readGalleryUrls(listing.photo_urls)[0] ?? null,
           pickupCity: listing.pickup_city,
           pickupProvince: listing.pickup_province,
+          paymentTypes: deps.readStringList(listing.payment_types),
+          civilPayStatus: listing.civil_pay_status,
+          civilPayAmountCents: typeof listing.civil_pay_amount_cents === 'number' ? Number(listing.civil_pay_amount_cents) : null,
+          civilPayFeeCents: typeof listing.civil_pay_fee_cents === 'number' ? Number(listing.civil_pay_fee_cents) : null,
+          civilPayPaidAt: listing.civil_pay_paid_at ? listing.civil_pay_paid_at.toISOString() : null,
         },
         viewerIsSeller,
         viewerIsSelectedBuyer,
@@ -673,8 +710,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       await deps.ensureCitizenMarketplaceTables()
 
-      const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; is_active: boolean; moderation_status: string }>>`
-        SELECT id, seller_user_id, status, selected_buyer_user_id, is_active, moderation_status
+      const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; payment_types: unknown; is_active: boolean; moderation_status: string }>>`
+        SELECT id, seller_user_id, status, selected_buyer_user_id, payment_types, is_active, moderation_status
         FROM citizen_market_listing
         WHERE id = ${params.data.listingId}
         LIMIT 1
@@ -736,11 +773,15 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       ]
         .filter((value) => typeof value === 'string' && value.trim().length > 0)
         .join(', ')
+      const paymentTypes = deps.readStringList(listing.payment_types)
+      const civilPayLink = buildCivilPayLink(listing.id, selectedThread.id)
       const notifySelectedBody = deps
         .sanitizePlainText(
-          pickupAddressInline
-            ? `I have selected you as the buyer for this item. The pickup address is ${pickupAddressInline}. Please confirm pickup details.`
-            : 'I have selected you as the buyer for this item. Please confirm pickup details.',
+          paymentTypes.includes('civil_wallet')
+            ? `I have selected you as the buyer for this item. Please click here to complete the sale with Civil Pay: ${civilPayLink}`
+            : pickupAddressInline
+              ? `I have selected you as the buyer for this item. The pickup address is ${pickupAddressInline}. Please confirm pickup details.`
+              : 'I have selected you as the buyer for this item. Please confirm pickup details.',
         )
         .trim()
 
@@ -792,6 +833,283 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       )
 
       return reply.send({ success: true, selectedBuyerUserId: buyerId, selectedThreadId: selectedThread.id, selectedAt: now.toISOString() })
+    }),
+  )
+
+  app.post('/market/chats/item/:listingId/civil-pay/complete', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.MarketListingParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const listingRows = await prisma.$queryRaw<Array<{
+        id: string
+        title: string
+        status: string
+        price_cents: number
+        payment_types: unknown
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+        civil_pay_status: string | null
+        civil_pay_paid_at: Date | null
+      }>>`
+        SELECT id, title, status, price_cents, payment_types, seller_user_id, selected_buyer_user_id, civil_pay_status, civil_pay_paid_at
+        FROM citizen_market_listing
+        WHERE id = ${params.data.listingId}
+        LIMIT 1
+      `
+
+      const listing = listingRows[0]
+      if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
+      if (listing.selected_buyer_user_id !== userId) return reply.code(403).send({ error: 'buyer_not_selected' })
+      if (!deps.readStringList(listing.payment_types).includes('civil_wallet')) return reply.code(400).send({ error: 'civil_pay_not_enabled' })
+      if (listing.civil_pay_paid_at || listing.civil_pay_status === 'completed') return reply.code(409).send({ error: 'civil_pay_already_completed' })
+      if (String(listing.status || '').toLowerCase() !== 'pending') return reply.code(409).send({ error: 'sale_not_pending' })
+
+      const [buyer, seller, selectedThread] = await Promise.all([
+        prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+        prisma.user.findUnique({ where: { id: listing.seller_user_id }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+        prisma.messageThread.findFirst({
+          where: {
+            contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+            contextId: listing.id,
+            participants: { some: { userId } },
+            AND: [{ participants: { some: { userId: listing.seller_user_id } } }],
+          },
+          select: { id: true, participants: { select: { userId: true, mutedUntil: true } } },
+        }),
+      ])
+
+      if (!buyer || !seller) return reply.code(404).send({ error: 'user_not_found' })
+
+      const amountCents = Math.max(0, Number(listing.price_cents) || 0)
+      const feeCents = computeCivilPayFeeCents(amountCents)
+      const totalChargeCents = amountCents + feeCents
+      const buyerWallet = readWalletSummary(buyer.communityMeta)
+      const sellerWallet = readWalletSummary(seller.communityMeta)
+
+      if (!sellerWallet.enabled || !walletHasConnectPayoutsEnabled(sellerWallet)) {
+        return reply.code(400).send({ error: 'seller_wallet_not_available' })
+      }
+      if (buyerWallet.civilCreditsCents < totalChargeCents) {
+        return reply.code(400).send({
+          error: 'insufficient_wallet_balance',
+          availableCreditsCents: buyerWallet.civilCreditsCents,
+          requiredAmountCents: totalChargeCents,
+          feeCents,
+        })
+      }
+
+      const transactionId = randomUUID()
+      const eventId = randomUUID()
+      const now = new Date()
+      let createdMessage: any = null
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          const [freshBuyer, freshSeller, freshListingRows] = await Promise.all([
+            tx.user.findUnique({ where: { id: buyer.id }, select: { communityMeta: true } }),
+            tx.user.findUnique({ where: { id: seller.id }, select: { communityMeta: true } }),
+            tx.$queryRaw<Array<{ selected_buyer_user_id: string | null; civil_pay_status: string | null; civil_pay_paid_at: Date | null; status: string }>>`
+              SELECT selected_buyer_user_id, civil_pay_status, civil_pay_paid_at, status
+              FROM citizen_market_listing
+              WHERE id = ${listing.id}
+              LIMIT 1
+            `,
+          ])
+
+          if (!freshBuyer || !freshSeller) throw new Error('user_not_found')
+          const freshListing = freshListingRows[0]
+          if (!freshListing) throw new Error('listing_not_found')
+          if (freshListing.selected_buyer_user_id !== buyer.id) throw new Error('buyer_not_selected')
+          if (freshListing.civil_pay_paid_at || freshListing.civil_pay_status === 'completed') throw new Error('civil_pay_already_completed')
+          if (String(freshListing.status || '').toLowerCase() !== 'pending') throw new Error('sale_not_pending')
+
+          const freshBuyerWallet = readWalletSummary(freshBuyer.communityMeta)
+          const freshSellerWallet = readWalletSummary(freshSeller.communityMeta)
+          if (!freshSellerWallet.enabled || !walletHasConnectPayoutsEnabled(freshSellerWallet)) throw new Error('seller_wallet_not_available')
+          if (freshBuyerWallet.civilCreditsCents < totalChargeCents) throw new Error('insufficient_wallet_balance')
+
+          const buyerMeta = deps.readBaseCommunityMeta(freshBuyer.communityMeta)
+          buyerMeta.wallet = buildWalletMetaValue({
+            ...freshBuyerWallet,
+            civilCreditsCents: freshBuyerWallet.civilCreditsCents - totalChargeCents,
+          })
+
+          const sellerMeta = deps.readBaseCommunityMeta(freshSeller.communityMeta)
+          sellerMeta.wallet = buildWalletMetaValue({
+            ...freshSellerWallet,
+            civilCreditsCents: freshSellerWallet.civilCreditsCents + amountCents,
+          })
+
+          await Promise.all([
+            tx.user.update({ where: { id: buyer.id }, data: { communityMeta: buyerMeta } }),
+            tx.user.update({ where: { id: seller.id }, data: { communityMeta: sellerMeta } }),
+          ])
+
+          await tx.$executeRaw`
+            INSERT INTO citizen_wallet_transaction (
+              id,
+              kind,
+              status,
+              user_id,
+              counterparty_user_id,
+              amount_cents,
+              currency,
+              stripe_connect_account_id,
+              metadata,
+              updated_at
+            )
+            VALUES (
+              ${transactionId},
+              ${'market_civil_pay'},
+              ${'completed'},
+              ${buyer.id},
+              ${seller.id},
+              ${totalChargeCents},
+              ${'cad'},
+              ${freshSellerWallet.stripeConnect.accountId},
+              ${JSON.stringify({ kind: 'market_civil_pay', listingId: listing.id, amountCents, feeCents, buyerUserId: buyer.id, sellerUserId: seller.id })}::jsonb,
+              NOW()
+            )
+          `
+
+          await insertCivilCreditLedgerEntry(tx, {
+            id: `market-civil-pay:sale:${transactionId}`,
+            eventId,
+            entryType: 'transfer',
+            status: 'completed',
+            amountCents,
+            currency: 'cad',
+            from: {
+              entityType: 'user_wallet',
+              userId: buyer.id,
+              handle: buyer.handle ?? null,
+              name: buyer.name ?? null,
+              entityLabel: 'Civil Wallet',
+            },
+            to: {
+              entityType: 'user_wallet',
+              userId: seller.id,
+              handle: seller.handle ?? null,
+              name: seller.name ?? null,
+              entityLabel: 'Civil Wallet',
+            },
+            sourceType: 'market_civil_pay_sale',
+            sourceReferenceId: `${transactionId}:sale`,
+            stripeConnectAccountId: freshSellerWallet.stripeConnect.accountId,
+            description: `Civil Pay purchase for ${listing.title}`,
+            metadata: { kind: 'market_civil_pay_sale', listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id },
+          })
+
+          await insertCivilCreditLedgerEntry(tx, {
+            id: `market-civil-pay:fee:${transactionId}`,
+            eventId,
+            entryType: 'transfer',
+            status: 'completed',
+            amountCents: feeCents,
+            currency: 'cad',
+            from: {
+              entityType: 'user_wallet',
+              userId: buyer.id,
+              handle: buyer.handle ?? null,
+              name: buyer.name ?? null,
+              entityLabel: 'Civil Wallet',
+            },
+            to: {
+              entityType: 'platform_wallet',
+              userId: null,
+              handle: CIVIL_LEDGER_ACCOUNT_ID,
+              name: 'Civil',
+              entityLabel: 'CIVIL',
+            },
+            sourceType: 'market_civil_pay_fee',
+            sourceReferenceId: `${transactionId}:fee`,
+            description: `Civil Pay fee for ${listing.title}`,
+            metadata: { kind: 'market_civil_pay_fee', listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id, platformAccountId: CIVIL_LEDGER_ACCOUNT_ID },
+          })
+
+          const updatedRows = await tx.$queryRaw<Array<{ id: string }>>`
+            UPDATE citizen_market_listing
+            SET civil_pay_status = ${'completed'},
+                civil_pay_transaction_id = ${transactionId},
+                civil_pay_paid_by_user_id = ${buyer.id},
+                civil_pay_amount_cents = ${amountCents},
+                civil_pay_fee_cents = ${feeCents},
+                civil_pay_paid_at = ${now},
+                updated_at = NOW()
+            WHERE id = ${listing.id}
+              AND selected_buyer_user_id = ${buyer.id}
+              AND civil_pay_paid_at IS NULL
+            RETURNING id
+          `
+          if (!updatedRows[0]) throw new Error('civil_pay_already_completed')
+
+          if (selectedThread) {
+            const body = deps
+              .sanitizePlainText(`Civil Pay completed for ${listing.title}. Seller received $${(amountCents / 100).toFixed(2)} and Civil collected $${(feeCents / 100).toFixed(2)} in fees.`)
+              .trim()
+            createdMessage = await tx.message.create({
+              data: {
+                threadId: selectedThread.id,
+                senderId: buyer.id,
+                body: body || null,
+                messageType: MessageType.text,
+              },
+              select: deps.MESSAGE_SELECT,
+            })
+
+            await tx.messageThread.update({ where: { id: selectedThread.id }, data: { lastMessageAt: createdMessage.createdAt } })
+            await tx.messageParticipant.update({
+              where: { threadId_userId: { threadId: selectedThread.id, userId: buyer.id } },
+              data: { lastReadAt: createdMessage.createdAt, lastActivityAt: createdMessage.createdAt },
+            })
+            await tx.messageParticipant.updateMany({
+              where: { threadId: selectedThread.id, userId: { not: buyer.id } },
+              data: { lastActivityAt: createdMessage.createdAt },
+            })
+          }
+        })
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message === 'insufficient_wallet_balance') {
+            return reply.code(400).send({ error: 'insufficient_wallet_balance', availableCreditsCents: buyerWallet.civilCreditsCents, requiredAmountCents: totalChargeCents, feeCents })
+          }
+          if (error.message === 'buyer_not_selected') return reply.code(403).send({ error: 'buyer_not_selected' })
+          if (error.message === 'civil_pay_already_completed') return reply.code(409).send({ error: 'civil_pay_already_completed' })
+          if (error.message === 'sale_not_pending') return reply.code(409).send({ error: 'sale_not_pending' })
+          if (error.message === 'seller_wallet_not_available') return reply.code(400).send({ error: 'seller_wallet_not_available' })
+        }
+        req.log.error({ err: error, listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id }, 'market_civil_pay_complete_failed')
+        return reply.code(400).send({ error: 'civil_pay_failed' })
+      }
+
+      if (selectedThread && createdMessage) {
+        await Promise.all(
+          selectedThread.participants.map((participant: { userId: string }) =>
+            deps.dispatchRealtimeEvent(participant.userId, {
+              type: 'message.created',
+              data: { threadId: selectedThread.id, message: deps.formatMessage(createdMessage, participant.userId) },
+            }),
+          ),
+        )
+      }
+
+      const updated = await prisma.user.findUnique({ where: { id: buyer.id }, select: { communityMeta: true } })
+      const updatedWallet = readWalletSummary(updated?.communityMeta ?? null)
+
+      return reply.send({
+        success: true,
+        transactionId,
+        amountCents,
+        feeCents,
+        totalChargeCents,
+        remainingCreditsCents: updatedWallet.civilCreditsCents,
+      })
     }),
   )
 

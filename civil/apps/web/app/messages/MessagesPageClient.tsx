@@ -152,6 +152,11 @@ type MarketListingHeaderSummary = {
   photoUrl: string | null
   pickupCity?: string | null
   pickupProvince?: string | null
+  paymentTypes?: string[]
+  civilPayStatus?: string | null
+  civilPayAmountCents?: number | null
+  civilPayFeeCents?: number | null
+  civilPayPaidAt?: string | null
 }
 
 type MarketThreadContext = {
@@ -353,6 +358,10 @@ function formatMarketListingStatus(status?: string | null) {
   if (normalized === 'sold') return 'Sold'
   if (normalized === 'canceled') return 'Canceled'
   return normalized.charAt(0).toUpperCase() + normalized.slice(1).replace(/_/g, ' ')
+}
+
+function supportsCivilPay(paymentTypes: string[] | null | undefined) {
+  return Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')
 }
 
 const getThreadTitle = (thread: ThreadSummary) => {
@@ -2675,7 +2684,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     }
     return `/market/listings/${encodeURIComponent(marketThreadContext.listing.id)}`
   }, [marketThreadContext])
+  const activeMarketCivilPayHref = useMemo(() => {
+    if (!marketThreadContext?.listing?.id || !activeThread) return null
+    return `/market/listings/${encodeURIComponent(marketThreadContext.listing.id)}/civil-pay?thread=${encodeURIComponent(activeThread.id)}`
+  }, [activeThread, marketThreadContext])
   const activeMarketListingStatus = (marketThreadContext?.listing.status || '').trim().toLowerCase()
+  const activeMarketSupportsCivilPay = supportsCivilPay(marketThreadContext?.listing?.paymentTypes)
   const activeMarketThreadIsSelectedBuyer = Boolean(
     activeThread && marketThreadContext?.selectedThreadId && marketThreadContext.selectedThreadId === activeThread.id,
   )
@@ -2706,6 +2720,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       (marketThreadContext?.viewerIsSelectedBuyer && !marketThreadContext?.buyerPickedUpAt)) &&
       activeMarketThreadIsSelectedBuyer &&
       activeMarketListingStatus === 'pending',
+  )
+  const canCompleteActiveMarketCivilPay = Boolean(
+    marketThreadContext?.viewerIsSelectedBuyer &&
+      activeMarketThreadIsSelectedBuyer &&
+      activeMarketSupportsCivilPay &&
+      activeMarketListingStatus === 'pending' &&
+      marketThreadContext?.listing?.civilPayStatus !== 'completed' &&
+      activeMarketCivilPayHref,
   )
   const activeMarketPickupDirectionsHref = useMemo(() => {
     if (!marketThreadContext?.pickupAddress) return null
@@ -3945,14 +3967,26 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                             {formatMoney(marketThreadContext.listing.priceCents, marketThreadContext.listing.currency)} •{' '}
                             {formatPickupLocation(marketThreadContext.listing.pickupCity, marketThreadContext.listing.pickupProvince)}
                           </p>
-                          <div className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
-                            {marketThreadContext.viewerIsSeller ? 'Open listing management' : 'Open listing'}
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <div className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                              {marketThreadContext.viewerIsSeller ? 'Open listing management' : 'Open listing'}
+                            </div>
+                            {activeMarketSupportsCivilPay ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 shadow-sm">Civil Pay</span> : null}
+                            {marketThreadContext.listing.civilPayStatus === 'completed' ? <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-700 shadow-sm">Paid</span> : null}
                           </div>
                         </div>
                       </div>
                     </Link>
                     <div className="rounded-[20px] border border-slate-200 bg-white/90 p-2.5 shadow-sm xl:w-[420px] xl:self-center">
                       <div className="flex flex-wrap items-center gap-2">
+                      {canCompleteActiveMarketCivilPay && activeMarketCivilPayHref ? (
+                        <Link
+                          href={activeMarketCivilPayHref}
+                          className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                        >
+                          Complete Civil Pay
+                        </Link>
+                      ) : null}
                       {canSelectActiveMarketBuyer ? (
                         <button
                           type="button"

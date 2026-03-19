@@ -11,36 +11,13 @@ import ContentModerationMenu from '../../../_components/ContentModerationMenu'
 import DashboardShell from '../../../_components/DashboardShell'
 import SharePostModal from '../../../_components/SharePostModal'
 import ShareSendModal from '../../../_components/ShareSendModal'
-import { AddressDirectionsMap } from '../../../_components/map/AddressDirectionsMap'
+import ApproximatePickupMap from '../../../_components/map/ApproximatePickupMap'
 import { pushToast } from '../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../_lib/authModal'
 import { buildApiUrl } from '../../../_lib/api'
-import { calculateDistanceKm, fetchDrivingRoute } from '../../../_lib/addressSearch'
-import { type MeResponse } from '../../../_lib/me'
-import { normalizePostalCodeForLookup, readStoredPostalCode } from '../../../_lib/postalRequirement'
 import { type ShareTarget } from '../../../_lib/shareTarget'
 import { getStoredToken } from '../../../_lib/tokenStorage'
-import { useViewerStore } from '../../../_lib/viewerStore'
 import MarketRightRail from '../../_components/MarketRightRail'
-
-type MapPoint = {
-  latitude: number
-  longitude: number
-  label: string
-}
-
-type ProfileAddressResponse = {
-  user?: {
-    billingPostalCode?: string | null
-  }
-}
-
-type PostalLookupResponse = {
-  fsa?: {
-    centroidLat?: number | null
-    centroidLng?: number | null
-  } | null
-}
 
 type ListingDetailResponse = {
   listing?: {
@@ -58,6 +35,7 @@ type ListingDetailResponse = {
     foodExpiryDate?: string | null
     pickupCity: string | null
     pickupProvince: string | null
+    paymentTypes?: string[]
     status?: string | null
     approximatePickup?: {
       latitude: number
@@ -125,40 +103,26 @@ function formatStorageMethod(value: 'refrigerated' | 'frozen' | null | undefined
   return null
 }
 
-async function resolvePostalPoint(postalCode: string, token: string, label: string): Promise<MapPoint | null> {
-  const res = await fetch(buildApiUrl('/communities/postal-lookup'), {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ postalCode }),
-  })
-  if (!res.ok) return null
-  const payload = (await res.json().catch(() => null)) as PostalLookupResponse | null
-  const latitude = payload?.fsa?.centroidLat
-  const longitude = payload?.fsa?.centroidLng
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null
-  return {
-    latitude: Number(latitude),
-    longitude: Number(longitude),
-    label,
-  }
+function supportsCivilPay(paymentTypes: string[] | null | undefined) {
+  return Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')
+}
+
+function getPaymentMethodLabels(paymentTypes: string[] | null | undefined) {
+  const labels: string[] = []
+  if (Array.isArray(paymentTypes) && paymentTypes.includes('cash_pickup')) labels.push('Cash')
+  if (Array.isArray(paymentTypes) && paymentTypes.includes('etransfer')) labels.push('eTransfer')
+  if (Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')) labels.push('Civil Pay')
+  return labels
 }
 
 export default function MarketListingDetailPageClient({ listingId }: { listingId: string }) {
   const router = useRouter()
-  const me = useViewerStore((state) => state.me)
   const [listing, setListing] = useState<ListingDetailResponse['listing'] | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
   const [sendingMessage, setSendingMessage] = useState(false)
   const [repostModalOpen, setRepostModalOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [galleryIndex, setGalleryIndex] = useState<number | null>(null)
-  const [travelOrigin, setTravelOrigin] = useState<MapPoint | null>(null)
-  const [routeCoordinates, setRouteCoordinates] = useState<Array<[number, number]> | null>(null)
-  const [travelDistanceKm, setTravelDistanceKm] = useState<number | null>(null)
-  const [travelStatus, setTravelStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [nearbyListings, setNearbyListings] = useState<NearbyListing[]>([])
   const [nearbyStatus, setNearbyStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
@@ -291,130 +255,7 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
   )
 
   useEffect(() => {
-    const approximatePickup = listing?.approximatePickup
-    if (!approximatePickup) {
-      setTravelOrigin(null)
-      setTravelDistanceKm(null)
-      setRouteCoordinates(null)
-      setTravelStatus('idle')
-      return
-    }
-
-    let cancelled = false
-
-    const resolveCurrentLocation = async () => {
-      if (typeof navigator === 'undefined' || !navigator.geolocation) return null
-      if ('permissions' in navigator && navigator.permissions?.query) {
-        try {
-          const permission = await navigator.permissions.query({ name: 'geolocation' as PermissionName })
-          if (permission.state !== 'granted') return null
-        } catch {
-          return null
-        }
-      } else {
-        return null
-      }
-
-      return await new Promise<MapPoint | null>((resolve) => {
-        navigator.geolocation.getCurrentPosition(
-          (position) =>
-            resolve({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              label: 'Current location',
-            }),
-          () => resolve(null),
-          { enableHighAccuracy: true, maximumAge: 120000, timeout: 8000 },
-        )
-      })
-    }
-
-    const resolveHomeArea = async (viewer: MeResponse | null, token: string | null) => {
-      if (!token) return null
-      const storedPostal = normalizePostalCodeForLookup(readStoredPostalCode(viewer?.id))
-      if (storedPostal) {
-        const storedPoint = await resolvePostalPoint(storedPostal, token, 'Home area')
-        if (storedPoint) return storedPoint
-      }
-
-      const profileRes = await fetch(buildApiUrl('/profile'), {
-        headers: {
-          authorization: `Bearer ${token}`,
-        },
-        cache: 'no-store',
-      })
-      if (!profileRes.ok) return null
-      const profile = (await profileRes.json().catch(() => null)) as ProfileAddressResponse | null
-      const billingPostal = normalizePostalCodeForLookup(profile?.user?.billingPostalCode)
-      if (!billingPostal) return null
-      return await resolvePostalPoint(billingPostal, token, 'Home area')
-    }
-
-    void (async () => {
-      setTravelStatus('loading')
-      setTravelOrigin(null)
-      setTravelDistanceKm(null)
-      setRouteCoordinates(null)
-
-      const token = getStoredToken()
-      const currentLocation = await resolveCurrentLocation()
-      if (cancelled) return
-      if (currentLocation) {
-        setTravelOrigin(currentLocation)
-        return
-      }
-
-      const homeArea = await resolveHomeArea(me, token)
-      if (cancelled) return
-      if (homeArea) {
-        setTravelOrigin(homeArea)
-        return
-      }
-
-      setTravelStatus('error')
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [listing?.approximatePickup, me])
-
-  useEffect(() => {
-    const approximatePickup = listing?.approximatePickup
-    if (!travelOrigin || !approximatePickup) {
-      setRouteCoordinates(null)
-      setTravelDistanceKm(null)
-      return
-    }
-
-    const controller = new AbortController()
-    const fallbackDistanceKm = calculateDistanceKm(
-      { latitude: travelOrigin.latitude, longitude: travelOrigin.longitude },
-      { latitude: approximatePickup.latitude, longitude: approximatePickup.longitude },
-    )
-
-    setTravelDistanceKm(fallbackDistanceKm)
-    setTravelStatus('ready')
-
-    void fetchDrivingRoute(
-      { latitude: travelOrigin.latitude, longitude: travelOrigin.longitude },
-      { latitude: approximatePickup.latitude, longitude: approximatePickup.longitude },
-      controller.signal,
-    )
-      .then((route) => {
-        if (!route) return
-        setRouteCoordinates(route.geometry)
-        setTravelDistanceKm(route.distanceMeters / 1000)
-      })
-      .catch((error) => {
-        if ((error as Error).name === 'AbortError') return
-      })
-
-    return () => controller.abort()
-  }, [listing?.approximatePickup, travelOrigin])
-
-  useEffect(() => {
-    if (!listing || !travelOrigin) {
+    if (!listing?.id || !listing.approximatePickup) {
       setNearbyListings([])
       setNearbyStatus('ready')
       return
@@ -427,8 +268,8 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
       setNearbyStatus('loading')
       try {
         const params = new URLSearchParams({
-          lat: String(travelOrigin.latitude),
-          lng: String(travelOrigin.longitude),
+          lat: String(listing.approximatePickup.latitude),
+          lng: String(listing.approximatePickup.longitude),
           limit: '6',
         })
         const res = await fetch(buildApiUrl(`/market/listings/public/${encodeURIComponent(listing.id)}/nearby?${params.toString()}`), {
@@ -456,9 +297,10 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
       cancelled = true
       controller.abort()
     }
-  }, [listing, travelOrigin])
+  }, [listing])
 
   const priceLabel = useMemo(() => formatMoney(listing?.priceCents ?? 0, listing?.currency ?? 'CAD'), [listing?.currency, listing?.priceCents])
+  const paymentMethodLabels = useMemo(() => getPaymentMethodLabels(listing?.paymentTypes), [listing?.paymentTypes])
   const isSoldListing = listing?.status === 'sold'
   const galleryPhotos = listing?.photoUrls ?? []
   const activeGalleryPhoto = galleryIndex !== null ? galleryPhotos[galleryIndex] ?? null : null
@@ -512,7 +354,26 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
             <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-4 sm:p-6">
               <div className="space-y-3">
                 {listing.photoUrls?.[0] ? (
-                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                    {listing.seller ? (
+                      <div className="absolute right-3 top-3 z-10">
+                        <ContentModerationMenu
+                          reportTarget={{
+                            targetType: 'MARKET_LISTING',
+                            targetId: listing.id,
+                            targetLabel: listing.title,
+                          }}
+                          blockTarget={{
+                            type: 'user',
+                            id: listing.seller.id,
+                            label: listing.seller.name || (listing.seller.handle ? `@${listing.seller.handle}` : 'Seller'),
+                          }}
+                          buttonClassName="border-white/70 bg-slate-950/72 text-white shadow-lg ring-1 ring-black/10 backdrop-blur-md hover:border-white hover:bg-slate-950/84"
+                          onReported={() => router.push('/market')}
+                          onBlocked={() => router.push('/market')}
+                        />
+                      </div>
+                    ) : null}
                     <img src={listing.photoUrls[0]} alt={listing.title} className="aspect-[16/10] w-full object-cover" loading="lazy" />
                   </div>
                 ) : null}
@@ -537,6 +398,22 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                 </div>
 
                 {listing.description ? <div className="prose prose-slate max-w-none text-base" dangerouslySetInnerHTML={{ __html: listing.description }} /> : null}
+
+                {paymentMethodLabels.length ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">Ways to Pay</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {paymentMethodLabels.map((label) => (
+                        <span
+                          key={label}
+                          className={label === 'Civil Pay' ? 'rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700' : 'rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700'}
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {hasFoodSafetyDetails ? (
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -567,6 +444,7 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
           ) : (
           <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="space-y-3">
+              <div className="relative">
               <button
                 type="button"
                 onClick={() => {
@@ -576,6 +454,26 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
               >
                 {listing.photoUrls?.[0] ? <img src={listing.photoUrls[0]} alt={listing.title} className="aspect-[16/10] w-full object-cover" loading="lazy" /> : null}
               </button>
+              {listing.seller ? (
+                <div className="absolute right-3 top-3 z-10">
+                  <ContentModerationMenu
+                    reportTarget={{
+                      targetType: 'MARKET_LISTING',
+                      targetId: listing.id,
+                      targetLabel: listing.title,
+                    }}
+                    blockTarget={{
+                      type: 'user',
+                      id: listing.seller.id,
+                      label: listing.seller.name || (listing.seller.handle ? `@${listing.seller.handle}` : 'Seller'),
+                    }}
+                    buttonClassName="border-white/70 bg-slate-950/72 text-white shadow-lg ring-1 ring-black/10 backdrop-blur-md hover:border-white hover:bg-slate-950/84"
+                    onReported={() => router.push('/market')}
+                    onBlocked={() => router.push('/market')}
+                  />
+                </div>
+              ) : null}
+              </div>
 
               {galleryPhotos.length > 1 ? (
                 <ul className="grid grid-cols-4 gap-2 sm:grid-cols-5 md:grid-cols-6">
@@ -619,29 +517,26 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                   </button>
                 </div>
               </div>
-              <div className="flex items-start gap-2">
-                {listing.seller ? (
-                  <ContentModerationMenu
-                    reportTarget={{
-                      targetType: 'MARKET_LISTING',
-                      targetId: listing.id,
-                      targetLabel: listing.title,
-                    }}
-                    blockTarget={{
-                      type: 'user',
-                      id: listing.seller.id,
-                      label: listing.seller.name || (listing.seller.handle ? `@${listing.seller.handle}` : 'Seller'),
-                    }}
-                    buttonClassName="border-slate-200 bg-white text-slate-700 shadow-none backdrop-blur-0 hover:bg-slate-50 hover:text-slate-900"
-                    onReported={() => router.push('/market')}
-                    onBlocked={() => router.push('/market')}
-                  />
-                ) : null}
-                <div className="text-lg font-semibold text-slate-900">{priceLabel}</div>
-              </div>
+              <div className="text-lg font-semibold text-slate-900">{priceLabel}</div>
             </div>
 
             {listing.description ? <div className="prose prose-slate max-w-none text-base" dangerouslySetInnerHTML={{ __html: listing.description }} /> : null}
+
+            {paymentMethodLabels.length ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-900">Ways to Pay</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {paymentMethodLabels.map((label) => (
+                    <span
+                      key={label}
+                      className={label === 'Civil Pay' ? 'rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700' : 'rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700'}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {hasFoodSafetyDetails ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -678,23 +573,6 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                 avatarInitials={listing.seller.handle || listing.seller.name || 'C'}
                 avatarSrc={listing.seller.avatarUrl || undefined}
                 coverUrl={listing.seller.coverUrl}
-                trailing={
-                  <ContentModerationMenu
-                    reportTarget={{
-                      targetType: 'MARKET_LISTING',
-                      targetId: listing.id,
-                      targetLabel: listing.title,
-                    }}
-                    blockTarget={{
-                      type: 'user',
-                      id: listing.seller.id,
-                      label: listing.seller.name || (listing.seller.handle ? `@${listing.seller.handle}` : 'Seller'),
-                    }}
-                    buttonClassName="border-white/20 bg-white/10 text-white shadow-none backdrop-blur-sm hover:bg-white/20 hover:text-white"
-                    onReported={() => router.push('/market')}
-                    onBlocked={() => router.push('/market')}
-                  />
-                }
               />
             ) : null}
 
@@ -722,23 +600,15 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
               {listing.approximatePickup ? (
                 <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                   <div className="space-y-1">
-                    {travelDistanceKm !== null ? (
-                      <p className="text-sm font-semibold text-slate-900">This item is {formatDistanceKm(travelDistanceKm)} away from you</p>
-                    ) : travelStatus === 'loading' ? (
-                      <p className="text-sm font-semibold text-slate-900">Calculating approximate distance…</p>
-                    ) : (
-                      <p className="text-sm font-semibold text-slate-900">Approximate pickup area</p>
-                    )}
-                    <p className="text-xs text-slate-500">{travelOrigin ? `Using ${travelOrigin.label.toLowerCase()} to estimate travel distance.` : 'Using the seller postal area to show an approximate pickup zone.'}</p>
+                    <p className="text-sm font-semibold text-slate-900">Approximate pickup area</p>
+                    <p className="text-xs text-slate-500">Using the seller postal area to show an approximate pickup zone.</p>
                   </div>
 
-                  {travelOrigin ? (
-                    <AddressDirectionsMap
-                      origin={travelOrigin}
-                      destination={listing.approximatePickup}
-                      routeCoordinates={routeCoordinates}
-                    />
-                  ) : null}
+                  <ApproximatePickupMap location={listing.approximatePickup} />
+
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-700">
+                    {listing.approximatePickup.label}
+                  </div>
 
                   <p className="text-xs font-medium text-slate-600">Full address is shared when you have been selected as a buyer.</p>
                 </div>
@@ -752,7 +622,7 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
           <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="space-y-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Other listings near you</h2>
+                <h2 className="text-lg font-semibold text-slate-900">Other listings nearby</h2>
               </div>
 
               {nearbyStatus === 'loading' ? <div className="text-sm text-slate-600">Loading nearby listings…</div> : null}

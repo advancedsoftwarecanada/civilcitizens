@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { MessageType, Prisma } from '@prisma/client'
 import { normalizePostalCodeInput } from '../communityGeo.js'
+import { readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type MarketListingDeps = Record<string, any>
 
@@ -17,6 +18,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
 
       const userScopeFollows = await deps.readViewerCommunityFollows(userId)
       const listingScope = userScopeFollows[0] ?? null
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+      const wallet = readWalletSummary(user?.communityMeta ?? null)
+      const defaultPaymentTypes = wallet.enabled && walletHasConnectPayoutsEnabled(wallet) ? ['cash_pickup', 'civil_wallet'] : ['cash_pickup']
 
       const listingId = randomUUID()
       await prisma.$executeRaw`
@@ -48,7 +52,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           ${JSON.stringify([])}::jsonb,
           ${listingScope?.provinceCode ?? null},
           ${listingScope?.communitySlug ?? null},
-          ${JSON.stringify(['cash_pickup'])}::jsonb,
+          ${JSON.stringify(defaultPaymentTypes)}::jsonb,
           ${false},
           ${JSON.stringify({})}::jsonb,
           ${'draft'},
@@ -584,7 +588,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
         if (!user) return reply.code(401).send({ error: 'unauthorized' })
 
-        const wallet = deps.parseCommunityMeta(user.communityMeta ?? null)?.wallet
+        const wallet = readWalletSummary(user.communityMeta ?? null)
         const walletEmail = wallet?.eTransferEmail?.trim()?.toLowerCase() ?? null
         const walletEnabled = wallet?.enabled == null ? Boolean(walletEmail) : Boolean(wallet.enabled)
         const walletMarketSharing = wallet?.sharing?.market == null ? Boolean(walletEmail) : Boolean(wallet.sharing.market)
@@ -593,6 +597,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         }
         if (nextPaymentTypes.includes('etransfer') && (!walletEnabled || !walletMarketSharing)) {
           return reply.code(400).send({ error: 'wallet_etransfer_required' })
+        }
+        if (nextPaymentTypes.includes('civil_wallet') && (!wallet.enabled || !walletHasConnectPayoutsEnabled(wallet))) {
+          return reply.code(400).send({ error: 'wallet_civil_pay_required' })
         }
         nextETransferEmail = nextPaymentTypes.includes('etransfer') ? walletEmail : null
       }
