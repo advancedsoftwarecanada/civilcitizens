@@ -483,6 +483,17 @@ html.cc-launch-pending #cc-app-root {
   font-family: inherit;
 }
 
+.cc-rich-text-editor + .note-editor,
+.cc-rich-text-editor + .note-editor .note-toolbar,
+.cc-rich-text-editor + .note-editor .note-editing-area,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable,
+.cc-rich-text-editor + .note-editor .note-placeholder,
+.cc-rich-text-editor + .note-editor .note-toolbar button,
+.cc-rich-text-editor + .note-editor .dropdown-menu,
+.cc-rich-text-editor + .note-editor .dropdown-menu * {
+  font-family: inherit;
+}
+
 .cc-article-rich-content > div,
 .cc-article-rich-content p,
 .cc-article-rich-content li,

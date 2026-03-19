@@ -11,7 +11,7 @@ import { buildApiUrl } from '../../../_lib/api'
 import { fetchAddressSearchResults } from '../../../_lib/addressSearch'
 import { normalizeCanadianPostalCode, normalizeCanadianProvince, type SavedShippingAddress } from '../../../_lib/canadianAddresses'
 import MarketRightRail from '../../_components/MarketRightRail'
-import { getMarketListingCategory, getMarketListingSection, MARKET_LISTING_SECTIONS } from '../../_lib/listingCategories'
+import { getMarketListingCategory, getMarketListingSection, getMarketListingSubcategory, MARKET_LISTING_SECTIONS } from '../../_lib/listingCategories'
 
 type ListingDetail = {
   id: string
@@ -25,6 +25,7 @@ type ListingDetail = {
   listingSection?: string | null
   listingCategory?: string | null
   listingSubcategory?: string | null
+  listingDetail?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupAddressLine1: string | null
@@ -87,6 +88,7 @@ type DraftForm = {
   listingSection: string
   listingCategory: string
   listingSubcategory: string
+  listingDetail: string
   pickupCity: string
   pickupProvince: string
   pickupAddressLine1: string
@@ -119,6 +121,7 @@ const EMPTY_FORM: DraftForm = {
   listingSection: '',
   listingCategory: '',
   listingSubcategory: '',
+  listingDetail: '',
   pickupCity: '',
   pickupProvince: '',
   pickupAddressLine1: '',
@@ -347,6 +350,7 @@ export default function MarketNewListingPageClient() {
       listingSection: listing.listingSection ?? '',
       listingCategory: listing.listingCategory ?? '',
       listingSubcategory: listing.listingSubcategory ?? '',
+      listingDetail: listing.listingDetail ?? '',
       pickupCity: listing.pickupCity ?? '',
       pickupProvince: listing.pickupProvince ?? '',
       pickupAddressLine1: listing.pickupAddressLine1 ?? '',
@@ -400,6 +404,7 @@ export default function MarketNewListingPageClient() {
       : `This ${statusLabelText.toLowerCase()} listing is available here for reference only.`
     : 'Create a marketplace listing for your community.'
   const initializingText = listingParam?.trim() ? 'Loading listing…' : 'Preparing listing draft…'
+  const editorCardClassName = 'rounded-3xl border border-slate-200 bg-white p-4 sm:p-5'
 
   const loadCommunityOptions = useCallback(async () => {
     try {
@@ -611,6 +616,26 @@ export default function MarketNewListingPageClient() {
     () => getMarketListingCategory(form.listingSection, form.listingCategory),
     [form.listingCategory, form.listingSection],
   )
+  const selectedListingSubcategory = useMemo(
+    () => getMarketListingSubcategory(form.listingSection, form.listingCategory, form.listingSubcategory),
+    [form.listingCategory, form.listingSection, form.listingSubcategory],
+  )
+  const selectedListingDetails = selectedListingSubcategory?.details ?? []
+  const requiresListingDetail = selectedListingDetails.length > 0
+
+  useEffect(() => {
+    if (requiresListingDetail) {
+      const hasMatchingDetail = selectedListingDetails.some((detail) => detail.label === form.listingDetail)
+      if (!hasMatchingDetail && form.listingDetail) {
+        setForm((prev) => ({ ...prev, listingDetail: '' }))
+      }
+      return
+    }
+
+    if (form.listingDetail) {
+      setForm((prev) => ({ ...prev, listingDetail: '' }))
+    }
+  }, [form.listingDetail, requiresListingDetail, selectedListingDetails])
 
   const addressMapQuery = useMemo(() => {
     const line1 = form.pickupAddressLine1.trim()
@@ -912,6 +937,10 @@ export default function MarketNewListingPageClient() {
           pushToast('Choose a listing type before publishing.', 'error')
           return
         }
+        if (requiresListingDetail && !form.listingDetail.trim()) {
+          pushToast('Choose the final listing type before publishing.', 'error')
+          return
+        }
         if (form.willingToDeliver) {
           const hasDeliveryRange = Object.values(form.deliverySelection).some(Boolean)
           if (!hasDeliveryRange) {
@@ -947,6 +976,7 @@ export default function MarketNewListingPageClient() {
             listingSection: form.listingSection.trim() || null,
             listingCategory: form.listingCategory.trim() || null,
             listingSubcategory: form.listingSubcategory.trim() || null,
+            listingDetail: requiresListingDetail ? form.listingDetail.trim() || null : null,
             pickupCity: form.pickupCity.trim() || null,
             pickupProvince: form.pickupProvince.trim() || null,
             pickupAddressLine1: form.pickupAddressLine1.trim() || null,
@@ -1070,155 +1100,11 @@ export default function MarketNewListingPageClient() {
         {initializing ? <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">{initializingText}</div> : null}
 
         {!initializing ? (
-          <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
-            <fieldset disabled={!canEditActiveDraftListing} className={`space-y-5 ${canEditActiveDraftListing ? '' : 'opacity-80'}`}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Title</span>
-                <input
-                  value={form.title}
-                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
-                  placeholder="What are you selling?"
-                  maxLength={140}
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price (CAD)</span>
-                <input
-                  value={form.price}
-                  onChange={(event) => setForm((prev) => ({ ...prev, price: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
-                  placeholder="0.00"
-                />
-              </label>
-            </div>
-
+          <>
+          <fieldset disabled={!canEditActiveDraftListing} className={`space-y-5 ${canEditActiveDraftListing ? '' : 'opacity-80'}`}>
+            <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Listing type</p>
-              <p className="mt-1 text-xs text-slate-600">Use section, category, and subcategory so buyers can understand what kind of listing this is.</p>
-              <div className="mt-3 grid gap-4 sm:grid-cols-3">
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
-                  <select
-                    value={form.listingSection}
-                    onChange={(event) => {
-                      const nextSection = event.target.value
-                      setForm((prev) => ({
-                        ...prev,
-                        listingSection: nextSection,
-                        listingCategory: '',
-                        listingSubcategory: '',
-                      }))
-                    }}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                  >
-                    <option value="">Select section…</option>
-                    {MARKET_LISTING_SECTIONS.map((section) => (
-                      <option key={section.label} value={section.label}>
-                        {section.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</span>
-                  <select
-                    value={form.listingCategory}
-                    onChange={(event) => {
-                      const nextCategory = event.target.value
-                      setForm((prev) => ({
-                        ...prev,
-                        listingCategory: nextCategory,
-                        listingSubcategory: '',
-                      }))
-                    }}
-                    disabled={!selectedListingSection}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">Select category…</option>
-                    {(selectedListingSection?.categories ?? []).map((category) => (
-                      <option key={category.label} value={category.label}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</span>
-                  <select
-                    value={form.listingSubcategory}
-                    onChange={(event) => setForm((prev) => ({ ...prev, listingSubcategory: event.target.value }))}
-                    disabled={!selectedListingCategory}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
-                  >
-                    <option value="">Select subcategory…</option>
-                    {(selectedListingCategory?.subcategories ?? []).map((subcategory) => (
-                      <option key={subcategory.label} value={subcategory.label}>
-                        {subcategory.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <label className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
-              <div className="rounded-xl border border-slate-200 bg-white p-2">
-                <RichTextEditor
-                  value={form.description}
-                  onChange={(value) => setForm((prev) => ({ ...prev, description: value }))}
-                  placeholder="Condition, details, pickup expectations, and anything buyers should know."
-                  minHeight={200}
-                  disabled={saving || initializing || !canEditActiveDraftListing}
-                />
-              </div>
-              <p className={`text-xs ${descriptionTooLong ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>
-                {descriptionPlainText.length.toLocaleString()} / {MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters
-              </p>
-            </label>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Community</p>
-              <p className="mt-1 text-xs text-slate-600">Choose the community this listing belongs to.</p>
-              <label className="mt-3 block space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">List in community</span>
-                <select
-                  value={form.listingProvinceCode && form.listingCommunitySlug ? `${form.listingProvinceCode}|${form.listingCommunitySlug}` : ''}
-                  onChange={(event) => {
-                    const value = event.target.value
-                    if (!value) {
-                      setForm((prev) => ({ ...prev, listingProvinceCode: '', listingCommunitySlug: '' }))
-                      return
-                    }
-                    const [provinceCode, communitySlug] = value.split('|')
-                    setForm((prev) => ({
-                      ...prev,
-                      listingProvinceCode: provinceCode ?? '',
-                      listingCommunitySlug: communitySlug ?? '',
-                    }))
-                  }}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
-                >
-                  <option value="">Select community…</option>
-                  {communityOptions.map((option) => (
-                    <option key={`${option.provinceCode}|${option.communitySlug}`} value={`${option.provinceCode}|${option.communitySlug}`}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {!communityOptions.length ? (
-                <p className="mt-2 text-xs text-amber-700">Follow or set a home community first to publish listings into market feed scope.</p>
-              ) : null}
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Photos</p>
+              <p className="text-sm font-semibold text-slate-900">Add photos</p>
               <p className="mt-1 text-xs text-slate-600">Upload up to 12 photos.</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100">
@@ -1257,7 +1143,187 @@ export default function MarketNewListingPageClient() {
                 </ul>
               ) : null}
             </div>
+            </section>
 
+            <section className={editorCardClassName}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Title</span>
+                <input
+                  value={form.title}
+                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
+                  placeholder="What are you selling?"
+                  maxLength={140}
+                />
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price (CAD)</span>
+                <input
+                  value={form.price}
+                  onChange={(event) => setForm((prev) => ({ ...prev, price: event.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
+                  placeholder="0.00"
+                />
+              </label>
+            </div>
+            </section>
+
+            <section className={editorCardClassName}>
+            <label className="space-y-1.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
+              <div className="rounded-xl border border-slate-200 bg-white p-2">
+                <RichTextEditor
+                  value={form.description}
+                  onChange={(value) => setForm((prev) => ({ ...prev, description: value }))}
+                  placeholder="Condition, details, pickup expectations, and anything buyers should know."
+                  minHeight={200}
+                  disabled={saving || initializing || !canEditActiveDraftListing}
+                />
+              </div>
+              <p className={`text-xs ${descriptionTooLong ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>
+                {descriptionPlainText.length.toLocaleString()} / {MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters
+              </p>
+            </label>
+            </section>
+
+            <section className={editorCardClassName}>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Listing type</p>
+              <p className="mt-1 text-xs text-slate-600">Use the exact marketplace path so buyers can understand what kind of listing this is.</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
+                  <select
+                    value={form.listingSection}
+                    onChange={(event) => {
+                      const nextSection = event.target.value
+                      setForm((prev) => ({
+                        ...prev,
+                        listingSection: nextSection,
+                        listingCategory: '',
+                        listingSubcategory: '',
+                        listingDetail: '',
+                      }))
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                  >
+                    <option value="">Select section…</option>
+                    {MARKET_LISTING_SECTIONS.map((section) => (
+                      <option key={section.label} value={section.label}>
+                        {section.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</span>
+                  <select
+                    value={form.listingCategory}
+                    onChange={(event) => {
+                      const nextCategory = event.target.value
+                      setForm((prev) => ({
+                        ...prev,
+                        listingCategory: nextCategory,
+                        listingSubcategory: '',
+                        listingDetail: '',
+                      }))
+                    }}
+                    disabled={!selectedListingSection}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">Select category…</option>
+                    {(selectedListingSection?.categories ?? []).map((category) => (
+                      <option key={category.label} value={category.label}>
+                        {category.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</span>
+                  <select
+                    value={form.listingSubcategory}
+                    onChange={(event) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        listingSubcategory: event.target.value,
+                        listingDetail: '',
+                      }))
+                    }
+                    disabled={!selectedListingCategory}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">Select subcategory…</option>
+                    {(selectedListingCategory?.subcategories ?? []).map((subcategory) => (
+                      <option key={subcategory.label} value={subcategory.label}>
+                        {subcategory.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Detail</span>
+                  <select
+                    value={form.listingDetail}
+                    onChange={(event) => setForm((prev) => ({ ...prev, listingDetail: event.target.value }))}
+                    disabled={!requiresListingDetail}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">{requiresListingDetail ? 'Select detail…' : 'No detail needed'}</option>
+                    {selectedListingDetails.map((detail) => (
+                      <option key={detail.label} value={detail.label}>
+                        {detail.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+            </section>
+
+            <section className={editorCardClassName}>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Community</p>
+              <p className="mt-1 text-xs text-slate-600">Choose the community this listing belongs to.</p>
+              <label className="mt-3 block space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">List in community</span>
+                <select
+                  value={form.listingProvinceCode && form.listingCommunitySlug ? `${form.listingProvinceCode}|${form.listingCommunitySlug}` : ''}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    if (!value) {
+                      setForm((prev) => ({ ...prev, listingProvinceCode: '', listingCommunitySlug: '' }))
+                      return
+                    }
+                    const [provinceCode, communitySlug] = value.split('|')
+                    setForm((prev) => ({
+                      ...prev,
+                      listingProvinceCode: provinceCode ?? '',
+                      listingCommunitySlug: communitySlug ?? '',
+                    }))
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <option value="">Select community…</option>
+                  {communityOptions.map((option) => (
+                    <option key={`${option.provinceCode}|${option.communitySlug}`} value={`${option.provinceCode}|${option.communitySlug}`}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!communityOptions.length ? (
+                <p className="mt-2 text-xs text-amber-700">Follow or set a home community first to publish listings into market feed scope.</p>
+              ) : null}
+            </div>
+            </section>
+
+            <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">Address</p>
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
@@ -1363,7 +1429,9 @@ export default function MarketNewListingPageClient() {
                 </div>
               ) : null}
             </div>
+            </section>
 
+            <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">Delivery Addon?</p>
               <p className="mt-1 text-xs text-slate-600">
@@ -1428,7 +1496,9 @@ export default function MarketNewListingPageClient() {
                 </div>
               ) : null}
             </div>
+            </section>
 
+            <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">Payment options</p>
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
@@ -1464,7 +1534,9 @@ export default function MarketNewListingPageClient() {
               ) : null}
             </div>
 
-            </fieldset>
+            </section>
+
+          </fieldset>
 
             <Modal
               open={publishConfirmOpen}
@@ -1544,7 +1616,7 @@ export default function MarketNewListingPageClient() {
                 </div>
               </div>
             </Modal>
-          </section>
+          </>
         ) : null}
       </div>
     </DashboardShell>

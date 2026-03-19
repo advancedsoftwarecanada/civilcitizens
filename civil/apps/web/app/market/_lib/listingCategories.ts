@@ -1,5 +1,10 @@
 export type MarketListingSubcategory = {
   label: string
+  details?: MarketListingSubcategoryDetail[]
+}
+
+export type MarketListingSubcategoryDetail = {
+  label: string
 }
 
 export type MarketListingCategory = {
@@ -12,80 +17,131 @@ export type MarketListingSection = {
   categories: MarketListingCategory[]
 }
 
-const subcategories = (labels: string[]): MarketListingSubcategory[] => labels.map((label) => ({ label }))
+const detail = (label: string): MarketListingSubcategoryDetail => ({ label })
+const leaf = (label: string): MarketListingSubcategory => ({ label })
+const branch = (label: string, details: string[]): MarketListingSubcategory => ({
+  label,
+  details: details.map(detail),
+})
+const category = (label: string, subcategories: MarketListingSubcategory[]): MarketListingCategory => ({ label, subcategories })
 
 export const MARKET_LISTING_SECTIONS: MarketListingSection[] = [
   {
-    label: 'Items',
+    label: 'ITEMS',
     categories: [
-      { label: 'Arts & Collectibles', subcategories: subcategories(['Antiques', 'Art', 'Collectibles', 'Coins & Stamps', 'Memorabilia', 'Other']) },
-      { label: 'Clothing & Accessories', subcategories: subcategories(["Men's Clothing", "Women's Clothing", 'Tops & Outerwear', 'Dresses & Skirts', 'Bottoms', 'Maternity', 'Other']) },
-      { label: 'Kids & Youth Clothing', subcategories: subcategories(['Shoes', "Men's Shoes", "Women's Shoes", 'Bags & Wallets', 'Costumes', 'Wedding Apparel', 'Multi-item Bundles', 'Other']) },
-      { label: 'Home – Indoor', subcategories: subcategories(['Home Decor', 'Kitchen & Dining', 'Bedding & Linens', 'Storage & Organization', 'Lighting', 'Other']) },
-      { label: 'Furniture', subcategories: subcategories(['Living Room', 'Bedroom', 'Dining Room', 'Office Furniture', 'Outdoor Furniture', 'Other']) },
-      { label: 'Electronics', subcategories: subcategories(['General Electronics', 'Gadgets', 'Smart Home Devices', 'Other']) },
-      { label: 'Computers', subcategories: subcategories(['Desktop Computers', 'Laptops', 'Tablets', 'Computer Parts', 'Other']) },
-      { label: 'Computer Accessories', subcategories: subcategories(['Keyboards & Mice', 'Monitors', 'Networking Equipment', 'Storage Devices', 'Other']) },
-      { label: 'Phones', subcategories: subcategories(['Smartphones', 'Phone Accessories', 'Other']) },
-      { label: 'Audio', subcategories: subcategories(['Headphones', 'Speakers', 'Audio Equipment', 'Other']) },
-      { label: 'TVs & Video', subcategories: subcategories(['Televisions', 'Streaming Devices', 'Projectors', 'Other']) },
-      { label: 'Cameras & Camcorders', subcategories: subcategories(['Cameras', 'Lenses', 'Accessories', 'Other']) },
-      { label: 'Video Games & Consoles', subcategories: subcategories(['Consoles', 'Games', 'Accessories', 'Other']) },
-      { label: 'Home Appliances', subcategories: subcategories(['Kitchen Appliances', 'Laundry Appliances', 'Small Appliances', 'Other']) },
-      { label: 'Home – Outdoor & Garden', subcategories: subcategories(['Patio & Outdoor Living', 'Gardening Supplies', 'Tools & Equipment', 'BBQs & Outdoor Cooking', 'Other']) },
-      { label: 'Tools', subcategories: subcategories(['Hand Tools', 'Power Tools', 'Tool Storage', 'Other']) },
-      { label: 'Home Renovation Materials', subcategories: subcategories(['Flooring', 'Lumber', 'Fixtures', 'Paint & Supplies', 'Other']) },
-      { label: 'Sporting Goods & Exercise', subcategories: subcategories(['Fitness Equipment', 'Team Sports', 'Outdoor Sports', 'Other']) },
-      { label: 'Bikes', subcategories: subcategories(['Road Bikes', 'Mountain Bikes', 'Kids Bikes', 'Accessories', 'Other']) },
-      { label: 'Hobbies & Crafts', subcategories: subcategories(['Craft Supplies', 'Models & Kits', 'DIY Materials', 'Other']) },
-      { label: 'Toys & Games', subcategories: subcategories(['Board Games', 'Educational Toys', 'Outdoor Toys', 'Other']) },
-      { label: 'Books', subcategories: subcategories(['Fiction', 'Non-fiction', 'Educational', 'Comics', 'Other']) },
-      { label: 'Music / Media', subcategories: subcategories(['CDs', 'DVDs', 'Blu-ray', 'Vinyl', 'Other']) },
-      { label: 'Musical Instruments', subcategories: subcategories(['Guitars', 'Keyboards', 'Drums', 'Band Instruments', 'Other']) },
-      { label: 'Jewellery & Watches', subcategories: subcategories(['Watches', 'Necklaces', 'Rings', 'Bracelets', 'Other']) },
-      { label: 'Baby Items', subcategories: subcategories(['Strollers', 'Cribs', 'Clothing', 'Toys', 'Other']) },
-      { label: 'Health & Special Needs', subcategories: subcategories(['Mobility Equipment', 'Medical Supplies', 'Wellness Products', 'Other']) },
-      { label: 'Bags & Luggage', subcategories: subcategories(['Suitcases', 'Travel Bags', 'Backpacks', 'Other']) },
-      { label: 'Business & Industrial', subcategories: subcategories(['Equipment', 'Inventory', 'Supplies', 'Other']) },
-      { label: 'Tickets', subcategories: subcategories(['Events', 'Sports', 'Concerts', 'Other']) },
-      { label: 'Free Stuff', subcategories: subcategories(['Everything Free', 'Garage Sales', 'Listings', 'Other']) },
-      { label: 'Miscellaneous', subcategories: subcategories(['Miscellaneous']) },
+      category('Clothing & Accessories', [
+        branch("Men's Clothing", [
+          'Tops (T Shirts, Polos, Dress Shirts, Hoodies, Sweaters)',
+          'Outerwear (Jackets, Coats, Blazers, Vests)',
+          'Bottoms (Jeans, Pants, Shorts, Joggers)',
+          'Suits & Formalwear (Suits, Tuxedos)',
+          'Activewear',
+          'Sleepwear & Loungewear',
+          'Workwear',
+          'Swimwear',
+          'Underwear & Socks',
+        ]),
+        branch("Women's Clothing", [
+          'Tops (Blouses, Tank Tops, Sweaters)',
+          'Dresses (Casual, Formal, Maxi, Mini)',
+          'Skirts',
+          'Bottoms (Jeans, Leggings, Shorts)',
+          'Outerwear (Coats, Jackets, Cardigans)',
+          'Activewear',
+          'Intimates',
+          'Maternity',
+          'Swimwear',
+        ]),
+        branch('Kids Clothing', [
+          'Baby (0-12 Months)',
+          'Toddler (1-3 Years)',
+          'Kids (4-9 Years)',
+          'Pre-Teen (10-12 Years)',
+          'Teen (13-17 Years)',
+        ]),
+        branch('Shoes', [
+          "Men's Shoes (Sneakers, Boots, Dress Shoes)",
+          "Women's Shoes (Heels, Flats, Boots)",
+          'Kids Shoes',
+        ]),
+        branch('Bags & Luggage', ['Handbags', 'Backpacks', 'Wallets', 'Travel Bags']),
+        branch('Jewellery & Watches', ['Necklaces', 'Rings', 'Watches']),
+        branch('Fashion Accessories', ['Hats', 'Belts', 'Scarves', 'Sunglasses']),
+        leaf('Costumes'),
+        leaf('Wedding & Formal'),
+        leaf('Uniforms & Workwear'),
+        leaf('Vintage Clothing'),
+        leaf('Plus Size Clothing'),
+        leaf('Seasonal Clothing'),
+        leaf('Multi Item Clothing Lots'),
+      ]),
+      category('Home & Living', [
+        branch('Furniture', ['Living Room', 'Bedroom', 'Dining', 'Office', 'Outdoor Furniture']),
+        branch('Home Decor', ['Wall Art', 'Mirrors', 'Rugs', 'Curtains']),
+        branch('Kitchen & Dining', ['Cookware', 'Small Appliances', 'Dishes & Utensils']),
+        leaf('Bedding & Linens'),
+        leaf('Storage & Organization'),
+        leaf('Lighting'),
+      ]),
+      category('Electronics & Technology', [
+        branch('Phones', ['Smartphones', 'Accessories']),
+        branch('Computers', ['Desktops', 'Laptops', 'Tablets', 'Parts']),
+        branch('Computer Accessories', ['Monitors', 'Keyboards', 'Networking']),
+        branch('Audio', ['Headphones', 'Speakers']),
+        leaf('TVs & Video'),
+        leaf('Cameras & Camcorders'),
+        leaf('Video Games & Consoles'),
+        leaf('Smart Home Devices'),
+      ]),
+      category('Appliances', [
+        leaf('Kitchen Appliances'),
+        leaf('Laundry Machines'),
+        leaf('Small Appliances'),
+      ]),
+      category('Outdoor & Garden', [
+        leaf('Patio Furniture'),
+        leaf('Gardening Supplies'),
+        leaf('BBQ & Outdoor Cooking'),
+        leaf('Outdoor Decor'),
+      ]),
+      category('Tools & Renovation', [
+        branch('Tools', ['Hand Tools', 'Power Tools']),
+        branch('Building Materials', ['Lumber', 'Flooring', 'Fixtures', 'Paint']),
+      ]),
+      category('Sports & Recreation', [
+        leaf('Fitness Equipment'),
+        leaf('Team Sports'),
+        leaf('Outdoor Sports'),
+        leaf('Bikes'),
+      ]),
+      category('Toys, Games & Hobbies', [
+        leaf('Toys'),
+        leaf('Board Games'),
+        leaf('Hobbies & Crafts'),
+        leaf('Models & DIY'),
+      ]),
+      category('Books & Media', [leaf('Books'), leaf('CDs / DVDs / Blu-ray'), leaf('Vinyl')]),
+      category('Musical Instruments', [leaf('Guitars'), leaf('Keyboards'), leaf('Drums'), leaf('Band Instruments')]),
+      category('Baby & Kids Items', [leaf('Strollers'), leaf('Cribs'), leaf('Car Seats'), leaf('Toys'), leaf('Feeding Supplies')]),
+      category('Health & Wellness', [leaf('Medical Equipment'), leaf('Mobility Aids'), leaf('Wellness Products')]),
+      category('Business & Industrial', [leaf('Equipment'), leaf('Supplies'), leaf('Inventory')]),
+      category('Tickets & Events', [leaf('Concerts'), leaf('Sports'), leaf('Local Events')]),
+      category('Free & Community', [leaf('Free Items'), leaf('Garage Sales')]),
     ],
   },
   {
-    label: 'Services',
+    label: 'VEHICLES',
     categories: [
-      { label: 'Skilled Trades', subcategories: subcategories(['Electrician', 'Plumbing', 'Carpentry', 'HVAC', 'Roofing', 'Other']) },
-      { label: 'Cleaning Services', subcategories: subcategories(['Residential Cleaning', 'Commercial Cleaning', 'Specialty Cleaning']) },
-      { label: 'Health & Beauty', subcategories: subcategories(['Hair Services', 'Spa Services', 'Personal Care']) },
-      { label: 'Tutors & Education', subcategories: subcategories(['Academic Tutoring', 'Language Lessons', 'Test Prep']) },
-      { label: 'Moving & Storage', subcategories: subcategories(['Moving Services', 'Storage Solutions']) },
-      { label: 'Financial & Legal', subcategories: subcategories(['Accounting', 'Legal Services', 'Tax Services']) },
-      { label: 'Entertainment', subcategories: subcategories(['Event Entertainment', 'DJs', 'Performers']) },
-      { label: 'Photography & Video', subcategories: subcategories(['Photography', 'Videography', 'Editing']) },
-      { label: 'Music Lessons', subcategories: subcategories(['Instrument Lessons', 'Vocal Coaching']) },
-      { label: 'Fitness & Personal Training', subcategories: subcategories(['Personal Training', 'Coaching']) },
-      { label: 'Wedding Services', subcategories: subcategories(['Planning', 'Photography', 'Catering']) },
-      { label: 'Childcare', subcategories: subcategories(['Babysitting', 'Daycare']) },
-      { label: 'Food & Catering', subcategories: subcategories(['Catering', 'Private Chef']) },
-      { label: 'Travel & Vacations', subcategories: subcategories(['Travel Planning', 'Tours']) },
-      { label: 'Other Services', subcategories: subcategories(['Miscellaneous']) },
-    ],
-  },
-  {
-    label: 'Cars & Vehicles',
-    categories: [
-      { label: 'Cars & Trucks', subcategories: subcategories(['Sedans', 'SUVs', 'Trucks', 'Vans']) },
-      { label: 'Vehicle Parts & Accessories', subcategories: subcategories(['Tires', 'Parts', 'Accessories']) },
-      { label: 'Heavy Equipment', subcategories: subcategories(['Construction Equipment', 'Industrial Vehicles']) },
-      { label: 'ATVs & Snowmobiles', subcategories: subcategories(['ATVs', 'Snowmobiles']) },
-      { label: 'RVs, Campers & Trailers', subcategories: subcategories(['RVs', 'Campers', 'Utility Trailers']) },
-      { label: 'Motorcycles', subcategories: subcategories(['Street Bikes', 'Dirt Bikes', 'Cruisers']) },
-      { label: 'Boats & Watercraft', subcategories: subcategories(['Boats', 'Jet Skis', 'Accessories']) },
-      { label: 'Farming Equipment', subcategories: subcategories(['Tractors', 'Implements', 'Attachments']) },
-      { label: 'Classic Cars', subcategories: subcategories(['Vintage Vehicles']) },
-      { label: 'Automotive Services', subcategories: subcategories(['Repairs', 'Detailing', 'Inspections']) },
-      { label: 'Other Vehicles', subcategories: subcategories(['Miscellaneous']) },
+      category('Cars & Trucks', [leaf('Sedans'), leaf('SUVs'), leaf('Pickup Trucks'), leaf('Vans'), leaf('Hatchbacks')]),
+      category('Vehicle Parts & Accessories', [leaf('Tires'), leaf('Rims'), leaf('Engine Parts'), leaf('Interior Parts'), leaf('Exterior Parts')]),
+      category('Heavy Equipment', [leaf('Excavators'), leaf('Loaders'), leaf('Skid Steers')]),
+      category('Motorcycles', [leaf('Sport Bikes'), leaf('Cruisers'), leaf('Dirt Bikes')]),
+      category('ATVs & Snowmobiles', [leaf('ATVs & Snowmobiles')]),
+      category('RVs & Trailers', [leaf('Motorhomes'), leaf('Travel Trailers'), leaf('Utility Trailers')]),
+      category('Boats & Watercraft', [leaf('Fishing Boats'), leaf('Speed Boats'), leaf('Jet Skis')]),
+      category('Farming Equipment', [leaf('Tractors'), leaf('Implements'), leaf('Attachments')]),
+      category('Classic Cars', [leaf('Classic Cars')]),
+      category('Automotive Services', [leaf('Repair'), leaf('Detailing'), leaf('Inspection')]),
     ],
   },
 ]
@@ -98,4 +154,14 @@ export function getMarketListingCategory(sectionLabel: string | null | undefined
   const section = getMarketListingSection(sectionLabel)
   if (!section) return null
   return section.categories.find((category) => category.label === (categoryLabel ?? '').trim()) ?? null
+}
+
+export function getMarketListingSubcategory(
+  sectionLabel: string | null | undefined,
+  categoryLabel: string | null | undefined,
+  subcategoryLabel: string | null | undefined,
+) {
+  const category = getMarketListingCategory(sectionLabel, categoryLabel)
+  if (!category) return null
+  return category.subcategories.find((subcategory) => subcategory.label === (subcategoryLabel ?? '').trim()) ?? null
 }
