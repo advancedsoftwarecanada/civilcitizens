@@ -310,7 +310,7 @@ export default function MarketPageClient() {
                           id: product.organization.id,
                           label: product.organization.name,
                         }}
-                        buttonClassName="h-9 w-9 border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-white"
+                        buttonClassName="h-10 w-10 border-white/70 bg-slate-950/72 text-white shadow-lg ring-1 ring-black/10 backdrop-blur-md hover:border-white hover:bg-slate-950/84"
                         onReported={() => {
                           setItems((prev) => prev.filter((item) => item.id !== product.id))
                           router.refresh()
@@ -335,7 +335,7 @@ export default function MarketPageClient() {
                           id: product.seller.id,
                           label: product.seller.name || (product.seller.handle ? `@${product.seller.handle}` : 'Seller'),
                         }}
-                        buttonClassName="h-9 w-9 border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur-md hover:border-[var(--cc-primary)] hover:bg-white"
+                        buttonClassName="h-10 w-10 border-white/70 bg-slate-950/72 text-white shadow-lg ring-1 ring-black/10 backdrop-blur-md hover:border-white hover:bg-slate-950/84"
                         onReported={() => {
                           setItems((prev) => prev.filter((item) => item.id !== product.id))
                           router.refresh()
