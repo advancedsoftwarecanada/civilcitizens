@@ -160,6 +160,8 @@ type MarketThreadContext = {
   viewerIsSelectedBuyer?: boolean
   viewerCanAccessPickupAddress?: boolean
   pickupCompletedAt?: string | null
+  buyerPickedUpAt?: string | null
+  sellerPickedUpAt?: string | null
   pickupAddress?: {
     name?: string | null
     line1?: string | null
@@ -1783,8 +1785,13 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         const normalizedMessages = sortMessagesChronologically(payload.messages)
         const lastMessage = normalizedMessages[normalizedMessages.length - 1] ?? null
         upsertThread({ ...payload.thread, lastMessage, lastMessageAt: lastMessage?.createdAt ?? payload.thread.lastMessageAt })
+        forceBottomScrollThreadRef.current = threadId
+        smoothScrollPendingRef.current = false
         setMessagesByThread((prev) => ({ ...prev, [threadId]: normalizedMessages }))
         setMessageCursors((prev) => ({ ...prev, [threadId]: payload.nextCursor ?? null }))
+        if (selectedThreadRef.current === threadId) {
+          scheduleMessagesBottomSettle('auto')
+        }
         if (lastMessage && explicitThreadOpenRef.current === threadId) {
           markThreadReadLocally(threadId, lastMessage.createdAt)
           void markThreadRead(threadId, lastMessage.id)
@@ -1809,7 +1816,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         setLoadingThreadId(null)
       }
     },
-    [authedFetch, markThreadRead, markThreadReadLocally, upsertThread],
+    [authedFetch, markThreadRead, markThreadReadLocally, scheduleMessagesBottomSettle, upsertThread],
   )
 
   const loadOlderMessages = useCallback(
@@ -2682,17 +2689,23 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const canUnselectActiveMarketBuyer = Boolean(
     marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
   )
-  const canMarkSoldFromActiveMarketThread = Boolean(
+  const showMarkSoldFromActiveMarketThread = Boolean(
     marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
+  )
+  const canMarkSoldFromActiveMarketThread = Boolean(
+    marketThreadContext?.viewerIsSeller &&
+      activeMarketThreadIsSelectedBuyer &&
+      activeMarketListingStatus === 'pending' &&
+      marketThreadContext?.buyerPickedUpAt,
   )
   const canAccessActiveMarketPickupDirections = Boolean(
     marketThreadContext?.viewerCanAccessPickupAddress && marketThreadContext.pickupAddress && !marketThreadContext.pickupCompletedAt,
   )
   const canMarkActiveMarketPickupComplete = Boolean(
-    (marketThreadContext?.viewerIsSeller || marketThreadContext?.viewerIsSelectedBuyer) &&
+    ((marketThreadContext?.viewerIsSeller && !marketThreadContext?.sellerPickedUpAt) ||
+      (marketThreadContext?.viewerIsSelectedBuyer && !marketThreadContext?.buyerPickedUpAt)) &&
       activeMarketThreadIsSelectedBuyer &&
-      activeMarketListingStatus === 'pending' &&
-      !marketThreadContext?.pickupCompletedAt,
+      activeMarketListingStatus === 'pending',
   )
   const activeMarketPickupDirectionsHref = useMemo(() => {
     if (!marketThreadContext?.pickupAddress) return null
@@ -2776,7 +2789,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       }
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null
-        setMarketHeaderActionError(payload?.error || 'Unable to unselect this buyer right now.')
+        setMarketHeaderActionError(payload?.error || 'Unable to relist this item right now.')
         return
       }
 
@@ -2784,7 +2797,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       await Promise.all([loadActiveMarketThreadContext(), loadThreads(), loadSupplementalUnreadCounts(), loadMarketInbox()])
     } catch (error) {
       console.error('Failed to unselect market buyer', error)
-      setMarketHeaderActionError('Unable to unselect this buyer right now.')
+      setMarketHeaderActionError('Unable to relist this item right now.')
     } finally {
       setMarketUnselectBuyerSubmitting(false)
     }
@@ -2806,8 +2819,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         return
       }
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null
-        setMarketHeaderActionError(payload?.error || 'Unable to mark this item sold right now.')
+        const payload = (await response.json().catch(() => null)) as { error?: string; detail?: string } | null
+        setMarketHeaderActionError(payload?.detail || payload?.error || 'Unable to mark this item sold right now.')
         return
       }
 
@@ -3906,33 +3919,36 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
               {marketThreadContextLoading ? (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Loading item…</div>
               ) : marketThreadContext?.listing && activeMarketListingHref ? (
-                <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <Link href={activeMarketListingHref} className="min-w-0 flex-1 rounded-2xl p-1 transition hover:bg-white/80">
-                      <div className="flex items-start gap-3">
-                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.92)_0%,rgba(255,255,255,0.98)_100%)] p-3 sm:p-4">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-stretch xl:justify-between">
+                    <Link href={activeMarketListingHref} className="min-w-0 flex-1 rounded-[20px] border border-transparent p-2 transition hover:border-slate-200 hover:bg-white/90">
+                      <div className="flex items-start gap-3 sm:gap-4">
+                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[76px] sm:w-[76px]">
                           {marketThreadContext.listing.photoUrl ? (
                             <img src={marketThreadContext.listing.photoUrl} alt="" className="h-full w-full object-cover" />
                           ) : (
                             <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-400">No photo</div>
                           )}
                         </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">{marketThreadContext.listing.title}</p>
-                          <p className="truncate text-sm text-slate-600">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900 sm:text-base">{marketThreadContext.listing.title}</p>
+                            <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700 shadow-sm">
+                              {formatMarketListingStatus(marketThreadContext.listing.status)}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate text-sm text-slate-600">
                             {formatMoney(marketThreadContext.listing.priceCents, marketThreadContext.listing.currency)} •{' '}
                             {formatPickupLocation(marketThreadContext.listing.pickupCity, marketThreadContext.listing.pickupProvince)}
                           </p>
-                          <p className="mt-1 text-xs text-slate-500">
+                          <div className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
                             {marketThreadContext.viewerIsSeller ? 'Open listing management' : 'Open listing'}
-                          </p>
+                          </div>
                         </div>
                       </div>
                     </Link>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
-                        {formatMarketListingStatus(marketThreadContext.listing.status)}
-                      </span>
+                    <div className="rounded-[20px] border border-slate-200 bg-white/90 p-2.5 shadow-sm xl:w-[420px] xl:self-center">
+                      <div className="flex flex-wrap items-center gap-2">
                       {canSelectActiveMarketBuyer ? (
                         <button
                           type="button"
@@ -3954,20 +3970,26 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                             setMarketUnselectBuyerConfirmOpen(true)
                           }}
                           disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
-                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                          className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
                         >
-                          Unselect buyer
+                          Relist
                         </button>
                       ) : null}
-                      {canMarkSoldFromActiveMarketThread ? (
+                      {showMarkSoldFromActiveMarketThread ? (
                         <button
                           type="button"
                           onClick={() => {
+                            if (!canMarkSoldFromActiveMarketThread) return
                             setMarketHeaderActionError(null)
                             setMarketMarkSoldConfirmOpen(true)
                           }}
-                          disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
-                          className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                          disabled={!canMarkSoldFromActiveMarketThread || marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
+                          className={clsx(
+                            'rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-70',
+                            canMarkSoldFromActiveMarketThread
+                              ? 'bg-blue-600 text-white hover:bg-blue-700'
+                              : 'border border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100',
+                          )}
                         >
                           Mark sold
                         </button>
@@ -3975,7 +3997,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                       {canAccessActiveMarketPickupDirections && activeMarketPickupDirectionsHref ? (
                         <Link
                           href={activeMarketPickupDirectionsHref}
-                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                          className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
                         >
                           Directions for pickup
                         </Link>
@@ -3987,12 +4009,13 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                             void handleMarkActiveMarketPickupComplete()
                           }}
                           disabled={marketPickupCompleteSubmitting}
-                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
                         >
                           {marketPickupCompleteSubmitting ? 'Marking…' : 'Mark picked up'}
                         </button>
                       ) : null}
                     </div>
+                  </div>
                   </div>
                   {marketThreadContext.viewerIsSeller && marketThreadContext.selectedThreadId && !activeMarketThreadIsSelectedBuyer ? (
                     <p className="mt-3 text-xs font-medium text-slate-500">A different buyer is currently selected for this item.</p>
@@ -4354,10 +4377,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           if (marketUnselectBuyerSubmitting) return
           setMarketUnselectBuyerConfirmOpen(false)
         }}
-        title="Unselect buyer?"
+        title="Relist item?"
         maxWidthClassName="max-w-lg"
       >
-        <p className="text-sm text-slate-700">This will return the item to active status so you can continue chatting with other buyers.</p>
+        <p className="text-sm text-slate-700">This will put the item back on the market so you can continue with other buyers or start over.</p>
         {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
         <div className="mt-5 flex items-center justify-end gap-2">
           <button
@@ -4376,7 +4399,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             disabled={marketUnselectBuyerSubmitting}
             className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {marketUnselectBuyerSubmitting ? 'Unselecting…' : 'Unselect buyer'}
+            {marketUnselectBuyerSubmitting ? 'Relisting…' : 'Relist'}
           </button>
         </div>
       </Modal>

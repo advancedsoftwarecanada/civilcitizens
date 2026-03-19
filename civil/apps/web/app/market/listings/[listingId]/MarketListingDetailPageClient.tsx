@@ -52,6 +52,7 @@ type ListingDetailResponse = {
     photoUrls: string[]
     pickupCity: string | null
     pickupProvince: string | null
+    status?: string | null
     approximatePickup?: {
       latitude: number
       longitude: number
@@ -434,6 +435,7 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
   }, [listing, travelOrigin])
 
   const priceLabel = useMemo(() => formatMoney(listing?.priceCents ?? 0, listing?.currency ?? 'CAD'), [listing?.currency, listing?.priceCents])
+  const isSoldListing = listing?.status === 'sold'
   const galleryPhotos = listing?.photoUrls ?? []
   const activeGalleryPhoto = galleryIndex !== null ? galleryPhotos[galleryIndex] ?? null : null
   const listingShareTarget = useMemo<ShareTarget | null>(() => {
@@ -470,6 +472,38 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
         {status === 'not-found' ? <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Listing not found.</div> : null}
 
         {status === 'ready' && listing ? (
+          isSoldListing ? (
+            <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-4 sm:p-6">
+              <div className="space-y-3">
+                {listing.photoUrls?.[0] ? (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                    <img src={listing.photoUrls[0]} alt={listing.title} className="aspect-[16/10] w-full object-cover" loading="lazy" />
+                  </div>
+                ) : null}
+
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl font-semibold text-slate-900">{listing.title}</h2>
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                        Sold
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {listing.pickupCity ? `${listing.pickupCity}${listing.pickupProvince ? `, ${listing.pickupProvince}` : ''}` : 'Location not specified'}
+                    </p>
+                  </div>
+                  <div className="text-lg font-semibold text-slate-900">{priceLabel}</div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  This item has already been sold.
+                </div>
+
+                {listing.description ? <div className="prose prose-slate max-w-none text-base" dangerouslySetInnerHTML={{ __html: listing.description }} /> : null}
+              </div>
+            </section>
+          ) : (
           <section className="space-y-4 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="space-y-3">
               <button
@@ -625,9 +659,10 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
               ) : null}
             </div>
           </section>
+          )
         ) : null}
 
-        {status === 'ready' ? (
+        {status === 'ready' && !isSoldListing ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <div className="space-y-4">
               <div>
@@ -669,14 +704,14 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
           </section>
         ) : null}
 
-        {repostModalOpen && listingShareTarget ? (
+        {repostModalOpen && listingShareTarget && !isSoldListing ? (
           <SharePostModal
             target={listingShareTarget}
             onClose={() => setRepostModalOpen(false)}
           />
         ) : null}
 
-        {shareModalOpen && listingShareTarget ? (
+        {shareModalOpen && listingShareTarget && !isSoldListing ? (
           <ShareSendModal
             target={listingShareTarget}
             onClose={() => setShareModalOpen(false)}

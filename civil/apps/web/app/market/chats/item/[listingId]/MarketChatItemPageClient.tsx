@@ -319,8 +319,8 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
         body: JSON.stringify({ resolution: 'sold' }),
       })
       if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as { error?: string } | null
-        setMarkSoldError(payload?.error || 'Unable to mark item sold.')
+        const payload = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
+        setMarkSoldError(payload?.detail || payload?.error || 'Unable to mark item sold.')
         return
       }
 

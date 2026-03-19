@@ -30,11 +30,13 @@ import PostComposer, { ApiPost, type PostType } from '../../_components/PostComp
 import PostFeedItem from '../../_components/PostFeedItem'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
+import { buildAddressesHrefFromAddress } from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
 import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { pushToast } from '../../_components/useToasts'
+import type { SavedShippingAddress } from '../../_lib/canadianAddresses'
 import { hasFamilyProfilesAvailable, type FamilyModeSummary } from '../../_lib/me'
 import { formatUserDisplayName } from '../../_lib/text'
 import { useViewerStore } from '../../_lib/viewerStore'
@@ -86,6 +88,7 @@ type UserProfile = {
   communityCount?: number
   organizationCount?: number
   connectionCount?: number
+  homeShippingAddress?: SavedShippingAddress | null
   homeChamber?: {
     provinceCode: string
     provinceName?: string | null
@@ -835,6 +838,15 @@ export default function UserPostsPage({ params }: PageProps) {
       resolvedRelationship.connectionStatus === 'connected' ||
       Boolean(currentProfileFamilyRelationship)
     )
+  const canViewProfileDirections = Boolean(
+    !isOwner &&
+      profile?.homeShippingAddress &&
+      (resolvedRelationship.friendshipStatus === 'friends' || Boolean(currentProfileFamilyRelationship)),
+  )
+  const profileDirectionsHref = useMemo(() => {
+    if (!profile?.homeShippingAddress) return null
+    return buildAddressesHrefFromAddress(profile.homeShippingAddress, profileDisplayName)
+  }, [profile?.homeShippingAddress, profileDisplayName])
   const hasAnyProfileRelationship =
     Boolean(currentProfileFamilyRelationship) ||
     ['friends', 'incoming', 'outgoing'].includes(resolvedRelationship.friendshipStatus) ||
@@ -1242,17 +1254,28 @@ export default function UserPostsPage({ params }: PageProps) {
   }
 
   const renderMessageMenu = () => (
-    <button
-      type="button"
-      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-55"
-      onClick={() => {
-        void handleStartDirectMessage()
-      }}
-      disabled={!canDirectlyReachProfile || messageLoading || callActionMode !== null}
-    >
-      <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
-      {messageLoading ? 'Opening…' : 'Message'}
-    </button>
+    <>
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-55"
+        onClick={() => {
+          void handleStartDirectMessage()
+        }}
+        disabled={!canDirectlyReachProfile || messageLoading || callActionMode !== null}
+      >
+        <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
+        {messageLoading ? 'Opening…' : 'Message'}
+      </button>
+      {canViewProfileDirections && profileDirectionsHref ? (
+        <Link
+          href={profileDirectionsHref}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+        >
+          <HiOutlineMap className="h-4 w-4" aria-hidden="true" />
+          Directions
+        </Link>
+      ) : null}
+    </>
   )
 
   const renderInviteMenu = () =>
@@ -2199,6 +2222,15 @@ export default function UserPostsPage({ params }: PageProps) {
       >
         {messageLoading ? 'Opening...' : 'Message'}
       </button>
+      {canViewProfileDirections && profileDirectionsHref ? (
+        <Link
+          href={profileDirectionsHref}
+          className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+        >
+          <HiOutlineMap className="mr-2 h-4 w-4" aria-hidden="true" />
+          Directions
+        </Link>
+      ) : null}
       <button
         type="button"
         className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"

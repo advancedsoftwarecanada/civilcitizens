@@ -11,6 +11,7 @@ import { buildApiUrl } from '../../../_lib/api'
 import { fetchAddressSearchResults } from '../../../_lib/addressSearch'
 import { normalizeCanadianPostalCode, normalizeCanadianProvince, type SavedShippingAddress } from '../../../_lib/canadianAddresses'
 import MarketRightRail from '../../_components/MarketRightRail'
+import { getMarketListingCategory, getMarketListingSection, MARKET_LISTING_SECTIONS } from '../../_lib/listingCategories'
 
 type ListingDetail = {
   id: string
@@ -21,6 +22,9 @@ type ListingDetail = {
   photoUrls: string[]
   listingProvinceCode?: string | null
   listingCommunitySlug?: string | null
+  listingSection?: string | null
+  listingCategory?: string | null
+  listingSubcategory?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupAddressLine1: string | null
@@ -80,6 +84,9 @@ type DraftForm = {
   price: string
   listingProvinceCode: string
   listingCommunitySlug: string
+  listingSection: string
+  listingCategory: string
+  listingSubcategory: string
   pickupCity: string
   pickupProvince: string
   pickupAddressLine1: string
@@ -101,12 +108,17 @@ type DraftForm = {
   photoUrls: string[]
 }
 
+type ListingEditorStatus = 'draft' | 'active' | 'pending' | 'sold' | 'canceled'
+
 const EMPTY_FORM: DraftForm = {
   title: 'Draft Listing',
   description: '',
   price: '0.00',
   listingProvinceCode: '',
   listingCommunitySlug: '',
+  listingSection: '',
+  listingCategory: '',
+  listingSubcategory: '',
   pickupCity: '',
   pickupProvince: '',
   pickupAddressLine1: '',
@@ -295,7 +307,7 @@ export default function MarketNewListingPageClient() {
   const [initializing, setInitializing] = useState(true)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<DraftForm>(EMPTY_FORM)
-  const [statusLabel, setStatusLabel] = useState<'draft' | 'active'>('draft')
+  const [statusLabel, setStatusLabel] = useState<ListingEditorStatus>('draft')
   const [uploadingPhotos, setUploadingPhotos] = useState(false)
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
@@ -332,6 +344,9 @@ export default function MarketNewListingPageClient() {
       price: formatMoneyInput(listing.priceCents),
       listingProvinceCode: listing.listingProvinceCode ?? '',
       listingCommunitySlug: listing.listingCommunitySlug ?? '',
+      listingSection: listing.listingSection ?? '',
+      listingCategory: listing.listingCategory ?? '',
+      listingSubcategory: listing.listingSubcategory ?? '',
       pickupCity: listing.pickupCity ?? '',
       pickupProvince: listing.pickupProvince ?? '',
       pickupAddressLine1: listing.pickupAddressLine1 ?? '',
@@ -354,8 +369,37 @@ export default function MarketNewListingPageClient() {
       ),
       photoUrls: Array.isArray(listing.photoUrls) ? listing.photoUrls : [],
     })
-    setStatusLabel(listing.status === 'active' || !listing.isDraft ? 'active' : 'draft')
+    const nextStatus: ListingEditorStatus =
+      listing.status === 'active' ||
+      listing.status === 'pending' ||
+      listing.status === 'sold' ||
+      listing.status === 'canceled'
+        ? listing.status
+        : listing.isDraft
+          ? 'draft'
+          : 'active'
+    setStatusLabel(nextStatus)
   }, [])
+
+  const canEditActiveDraftListing = statusLabel === 'draft' || statusLabel === 'active'
+  const statusLabelText =
+    statusLabel === 'draft'
+      ? 'Draft'
+      : statusLabel === 'active'
+        ? 'Active'
+        : statusLabel === 'pending'
+          ? 'Pending sale'
+          : statusLabel === 'sold'
+            ? 'Sold'
+            : 'Canceled'
+  const hasExistingListing = Boolean(listingParam?.trim() || listingId)
+  const pageTitle = hasExistingListing ? 'Manage Listing' : 'Create Listing'
+  const pageSubtitle = hasExistingListing
+    ? canEditActiveDraftListing
+      ? 'Review and update this listing from your marketplace manager.'
+      : `This ${statusLabelText.toLowerCase()} listing is available here for reference only.`
+    : 'Create a marketplace listing for your community.'
+  const initializingText = listingParam?.trim() ? 'Loading listing…' : 'Preparing listing draft…'
 
   const loadCommunityOptions = useCallback(async () => {
     try {
@@ -562,6 +606,11 @@ export default function MarketNewListingPageClient() {
 
   const descriptionPlainText = useMemo(() => stripHtmlToPlainText(form.description), [form.description])
   const descriptionTooLong = descriptionPlainText.length > MAX_LISTING_DESCRIPTION_LENGTH
+  const selectedListingSection = useMemo(() => getMarketListingSection(form.listingSection), [form.listingSection])
+  const selectedListingCategory = useMemo(
+    () => getMarketListingCategory(form.listingSection, form.listingCategory),
+    [form.listingCategory, form.listingSection],
+  )
 
   const addressMapQuery = useMemo(() => {
     const line1 = form.pickupAddressLine1.trim()
@@ -859,6 +908,10 @@ export default function MarketNewListingPageClient() {
           pushToast('Select a community to list in.', 'error')
           return
         }
+        if (!form.listingSection.trim() || !form.listingCategory.trim() || !form.listingSubcategory.trim()) {
+          pushToast('Choose a listing type before publishing.', 'error')
+          return
+        }
         if (form.willingToDeliver) {
           const hasDeliveryRange = Object.values(form.deliverySelection).some(Boolean)
           if (!hasDeliveryRange) {
@@ -877,7 +930,7 @@ export default function MarketNewListingPageClient() {
 
       setSaving(true)
       try {
-        const nextStatus: 'draft' | 'active' = publish ? 'active' : unpublish ? 'draft' : statusLabel
+        const nextStatus: ListingEditorStatus = publish ? 'active' : unpublish ? 'draft' : statusLabel
         const nextIsDraft = nextStatus !== 'active'
 
         const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(listingId)}`), {
@@ -891,6 +944,9 @@ export default function MarketNewListingPageClient() {
             photoUrls: form.photoUrls,
             listingProvinceCode: form.listingProvinceCode.trim().toUpperCase() || null,
             listingCommunitySlug: form.listingCommunitySlug.trim().toLowerCase() || null,
+            listingSection: form.listingSection.trim() || null,
+            listingCategory: form.listingCategory.trim() || null,
+            listingSubcategory: form.listingSubcategory.trim() || null,
             pickupCity: form.pickupCity.trim() || null,
             pickupProvince: form.pickupProvince.trim() || null,
             pickupAddressLine1: form.pickupAddressLine1.trim() || null,
@@ -958,15 +1014,16 @@ export default function MarketNewListingPageClient() {
         <section className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Create Listing</h1>
+              <h1 className="text-2xl font-semibold text-slate-900">{pageTitle}</h1>
+              <p className="mt-1 text-sm text-slate-600">{pageSubtitle}</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
-                Status: {statusLabel === 'active' ? 'Active' : 'Draft'}
+                Status: {statusLabelText}
               </span>
               <button
                 type="button"
-                disabled={!listingId || saving || initializing || deleteSubmitting}
+                disabled={!listingId || saving || initializing || deleteSubmitting || !canEditActiveDraftListing}
                 onClick={() => {
                   setDeleteError(null)
                   setDeleteAsSold(false)
@@ -978,7 +1035,7 @@ export default function MarketNewListingPageClient() {
               </button>
               <button
                 type="button"
-                disabled={saving || initializing}
+                disabled={saving || initializing || !canEditActiveDraftListing}
                 onClick={() => void saveListing('save')}
                 className="inline-flex items-center justify-center rounded-full bg-green-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
               >
@@ -987,30 +1044,34 @@ export default function MarketNewListingPageClient() {
               {statusLabel === 'draft' ? (
                 <button
                   type="button"
-                  disabled={saving || initializing}
+                  disabled={saving || initializing || !canEditActiveDraftListing}
                   onClick={() => setPublishConfirmOpen(true)}
                   className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
                 >
                   Publish listing
                 </button>
-              ) : (
+              ) : statusLabel === 'active' ? (
                 <button
                   type="button"
-                  disabled={saving || initializing}
+                  disabled={saving || initializing || !canEditActiveDraftListing}
                   onClick={() => void saveListing('unpublish')}
                   className="inline-flex items-center justify-center rounded-full bg-rose-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
                 >
                   Unpublish
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
+          {!canEditActiveDraftListing ? (
+            <p className="mt-3 text-sm text-slate-600">This listing is {statusLabelText.toLowerCase()} and can no longer be edited from the listing manager.</p>
+          ) : null}
         </section>
 
-        {initializing ? <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">Preparing listing draft…</div> : null}
+        {initializing ? <div className="rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">{initializingText}</div> : null}
 
         {!initializing ? (
           <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+            <fieldset disabled={!canEditActiveDraftListing} className={`space-y-5 ${canEditActiveDraftListing ? '' : 'opacity-80'}`}>
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="space-y-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Title</span>
@@ -1034,6 +1095,77 @@ export default function MarketNewListingPageClient() {
               </label>
             </div>
 
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Listing type</p>
+              <p className="mt-1 text-xs text-slate-600">Use section, category, and subcategory so buyers can understand what kind of listing this is.</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Section</span>
+                  <select
+                    value={form.listingSection}
+                    onChange={(event) => {
+                      const nextSection = event.target.value
+                      setForm((prev) => ({
+                        ...prev,
+                        listingSection: nextSection,
+                        listingCategory: '',
+                        listingSubcategory: '',
+                      }))
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                  >
+                    <option value="">Select section…</option>
+                    {MARKET_LISTING_SECTIONS.map((section) => (
+                      <option key={section.label} value={section.label}>
+                        {section.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</span>
+                  <select
+                    value={form.listingCategory}
+                    onChange={(event) => {
+                      const nextCategory = event.target.value
+                      setForm((prev) => ({
+                        ...prev,
+                        listingCategory: nextCategory,
+                        listingSubcategory: '',
+                      }))
+                    }}
+                    disabled={!selectedListingSection}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">Select category…</option>
+                    {(selectedListingSection?.categories ?? []).map((category) => (
+                      <option key={category.label} value={category.label}>
+                        {category.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subcategory</span>
+                  <select
+                    value={form.listingSubcategory}
+                    onChange={(event) => setForm((prev) => ({ ...prev, listingSubcategory: event.target.value }))}
+                    disabled={!selectedListingCategory}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    <option value="">Select subcategory…</option>
+                    {(selectedListingCategory?.subcategories ?? []).map((subcategory) => (
+                      <option key={subcategory.label} value={subcategory.label}>
+                        {subcategory.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
+
             <label className="space-y-1.5">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
               <div className="rounded-xl border border-slate-200 bg-white p-2">
@@ -1042,7 +1174,7 @@ export default function MarketNewListingPageClient() {
                   onChange={(value) => setForm((prev) => ({ ...prev, description: value }))}
                   placeholder="Condition, details, pickup expectations, and anything buyers should know."
                   minHeight={200}
-                  disabled={saving || initializing}
+                  disabled={saving || initializing || !canEditActiveDraftListing}
                 />
               </div>
               <p className={`text-xs ${descriptionTooLong ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>
@@ -1331,6 +1463,8 @@ export default function MarketNewListingPageClient() {
                 </label>
               ) : null}
             </div>
+
+            </fieldset>
 
             <Modal
               open={publishConfirmOpen}

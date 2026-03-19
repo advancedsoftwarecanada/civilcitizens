@@ -208,23 +208,13 @@ function AddressPageRightRail({
 }) {
   return (
     <>
-      <div className="mb-4 flex items-center justify-end">
-        <Link
-          href="/messages?inbox=market"
-          className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:border-[var(--cc-primary)]/35 hover:bg-[var(--cc-primary)]/5"
-        >
-          Messages
-        </Link>
-      </div>
-
       <Block title="Market Pickups" className="mb-4">
         <div className="space-y-3">
           {marketPickups.length ? (
             marketPickups.map((pickup) => (
-              <Link
+              <div
                 key={pickup.listingId}
-                href={buildAddressesHrefFromAddress(pickup.pickupAddress ?? null, pickup.title)}
-                className="block rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 transition hover:border-[var(--cc-primary)]/30 hover:bg-white"
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3"
               >
                 <div className="flex items-start gap-3">
                   <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -236,9 +226,25 @@ function AddressPageRightRail({
                       <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{pickup.role}</span>
                     </div>
                     <p className="mt-1 text-xs text-slate-500">{formatSavedAddressDetail(pickup.pickupAddress ?? {}, { includeName: false }) || 'Open directions'}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Link
+                        href={buildAddressesHrefFromAddress(pickup.pickupAddress ?? null, pickup.title)}
+                        className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:border-[var(--cc-primary)]/35 hover:bg-[var(--cc-primary)]/5"
+                      >
+                        Directions
+                      </Link>
+                      {pickup.threadId ? (
+                        <Link
+                          href={`/messages?inbox=market&thread=${encodeURIComponent(pickup.threadId)}`}
+                          className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[var(--cc-primary-dark,#163e72)]"
+                        >
+                          Message
+                        </Link>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
-              </Link>
+              </div>
             ))
           ) : (
             <p className="text-sm text-slate-500">No pending pickups right now.</p>
