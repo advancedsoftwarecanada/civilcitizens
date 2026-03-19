@@ -26,6 +26,8 @@ type ListingsResponse = {
   items?: ListingItem[]
 }
 
+type ListingBucket = 'draft' | 'active' | 'sold' | 'other'
+
 function formatMoney(cents: number, currency: string) {
   try {
     return new Intl.NumberFormat('en-CA', { style: 'currency', currency: currency.toUpperCase() }).format((cents || 0) / 100)
@@ -39,6 +41,68 @@ function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
   if (token) headers.authorization = `Bearer ${token}`
   return headers
+}
+
+function getListingBucket(item: ListingItem): ListingBucket {
+  if (item.isDraft || item.status === 'draft') return 'draft'
+  if (item.status === 'sold') return 'sold'
+  if (item.status === 'active' || item.status === 'pending' || item.status === 'pending_sale') return 'active'
+  return 'other'
+}
+
+function getListingStatusLabel(item: ListingItem) {
+  if (item.isDraft || item.status === 'draft') return 'Draft'
+  if (item.status === 'active') return 'Active'
+  if (item.status === 'pending' || item.status === 'pending_sale') return 'Pending sale'
+  if (item.status === 'sold') return 'Sold'
+  if (item.status === 'canceled') return 'Canceled'
+  return item.status
+}
+
+function ListingSection({
+  title,
+  items,
+}: {
+  title: string
+  items: ListingItem[]
+}) {
+  if (!items.length) return null
+
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+          {items.length}
+        </span>
+      </div>
+      <ul className="space-y-3">
+        {items.map((item) => {
+          const cover = item.photoUrls[0] ?? null
+          const href = `/market/listings/new?listing=${encodeURIComponent(item.id)}`
+          return (
+            <li key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 transition hover:border-slate-300 hover:bg-slate-100">
+              <Link href={href} className="grid gap-3 p-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:p-4">
+                <div className="h-28 overflow-hidden rounded-xl bg-slate-200 sm:h-24">
+                  {cover ? <img src={cover} alt={item.title} className="h-full w-full object-cover" loading="lazy" /> : null}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="truncate text-base font-semibold text-slate-900">{item.title}</p>
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">
+                      {getListingStatusLabel(item)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{formatMoney(item.priceCents, item.currency)}</p>
+                  <p className="mt-1 text-xs text-slate-600">Pickup area: {item.pickupCity ? `${item.pickupCity}${item.pickupProvince ? `, ${item.pickupProvince}` : ''}` : 'Not set'}</p>
+                </div>
+              </Link>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
 }
 
 export default function MarketListingsPageClient() {
@@ -80,6 +144,10 @@ export default function MarketListingsPageClient() {
   }, [])
 
   const hasItems = useMemo(() => items.length > 0, [items.length])
+  const draftItems = useMemo(() => items.filter((item) => getListingBucket(item) === 'draft'), [items])
+  const activeItems = useMemo(() => items.filter((item) => getListingBucket(item) === 'active'), [items])
+  const soldItems = useMemo(() => items.filter((item) => getListingBucket(item) === 'sold'), [items])
+  const otherItems = useMemo(() => items.filter((item) => getListingBucket(item) === 'other'), [items])
 
   return (
     <DashboardShell rightRail={<MarketRightRail />} showMobileRightRail mainClassName="space-y-5 pb-12">
@@ -109,35 +177,10 @@ export default function MarketListingsPageClient() {
           </section>
         ) : null}
 
-        {status === 'ready' && hasItems ? (
-          <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
-            <ul className="space-y-3">
-              {items.map((item) => {
-                const cover = item.photoUrls[0] ?? null
-                const href = `/market/listings/new?listing=${encodeURIComponent(item.id)}`
-                return (
-                  <li key={item.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 transition hover:border-slate-300 hover:bg-slate-100">
-                    <Link href={href} className="grid gap-3 p-3 sm:grid-cols-[160px_minmax(0,1fr)] sm:p-4">
-                      <div className="h-28 overflow-hidden rounded-xl bg-slate-200 sm:h-24">
-                        {cover ? <img src={cover} alt={item.title} className="h-full w-full object-cover" loading="lazy" /> : null}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="truncate text-base font-semibold text-slate-900">{item.title}</p>
-                          <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold text-slate-600">
-                            {item.isDraft ? 'Draft' : item.status}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm font-semibold text-slate-900">{formatMoney(item.priceCents, item.currency)}</p>
-                        <p className="mt-1 text-xs text-slate-600">Pickup area: {item.pickupCity ? `${item.pickupCity}${item.pickupProvince ? `, ${item.pickupProvince}` : ''}` : 'Not set'}</p>
-                      </div>
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          </section>
-        ) : null}
+        {status === 'ready' && hasItems ? <ListingSection title="Draft" items={draftItems} /> : null}
+        {status === 'ready' && hasItems ? <ListingSection title="Active" items={activeItems} /> : null}
+        {status === 'ready' && hasItems ? <ListingSection title="Sold" items={soldItems} /> : null}
+        {status === 'ready' && hasItems ? <ListingSection title="Other" items={otherItems} /> : null}
       </div>
     </DashboardShell>
   )

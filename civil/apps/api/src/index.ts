@@ -6323,6 +6323,9 @@ function ensureCitizenMarketplaceTables() {
           pickup_postal_code TEXT,
           listing_province_code TEXT,
           listing_community_slug TEXT,
+          listing_section TEXT,
+          listing_category TEXT,
+          listing_subcategory TEXT,
           payment_types JSONB NOT NULL DEFAULT '[]'::jsonb,
           willing_to_deliver BOOLEAN NOT NULL DEFAULT FALSE,
           delivery_options JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -6330,6 +6333,8 @@ function ensureCitizenMarketplaceTables() {
           status TEXT NOT NULL DEFAULT 'draft',
           selected_buyer_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
           sale_expires_at TIMESTAMPTZ,
+          buyer_picked_up_at TIMESTAMPTZ,
+          seller_picked_up_at TIMESTAMPTZ,
           is_draft BOOLEAN NOT NULL DEFAULT TRUE,
           is_active BOOLEAN NOT NULL DEFAULT TRUE,
           created_by TEXT REFERENCES "User"(id) ON DELETE SET NULL,
@@ -6370,6 +6375,21 @@ function ensureCitizenMarketplaceTables() {
 
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS listing_section TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS listing_category TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS listing_subcategory TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
         ADD COLUMN IF NOT EXISTS moderation_status TEXT NOT NULL DEFAULT 'visible';
       `)
 
@@ -6384,8 +6404,23 @@ function ensureCitizenMarketplaceTables() {
       `)
 
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS buyer_picked_up_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS seller_picked_up_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_market_listing_scope_idx
         ON citizen_market_listing (listing_province_code, listing_community_slug, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_listing_category_idx
+        ON citizen_market_listing (listing_section, listing_category, listing_subcategory, created_at DESC);
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -8920,6 +8955,9 @@ const MarketListingUpdateBody = z.object({
   photoUrls: z.array(z.string().trim().url().max(2048)).max(12).optional(),
   listingProvinceCode: z.string().trim().min(2).max(8).optional().nullable(),
   listingCommunitySlug: z.string().trim().min(1).max(120).optional().nullable(),
+  listingSection: z.string().trim().min(1).max(120).optional().nullable(),
+  listingCategory: z.string().trim().min(1).max(120).optional().nullable(),
+  listingSubcategory: z.string().trim().min(1).max(120).optional().nullable(),
   pickupCity: z.string().trim().max(120).optional().nullable(),
   pickupProvince: z.string().trim().max(80).optional().nullable(),
   pickupAddressLine1: z.string().trim().max(180).optional().nullable(),
@@ -9546,6 +9584,7 @@ registerMarketListingRoutes(app, {
   readViewerCommunityFollows,
   normalizeRichTextHtml,
   resolveUserId,
+  sanitizePlainText,
   sendMobilePushForMessageCreated,
   stripHtmlToPlainText,
   withSchemaGuard,

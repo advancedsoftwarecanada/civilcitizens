@@ -458,8 +458,10 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         seller_user_id: string
         selected_buyer_user_id: string | null
         pickup_completed_at: Date | null
+        buyer_picked_up_at: Date | null
+        seller_picked_up_at: Date | null
       }>>`
-        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, seller_user_id, selected_buyer_user_id, pickup_completed_at
+        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, seller_user_id, selected_buyer_user_id, pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
         FROM citizen_market_listing
         WHERE id = ${thread.contextId}
         LIMIT 1
@@ -501,6 +503,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         viewerIsSelectedBuyer,
         viewerCanAccessPickupAddress,
         pickupCompletedAt: listing.pickup_completed_at ? listing.pickup_completed_at.toISOString() : null,
+        buyerPickedUpAt: listing.buyer_picked_up_at ? listing.buyer_picked_up_at.toISOString() : null,
+        sellerPickedUpAt: listing.seller_picked_up_at ? listing.seller_picked_up_at.toISOString() : null,
         pickupAddress: viewerCanAccessPickupAddress
           ? {
               name: listing.title,
@@ -792,8 +796,10 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         selected_buyer_user_id: string | null
         status: string
         pickup_completed_at: Date | null
+        buyer_picked_up_at: Date | null
+        seller_picked_up_at: Date | null
       }>>`
-        SELECT id, seller_user_id, selected_buyer_user_id, status, pickup_completed_at
+        SELECT id, seller_user_id, selected_buyer_user_id, status, pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
         FROM citizen_market_listing
         WHERE id = ${params.data.listingId}
         LIMIT 1
@@ -802,20 +808,134 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       const listing = listingRows[0]
       if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
       if (listing.status !== 'pending') return reply.code(409).send({ error: 'pickup_not_pending' })
-      if (listing.pickup_completed_at) return reply.send({ success: true, pickupCompletedAt: listing.pickup_completed_at.toISOString() })
 
-      const isParticipant = listing.seller_user_id === userId || listing.selected_buyer_user_id === userId
+      const viewerIsSeller = listing.seller_user_id === userId
+      const viewerIsSelectedBuyer = Boolean(listing.selected_buyer_user_id && listing.selected_buyer_user_id === userId)
+      const isParticipant = viewerIsSeller || viewerIsSelectedBuyer
       if (!isParticipant) return reply.code(404).send({ error: 'listing_not_found' })
 
-      await prisma.$executeRaw`
-        UPDATE citizen_market_listing
-        SET pickup_completed_at = NOW(),
-            pickup_completed_by_user_id = ${userId},
-            updated_at = NOW()
-        WHERE id = ${listing.id}
-      `
+      if (viewerIsSeller && listing.seller_picked_up_at) {
+        return reply.send({
+          success: true,
+          pickupCompletedAt: listing.pickup_completed_at ? listing.pickup_completed_at.toISOString() : null,
+          buyerPickedUpAt: listing.buyer_picked_up_at ? listing.buyer_picked_up_at.toISOString() : null,
+          sellerPickedUpAt: listing.seller_picked_up_at.toISOString(),
+        })
+      }
+      if (viewerIsSelectedBuyer && listing.buyer_picked_up_at) {
+        return reply.send({
+          success: true,
+          pickupCompletedAt: listing.pickup_completed_at ? listing.pickup_completed_at.toISOString() : null,
+          buyerPickedUpAt: listing.buyer_picked_up_at.toISOString(),
+          sellerPickedUpAt: listing.seller_picked_up_at ? listing.seller_picked_up_at.toISOString() : null,
+        })
+      }
 
-      return reply.send({ success: true, pickupCompletedAt: new Date().toISOString() })
+      const selectedThread = listing.selected_buyer_user_id
+        ? await prisma.messageThread.findFirst({
+            where: {
+              contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+              contextId: listing.id,
+              participants: { some: { userId: listing.selected_buyer_user_id } },
+            },
+            select: { id: true, participants: { select: { userId: true, mutedUntil: true } } },
+          })
+        : null
+
+      const threadMessageBody = deps
+        .sanitizePlainText(viewerIsSelectedBuyer ? 'I have picked up the item.' : 'Thank you for picking up the item.')
+        .trim()
+
+      const createdMessage = selectedThread
+        ? await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            const updatedRows = await tx.$queryRaw<Array<{
+              pickup_completed_at: Date | null
+              buyer_picked_up_at: Date | null
+              seller_picked_up_at: Date | null
+            }>>`
+              UPDATE citizen_market_listing
+              SET buyer_picked_up_at = CASE WHEN ${viewerIsSelectedBuyer} AND buyer_picked_up_at IS NULL THEN NOW() ELSE buyer_picked_up_at END,
+                  seller_picked_up_at = CASE WHEN ${viewerIsSeller} AND seller_picked_up_at IS NULL THEN NOW() ELSE seller_picked_up_at END,
+                  pickup_completed_at = COALESCE(pickup_completed_at, NOW()),
+                  pickup_completed_by_user_id = COALESCE(pickup_completed_by_user_id, ${userId}),
+                  updated_at = NOW()
+              WHERE id = ${listing.id}
+              RETURNING pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
+            `
+
+            const created = await tx.message.create({
+              data: {
+                threadId: selectedThread.id,
+                senderId: userId,
+                body: threadMessageBody || null,
+                messageType: MessageType.text,
+              },
+              select: deps.MESSAGE_SELECT,
+            })
+
+            await tx.messageThread.update({ where: { id: selectedThread.id }, data: { lastMessageAt: created.createdAt } })
+            await tx.messageParticipant.update({
+              where: { threadId_userId: { threadId: selectedThread.id, userId } },
+              data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
+            })
+            await tx.messageParticipant.updateMany({
+              where: { threadId: selectedThread.id, userId: { not: userId } },
+              data: { lastActivityAt: created.createdAt },
+            })
+
+            return {
+              message: created,
+              participants: selectedThread.participants,
+              updated: updatedRows[0] ?? null,
+            }
+          })
+        : await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            const updatedRows = await tx.$queryRaw<Array<{
+              pickup_completed_at: Date | null
+              buyer_picked_up_at: Date | null
+              seller_picked_up_at: Date | null
+            }>>`
+              UPDATE citizen_market_listing
+              SET buyer_picked_up_at = CASE WHEN ${viewerIsSelectedBuyer} AND buyer_picked_up_at IS NULL THEN NOW() ELSE buyer_picked_up_at END,
+                  seller_picked_up_at = CASE WHEN ${viewerIsSeller} AND seller_picked_up_at IS NULL THEN NOW() ELSE seller_picked_up_at END,
+                  pickup_completed_at = COALESCE(pickup_completed_at, NOW()),
+                  pickup_completed_by_user_id = COALESCE(pickup_completed_by_user_id, ${userId}),
+                  updated_at = NOW()
+              WHERE id = ${listing.id}
+              RETURNING pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
+            `
+
+            return {
+              message: null,
+              participants: [] as Array<{ userId: string; mutedUntil: Date | null }>,
+              updated: updatedRows[0] ?? null,
+            }
+          })
+
+      if (selectedThread && createdMessage.message) {
+        await Promise.all(
+          createdMessage.participants.map((participant: { userId: string }) =>
+            deps.dispatchRealtimeEvent(participant.userId, {
+              type: 'message.created',
+              data: { threadId: selectedThread.id, message: deps.formatMessage(createdMessage.message, participant.userId) },
+            }),
+          ),
+        )
+
+        void deps.sendMobilePushForMessageCreated({
+          threadId: selectedThread.id,
+          message: createdMessage.message,
+          participants: createdMessage.participants,
+          pushUrl: `/messages?inbox=market&thread=${encodeURIComponent(selectedThread.id)}`,
+        })
+      }
+
+      return reply.send({
+        success: true,
+        pickupCompletedAt: createdMessage.updated?.pickup_completed_at ? createdMessage.updated.pickup_completed_at.toISOString() : null,
+        buyerPickedUpAt: createdMessage.updated?.buyer_picked_up_at ? createdMessage.updated.buyer_picked_up_at.toISOString() : null,
+        sellerPickedUpAt: createdMessage.updated?.seller_picked_up_at ? createdMessage.updated.seller_picked_up_at.toISOString() : null,
+      })
     }),
   )
 

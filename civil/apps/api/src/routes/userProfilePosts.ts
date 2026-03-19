@@ -293,6 +293,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           organizationCount: organizationsCount,
           connectionCount: connectionsCount,
           homeChamber,
+          homeShippingAddress: null as Record<string, unknown> | null,
         }
 
         const query = CursorQuery.extend({
@@ -427,6 +428,15 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
                 relationshipLabel: deps.profileFamilyRelationshipLabels[storedRelationship.familyType] ?? storedRelationship.familyType,
               }
             }
+          } catch (error) {
+            // Ignore
+          }
+        }
+
+        if (viewerId && viewerId !== user.id && (relationship.friendshipStatus === 'friends' || Boolean(profileFamilyRelationship))) {
+          try {
+            const savedAddresses = deps.readMarketShippingAddresses(userRecord.communityMeta)
+            user.homeShippingAddress = savedAddresses.find((entry: { isDefault?: boolean }) => Boolean(entry?.isDefault)) ?? savedAddresses[0] ?? null
           } catch (error) {
             // Ignore
           }

@@ -81,6 +81,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         photo_urls: unknown
         listing_province_code: string | null
         listing_community_slug: string | null
+        listing_section: string | null
+        listing_category: string | null
+        listing_subcategory: string | null
         pickup_city: string | null
         pickup_province: string | null
         payment_types: unknown
@@ -102,6 +105,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           photo_urls,
           listing_province_code,
           listing_community_slug,
+          listing_section,
+          listing_category,
+          listing_subcategory,
           pickup_city,
           pickup_province,
           payment_types,
@@ -113,7 +119,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           created_at
         FROM citizen_market_listing
         WHERE seller_user_id = ${userId}
-          AND is_active = TRUE
+          AND (is_active = TRUE OR status = 'sold')
         ORDER BY updated_at DESC, created_at DESC
         LIMIT ${query.data.limit}
       `
@@ -128,6 +134,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           photoUrls: deps.readGalleryUrls(row.photo_urls),
           listingProvinceCode: row.listing_province_code,
           listingCommunitySlug: row.listing_community_slug,
+          listingSection: row.listing_section,
+          listingCategory: row.listing_category,
+          listingSubcategory: row.listing_subcategory,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           paymentTypes: deps.readStringList(row.payment_types),
@@ -161,6 +170,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         photo_urls: unknown
         listing_province_code: string | null
         listing_community_slug: string | null
+        listing_section: string | null
+        listing_category: string | null
+        listing_subcategory: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_address_line1: string | null
@@ -186,6 +198,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           photo_urls,
           listing_province_code,
           listing_community_slug,
+          listing_section,
+          listing_category,
+          listing_subcategory,
           pickup_city,
           pickup_province,
           pickup_address_line1,
@@ -202,7 +217,6 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         FROM citizen_market_listing
         WHERE id = ${params.data.listingId}
           AND seller_user_id = ${userId}
-          AND is_active = TRUE
         LIMIT 1
       `
 
@@ -219,6 +233,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           photoUrls: deps.readGalleryUrls(row.photo_urls),
           listingProvinceCode: row.listing_province_code,
           listingCommunitySlug: row.listing_community_slug,
+          listingSection: row.listing_section,
+          listingCategory: row.listing_category,
+          listingSubcategory: row.listing_subcategory,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           pickupAddressLine1: row.pickup_address_line1,
@@ -253,12 +270,16 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         price_cents: number
         currency: string
         photo_urls: unknown
+        listing_section: string | null
+        listing_category: string | null
+        listing_subcategory: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_postal_code: string | null
         willing_to_deliver: boolean
         delivery_options: unknown
         payment_types: unknown
+        status: string
         created_at: Date
         seller_user_id: string
         seller_handle: string | null
@@ -275,12 +296,16 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           l.price_cents,
           l.currency,
           l.photo_urls,
+          l.listing_section,
+          l.listing_category,
+          l.listing_subcategory,
           l.pickup_city,
           l.pickup_province,
           l.pickup_postal_code,
           l.willing_to_deliver,
           l.delivery_options,
           l.payment_types,
+          l.status,
           l.created_at,
           l.seller_user_id,
           u.handle AS seller_handle,
@@ -290,10 +315,12 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         FROM citizen_market_listing l
         INNER JOIN "User" u ON u.id = l.seller_user_id
         WHERE l.id = ${params.data.listingId}
-          AND l.is_active = TRUE
           AND l.is_draft = FALSE
-          AND l.status = 'active'
           AND l.moderation_status = ${'visible'}
+          AND (
+            (l.is_active = TRUE AND l.status = 'active')
+            OR l.status = 'sold'
+          )
         LIMIT 1
       `
 
@@ -303,7 +330,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
 
       let approximatePickup: { latitude: number; longitude: number; label: string } | null = null
       const normalizedPostal = normalizePostalCodeInput(row.pickup_postal_code)
-      if (normalizedPostal) {
+      if (row.status === 'active' && normalizedPostal) {
         const pointRows = await prisma.$queryRaw<Array<{ lat: number | null; lng: number | null }>>`
           SELECT
             COALESCE(ST_Y("pointGeom"), ST_Y(ST_Transform(ST_SetSRID(ST_MakePoint("centroidLng", "centroidLat"), 3347), 4326))) AS lat,
@@ -333,8 +360,12 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           priceCents: Number(row.price_cents) || 0,
           currency: row.currency,
           photoUrls: deps.readGalleryUrls(row.photo_urls),
+          listingSection: row.listing_section,
+          listingCategory: row.listing_category,
+          listingSubcategory: row.listing_subcategory,
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
+          status: row.status,
           willingToDeliver: Boolean(row.willing_to_deliver),
           deliveryOptions: deps.readDeliveryOptions(row.delivery_options),
           paymentTypes: deps.readStringList(row.payment_types),
@@ -475,9 +506,17 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
 
       const listingProvinceCodeProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingProvinceCode')
       const listingCommunitySlugProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingCommunitySlug')
+      const listingSectionProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSection')
+      const listingCategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingCategory')
+      const listingSubcategoryProvided = Object.prototype.hasOwnProperty.call(body.data, 'listingSubcategory')
       const nextListingProvinceCode = listingProvinceCodeProvided ? (body.data.listingProvinceCode?.trim() ? body.data.listingProvinceCode.trim().toUpperCase() : null) : null
       const nextListingCommunitySlug = listingCommunitySlugProvided
         ? (body.data.listingCommunitySlug?.trim() ? body.data.listingCommunitySlug.trim().toLowerCase() : null)
+        : null
+      const nextListingSection = listingSectionProvided ? (body.data.listingSection?.trim() ? body.data.listingSection.trim() : null) : null
+      const nextListingCategory = listingCategoryProvided ? (body.data.listingCategory?.trim() ? body.data.listingCategory.trim() : null) : null
+      const nextListingSubcategory = listingSubcategoryProvided
+        ? (body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null)
         : null
 
       const hasStatusUpdate = Object.prototype.hasOwnProperty.call(body.data, 'status')
@@ -511,6 +550,9 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
               WHEN ${listingCommunitySlugProvided} THEN ${nextListingCommunitySlug}
               ELSE COALESCE(listing_community_slug, ${viewerScope?.communitySlug ?? null})
             END,
+            listing_section = CASE WHEN ${listingSectionProvided} THEN ${nextListingSection} ELSE listing_section END,
+            listing_category = CASE WHEN ${listingCategoryProvided} THEN ${nextListingCategory} ELSE listing_category END,
+            listing_subcategory = CASE WHEN ${listingSubcategoryProvided} THEN ${nextListingSubcategory} ELSE listing_subcategory END,
             payment_types = CASE WHEN ${hasPaymentTypesUpdate} THEN ${JSON.stringify(nextPaymentTypes)}::jsonb ELSE payment_types END,
             willing_to_deliver = COALESCE(${typeof body.data.willingToDeliver === 'boolean' ? body.data.willingToDeliver : null}, willing_to_deliver),
             delivery_options = CASE WHEN ${hasDeliveryOptionsUpdate} THEN ${JSON.stringify(nextDeliveryOptions)}::jsonb ELSE delivery_options END,
@@ -531,68 +573,36 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
 
   app.post('/market/listings/:listingId/remove', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
-      const userId = (await deps.resolveUserId(req)) ?? undefined
-      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+      try {
+        const userId = (await deps.resolveUserId(req)) ?? undefined
+        if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-      const params = deps.MarketListingParams.safeParse(req.params)
-      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
-      const body = deps.MarketListingRemoveBody.safeParse(req.body ?? {})
-      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+        const params = deps.MarketListingParams.safeParse(req.params)
+        if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+        const body = deps.MarketListingRemoveBody.safeParse(req.body ?? {})
+        if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
-      await deps.ensureCitizenMarketplaceTables()
+        await deps.ensureCitizenMarketplaceTables()
 
-      const listingRows = await prisma.$queryRaw<Array<{ id: string; status: string; seller_user_id: string; is_active: boolean; moderation_status: string }>>`
-        SELECT id, status, seller_user_id, is_active, moderation_status
-        FROM citizen_market_listing
-        WHERE id = ${params.data.listingId}
-        LIMIT 1
-      `
+        const listingRows = await prisma.$queryRaw<Array<{ id: string; status: string; seller_user_id: string; is_active: boolean; moderation_status: string }>>`
+          SELECT id, status, seller_user_id, is_active, moderation_status
+          FROM citizen_market_listing
+          WHERE id = ${params.data.listingId}
+          LIMIT 1
+        `
 
-      const listing = listingRows[0]
-      if (!listing || !listing.is_active) return reply.code(404).send({ error: 'listing_not_found' })
-      if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
-      if (!deps.isVisibleModerationStatus(listing.moderation_status)) {
-        return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_LISTING') })
-      }
+        const listing = listingRows[0]
+        if (!listing || !listing.is_active) return reply.code(404).send({ error: 'listing_not_found' })
+        if (listing.seller_user_id !== userId) return reply.code(404).send({ error: 'listing_not_found' })
+        if (!deps.isVisibleModerationStatus(listing.moderation_status)) {
+          return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_LISTING') })
+        }
 
-      const resolution = body.data.resolution === 'sold' ? 'sold' : 'deleted'
-      const nextStatus = resolution === 'sold' ? 'sold' : 'canceled'
-      const buyerMessageBody = deps.sanitizePlainText(resolution === 'sold' ? 'This item has been sold' : 'This item has been deleted').trim()
+        const resolution = body.data.resolution === 'sold' ? 'sold' : 'deleted'
+        const nextStatus = resolution === 'sold' ? 'sold' : 'canceled'
+        const buyerMessageBody = deps.sanitizePlainText(resolution === 'sold' ? 'This item is now sold' : 'This item has been deleted').trim()
 
-      const threads = await prisma.messageThread.findMany({
-        where: {
-          contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
-          contextId: listing.id,
-          participants: { some: { userId } },
-        },
-        select: {
-          id: true,
-          participants: { select: { userId: true, mutedUntil: true } },
-        },
-        orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
-        take: 200,
-      })
-
-      const activeThreads = threads.length
-        ? await prisma.$queryRaw<Array<{ thread_id: string }>>`
-            SELECT t.id AS thread_id
-            FROM "MessageThread" t
-            WHERE t.id IN (${Prisma.join(threads.map((thread) => thread.id))})
-              AND NOT EXISTS (
-                SELECT 1
-                FROM citizen_market_chat_interest i
-                WHERE i.thread_id = t.id
-                  AND i.user_id != ${userId}
-                  AND i.interested = FALSE
-              )
-          `
-        : []
-
-      const activeThreadIdSet = new Set(activeThreads.map((thread) => String(thread.thread_id)))
-      const targetThreads = threads.filter((thread) => activeThreadIdSet.has(thread.id))
-
-      const createdMessages = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        await tx.$executeRaw`
+        const updatedRows = await prisma.$queryRaw<Array<{ id: string }>>`
           UPDATE citizen_market_listing
           SET status = ${nextStatus},
               is_active = FALSE,
@@ -602,62 +612,125 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           WHERE id = ${listing.id}
             AND seller_user_id = ${userId}
             AND is_active = TRUE
+          RETURNING id
         `
 
-        const messageRecords: Array<{ threadId: string; record: any; participants: Array<{ userId: string; mutedUntil: Date | null }> }> = []
-
-        for (const thread of targetThreads) {
-          const created = await tx.message.create({
-            data: {
-              threadId: thread.id,
-              senderId: userId,
-              body: buyerMessageBody || null,
-              messageType: MessageType.text,
-            },
-            select: deps.MESSAGE_SELECT,
-          })
-
-          await tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: created.createdAt } })
-          await tx.messageParticipant.update({
-            where: { threadId_userId: { threadId: thread.id, userId } },
-            data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
-          })
-          await tx.messageParticipant.updateMany({
-            where: { threadId: thread.id, userId: { not: userId } },
-            data: { lastActivityAt: created.createdAt },
-          })
-
-          messageRecords.push({ threadId: thread.id, record: created, participants: thread.participants })
+        if (!updatedRows[0]) {
+          return reply.code(409).send({ error: 'listing_not_found' })
         }
 
-        return messageRecords
-      })
+        const createdMessages: Array<{ threadId: string; record: any; participants: Array<{ userId: string; mutedUntil: Date | null }> }> = []
+        try {
+          const threads = await prisma.messageThread.findMany({
+            where: {
+              contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+              contextId: listing.id,
+              participants: { some: { userId } },
+            },
+            select: {
+              id: true,
+              participants: { select: { userId: true, mutedUntil: true } },
+            },
+            orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
+            take: 200,
+          })
 
-      await Promise.all(
-        createdMessages.flatMap((entry) =>
-          entry.participants.map((participant) =>
-            deps.dispatchRealtimeEvent(participant.userId, {
-              type: 'message.created',
-              data: { threadId: entry.threadId, message: deps.formatMessage(entry.record, participant.userId) },
-            }),
-          ),
-        ),
-      )
+          const createdMessageResults = await Promise.allSettled(
+            threads.map(async (thread) => {
+              const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+                const message = await tx.message.create({
+                  data: {
+                    threadId: thread.id,
+                    senderId: userId,
+                    body: buyerMessageBody || null,
+                    messageType: MessageType.text,
+                  },
+                  select: deps.MESSAGE_SELECT,
+                })
 
-      if (resolution === 'sold') {
-        await Promise.all(
-          createdMessages.map((entry) =>
-            deps.sendMobilePushForMessageCreated({
-              threadId: entry.threadId,
-              message: entry.record,
-              participants: entry.participants,
-              pushUrl: `/messages?inbox=market&thread=${encodeURIComponent(entry.threadId)}`,
+                await tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: message.createdAt } })
+                await tx.messageParticipant.updateMany({
+                  where: { threadId: thread.id, userId },
+                  data: { lastReadAt: message.createdAt, lastActivityAt: message.createdAt },
+                })
+                await tx.messageParticipant.updateMany({
+                  where: { threadId: thread.id, userId: { not: userId } },
+                  data: { lastActivityAt: message.createdAt },
+                })
+
+                return message
+              })
+
+              return { threadId: thread.id, record: created, participants: thread.participants }
             }),
+          )
+
+          for (const [index, result] of createdMessageResults.entries()) {
+            if (result.status === 'fulfilled') {
+              createdMessages.push(result.value)
+              continue
+            }
+
+            console.error('market_listing_remove_thread_message_failed', {
+              listingId: listing.id,
+              threadId: threads[index]?.id ?? null,
+              resolution,
+              error: result.reason,
+            })
+          }
+        } catch (error) {
+          console.error('market_listing_remove_threads_load_failed', {
+            listingId: listing.id,
+            resolution,
+            error,
+          })
+        }
+
+        const realtimeResults = await Promise.allSettled(
+          createdMessages.flatMap((entry) =>
+            entry.participants.map((participant) =>
+              deps.dispatchRealtimeEvent(participant.userId, {
+                type: 'message.created',
+                data: { threadId: entry.threadId, message: deps.formatMessage(entry.record, participant.userId) },
+              }),
+            ),
           ),
         )
-      }
 
-      return reply.send({ success: true, resolution, status: nextStatus })
+        for (const result of realtimeResults) {
+          if (result.status === 'rejected') {
+            console.error('market_listing_remove_realtime_failed', result.reason)
+          }
+        }
+
+        if (resolution === 'sold') {
+          const pushResults = await Promise.allSettled(
+            createdMessages.map((entry) =>
+              deps.sendMobilePushForMessageCreated({
+                threadId: entry.threadId,
+                message: entry.record,
+                participants: entry.participants,
+                pushUrl: `/messages?inbox=market&thread=${encodeURIComponent(entry.threadId)}`,
+              }),
+            ),
+          )
+
+          for (const result of pushResults) {
+            if (result.status === 'rejected') {
+              console.error('market_listing_remove_push_failed', result.reason)
+            }
+          }
+        }
+
+        return reply.send({ success: true, resolution, status: nextStatus })
+      } catch (error) {
+        req.log.error({ err: error }, 'market_listing_remove_failed')
+        const payload: Record<string, unknown> = { error: 'market_listing_remove_failed' }
+        if (process.env.NODE_ENV !== 'production') {
+          payload.detail = error instanceof Error ? error.message : String(error)
+        }
+        return reply.code(500).send(payload)
+      }
     }),
   )
 }
