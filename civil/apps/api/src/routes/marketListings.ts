@@ -520,7 +520,16 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
       `
 
       return reply.send({
-        items: rows.map((row) => ({
+        items: rows.map((row: {
+          id: string
+          title: string
+          price_cents: number
+          currency: string
+          photo_urls: unknown
+          pickup_city: string | null
+          pickup_province: string | null
+          distance_meters: number | null
+        }) => ({
           id: row.id,
           title: row.title,
           priceCents: Number(row.price_cents) || 0,
@@ -749,7 +758,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
           })
 
           const createdMessageResults = await Promise.allSettled(
-            threads.map(async (thread) => {
+            threads.map(async (thread: { id: string; participants: Array<{ userId: string; mutedUntil: Date | null }> }) => {
               const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
                 const message = await tx.message.create({
                   data: {

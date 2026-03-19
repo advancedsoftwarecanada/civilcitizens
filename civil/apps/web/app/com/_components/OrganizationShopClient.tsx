@@ -151,8 +151,8 @@ const parseWarehouseAddress = (value?: string | null): CanadianAddress => {
     .filter(Boolean)
   if (!lines.length) return createEmptyCanadianAddress()
 
-  const countryLine = lines.length >= 2 ? lines[lines.length - 1] : 'CA'
-  const cityLine = lines.length >= 2 ? lines[lines.length - 2] : ''
+  const countryLine = lines.length >= 2 ? (lines[lines.length - 1] ?? 'CA') : 'CA'
+  const cityLine = lines.length >= 2 ? (lines[lines.length - 2] ?? '') : ''
   const addressLines = lines.slice(0, Math.max(1, lines.length - 2))
   const [line1 = '', line2 = ''] = addressLines
   const [cityPart, provincePostal = ''] = cityLine.includes(',') ? cityLine.split(/,(.+)/).map((part) => part.trim()) : ['', cityLine]
