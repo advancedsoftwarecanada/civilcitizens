@@ -1429,10 +1429,6 @@ export default function MarketNewListingPageClient() {
             pushToast('Preparation location is required for high-risk food listings.', 'error')
             return
           }
-          if (!form.foodStorageMethod) {
-            pushToast('Storage method is required for high-risk food listings.', 'error')
-            return
-          }
         }
         if (form.willingToDeliver) {
           const hasDeliveryRange = Object.values(form.deliverySelection).some(Boolean)
@@ -1473,7 +1469,7 @@ export default function MarketNewListingPageClient() {
             foodSafetyClassification: isFoodListing ? form.foodSafetyClassification || null : null,
             foodIngredients: requiresHighRiskFoodFields ? form.foodIngredients.trim() || null : null,
             foodPreparationLocation: requiresHighRiskFoodFields ? form.foodPreparationLocation || null : null,
-            foodStorageMethod: requiresHighRiskFoodFields ? form.foodStorageMethod || null : null,
+            foodStorageMethod: null,
             foodTags: isFoodListing ? form.foodTags : [],
             foodExpiryDate: requiresHighRiskFoodFields ? form.foodExpiryDate.trim() || null : null,
             pickupCity: form.pickupCity.trim() || null,
@@ -1857,32 +1853,6 @@ export default function MarketNewListingPageClient() {
                             </button>
                           </div>
                         </div>
-
-                        <div className="space-y-2">
-                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Storage method</span>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <button
-                              type="button"
-                              disabled={saving || initializing || !canEditActiveDraftListing}
-                              onClick={() => setForm((prev) => ({ ...prev, foodStorageMethod: 'refrigerated' }))}
-                              className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${form.foodStorageMethod === 'refrigerated' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
-                            >
-                              Refrigerated
-                            </button>
-                            <button
-                              type="button"
-                              disabled={saving || initializing || !canEditActiveDraftListing}
-                              onClick={() => setForm((prev) => ({ ...prev, foodStorageMethod: 'frozen' }))}
-                              className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${form.foodStorageMethod === 'frozen' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'}`}
-                            >
-                              Frozen
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                        Please ensure to package your food with an expire or best before date and handling instructions.
                       </div>
 
                     </div>
