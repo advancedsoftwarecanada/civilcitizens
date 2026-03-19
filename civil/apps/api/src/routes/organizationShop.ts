@@ -584,6 +584,72 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
     }),
   )
 
+  app.put('/communities/:province/:municipality/orgs/:slug/shop/warehouses/:warehouseId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgShopWarehouseParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgShopWarehouseUpdateBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      const normalizedAddress = [
+        body.data.address.line1.trim(),
+        body.data.address.line2?.trim() || null,
+        `${body.data.address.city.trim()}, ${body.data.address.province.trim()} ${body.data.address.postalCode.trim()}`,
+        body.data.address.country.trim().toUpperCase(),
+      ]
+        .filter((value: string | null): value is string => Boolean(value))
+        .join('\n')
+
+      const updatedRows = await prisma.$queryRaw<Array<{ id: string; name: string; address: string | null; is_head_office: boolean }>>`
+        UPDATE organization_shop_warehouse
+        SET name = ${body.data.name.trim()},
+            address = ${normalizedAddress},
+            updated_at = NOW()
+        WHERE business_id = ${org.id} AND id = ${params.data.warehouseId}
+        RETURNING id, name, address, is_head_office
+      `
+
+      const updated = updatedRows[0]
+      if (!updated) return reply.code(404).send({ error: 'warehouse_not_found' })
+
+      return reply.send({
+        warehouse: {
+          id: updated.id,
+          name: updated.name,
+          address: updated.address,
+          isHeadOffice: Boolean(updated.is_head_office),
+        },
+      })
+    }),
+  )
+
   app.post('/communities/:province/:municipality/orgs/:slug/shop/catalogs', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined
