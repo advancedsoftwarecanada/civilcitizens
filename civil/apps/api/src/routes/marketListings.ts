@@ -567,11 +567,26 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
         }
       }
 
-      const eTransferProvided = Object.prototype.hasOwnProperty.call(body.data, 'eTransferEmail')
-      const nextETransferEmail = eTransferProvided ? (body.data.eTransferEmail?.trim() ? body.data.eTransferEmail.trim() : null) : null
-
       const hasPaymentTypesUpdate = Object.prototype.hasOwnProperty.call(body.data, 'paymentTypes')
       const nextPaymentTypes = hasPaymentTypesUpdate ? Array.from(new Set(body.data.paymentTypes ?? [])) : []
+      let nextETransferEmail: string | null = null
+
+      if (hasPaymentTypesUpdate) {
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
+        if (!user) return reply.code(401).send({ error: 'unauthorized' })
+
+        const wallet = deps.parseCommunityMeta(user.communityMeta ?? null)?.wallet
+        const walletEmail = wallet?.eTransferEmail?.trim()?.toLowerCase() ?? null
+        const walletEnabled = wallet?.enabled == null ? Boolean(walletEmail) : Boolean(wallet.enabled)
+        const walletMarketSharing = wallet?.sharing?.market == null ? Boolean(walletEmail) : Boolean(wallet.sharing.market)
+        if (nextPaymentTypes.includes('etransfer') && !walletEmail) {
+          return reply.code(400).send({ error: 'wallet_etransfer_required' })
+        }
+        if (nextPaymentTypes.includes('etransfer') && (!walletEnabled || !walletMarketSharing)) {
+          return reply.code(400).send({ error: 'wallet_etransfer_required' })
+        }
+        nextETransferEmail = nextPaymentTypes.includes('etransfer') ? walletEmail : null
+      }
 
       const hasDeliveryOptionsUpdate = Object.prototype.hasOwnProperty.call(body.data, 'deliveryOptions')
       const nextDeliveryOptions = hasDeliveryOptionsUpdate ? deps.readDeliveryOptions(body.data.deliveryOptions ?? {}) : {}
@@ -654,7 +669,7 @@ export function registerMarketListingRoutes(app: FastifyInstance, deps: MarketLi
             payment_types = CASE WHEN ${hasPaymentTypesUpdate} THEN ${JSON.stringify(nextPaymentTypes)}::jsonb ELSE payment_types END,
             willing_to_deliver = COALESCE(${typeof body.data.willingToDeliver === 'boolean' ? body.data.willingToDeliver : null}, willing_to_deliver),
             delivery_options = CASE WHEN ${hasDeliveryOptionsUpdate} THEN ${JSON.stringify(nextDeliveryOptions)}::jsonb ELSE delivery_options END,
-            e_transfer_email = CASE WHEN ${eTransferProvided} THEN ${nextETransferEmail} ELSE e_transfer_email END,
+            e_transfer_email = CASE WHEN ${hasPaymentTypesUpdate} THEN ${nextETransferEmail} ELSE e_transfer_email END,
             status = CASE WHEN ${hasStatusUpdate} THEN ${nextStatus} ELSE status END,
             is_draft = CASE WHEN ${hasDraftUpdate} THEN ${nextIsDraft} ELSE is_draft END,
             updated_at = NOW()

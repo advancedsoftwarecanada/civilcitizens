@@ -13,7 +13,9 @@ type AuthJwtPayload = {
 
 type AuthRoutesDeps = {
   RegisterInputApi: ZodTypeAny
+  ensureCitizenMarketplaceTables: () => Promise<void>
   getUpdateCivilStatusBody: () => ZodTypeAny
+  getUpdateWalletBody: () => ZodTypeAny
   applyOrganizationInviteRegistration: (token: string, newUserId: string) => Promise<void>
   buildFamilyMemberAuthMeResponse: (member: any, homeCommunity: any) => any
   buildHomeCommunitySummaryForUserId: (userId: string) => Promise<any>
@@ -28,6 +30,35 @@ type AuthRoutesDeps = {
   parseCommunityMeta: (value: any) => any
   readBaseCommunityMeta: (value: any) => Record<string, any>
   withSchemaGuard: (req: FastifyRequest, reply: FastifyReply, handler: () => Promise<any>) => Promise<any>
+}
+
+function readWalletSummary(communityMeta: any) {
+  const wallet = communityMeta?.wallet && typeof communityMeta.wallet === 'object' && !Array.isArray(communityMeta.wallet)
+    ? communityMeta.wallet
+    : null
+  const civilCreditsCents =
+    typeof wallet?.civilCreditsCents === 'number' && Number.isFinite(wallet.civilCreditsCents)
+      ? Math.max(0, Math.round(wallet.civilCreditsCents))
+      : 0
+  const eTransferEmail = typeof wallet?.eTransferEmail === 'string' && wallet.eTransferEmail.trim()
+    ? wallet.eTransferEmail.trim().toLowerCase()
+    : null
+  const enabled = typeof wallet?.enabled === 'boolean' ? Boolean(wallet.enabled) : Boolean(eTransferEmail)
+  const sharing = wallet?.sharing && typeof wallet.sharing === 'object' && !Array.isArray(wallet.sharing)
+    ? wallet.sharing
+    : null
+  const sharingSummary = {
+    family: typeof sharing?.family === 'boolean' ? Boolean(sharing.family) : false,
+    friends: typeof sharing?.friends === 'boolean' ? Boolean(sharing.friends) : false,
+    market: typeof sharing?.market === 'boolean' ? Boolean(sharing.market) : Boolean(eTransferEmail),
+  }
+
+  return {
+    civilCreditsCents,
+    enabled,
+    eTransferEmail,
+    sharing: sharingSummary,
+  }
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
@@ -106,7 +137,10 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
         if (!member) return reply.code(401).send({ error: 'unauthorized' })
 
         const homeCommunity = await deps.buildHomeCommunitySummaryForUserId(member.parentId)
-        return reply.send(deps.buildFamilyMemberAuthMeResponse(member, homeCommunity))
+        return reply.send({
+          ...deps.buildFamilyMemberAuthMeResponse(member, homeCommunity),
+          wallet: null,
+        })
       }
 
       const user = await prisma.user.findUnique({
@@ -130,6 +164,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
       const homeCommunity = await deps.buildHomeCommunitySummaryForUserId(payload.sub)
       const normalizedUser = deps.normalizeUserMedia(user)
       const communityMeta = deps.parseCommunityMeta(user.communityMeta ?? null)
+      const wallet = readWalletSummary(communityMeta)
 
       let familyMemberCount = 0
       try {
@@ -162,8 +197,73 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
           memberCount: familyMemberCount,
           relationshipCount: familyRelationshipCount,
         },
+        wallet,
         accountType: 'user',
         familyMemberSession: null,
+      })
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+  })
+
+  app.put('/auth/wallet', async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const payload = (await (req as any).jwtVerify()) as AuthJwtPayload
+      if (!payload?.sub || typeof payload.sub !== 'string') {
+        return reply.code(401).send({ error: 'unauthorized' })
+      }
+      if (payload.actor === 'family_member') {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      const body = deps.getUpdateWalletBody().safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const user = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+      if (deps.isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
+
+      const baseMeta = deps.readBaseCommunityMeta(user.communityMeta)
+      const currentMeta = deps.parseCommunityMeta(user.communityMeta ?? null)
+      const currentWallet = readWalletSummary(currentMeta)
+      const nextEnabled = typeof body.data.enabled === 'boolean' ? body.data.enabled : currentWallet.enabled
+      const nextETransferEmail = body.data.eTransferEmail?.trim() ? body.data.eTransferEmail.trim().toLowerCase() : null
+      const nextSharing = {
+        family:
+          typeof body.data.sharing?.family === 'boolean' ? body.data.sharing.family : currentWallet.sharing.family,
+        friends:
+          typeof body.data.sharing?.friends === 'boolean' ? body.data.sharing.friends : currentWallet.sharing.friends,
+        market:
+          typeof body.data.sharing?.market === 'boolean' ? body.data.sharing.market : currentWallet.sharing.market,
+      }
+      baseMeta.wallet = {
+        civilCreditsCents: currentWallet.civilCreditsCents,
+        enabled: nextEnabled,
+        eTransferEmail: nextETransferEmail,
+        sharing: nextSharing,
+      }
+
+      const marketplaceWalletEmail = nextEnabled && nextSharing.market && nextETransferEmail ? nextETransferEmail : null
+
+      await prisma.user.update({ where: { id: payload.sub }, data: { communityMeta: baseMeta } })
+
+      await deps.ensureCitizenMarketplaceTables()
+      await prisma.$executeRaw`
+        UPDATE citizen_market_listing
+        SET e_transfer_email = ${marketplaceWalletEmail},
+            updated_at = NOW()
+        WHERE seller_user_id = ${payload.sub}
+          AND is_active = TRUE
+          AND payment_types @> ${JSON.stringify(['etransfer'])}::jsonb
+      `
+
+      return reply.send({
+        wallet: {
+          civilCreditsCents: currentWallet.civilCreditsCents,
+          enabled: nextEnabled,
+          eTransferEmail: nextETransferEmail,
+          sharing: nextSharing,
+        },
       })
     } catch {
       return reply.code(401).send({ error: 'unauthorized' })

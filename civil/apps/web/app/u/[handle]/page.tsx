@@ -5,12 +5,13 @@ import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import clsx from 'clsx'
 import type { ReactionType } from '@civil/shared'
-import { FaUserTie } from 'react-icons/fa'
+import { FaUserTie, FaWallet } from 'react-icons/fa'
 import {
   HiOutlineCamera,
   HiOutlineCalendarDays,
   HiOutlineChatBubbleOvalLeft,
   HiOutlineChevronDown,
+  HiOutlineClipboardDocument,
   HiOutlineDocumentText,
   HiOutlinePencilSquare,
   HiOutlinePhone,
@@ -88,6 +89,10 @@ type UserProfile = {
   communityCount?: number
   organizationCount?: number
   connectionCount?: number
+  wallet?: {
+    label: string
+    eTransferEmail: string
+  } | null
   homeShippingAddress?: SavedShippingAddress | null
   homeChamber?: {
     provinceCode: string
@@ -540,6 +545,7 @@ export default function UserPostsPage({ params }: PageProps) {
   const [familyInviteModalOpen, setFamilyInviteModalOpen] = useState(false)
   const [familyInviteRelationship, setFamilyInviteRelationship] = useState<FamilyInviteRelationshipValue | null>(null)
   const [familyInviteSending, setFamilyInviteSending] = useState(false)
+  const [sendMoneyModalOpen, setSendMoneyModalOpen] = useState(false)
   const [removingFamilyRelationship, setRemovingFamilyRelationship] = useState(false)
   const [inviteSurface, setInviteSurface] = useState<InviteSurface>('event')
   const [inviteOrganizations, setInviteOrganizations] = useState<InviteableOrganization[]>([])
@@ -843,6 +849,7 @@ export default function UserPostsPage({ params }: PageProps) {
       profile?.homeShippingAddress &&
       (resolvedRelationship.friendshipStatus === 'friends' || Boolean(currentProfileFamilyRelationship)),
   )
+  const canSendMoneyToProfile = Boolean(!isOwner && profile?.wallet?.eTransferEmail)
   const profileDirectionsHref = useMemo(() => {
     if (!profile?.homeShippingAddress) return null
     return buildAddressesHrefFromAddress(profile.homeShippingAddress, profileDisplayName)
@@ -1266,6 +1273,16 @@ export default function UserPostsPage({ params }: PageProps) {
         <HiOutlineChatBubbleOvalLeft className="h-4 w-4" aria-hidden="true" />
         {messageLoading ? 'Opening…' : 'Message'}
       </button>
+      {canSendMoneyToProfile ? (
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+          onClick={() => setSendMoneyModalOpen(true)}
+        >
+          <FaWallet className="h-4 w-4" aria-hidden="true" />
+          Send Money
+        </button>
+      ) : null}
       {canViewProfileDirections && profileDirectionsHref ? (
         <Link
           href={profileDirectionsHref}
@@ -1985,6 +2002,22 @@ export default function UserPostsPage({ params }: PageProps) {
     }
   }
 
+  const handleCopyWalletEmail = useCallback(async () => {
+    const email = profile?.wallet?.eTransferEmail?.trim()
+    if (!email) {
+      pushToast('No wallet email available to copy.', 'error')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(email)
+      pushToast('Wallet email copied.', 'success')
+    } catch (error) {
+      console.error('Failed to copy wallet email', error)
+      pushToast('Unable to copy the wallet email right now.', 'error')
+    }
+  }, [profile?.wallet?.eTransferEmail])
+
   const isFamilyParentProfile = Boolean(
     resolvedViewer?.accountType === 'family_member' &&
       resolvedViewer.familyMemberSession?.parentHandle?.toLowerCase() === handleParam.toLowerCase(),
@@ -2689,6 +2722,43 @@ export default function UserPostsPage({ params }: PageProps) {
             </Modal>
           </>
         ) : null}
+
+        <Modal
+          open={sendMoneyModalOpen}
+          onClose={() => setSendMoneyModalOpen(false)}
+          title="Send Money"
+          maxWidthClassName="max-w-lg"
+        >
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Civil Wallet</p>
+              <p className="mt-2 text-sm text-slate-600">Send money to {profileDisplayName} using this eTransfer email address.</p>
+              <div className="mt-3 flex items-center gap-2">
+                <div className="flex min-h-11 w-full items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900">
+                  {profile?.wallet?.eTransferEmail ?? ''}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyWalletEmail()}
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  aria-label="Copy wallet email"
+                  title="Copy wallet email"
+                >
+                  <HiOutlineClipboardDocument className="h-5 w-5" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSendMoneyModalOpen(false)}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
 
         <div className="flex justify-center">
           <div className="inline-flex rounded-full bg-slate-100 p-1 text-xs font-semibold text-slate-500">

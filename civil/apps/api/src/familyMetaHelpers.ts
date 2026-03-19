@@ -72,6 +72,16 @@ export type ProfileFamilyRelationshipDirection = 'outbound' | 'inbound'
 export type CommunityMetaPayload = {
   nearbyCommunities?: CitySummaryType[]
   computedAt?: string
+  wallet?: {
+    civilCreditsCents?: number
+    enabled?: boolean
+    eTransferEmail?: string | null
+    sharing?: {
+      family?: boolean
+      friends?: boolean
+      market?: boolean
+    } | null
+  } | null
   dateOfBirth?: string
   countryOfBirth?: string
   shareDateOfBirth?: boolean
@@ -187,6 +197,46 @@ export function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): 
       ? (payload.reference as { provinceCode?: string | null; communitySlug?: string | null; cityName?: string | null })
       : null
   const computedAt = typeof payload.computedAt === 'string' ? payload.computedAt : undefined
+  const walletValue = payload.wallet && typeof payload.wallet === 'object' && !Array.isArray(payload.wallet)
+    ? (payload.wallet as Record<string, unknown>)
+    : null
+  const wallet = walletValue
+    ? {
+        civilCreditsCents:
+          typeof walletValue.civilCreditsCents === 'number' && Number.isFinite(walletValue.civilCreditsCents)
+            ? Math.max(0, Math.round(walletValue.civilCreditsCents))
+            : undefined,
+        enabled:
+          typeof walletValue.enabled === 'boolean'
+            ? walletValue.enabled
+            : typeof walletValue.eTransferEmail === 'string' && walletValue.eTransferEmail.trim()
+              ? true
+              : undefined,
+        eTransferEmail:
+          typeof walletValue.eTransferEmail === 'string' && walletValue.eTransferEmail.trim()
+            ? walletValue.eTransferEmail.trim().toLowerCase()
+            : null,
+        sharing:
+          walletValue.sharing && typeof walletValue.sharing === 'object' && !Array.isArray(walletValue.sharing)
+            ? {
+                family:
+                  typeof (walletValue.sharing as Record<string, unknown>).family === 'boolean'
+                    ? Boolean((walletValue.sharing as Record<string, unknown>).family)
+                    : undefined,
+                friends:
+                  typeof (walletValue.sharing as Record<string, unknown>).friends === 'boolean'
+                    ? Boolean((walletValue.sharing as Record<string, unknown>).friends)
+                    : undefined,
+                market:
+                  typeof (walletValue.sharing as Record<string, unknown>).market === 'boolean'
+                    ? Boolean((walletValue.sharing as Record<string, unknown>).market)
+                    : typeof walletValue.eTransferEmail === 'string' && walletValue.eTransferEmail.trim()
+                      ? true
+                      : undefined,
+              }
+            : null,
+      }
+    : null
   const dateOfBirth = typeof payload.dateOfBirth === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(payload.dateOfBirth) ? payload.dateOfBirth : undefined
   const countryOfBirth = typeof payload.countryOfBirth === 'string' && payload.countryOfBirth.trim() ? payload.countryOfBirth.trim() : undefined
   const shareDateOfBirth = typeof payload.shareDateOfBirth === 'boolean' ? payload.shareDateOfBirth : undefined
@@ -480,6 +530,7 @@ export function parseCommunityMeta(value: Prisma.JsonValue | null | undefined): 
   return {
     nearbyCommunities: nearby,
     computedAt,
+    wallet,
     dateOfBirth,
     countryOfBirth,
     shareDateOfBirth,

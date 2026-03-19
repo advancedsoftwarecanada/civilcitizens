@@ -11,6 +11,8 @@ import { pushToast } from '../../../_components/useToasts'
 import { buildApiUrl } from '../../../_lib/api'
 import { fetchAddressSearchResults } from '../../../_lib/addressSearch'
 import { normalizeCanadianPostalCode, normalizeCanadianProvince, type SavedShippingAddress } from '../../../_lib/canadianAddresses'
+import { ensureViewerMe } from '../../../_lib/viewerMe'
+import { useViewerStore } from '../../../_lib/viewerStore'
 import MarketRightRail from '../../_components/MarketRightRail'
 import { getMarketListingCategory, getMarketListingSection, getMarketListingSubcategory, MARKET_LISTING_SECTIONS } from '../../_lib/listingCategories'
 
@@ -156,7 +158,6 @@ type DraftForm = {
     medium100km: string
     long250km: string
   }
-  eTransferEmail: string
   paymentTypes: Array<'cash_pickup' | 'etransfer'>
   photoUrls: string[]
 }
@@ -201,7 +202,6 @@ const EMPTY_FORM: DraftForm = {
     medium100km: DEFAULT_DELIVERY_PRICES.medium100km,
     long250km: DEFAULT_DELIVERY_PRICES.long250km,
   },
-  eTransferEmail: '',
   paymentTypes: ['cash_pickup'],
   photoUrls: [],
 }
@@ -421,6 +421,10 @@ function formatMoneyInput(cents: number) {
   return (Math.max(0, Number(cents) || 0) / 100).toFixed(2)
 }
 
+function normalizeEmail(value: string | null | undefined) {
+  return (value ?? '').trim().toLowerCase()
+}
+
 function stripHtmlToPlainText(html: string) {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
 }
@@ -538,6 +542,7 @@ export default function MarketNewListingPageClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const listingParam = searchParams.get('listing')
+  const viewerMe = useViewerStore((state) => state.me)
 
   const [listingId, setListingId] = useState<string | null>(null)
   const [initializing, setInitializing] = useState(true)
@@ -560,6 +565,7 @@ export default function MarketNewListingPageClient() {
   const [activeListingTypePicker, setActiveListingTypePicker] = useState<ListingTypeFieldKey | null>(null)
   const [aiCategorizing, setAiCategorizing] = useState(false)
   const [hasOrganization, setHasOrganization] = useState<boolean | null>(null)
+  const [walletSetupModalOpen, setWalletSetupModalOpen] = useState(false)
 
   const loadListing = useCallback(async (id: string) => {
     const res = await fetch(buildApiUrl(`/market/listings/${encodeURIComponent(id)}`), {
@@ -618,7 +624,6 @@ export default function MarketNewListingPageClient() {
         medium100km: hasMedium ? formatMoneyInput(Number(deliveryOptions.medium100km) || 0) : DEFAULT_DELIVERY_PRICES.medium100km,
         long250km: hasLong ? formatMoneyInput(Number(deliveryOptions.long250km) || 0) : DEFAULT_DELIVERY_PRICES.long250km,
       },
-      eTransferEmail: listing.eTransferEmail ?? '',
       paymentTypes: (Array.isArray(listing.paymentTypes) ? listing.paymentTypes : []).filter(
         (entry): entry is 'cash_pickup' | 'etransfer' => entry === 'cash_pickup' || entry === 'etransfer',
       ),
@@ -827,6 +832,10 @@ export default function MarketNewListingPageClient() {
   useEffect(() => {
     void loadAddressQuickSelects()
   }, [loadAddressQuickSelects])
+
+  useEffect(() => {
+    void ensureViewerMe()
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -1206,16 +1215,41 @@ export default function MarketNewListingPageClient() {
     }
   }, [addressMapQuery])
 
-  const togglePaymentType = useCallback((type: 'cash_pickup' | 'etransfer') => {
-    setForm((prev) => {
-      const exists = prev.paymentTypes.includes(type)
-      if (exists) {
+  const resolveWalletETransferEmail = useCallback(async () => {
+    const cachedWallet = useViewerStore.getState().me?.wallet
+    const cachedEmail = normalizeEmail(cachedWallet?.eTransferEmail)
+    const cachedEnabled = cachedWallet?.enabled == null ? Boolean(cachedEmail) : Boolean(cachedWallet.enabled)
+    const cachedMarketSharing = cachedWallet?.sharing?.market == null ? Boolean(cachedEmail) : Boolean(cachedWallet.sharing.market)
+    if (cachedEmail && cachedEnabled && cachedMarketSharing) return cachedEmail
+
+    const resolvedMe = await ensureViewerMe({ refresh: true })
+    const resolvedWallet = resolvedMe?.wallet
+    const resolvedEmail = normalizeEmail(resolvedWallet?.eTransferEmail)
+    const resolvedEnabled = resolvedWallet?.enabled == null ? Boolean(resolvedEmail) : Boolean(resolvedWallet.enabled)
+    const resolvedMarketSharing = resolvedWallet?.sharing?.market == null ? Boolean(resolvedEmail) : Boolean(resolvedWallet.sharing.market)
+    return resolvedEmail && resolvedEnabled && resolvedMarketSharing ? resolvedEmail : ''
+  }, [])
+
+  const togglePaymentType = useCallback(async (type: 'cash_pickup' | 'etransfer') => {
+    const exists = form.paymentTypes.includes(type)
+    if (exists) {
+      setForm((prev) => {
         const next = prev.paymentTypes.filter((entry) => entry !== type)
         return { ...prev, paymentTypes: next.length ? next : ['cash_pickup'] }
+      })
+      return
+    }
+
+    if (type === 'etransfer') {
+      const walletEmail = await resolveWalletETransferEmail()
+      if (!walletEmail) {
+        setWalletSetupModalOpen(true)
+        return
       }
-      return { ...prev, paymentTypes: [...prev.paymentTypes, type] }
-    })
-  }, [])
+    }
+
+    setForm((prev) => ({ ...prev, paymentTypes: [...prev.paymentTypes, type] }))
+  }, [form.paymentTypes, resolveWalletETransferEmail])
 
   const uploadMediaFile = useCallback(async (file: File) => {
     const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
@@ -1366,6 +1400,13 @@ export default function MarketNewListingPageClient() {
     [form.photoUrls, uploadMediaFile],
   )
 
+  const walletETransferEmail = normalizeEmail(viewerMe?.wallet?.eTransferEmail)
+  const walletMarketEnabled = Boolean(
+    walletETransferEmail &&
+      (viewerMe?.wallet?.enabled == null ? true : viewerMe.wallet.enabled) &&
+      (viewerMe?.wallet?.sharing?.market == null ? true : viewerMe.wallet.sharing.market),
+  )
+
   const saveListing = useCallback(
     async (mode: 'save' | 'publish' | 'unpublish') => {
       if (!listingId) return
@@ -1376,6 +1417,15 @@ export default function MarketNewListingPageClient() {
       if (descriptionTooLong) {
         pushToast(`Description must be ${MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters or fewer.`, 'error')
         return
+      }
+
+      if (form.paymentTypes.includes('etransfer')) {
+        const walletEmail = await resolveWalletETransferEmail()
+        if (!walletEmail) {
+          setWalletSetupModalOpen(true)
+          pushToast('Set up your wallet eTransfer address before enabling eTransfer.', 'error')
+          return
+        }
       }
 
       const priceCents = toCents(form.price)
@@ -1480,7 +1530,6 @@ export default function MarketNewListingPageClient() {
             paymentTypes: form.paymentTypes,
             willingToDeliver: form.willingToDeliver,
             deliveryOptions,
-            eTransferEmail: form.eTransferEmail.trim() || null,
             isDraft: nextIsDraft,
             status: nextStatus,
           }),
@@ -1503,7 +1552,7 @@ export default function MarketNewListingPageClient() {
         setSaving(false)
       }
     },
-    [descriptionPlainText, descriptionTooLong, form, listingId, router, statusLabel],
+    [descriptionPlainText, descriptionTooLong, form, listingId, resolveWalletETransferEmail, router, statusLabel],
   )
 
   const removeListing = useCallback(async () => {
@@ -1613,99 +1662,99 @@ export default function MarketNewListingPageClient() {
 
         {!initializing ? (
           <>
-          <fieldset disabled={!canEditActiveDraftListing} className={`space-y-5 ${canEditActiveDraftListing ? '' : 'opacity-80'}`}>
-            <section className={editorCardClassName}>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Add photos</p>
-              <p className="mt-1 text-xs text-slate-600">Upload up to 12 photos.</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100">
-                  {uploadingPhotos ? 'Uploading…' : 'Upload photos'}
-                  <input
-                    type="file"
-                    accept={ACCEPTED_IMAGE_TYPES}
-                    multiple
-                    className="hidden"
-                    disabled={uploadingPhotos}
-                    onChange={(event) => {
-                      void handlePhotoUpload(event.target.files)
-                      event.currentTarget.value = ''
-                    }}
-                  />
-                </label>
-              </div>
-              {form.photoUrls.length ? (
-                <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                  {form.photoUrls.map((url) => (
-                    <li key={url} className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      {url ? <img src={url} alt="Listing" className="h-full w-full object-cover" loading="lazy" /> : null}
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/35 to-transparent" />
-                      <div className="absolute right-2 top-2">
-                        <button
-                          type="button"
-                          onClick={() => setForm((prev) => ({ ...prev, photoUrls: prev.photoUrls.filter((entry) => entry !== url) }))}
-                          aria-label="Remove photo"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-sm font-semibold text-white transition hover:bg-black/80"
-                        >
-                          X
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-            </section>
-
-            <section className={editorCardClassName}>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Title</span>
-                <input
-                  value={form.title}
-                  onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
-                  placeholder="What are you selling?"
-                  maxLength={140}
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price (CAD)</span>
-                <input
-                  value={form.price}
-                  onChange={(event) => setForm((prev) => ({ ...prev, price: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
-                  placeholder="0.00"
-                />
-              </label>
-            </div>
-            </section>
-
-            <section className={editorCardClassName}>
-            <label className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
-              <div className="rounded-xl border border-slate-200 bg-white p-2">
-                <RichTextEditor
-                  value={form.description}
-                  onChange={(value) => setForm((prev) => ({ ...prev, description: value }))}
-                  placeholder="Condition, details, pickup expectations, and anything buyers should know."
-                  minHeight={200}
-                  disabled={saving || initializing || !canEditActiveDraftListing}
-                />
-              </div>
-              <p className={`text-xs ${descriptionTooLong ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>
-                {descriptionPlainText.length.toLocaleString()} / {MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters
-              </p>
-            </label>
-            </section>
-
-            <section className={editorCardClassName}>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">Listing type</p>
+            <fieldset disabled={!canEditActiveDraftListing} className={`space-y-5 ${canEditActiveDraftListing ? '' : 'opacity-80'}`}>
+              <section className={editorCardClassName}>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">Add photos</p>
+                  <p className="mt-1 text-xs text-slate-600">Upload up to 12 photos.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100">
+                      {uploadingPhotos ? 'Uploading…' : 'Upload photos'}
+                      <input
+                        type="file"
+                        accept={ACCEPTED_IMAGE_TYPES}
+                        multiple
+                        className="hidden"
+                        disabled={uploadingPhotos}
+                        onChange={(event) => {
+                          void handlePhotoUpload(event.target.files)
+                          event.currentTarget.value = ''
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {form.photoUrls.length ? (
+                    <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                      {form.photoUrls.map((url) => (
+                        <li key={url} className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-white">
+                          {url ? <img src={url} alt="Listing" className="h-full w-full object-cover" loading="lazy" /> : null}
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/35 to-transparent" />
+                          <div className="absolute right-2 top-2">
+                            <button
+                              type="button"
+                              onClick={() => setForm((prev) => ({ ...prev, photoUrls: prev.photoUrls.filter((entry) => entry !== url) }))}
+                              aria-label="Remove photo"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/65 text-sm font-semibold text-white transition hover:bg-black/80"
+                            >
+                              X
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
+              </section>
+
+              <section className={editorCardClassName}>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="space-y-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Title</span>
+                    <input
+                      value={form.title}
+                      onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
+                      placeholder="What are you selling?"
+                      maxLength={140}
+                    />
+                  </label>
+
+                  <label className="space-y-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Price (CAD)</span>
+                    <input
+                      value={form.price}
+                      onChange={(event) => setForm((prev) => ({ ...prev, price: event.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
+                      placeholder="0.00"
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className={editorCardClassName}>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
+                  <div className="rounded-xl border border-slate-200 bg-white p-2">
+                    <RichTextEditor
+                      value={form.description}
+                      onChange={(value) => setForm((prev) => ({ ...prev, description: value }))}
+                      placeholder="Condition, details, pickup expectations, and anything buyers should know."
+                      minHeight={200}
+                      disabled={saving || initializing || !canEditActiveDraftListing}
+                    />
+                  </div>
+                  <p className={`text-xs ${descriptionTooLong ? 'font-semibold text-rose-700' : 'text-slate-500'}`}>
+                    {descriptionPlainText.length.toLocaleString()} / {MAX_LISTING_DESCRIPTION_LENGTH.toLocaleString()} characters
+                  </p>
+                </label>
+              </section>
+
+              <section className={editorCardClassName}>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">Listing type</p>
+                    </div>
                 <button
                   type="button"
                   onClick={() => void classifyListingTypeWithAi()}
@@ -2084,20 +2133,20 @@ export default function MarketNewListingPageClient() {
             <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">Payment options</p>
-              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-                Your Etransfer account will remain private until you select a buyer.
-              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Your eTransfer account stays private until you choose a buyer.
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => togglePaymentType('cash_pickup')}
+                  onClick={() => void togglePaymentType('cash_pickup')}
                   className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('cash_pickup') ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'}`}
                 >
                   Cash on pickup
                 </button>
                 <button
                   type="button"
-                  onClick={() => togglePaymentType('etransfer')}
+                  onClick={() => void togglePaymentType('etransfer')}
                   className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${form.paymentTypes.includes('etransfer') ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'border-slate-200 bg-white text-slate-700'}`}
                 >
                   eTransfer
@@ -2105,21 +2154,60 @@ export default function MarketNewListingPageClient() {
               </div>
 
               {form.paymentTypes.includes('etransfer') ? (
-                <label className="mt-3 block space-y-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">eTransfer email (private)</span>
+                <div className={`mt-4 rounded-2xl border p-4 ${walletMarketEnabled ? 'border-slate-200 bg-white' : 'border-amber-200 bg-amber-50'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">eTransfer email</p>
+                      <p className="mt-1 text-sm text-slate-600">Managed in Wallet. Update it there if you need to change where buyers send payment.</p>
+                    </div>
+                    <Link
+                      href="/wallet"
+                      className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      Open Wallet
+                    </Link>
+                  </div>
                   <input
-                    value={form.eTransferEmail}
-                    onChange={(event) => setForm((prev) => ({ ...prev, eTransferEmail: event.target.value }))}
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
-                    placeholder="you@email.com"
+                    value={walletMarketEnabled ? walletETransferEmail : ''}
+                    readOnly
+                    className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none"
+                    placeholder="No wallet eTransfer address enabled for Market"
                   />
-                </label>
+                  {!walletMarketEnabled ? (
+                    <p className="mt-2 text-sm text-amber-700">Enable an eTransfer address for Market in Wallet before you enable eTransfer on this listing.</p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
 
             </section>
 
           </fieldset>
+
+            <Modal open={walletSetupModalOpen} onClose={() => setWalletSetupModalOpen(false)} title="Set up your wallet first" maxWidthClassName="max-w-lg">
+              <div className="space-y-4">
+                <p className="text-sm leading-6 text-slate-600">
+                  Add an eTransfer address in your wallet first. It is used to help you buy and sell things. When you choose a buyer,
+                  Civil will automatically show your eTransfer email address to the buyer.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  <Link
+                    href="/wallet"
+                    onClick={() => setWalletSetupModalOpen(false)}
+                    className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:opacity-95"
+                  >
+                    Open Wallet
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => setWalletSetupModalOpen(false)}
+                    className="inline-flex items-center justify-center rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            </Modal>
 
             <Modal
               open={publishConfirmOpen}

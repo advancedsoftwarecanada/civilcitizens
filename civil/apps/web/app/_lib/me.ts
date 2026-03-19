@@ -57,6 +57,16 @@ export type MeResponse = {
   verificationMethod?: 'self_declaration' | null
   statusDeclaredAt?: string | null
   statusUpdatedAt?: string | null
+  wallet?: {
+    civilCreditsCents: number
+    enabled?: boolean
+    eTransferEmail?: string | null
+    sharing?: {
+      family?: boolean
+      friends?: boolean
+      market?: boolean
+    } | null
+  } | null
   familyMode?: FamilyModeSummary | null
   accountType?: 'user' | 'family_member'
   familyMemberSession?: FamilyMemberSessionSummary | null
