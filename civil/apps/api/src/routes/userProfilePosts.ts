@@ -122,6 +122,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
               communityCount: 0,
               organizationCount: 0,
               connectionCount: 0,
+              wallet: null,
               accountType: 'family_member' as const,
               familyProfile: {
                 memberId: normalizedMember.id,
@@ -294,6 +295,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           connectionCount: connectionsCount,
           homeChamber,
           homeShippingAddress: null as Record<string, unknown> | null,
+          wallet: null as { label: string; eTransferEmail: string } | null,
         }
 
         const query = CursorQuery.extend({
@@ -439,6 +441,19 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
             user.homeShippingAddress = savedAddresses.find((entry: { isDefault?: boolean }) => Boolean(entry?.isDefault)) ?? savedAddresses[0] ?? null
           } catch (error) {
             // Ignore
+          }
+        }
+
+        if (viewerId && viewerId !== user.id) {
+          const walletEmail = profileMeta?.wallet?.eTransferEmail?.trim()?.toLowerCase() ?? null
+          const walletEnabled = profileMeta?.wallet?.enabled == null ? Boolean(walletEmail) : Boolean(profileMeta?.wallet?.enabled)
+          const canShareWithFamily = Boolean(profileFamilyRelationship) && Boolean(profileMeta?.wallet?.sharing?.family)
+          const canShareWithFriends = relationship.friendshipStatus === 'friends' && Boolean(profileMeta?.wallet?.sharing?.friends)
+          if (walletEnabled && walletEmail && (canShareWithFamily || canShareWithFriends)) {
+            user.wallet = {
+              label: 'Civil Wallet',
+              eTransferEmail: walletEmail,
+            }
           }
         }
 

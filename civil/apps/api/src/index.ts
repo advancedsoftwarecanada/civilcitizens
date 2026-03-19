@@ -5326,7 +5326,9 @@ registerUserProfilePostRoutes(app, {
 
 registerAuthRoutes(app, {
   RegisterInputApi,
+  ensureCitizenMarketplaceTables,
   getUpdateCivilStatusBody: () => UpdateCivilStatusBody,
+  getUpdateWalletBody: () => UpdateWalletBody,
   applyOrganizationInviteRegistration,
   buildFamilyMemberAuthMeResponse,
   buildHomeCommunitySummaryForUserId,
@@ -9678,6 +9680,7 @@ registerMarketListingRoutes(app, {
   loadViewerBlockState,
   moderationLockedErrorCode,
   normalizeMediaUrl,
+  parseCommunityMeta,
   readDeliveryOptions,
   readGalleryUrls,
   readStringList,
@@ -10737,6 +10740,18 @@ const UpdateCivilStatusBody = z.object({
   civicStatus: z.enum(['citizen', 'permanent_resident', 'work_permit', 'study_permit', 'unspecified']),
   workAuthorization: z.enum(['authorized', 'not_authorized', 'unspecified']).optional(),
   affirmed: z.literal(true),
+})
+
+const UpdateWalletBody = z.object({
+  enabled: z.boolean().optional(),
+  eTransferEmail: z.string().trim().email().max(320).optional().nullable(),
+  sharing: z
+    .object({
+      family: z.boolean().optional(),
+      friends: z.boolean().optional(),
+      market: z.boolean().optional(),
+    })
+    .optional(),
 })
 
 const JobEntityId = z.string().trim().refine(
