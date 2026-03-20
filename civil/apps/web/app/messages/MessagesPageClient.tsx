@@ -232,7 +232,9 @@ function formatMarketDeliveryStatus(status?: string | null) {
   }
 }
 
-function formatMarketDeliveryDriverName(driver?: MarketThreadContext['deliveryContract']['driver']) {
+type MarketDeliveryDriver = NonNullable<NonNullable<MarketThreadContext['deliveryContract']>['driver']> | null | undefined
+
+function formatMarketDeliveryDriverName(driver?: MarketDeliveryDriver) {
   if (!driver) return 'Civil driver'
   return driver.name?.trim() || (driver.handle ? `@${driver.handle}` : 'Civil driver')
 }
@@ -4298,7 +4300,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                 ) : null}
                 {activeMessages.map((message) => {
                   if (message.messageType === 'system' && message.systemMeta?.kind === 'call_ended') {
-                    const callbackLabel = message.systemMeta.callbackLabel || 'Call Back'
+                    const callMeta = message.systemMeta
+                    const callMode = callMeta.mode === 'audio' ? 'audio' : 'video'
+                    const callbackLabel = callMeta.callbackLabel || 'Call Back'
                     return (
                       <div key={message.id} className="flex w-full justify-center">
                         <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-3 text-center shadow-sm">
@@ -4307,12 +4311,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                             <button
                               type="button"
                               onClick={() => {
-                                void startThreadCall(message.systemMeta?.mode === 'audio' ? 'audio' : 'video')
+                                void startThreadCall(callMode)
                               }}
                               disabled={callActionMode !== null}
                               className={clsx(
                                 'inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold transition disabled:opacity-50',
-                                isFamilyCallBlocked(message.systemMeta?.mode === 'audio' ? 'audio' : 'video')
+                                isFamilyCallBlocked(callMode)
                                   ? 'border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100'
                                   : 'border-[var(--cc-primary)] bg-white text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/5',
                               )}

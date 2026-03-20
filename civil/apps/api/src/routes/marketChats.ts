@@ -214,7 +214,9 @@ async function loadMarketDeliveryContractSummary(listingId: string, deps: Market
     status: row.status,
     bidAmountCents: typeof row.bid_amount_cents === 'number' ? Number(row.bid_amount_cents) : null,
     pickupInstructions: row.pickup_instructions,
-    itemTraits: Array.isArray(row.item_traits) ? row.item_traits.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [],
+    itemTraits: Array.isArray(row.item_traits)
+      ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+      : [],
     estimatedDeliveryAt: row.estimated_delivery_at ? row.estimated_delivery_at.toISOString() : null,
     pickedUpAt: row.picked_up_at ? row.picked_up_at.toISOString() : null,
     deliveredAt: row.delivered_at ? row.delivered_at.toISOString() : null,
