@@ -25,6 +25,25 @@ type ListingSummary = {
   civilPayPaidAt?: string | null
 }
 
+type DeliveryContractSummary = {
+  id: string
+  buyerUserId: string
+  status: string
+  bidAmountCents: number | null
+  pickupInstructions: string | null
+  itemTraits: string[]
+  estimatedDeliveryAt: string | null
+  pickedUpAt: string | null
+  deliveredAt: string | null
+  groupThreadId: string | null
+  driver: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+  } | null
+}
+
 type ThreadPreview = {
   threadId: string
   lastMessageAt: string
@@ -45,6 +64,7 @@ type ThreadPreview = {
 type ItemChatsResponse = {
   listing?: ListingSummary
   threads?: ThreadPreview[]
+  deliveryContract?: DeliveryContractSummary | null
   selectedThreadId?: string | null
 }
 
@@ -70,6 +90,28 @@ function formatTimestamp(value?: string | null) {
 
 function supportsCivilPay(paymentTypes: string[] | null | undefined) {
   return Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')
+}
+
+function formatDeliveryStatus(status?: string | null) {
+  switch ((status || '').trim().toLowerCase()) {
+    case 'open':
+      return 'Open for driver bids'
+    case 'bid_pending':
+      return 'Waiting for buyer approval'
+    case 'assigned':
+      return 'Driver assigned'
+    case 'picked_up':
+      return 'Picked up'
+    case 'delivered':
+      return 'Delivered'
+    default:
+      return 'Delivery requested'
+  }
+}
+
+function formatDeliveryPerson(person: DeliveryContractSummary['driver']) {
+  if (!person) return 'Civil driver'
+  return person.name?.trim() || (person.handle ? `@${person.handle}` : 'Civil driver')
 }
 
 function ConversationCard({
@@ -126,6 +168,7 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
   const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'not-found'>('loading')
   const [listing, setListing] = useState<ListingSummary | null>(null)
   const [threads, setThreads] = useState<ThreadPreview[]>([])
+  const [deliveryContract, setDeliveryContract] = useState<DeliveryContractSummary | null>(null)
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [selectBuyerThreadId, setSelectBuyerThreadId] = useState<string | null>(null)
   const [selectBuyerSubmitting, setSelectBuyerSubmitting] = useState(false)
@@ -156,6 +199,7 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
           setStatus('not-found')
           setListing(null)
           setThreads([])
+          setDeliveryContract(null)
           return
         }
 
@@ -169,11 +213,13 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
           setStatus('not-found')
           setListing(null)
           setThreads([])
+          setDeliveryContract(null)
           return
         }
 
         setListing(payload.listing)
         setThreads(Array.isArray(payload.threads) ? payload.threads : [])
+        setDeliveryContract(payload.deliveryContract ?? null)
         setSelectedThreadId(payload.selectedThreadId ? String(payload.selectedThreadId) : null)
         setStatus('ready')
       } catch {
@@ -242,6 +288,22 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
     const statusValue = (listing?.status || '').toLowerCase()
     return Boolean(listing && statusValue === 'pending' && selectedThreadId)
   }, [listing, selectedThreadId])
+
+  const selectedBuyerDeliveryThreadHref = deliveryContract?.groupThreadId ? `/messages?thread=${encodeURIComponent(deliveryContract.groupThreadId)}` : null
+
+  const deliverySummaryText = useMemo(() => {
+    if (!deliveryContract) return null
+    const driverName = formatDeliveryPerson(deliveryContract.driver)
+    const status = (deliveryContract.status || '').trim().toLowerCase()
+    if (status === 'open') return 'The selected buyer requested Civil delivery. Drivers can now place bids on this contract.'
+    if (status === 'bid_pending') {
+      return `${driverName} placed a delivery bid${deliveryContract.bidAmountCents ? ` for ${formatMoney(deliveryContract.bidAmountCents, 'CAD')}` : ''}. The buyer still needs to accept it.`
+    }
+    if (status === 'assigned') return `${driverName} has been assigned and will coordinate pickup in the shared delivery chat.`
+    if (status === 'picked_up') return `${driverName} has picked up the item and delivery is now in progress.`
+    if (status === 'delivered') return `${driverName} marked this delivery complete with proof in the delivery chat.`
+    return 'Civil delivery has been requested for the selected buyer.'
+  }, [deliveryContract])
 
   const openThread = (threadId: string) => {
     router.push(`/market/chats/${encodeURIComponent(threadId)}`)
@@ -392,6 +454,49 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
       {status === 'ready' ? (
         <>
           {header}
+
+          {deliveryContract ? (
+            <section className="rounded-3xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.10),rgba(14,165,233,0.10))] p-4 sm:p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Civil Driver</p>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-900">{formatDeliveryStatus(deliveryContract.status)}</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">{deliverySummaryText}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+                    {deliveryContract.bidAmountCents ? <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-emerald-700">Bid {formatMoney(deliveryContract.bidAmountCents, 'CAD')}</span> : null}
+                    {deliveryContract.estimatedDeliveryAt ? <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">ETA {formatTimestamp(deliveryContract.estimatedDeliveryAt)}</span> : null}
+                    {deliveryContract.deliveredAt ? <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-sky-700">Delivered {formatTimestamp(deliveryContract.deliveredAt)}</span> : null} : null}
+                    {deliveryContract.itemTraits.map((trait) => (
+                      <span key={trait} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">{trait}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white/90 p-3 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Driver status</p>
+                  {deliveryContract.driver ? (
+                    <div className="mt-2">
+                      <CivilCard
+                        size="rail"
+                        name={formatDeliveryPerson(deliveryContract.driver)}
+                        avatarAlt={formatDeliveryPerson(deliveryContract.driver)}
+                        avatarInitials={formatDeliveryPerson(deliveryContract.driver)}
+                        avatarSrc={deliveryContract.driver.avatarUrl || undefined}
+                        subtitle={deliveryContract.driver.handle ? `@${deliveryContract.driver.handle}` : undefined}
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-600">No driver is assigned yet.</p>
+                  )}
+                  {deliveryContract.pickupInstructions?.trim() ? <p className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">{deliveryContract.pickupInstructions.trim()}</p> : null}
+                  {selectedBuyerDeliveryThreadHref ? (
+                    <Link href={selectedBuyerDeliveryThreadHref} className="mt-3 inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
+                      Open delivery chat
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section className="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
             <h2 className="text-lg font-semibold text-slate-900">All chats</h2>

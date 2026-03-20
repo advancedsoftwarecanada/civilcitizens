@@ -42,6 +42,11 @@ export const PROFILE_INVITE_NOTIFICATION_TYPES = {
   FAMILY_RESPONSE: 'profile_family_invite_response',
 } as const
 
+export const DELIVERY_NOTIFICATION_TYPES = {
+  BID: 'delivery_contract_bid',
+  BID_RESPONSE: 'delivery_contract_bid_response',
+} as const
+
 export const PROFILE_FAMILY_RELATIONSHIP_LABELS = {
   husband: 'Husband',
   wife: 'Wife',

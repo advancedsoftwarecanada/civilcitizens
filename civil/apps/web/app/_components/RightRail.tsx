@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { HiOutlineBell } from 'react-icons/hi2'
+import { HiOutlineBell, HiOutlineTruck } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { formatUserDisplayName } from '../_lib/text'
@@ -233,6 +233,19 @@ type WorkApplicationsRailResponse = {
   items?: WorkApplicationRailItem[]
 }
 
+type DeliverySummaryRailItem = {
+  id: string
+  status: string
+  listingId: string
+  listingTitle: string
+  listingPhotoUrl: string | null
+}
+
+type DeliverySummaryRailResponse = {
+  active?: boolean
+  items?: DeliverySummaryRailItem[]
+}
+
 type FamilyMemberRailItem = {
   id: string
   displayName: string
@@ -337,6 +350,8 @@ export function RightRail({
   const [eventOrganizations, setEventOrganizations] = useState<EventSidebarOrganization[]>([])
   const [communityOrganizationGroups, setCommunityOrganizationGroups] = useState<CommunityOrganizationsRailGroup[]>([])
   const [workApplications, setWorkApplications] = useState<WorkApplicationRailItem[]>([])
+  const [deliverySummaryActive, setDeliverySummaryActive] = useState(false)
+  const [deliverySummaryItems, setDeliverySummaryItems] = useState<DeliverySummaryRailItem[]>([])
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberRailItem[]>([])
   const [familyRelationships, setFamilyRelationships] = useState<ProfileFamilyRelationshipRailItem[]>([])
 
@@ -358,6 +373,7 @@ export function RightRail({
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
   const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps)
   const shouldLoadWorkApplications = mode === 'work'
+  const shouldLoadDeliverySummary = mode === 'work'
   const shouldLoadHomeRail = !hideSocialBlocks
   const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
 
@@ -474,7 +490,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'family'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'family'
         promise: Promise<Response>
       }> = []
 
@@ -568,6 +584,15 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadDeliverySummary) {
+        requests.push({
+          key: 'deliverySummary',
+          promise: fetch(buildApiUrl('/delivery/summary'), {
+            headers: { authorization: `Bearer ${token}` },
+          }),
+        })
+      }
+
       if (shouldLoadFamilyRail) {
         requests.push({
           key: 'family',
@@ -591,6 +616,7 @@ export function RightRail({
       const connectionRequestsRes = byKey.get('connectionRequests')
       const eventsSidebarRes = byKey.get('eventsSidebar')
       const workApplicationsRes = byKey.get('workApplications')
+      const deliverySummaryRes = byKey.get('deliverySummary')
       const familyRes = byKey.get('family')
 
       if (
@@ -636,6 +662,10 @@ export function RightRail({
           setEventOrganizations([])
         }
         if (!shouldLoadWorkApplications) setWorkApplications([])
+        if (!shouldLoadDeliverySummary) {
+          setDeliverySummaryActive(false)
+          setDeliverySummaryItems([])
+        }
         return
       }
 
@@ -776,6 +806,15 @@ export function RightRail({
         setWorkApplications([])
       }
 
+      if (deliverySummaryRes?.ok) {
+        const payload = (await deliverySummaryRes.json().catch(() => null)) as DeliverySummaryRailResponse | null
+        setDeliverySummaryActive(Boolean(payload?.active))
+        setDeliverySummaryItems(Array.isArray(payload?.items) ? payload.items : [])
+      } else {
+        setDeliverySummaryActive(false)
+        setDeliverySummaryItems([])
+      }
+
       if (familyRes?.ok) {
         const payload = (await familyRes.json().catch(() => null)) as FamilyRailResponse | null
         setFamilyMembers(Array.isArray(payload?.members) ? payload.members : [])
@@ -825,7 +864,7 @@ export function RightRail({
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadFamilyRail, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
 
   useEffect(() => {
     void loadData()
@@ -1304,35 +1343,72 @@ export function RightRail({
       ) : null}
 
       {mode === 'work' ? (
-        <Block title="Your Applications" action={{ label: 'View all', href: '/work/applications' }}>
-          {workApplications.length ? (
-            <ul className="space-y-3">
-              {workApplications.map((entry) => {
-                const org = entry.job.organization
-                const href =
-                  org.provinceCode && org.communitySlug
-                    ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}/jobs/${entry.job.id}`
-                    : '/work/applications'
+        <>
+          <Block title="Drive and Deliver for Civil" action={{ label: deliverySummaryActive ? 'Open delivery' : 'Get started', href: deliverySummaryActive ? '/delivery' : '/delivery/onboarding' }}>
+            <div className="rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.10),rgba(14,165,233,0.10))] p-4">
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-emerald-600 shadow-sm">
+                  <HiOutlineTruck className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-slate-900">Pick up local contracts and get paid in Civil Credits.</p>
+                </div>
+              </div>
+            </div>
 
-                return (
-                  <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
-                    {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
-                    <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
-                    <Link href={href} className="group relative flex items-center gap-2.5 px-3 py-2">
-                      <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-white">{entry.job.title}</p>
-                        <p className="truncate text-xs text-white/85">{org.name}</p>
-                      </div>
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">No applications submitted yet.</p>
-          )}
-        </Block>
+            {deliverySummaryActive ? (
+              deliverySummaryItems.length ? (
+                <ul className="mt-4 space-y-3">
+                  {deliverySummaryItems.map((entry) => (
+                    <li key={entry.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                      <Link href="/delivery/my" className="flex items-center gap-3 px-3 py-2.5 transition hover:bg-slate-50">
+                        <div className="h-12 w-12 overflow-hidden rounded-xl bg-slate-100">
+                          {entry.listingPhotoUrl ? <img src={entry.listingPhotoUrl} alt="" className="h-full w-full object-cover" loading="lazy" /> : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-slate-900">{entry.listingTitle}</p>
+                          <p className="truncate text-xs uppercase tracking-wide text-slate-500">{entry.status.replace(/_/g, ' ')}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-sm text-slate-500">Your Civil Driver account is active. Open delivery to claim your first contract.</p>
+              )
+            ) : null}
+          </Block>
+
+          <Block title="Your Applications" action={{ label: 'View all', href: '/work/applications' }}>
+            {workApplications.length ? (
+              <ul className="space-y-3">
+                {workApplications.map((entry) => {
+                  const org = entry.job.organization
+                  const href =
+                    org.provinceCode && org.communitySlug
+                      ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}/jobs/${entry.job.id}`
+                      : '/work/applications'
+
+                  return (
+                    <li key={entry.id} className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-700">
+                      {org.coverUrl ? <img src={org.coverUrl} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" /> : null}
+                      <span className="absolute inset-0 bg-slate-900/55" aria-hidden="true" />
+                      <Link href={href} className="group relative flex items-center gap-2.5 px-3 py-2">
+                        <VerifiedAvatar src={org.logoUrl ?? null} alt={org.name} initials={org.name} size={32} />
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-white">{entry.job.title}</p>
+                          <p className="truncate text-xs text-white/85">{org.name}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">No applications submitted yet.</p>
+            )}
+          </Block>
+        </>
       ) : null}
 
       {/* Friends Section */}

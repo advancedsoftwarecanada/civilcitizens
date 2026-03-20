@@ -20,6 +20,26 @@ type MessageCallSystemMeta = {
   actorName: string | null
 }
 
+type MarketPaymentType = 'cash_pickup' | 'etransfer' | 'civil_wallet'
+
+type MarketPaymentPromptSystemMeta = {
+  kind: 'market_payment_prompt'
+  listingId: string
+  options: MarketPaymentType[]
+  selectedOption: MarketPaymentType | null
+}
+
+type MarketPaymentSelectedSystemMeta = {
+  kind: 'market_payment_selected'
+  listingId: string
+  selectedOption: MarketPaymentType
+  selectedLabel: string
+  civilPayUrl: string | null
+  eTransferEmail: string | null
+}
+
+type MessageSystemMeta = MessageCallSystemMeta | MarketPaymentPromptSystemMeta | MarketPaymentSelectedSystemMeta
+
 type ParentConversationMember = {
   id: string
   createdAt: string
@@ -53,27 +73,68 @@ export function createMessageFormattingHelpers(deps: MessageFormattingDeps) {
     return value.filter((entry): entry is string => typeof entry === 'string')
   }
 
-  function extractMessageSystemMeta(value: Prisma.JsonValue | null | undefined): MessageCallSystemMeta | null {
+  function isMarketPaymentType(value: unknown): value is MarketPaymentType {
+    return value === 'cash_pickup' || value === 'etransfer' || value === 'civil_wallet'
+  }
+
+  function extractMessageSystemMeta(value: Prisma.JsonValue | null | undefined): MessageSystemMeta | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
     const typed = value as Record<string, unknown>
-    if (typed.kind !== 'call_ended') return null
-    const reason = typed.reason
-    const mode = typed.mode
-    const callId = typed.callId
-    const callbackThreadId = typed.callbackThreadId
-    if ((reason !== 'hangup' && reason !== 'no_answer') || (mode !== 'audio' && mode !== 'video')) return null
-    if (typeof callId !== 'string' || !callId.trim()) return null
-    if (typeof callbackThreadId !== 'string' || !callbackThreadId.trim()) return null
-    return {
-      kind: 'call_ended',
-      reason,
-      mode,
-      callId,
-      callbackThreadId,
-      callbackLabel: 'Call Back',
-      actorUserId: typeof typed.actorUserId === 'string' && typed.actorUserId.trim() ? typed.actorUserId : null,
-      actorName: typeof typed.actorName === 'string' && typed.actorName.trim() ? typed.actorName : null,
+    if (typed.kind === 'call_ended') {
+      const reason = typed.reason
+      const mode = typed.mode
+      const callId = typed.callId
+      const callbackThreadId = typed.callbackThreadId
+      if ((reason !== 'hangup' && reason !== 'no_answer') || (mode !== 'audio' && mode !== 'video')) return null
+      if (typeof callId !== 'string' || !callId.trim()) return null
+      if (typeof callbackThreadId !== 'string' || !callbackThreadId.trim()) return null
+      return {
+        kind: 'call_ended',
+        reason,
+        mode,
+        callId,
+        callbackThreadId,
+        callbackLabel: 'Call Back',
+        actorUserId: typeof typed.actorUserId === 'string' && typed.actorUserId.trim() ? typed.actorUserId : null,
+        actorName: typeof typed.actorName === 'string' && typed.actorName.trim() ? typed.actorName : null,
+      }
     }
+
+    if (typed.kind === 'market_payment_prompt') {
+      const listingId = typed.listingId
+      const rawOptions = typed.options
+      const selectedOption = typed.selectedOption
+      if (typeof listingId !== 'string' || !listingId.trim()) return null
+      if (!Array.isArray(rawOptions)) return null
+      const options = rawOptions.filter(isMarketPaymentType)
+      if (options.length === 0) return null
+      if (selectedOption !== null && selectedOption !== undefined && !isMarketPaymentType(selectedOption)) return null
+      return {
+        kind: 'market_payment_prompt',
+        listingId,
+        options,
+        selectedOption: isMarketPaymentType(selectedOption) ? selectedOption : null,
+      }
+    }
+
+    if (typed.kind === 'market_payment_selected') {
+      const listingId = typed.listingId
+      const selectedOption = typed.selectedOption
+      const selectedLabel = typed.selectedLabel
+      if (typeof listingId !== 'string' || !listingId.trim()) return null
+      if (!isMarketPaymentType(selectedOption)) return null
+      if (typeof selectedLabel !== 'string' || !selectedLabel.trim()) return null
+      return {
+        kind: 'market_payment_selected',
+        listingId,
+        selectedOption,
+        selectedLabel: selectedLabel.trim(),
+        civilPayUrl: typeof typed.civilPayUrl === 'string' && typed.civilPayUrl.trim() ? typed.civilPayUrl.trim() : null,
+        eTransferEmail: typeof typed.eTransferEmail === 'string' && typed.eTransferEmail.trim() ? typed.eTransferEmail.trim() : null,
+      }
+    }
+
+    return null
   }
 
   function formatMessage(record: any, viewerId: string) {

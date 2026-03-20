@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineXMark } from 'react-icons/hi2'
+import { HiOutlineChatBubbleLeftRight, HiOutlineChevronLeft, HiOutlineChevronRight, HiOutlineXMark } from 'react-icons/hi2'
 import { LuRepeat2, LuShare } from 'react-icons/lu'
 import CivilCard from '../../../_components/CivilCard'
 import ContentModerationMenu from '../../../_components/ContentModerationMenu'
@@ -579,9 +579,9 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
             ) : null}
 
             <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-slate-900">Interested in this item?</p>
-                <p className="text-xs text-slate-500">Choose a quick message and we will open the conversation with the seller.</p>
+              <div className="space-y-1 text-center">
+                <p className="text-lg font-semibold text-slate-900">Interested in this item?</p>
+                <p className="text-sm text-slate-500">Message the seller below to start chatting!</p>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {quickMessageOptions.map((option) => (
@@ -592,9 +592,10 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
                       void sendMessageToSeller(option)
                     }}
                     disabled={sendingMessage}
-                    className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-3 text-base font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {option}
+                    <HiOutlineChatBubbleLeftRight className="h-5 w-5" />
+                    <span>{option}</span>
                   </button>
                 ))}
               </div>

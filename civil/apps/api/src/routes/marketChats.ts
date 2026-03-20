@@ -3,11 +3,152 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
+import { z } from 'zod'
 import { buildWalletMetaValue, insertCivilCreditLedgerEntry, readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type MarketChatDeps = Record<string, any>
 
 const CIVIL_LEDGER_ACCOUNT_ID = 'CIVIL'
+const CIVIL_SYSTEM_HANDLE = 'civil'
+const CIVIL_SYSTEM_EMAIL = 'civil@system.local'
+const CIVIL_SYSTEM_PASSWORD_HASH = 'SYSTEM_ACCOUNT_DISABLED'
+const MARKET_PAYMENT_TYPES = ['cash_pickup', 'etransfer', 'civil_wallet'] as const
+
+const MarketPaymentSelectionBody = z.object({ paymentType: z.enum(MARKET_PAYMENT_TYPES) })
+
+type MarketPaymentType = (typeof MARKET_PAYMENT_TYPES)[number]
+
+type MarketDeliveryContractSummary = {
+  id: string
+  buyerUserId: string
+  status: string
+  bidAmountCents: number | null
+  pickupInstructions: string | null
+  itemTraits: string[]
+  estimatedDeliveryAt: string | null
+  pickedUpAt: string | null
+  deliveredAt: string | null
+  groupThreadId: string | null
+  driver: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+  } | null
+}
+
+function isMarketPaymentType(value: unknown): value is MarketPaymentType {
+  return value === 'cash_pickup' || value === 'etransfer' || value === 'civil_wallet'
+}
+
+function readMarketPaymentTypes(raw: unknown, deps: MarketChatDeps): MarketPaymentType[] {
+  const options = deps.readStringList(raw).filter(isMarketPaymentType)
+  return options.length ? options : ['cash_pickup']
+}
+
+function formatMarketPaymentTypeLabel(value: MarketPaymentType) {
+  switch (value) {
+    case 'cash_pickup':
+      return 'Cash on pickup'
+    case 'etransfer':
+      return 'eTransfer'
+    case 'civil_wallet':
+      return 'Civil Pay'
+    default:
+      return 'Payment'
+  }
+}
+
+function buildMarketPaymentPromptBody() {
+  return 'How would you like to pay?'
+}
+
+function buildMarketPaymentPromptMeta(listingId: string, options: MarketPaymentType[]): Prisma.InputJsonValue {
+  return {
+    kind: 'market_payment_prompt',
+    listingId,
+    options,
+    selectedOption: null,
+  } satisfies Record<string, unknown> as Prisma.InputJsonValue
+}
+
+function buildMarketPaymentSelectedMeta(args: {
+  listingId: string
+  selectedOption: MarketPaymentType
+  civilPayUrl?: string | null
+  eTransferEmail?: string | null
+}): Prisma.InputJsonValue {
+  return {
+    kind: 'market_payment_selected',
+    listingId: args.listingId,
+    selectedOption: args.selectedOption,
+    selectedLabel: formatMarketPaymentTypeLabel(args.selectedOption),
+    civilPayUrl: args.civilPayUrl ?? null,
+    eTransferEmail: args.eTransferEmail ?? null,
+  } satisfies Record<string, unknown> as Prisma.InputJsonValue
+}
+
+async function ensureCivilSystemUser(client: Prisma.TransactionClient | typeof prisma) {
+  const existing = await client.user.findUnique({
+    where: { handle: CIVIL_SYSTEM_HANDLE },
+    select: { id: true, handle: true, name: true, avatarUrl: true },
+  })
+  if (existing) return existing
+
+  try {
+    return await client.user.create({
+      data: {
+        email: CIVIL_SYSTEM_EMAIL,
+        handle: CIVIL_SYSTEM_HANDLE,
+        name: 'Civil',
+        passwordHash: CIVIL_SYSTEM_PASSWORD_HASH,
+      },
+      select: { id: true, handle: true, name: true, avatarUrl: true },
+    })
+  } catch {
+    const fallback = await client.user.findFirst({
+      where: {
+        OR: [{ handle: CIVIL_SYSTEM_HANDLE }, { email: CIVIL_SYSTEM_EMAIL }],
+      },
+      select: { id: true, handle: true, name: true, avatarUrl: true },
+    })
+    if (fallback) return fallback
+    throw new Error('civil_system_user_unavailable')
+  }
+}
+
+async function createMarketSystemMessage(args: {
+  tx: Prisma.TransactionClient
+  threadId: string
+  senderId: string
+  actingUserId: string
+  body: string
+  attachments: Prisma.InputJsonValue
+  select: Prisma.MessageSelect
+}) {
+  const created = await args.tx.message.create({
+    data: {
+      threadId: args.threadId,
+      senderId: args.senderId,
+      body: args.body,
+      attachments: args.attachments,
+      messageType: MessageType.system,
+    },
+    select: args.select,
+  })
+
+  await args.tx.messageThread.update({ where: { id: args.threadId }, data: { lastMessageAt: created.createdAt } })
+  await args.tx.messageParticipant.updateMany({
+    where: { threadId: args.threadId, userId: args.actingUserId },
+    data: { lastActivityAt: created.createdAt, lastReadAt: created.createdAt },
+  })
+  await args.tx.messageParticipant.updateMany({
+    where: { threadId: args.threadId, userId: { not: args.actingUserId } },
+    data: { lastActivityAt: created.createdAt },
+  })
+
+  return created
+}
 
 function computeCivilPayFeeCents(amountCents: number) {
   if (amountCents <= 0) return 0
@@ -24,6 +165,69 @@ function buildCivilPayLink(listingId: string, threadId: string) {
   if (!host) return `http://localhost:3000${pathname}`
   const scheme = host.includes('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
   return `${scheme}://${host}${pathname}`
+}
+
+async function loadMarketDeliveryContractSummary(listingId: string, deps: MarketChatDeps): Promise<MarketDeliveryContractSummary | null> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string
+    buyer_user_id: string
+    status: string
+    bid_amount_cents: number | null
+    pickup_instructions: string | null
+    item_traits: unknown
+    estimated_delivery_at: Date | null
+    picked_up_at: Date | null
+    delivered_at: Date | null
+    group_thread_id: string | null
+    display_driver_id: string | null
+    display_driver_handle: string | null
+    display_driver_name: string | null
+    display_driver_avatar_url: string | null
+  }>>`
+    SELECT
+      c.id,
+      c.buyer_user_id,
+      c.status,
+      c.bid_amount_cents,
+      c.pickup_instructions,
+      c.item_traits,
+      c.estimated_delivery_at,
+      c.picked_up_at,
+      c.delivered_at,
+      c.group_thread_id,
+      driver.id AS display_driver_id,
+      driver.handle AS display_driver_handle,
+      driver.name AS display_driver_name,
+      driver."avatarUrl" AS display_driver_avatar_url
+    FROM citizen_market_delivery_contract c
+    LEFT JOIN "User" driver ON driver.id = COALESCE(c.driver_user_id, c.bid_driver_user_id)
+    WHERE c.listing_id = ${listingId}
+    LIMIT 1
+  `
+
+  const row = rows[0]
+  if (!row) return null
+
+  return {
+    id: row.id,
+    buyerUserId: row.buyer_user_id,
+    status: row.status,
+    bidAmountCents: typeof row.bid_amount_cents === 'number' ? Number(row.bid_amount_cents) : null,
+    pickupInstructions: row.pickup_instructions,
+    itemTraits: Array.isArray(row.item_traits) ? row.item_traits.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [],
+    estimatedDeliveryAt: row.estimated_delivery_at ? row.estimated_delivery_at.toISOString() : null,
+    pickedUpAt: row.picked_up_at ? row.picked_up_at.toISOString() : null,
+    deliveredAt: row.delivered_at ? row.delivered_at.toISOString() : null,
+    groupThreadId: row.group_thread_id,
+    driver: row.display_driver_id
+      ? {
+          id: row.display_driver_id,
+          handle: row.display_driver_handle,
+          name: row.display_driver_name,
+          avatarUrl: deps.normalizeMediaUrl(row.display_driver_avatar_url ?? null),
+        }
+      : null,
+  }
 }
 
 export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatDeps) {
@@ -441,6 +645,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       const selectedThreadId = selectedBuyerUserId
         ? threads.find((thread: any) => thread.participants.some((p: any) => p.userId === selectedBuyerUserId))?.id ?? null
         : null
+      const deliveryContract = await loadMarketDeliveryContractSummary(listing.id, deps)
 
       return reply.send({
         listing: {
@@ -459,6 +664,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           civilPayPaidAt: listing.civil_pay_paid_at ? listing.civil_pay_paid_at.toISOString() : null,
         },
         threads: formattedThreads,
+        deliveryContract,
         selectedBuyerUserId,
         selectedThreadId,
       })
@@ -500,6 +706,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         payment_types: unknown
         seller_user_id: string
         selected_buyer_user_id: string | null
+        selected_payment_type: string | null
         civil_pay_status: string | null
         civil_pay_amount_cents: number | null
         civil_pay_fee_cents: number | null
@@ -508,7 +715,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         buyer_picked_up_at: Date | null
         seller_picked_up_at: Date | null
       }>>`
-        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, payment_types, seller_user_id, selected_buyer_user_id, civil_pay_status, civil_pay_amount_cents, civil_pay_fee_cents, civil_pay_paid_at, pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
+        SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, pickup_address_line1, pickup_address_line2, pickup_postal_code, payment_types, seller_user_id, selected_buyer_user_id, selected_payment_type, civil_pay_status, civil_pay_amount_cents, civil_pay_fee_cents, civil_pay_paid_at, pickup_completed_at, buyer_picked_up_at, seller_picked_up_at
         FROM citizen_market_listing
         WHERE id = ${thread.contextId}
         LIMIT 1
@@ -534,6 +741,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       }
 
       const viewerCanAccessPickupAddress = Boolean((viewerIsSeller || viewerIsSelectedBuyer) && selectedThreadId === thread.id)
+      const deliveryContract = await loadMarketDeliveryContractSummary(listing.id, deps)
 
       return reply.send({
         listing: {
@@ -546,6 +754,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           pickupCity: listing.pickup_city,
           pickupProvince: listing.pickup_province,
           paymentTypes: deps.readStringList(listing.payment_types),
+          selectedPaymentType: isMarketPaymentType(listing.selected_payment_type) ? listing.selected_payment_type : null,
           civilPayStatus: listing.civil_pay_status,
           civilPayAmountCents: typeof listing.civil_pay_amount_cents === 'number' ? Number(listing.civil_pay_amount_cents) : null,
           civilPayFeeCents: typeof listing.civil_pay_fee_cents === 'number' ? Number(listing.civil_pay_fee_cents) : null,
@@ -568,6 +777,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
               country: 'CA',
             }
           : null,
+        deliveryContract,
         selectedBuyerUserId,
         selectedThreadId,
       })
@@ -640,6 +850,11 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           AND seller_user_id = ${userId}
       `
 
+      await prisma.$executeRaw`
+        DELETE FROM citizen_market_delivery_contract
+        WHERE listing_id = ${listing.id}
+      `
+
       if (body.data.notify) {
         const threads = await prisma.messageThread.findMany({
           where: {
@@ -710,8 +925,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       await deps.ensureCitizenMarketplaceTables()
 
-      const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; payment_types: unknown; is_active: boolean; moderation_status: string }>>`
-        SELECT id, seller_user_id, status, selected_buyer_user_id, payment_types, is_active, moderation_status
+      const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; selected_buyer_user_id: string | null; payment_types: unknown; willing_to_deliver: boolean; delivery_options: unknown; is_active: boolean; moderation_status: string }>>`
+        SELECT id, seller_user_id, status, selected_buyer_user_id, payment_types, willing_to_deliver, delivery_options, is_active, moderation_status
         FROM citizen_market_listing
         WHERE id = ${params.data.listingId}
         LIMIT 1
@@ -773,49 +988,108 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       ]
         .filter((value) => typeof value === 'string' && value.trim().length > 0)
         .join(', ')
-      const paymentTypes = deps.readStringList(listing.payment_types)
-      const civilPayLink = buildCivilPayLink(listing.id, selectedThread.id)
-      const notifySelectedBody = deps
-        .sanitizePlainText(
-          paymentTypes.includes('civil_wallet')
-            ? `I have selected you as the buyer for this item. Please click here to complete the sale with Civil Pay: ${civilPayLink}`
-            : pickupAddressInline
-              ? `I have selected you as the buyer for this item. The pickup address is ${pickupAddressInline}. Please confirm pickup details.`
-              : 'I have selected you as the buyer for this item. Please confirm pickup details.',
-        )
-        .trim()
+      const paymentTypes = readMarketPaymentTypes(listing.payment_types, deps)
+      const deliveryOptions = deps.readDeliveryOptions(listing.delivery_options)
+      const deliveryTraits = [
+        deliveryOptions.itemIsHeavy ? 'Heavy' : null,
+        deliveryOptions.itemIsBulky ? 'Bulky' : null,
+        deliveryOptions.itemIsSmall ? 'Small' : null,
+      ].filter((entry): entry is string => Boolean(entry))
 
       const createdMessages = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const civilSystemUser = await ensureCivilSystemUser(tx)
+
         await tx.$executeRaw`
           UPDATE citizen_market_listing
           SET selected_buyer_user_id = ${buyerId},
               status = 'pending',
               is_draft = FALSE,
+              selected_payment_type = NULL,
+              selected_payment_at = NULL,
               updated_at = NOW()
           WHERE id = ${listing.id}
             AND seller_user_id = ${userId}
             AND selected_buyer_user_id IS NULL
         `
 
+        if (listing.willing_to_deliver) {
+          await tx.$executeRaw`
+            INSERT INTO citizen_market_delivery_contract (
+              id,
+              listing_id,
+              seller_user_id,
+              buyer_user_id,
+              status,
+              pickup_instructions,
+              item_traits,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              ${randomUUID()},
+              ${listing.id},
+              ${userId},
+              ${buyerId},
+              ${'open'},
+              ${deliveryOptions.pickupInstructions ?? null},
+              ${JSON.stringify(deliveryTraits)}::jsonb,
+              NOW(),
+              NOW()
+            )
+            ON CONFLICT (listing_id)
+            DO UPDATE SET
+              buyer_user_id = EXCLUDED.buyer_user_id,
+              seller_user_id = EXCLUDED.seller_user_id,
+              driver_user_id = NULL,
+              status = 'open',
+              pickup_instructions = EXCLUDED.pickup_instructions,
+              item_traits = EXCLUDED.item_traits,
+              bid_driver_user_id = NULL,
+              bid_amount_cents = NULL,
+              bid_requested_at = NULL,
+              bid_responded_at = NULL,
+              accepted_at = NULL,
+              picked_up_at = NULL,
+              estimated_delivery_at = NULL,
+              delivered_at = NULL,
+              delivery_photo_url = NULL,
+              group_thread_id = NULL,
+              updated_at = NOW()
+          `
+        }
+
         const messageRecords: Array<{ threadId: string; record: any; participants: Array<{ userId: string }> }> = []
         for (const thread of threads) {
-          const messageBody = thread.id === selectedThread.id ? notifySelectedBody : notifyOthersBody
-          const created = await tx.message.create({
-            data: {
-              threadId: thread.id,
-              senderId: userId,
-              body: messageBody || null,
-              messageType: MessageType.text,
-            },
-            select: deps.MESSAGE_SELECT,
-          })
+          const created =
+            thread.id === selectedThread.id
+              ? await createMarketSystemMessage({
+                  tx,
+                  threadId: thread.id,
+                  senderId: civilSystemUser.id,
+                  actingUserId: userId,
+                  body: buildMarketPaymentPromptBody(),
+                  attachments: buildMarketPaymentPromptMeta(listing.id, paymentTypes),
+                  select: deps.MESSAGE_SELECT,
+                })
+              : await tx.message.create({
+                  data: {
+                    threadId: thread.id,
+                    senderId: userId,
+                    body: notifyOthersBody || null,
+                    messageType: MessageType.text,
+                  },
+                  select: deps.MESSAGE_SELECT,
+                })
 
-          await tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: created.createdAt } })
-          await tx.messageParticipant.update({
-            where: { threadId_userId: { threadId: thread.id, userId } },
-            data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
-          })
-          await tx.messageParticipant.updateMany({ where: { threadId: thread.id, userId: { not: userId } }, data: { lastActivityAt: created.createdAt } })
+          if (thread.id !== selectedThread.id) {
+            await tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: created.createdAt } })
+            await tx.messageParticipant.update({
+              where: { threadId_userId: { threadId: thread.id, userId } },
+              data: { lastReadAt: created.createdAt, lastActivityAt: created.createdAt },
+            })
+            await tx.messageParticipant.updateMany({ where: { threadId: thread.id, userId: { not: userId } }, data: { lastActivityAt: created.createdAt } })
+          }
+
           messageRecords.push({ threadId: thread.id, record: created, participants: thread.participants })
         }
         return messageRecords
@@ -1295,10 +1569,163 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       const { rows, nextCursor } = await deps.fetchThreadMessages(thread.id, query.data.limit, query.data.cursor)
 
+      const listingRows = thread.contextId
+        ? await prisma.$queryRaw<Array<{
+            id: string
+            title: string
+            status: string
+            price_cents: number
+            currency: string
+            photo_urls: unknown
+            pickup_city: string | null
+            pickup_province: string | null
+            seller_user_id: string
+            selected_buyer_user_id: string | null
+            selected_payment_type: string | null
+          }>>`
+            SELECT id, title, status, price_cents, currency, photo_urls, pickup_city, pickup_province, seller_user_id, selected_buyer_user_id, selected_payment_type
+            FROM citizen_market_listing
+            WHERE id = ${thread.contextId}
+            LIMIT 1
+          `
+        : []
+      const listing = listingRows[0] ?? null
+
       return reply.send({
         thread: deps.formatThreadBase(thread, userId),
+        listing: listing
+          ? {
+              id: listing.id,
+              title: listing.title,
+              status: listing.status,
+              priceCents: Number(listing.price_cents) || 0,
+              currency: listing.currency,
+              photoUrl: deps.readGalleryUrls(listing.photo_urls)[0] ?? null,
+              pickupCity: listing.pickup_city,
+              pickupProvince: listing.pickup_province,
+              selectedPaymentType: isMarketPaymentType(listing.selected_payment_type) ? listing.selected_payment_type : null,
+            }
+          : null,
+        viewerIsSeller: Boolean(listing?.seller_user_id === userId),
+        viewerIsSelectedBuyer: Boolean(listing?.selected_buyer_user_id && listing.selected_buyer_user_id === userId),
         messages: rows.map((message: any) => deps.formatMessage(message, userId)),
         nextCursor,
+      })
+    }),
+  )
+
+  app.post('/market/chats/:threadId/payment-selection', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.MarketChatThreadParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      const body = MarketPaymentSelectionBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const thread = await prisma.messageThread.findFirst({
+        where: {
+          id: params.data.threadId,
+          contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+          participants: { some: { userId } },
+        },
+        select: { id: true, contextId: true, participants: { select: { userId: true } } },
+      })
+      if (!thread?.contextId) return reply.code(404).send({ error: 'market_chat_not_found' })
+
+      const listingRows = await prisma.$queryRaw<Array<{
+        id: string
+        title: string
+        status: string
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+        selected_payment_type: string | null
+        payment_types: unknown
+        e_transfer_email: string | null
+        civil_pay_status: string | null
+        civil_pay_paid_at: Date | null
+      }>>`
+        SELECT id, title, status, seller_user_id, selected_buyer_user_id, selected_payment_type, payment_types, e_transfer_email, civil_pay_status, civil_pay_paid_at
+        FROM citizen_market_listing
+        WHERE id = ${thread.contextId}
+        LIMIT 1
+      `
+
+      const listing = listingRows[0]
+      if (!listing) return reply.code(404).send({ error: 'listing_not_found' })
+      if (listing.selected_buyer_user_id !== userId) return reply.code(403).send({ error: 'buyer_not_selected' })
+      if (String(listing.status || '').toLowerCase() !== 'pending') return reply.code(409).send({ error: 'sale_not_pending' })
+
+      const allowedPaymentTypes = readMarketPaymentTypes(listing.payment_types, deps)
+      if (!allowedPaymentTypes.includes(body.data.paymentType)) {
+        return reply.code(400).send({ error: 'payment_type_not_available' })
+      }
+      if (listing.selected_payment_type === body.data.paymentType) {
+        return reply.send({ success: true, selectedPaymentType: body.data.paymentType, message: null })
+      }
+      if (listing.selected_payment_type && listing.selected_payment_type !== body.data.paymentType) {
+        return reply.code(409).send({ error: 'payment_already_selected' })
+      }
+      if (body.data.paymentType === 'etransfer' && !listing.e_transfer_email) {
+        return reply.code(400).send({ error: 'etransfer_not_available' })
+      }
+      if (body.data.paymentType === 'civil_wallet' && (!allowedPaymentTypes.includes('civil_wallet') || listing.civil_pay_paid_at || listing.civil_pay_status === 'completed')) {
+        return reply.code(409).send({ error: 'civil_pay_unavailable' })
+      }
+
+      const civilPayUrl = body.data.paymentType === 'civil_wallet' ? buildCivilPayLink(listing.id, thread.id) : null
+      const selectedBody =
+        body.data.paymentType === 'cash_pickup'
+          ? 'Cash on pickup selected. Coordinate the handoff details in this chat.'
+          : body.data.paymentType === 'etransfer'
+            ? `eTransfer selected. Send the payment to ${listing.e_transfer_email}.`
+            : 'Civil Pay selected. Use the button below to complete the sale securely through Civil.'
+
+      const createdMessage = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const civilSystemUser = await ensureCivilSystemUser(tx)
+
+        await tx.$executeRaw`
+          UPDATE citizen_market_listing
+          SET selected_payment_type = ${body.data.paymentType},
+              selected_payment_at = NOW(),
+              updated_at = NOW()
+          WHERE id = ${listing.id}
+            AND selected_buyer_user_id = ${userId}
+        `
+
+        return createMarketSystemMessage({
+          tx,
+          threadId: thread.id,
+          senderId: civilSystemUser.id,
+          actingUserId: userId,
+          body: selectedBody,
+          attachments: buildMarketPaymentSelectedMeta({
+            listingId: listing.id,
+            selectedOption: body.data.paymentType,
+            civilPayUrl,
+            eTransferEmail: body.data.paymentType === 'etransfer' ? listing.e_transfer_email : null,
+          }),
+          select: deps.MESSAGE_SELECT,
+        })
+      })
+
+      await Promise.all(
+        thread.participants.map((participant: { userId: string }) =>
+          deps.dispatchRealtimeEvent(participant.userId, {
+            type: 'message.created',
+            data: { threadId: thread.id, message: deps.formatMessage(createdMessage, participant.userId) },
+          }),
+        ),
+      )
+
+      return reply.send({
+        success: true,
+        selectedPaymentType: body.data.paymentType,
+        message: deps.formatMessage(createdMessage, userId),
       })
     }),
   )

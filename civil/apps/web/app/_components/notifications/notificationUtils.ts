@@ -314,6 +314,7 @@ export function isActionableNotification(notification: NotificationItem): boolea
     notification.type === 'friend_request' ||
     notification.type === 'profile_family_invite' ||
     notification.type === 'family_child_friend_request' ||
+    notification.type === 'delivery_contract_bid' ||
     notification.type === 'event_guest_speaker_invite' ||
     notification.type === 'event_sponsor_invite'
   )
@@ -345,6 +346,12 @@ function formatReplySnippet(notification: NotificationItem, maxLength = 50): str
 
 export function getNotificationMessage(notification: NotificationItem) {
   const inviteTitle = typeof notification.payload?.title === 'string' ? notification.payload.title.trim() : ''
+  const deliveryListingTitle = typeof notification.payload?.listingTitle === 'string' ? notification.payload.listingTitle.trim() : ''
+  const deliveryAmountCents = typeof notification.payload?.amountCents === 'number' ? notification.payload.amountCents : null
+  const deliveryAmountLabel =
+    typeof deliveryAmountCents === 'number'
+      ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(deliveryAmountCents / 100)
+      : null
   switch (notification.type) {
     case 'friend_request':
       return 'sent you a friend request'
@@ -387,6 +394,25 @@ export function getNotificationMessage(notification: NotificationItem) {
     case 'profile_family_invite': {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : ''
       return relationshipLabel ? `has added you as their ${relationshipLabel}` : 'has added you as family'
+    }
+    case 'delivery_contract_bid':
+      if (deliveryListingTitle && deliveryAmountLabel) return `wants to deliver your ${deliveryListingTitle} for ${deliveryAmountLabel}`
+      if (deliveryListingTitle) return `wants to deliver your ${deliveryListingTitle}`
+      if (deliveryAmountLabel) return `wants to deliver your item for ${deliveryAmountLabel}`
+      return 'wants to deliver your item'
+    case 'delivery_contract_bid_response': {
+      const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+      if (status === 'accepted') {
+        if (deliveryListingTitle && deliveryAmountLabel) return `accepted your delivery bid for ${deliveryListingTitle} at ${deliveryAmountLabel}`
+        if (deliveryListingTitle) return `accepted your delivery bid for ${deliveryListingTitle}`
+        return 'accepted your delivery bid'
+      }
+      if (status === 'rejected') {
+        if (deliveryListingTitle && deliveryAmountLabel) return `declined your delivery bid for ${deliveryListingTitle} at ${deliveryAmountLabel}`
+        if (deliveryListingTitle) return `declined your delivery bid for ${deliveryListingTitle}`
+        return 'declined your delivery bid'
+      }
+      return 'responded to your delivery bid'
     }
     case 'profile_family_invite_response': {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : 'family'
@@ -456,6 +482,10 @@ export function getNotificationOpenLabel(notification: NotificationItem): string
   if (notification.type === 'profile_organization_invite') return 'View organization'
   if (notification.type === 'profile_family_invite') return 'View profile'
   if (notification.type === 'profile_family_invite_response') return 'View profile'
+  if (notification.type === 'delivery_contract_bid_response') {
+    const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+    return status === 'accepted' ? 'Open chat' : 'View delivery'
+  }
   return null
 }
 

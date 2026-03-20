@@ -75,7 +75,21 @@ type MessageSystemMeta = {
   callbackLabel: string
   actorUserId: string | null
   actorName: string | null
+} | {
+  kind: 'market_payment_prompt'
+  listingId: string
+  options: MarketPaymentType[]
+  selectedOption: MarketPaymentType | null
+} | {
+  kind: 'market_payment_selected'
+  listingId: string
+  selectedOption: MarketPaymentType
+  selectedLabel: string
+  civilPayUrl: string | null
+  eTransferEmail: string | null
 }
+
+type MarketPaymentType = 'cash_pickup' | 'etransfer' | 'civil_wallet'
 
 type MessagePayload = {
   id: string
@@ -153,6 +167,7 @@ type MarketListingHeaderSummary = {
   pickupCity?: string | null
   pickupProvince?: string | null
   paymentTypes?: string[]
+  selectedPaymentType?: MarketPaymentType | null
   civilPayStatus?: string | null
   civilPayAmountCents?: number | null
   civilPayFeeCents?: number | null
@@ -178,8 +193,48 @@ type MarketThreadContext = {
     latitude?: number | null
     longitude?: number | null
   } | null
+  deliveryContract?: {
+    id: string
+    buyerUserId: string
+    status: string
+    bidAmountCents: number | null
+    pickupInstructions: string | null
+    itemTraits: string[]
+    estimatedDeliveryAt: string | null
+    pickedUpAt: string | null
+    deliveredAt: string | null
+    groupThreadId: string | null
+    driver: {
+      id: string
+      handle: string | null
+      name: string | null
+      avatarUrl: string | null
+    } | null
+  } | null
   selectedBuyerUserId: string | null
   selectedThreadId: string | null
+}
+
+function formatMarketDeliveryStatus(status?: string | null) {
+  switch ((status || '').trim().toLowerCase()) {
+    case 'open':
+      return 'Open for driver bids'
+    case 'bid_pending':
+      return 'Waiting for buyer approval'
+    case 'assigned':
+      return 'Driver assigned'
+    case 'picked_up':
+      return 'Picked up'
+    case 'delivered':
+      return 'Delivered'
+    default:
+      return 'Delivery requested'
+  }
+}
+
+function formatMarketDeliveryDriverName(driver?: MarketThreadContext['deliveryContract']['driver']) {
+  if (!driver) return 'Civil driver'
+  return driver.name?.trim() || (driver.handle ? `@${driver.handle}` : 'Civil driver')
 }
 
 type MarketInboxCounterpart = {
@@ -362,6 +417,30 @@ function formatMarketListingStatus(status?: string | null) {
 
 function supportsCivilPay(paymentTypes: string[] | null | undefined) {
   return Array.isArray(paymentTypes) && paymentTypes.includes('civil_wallet')
+}
+
+function formatMarketPaymentTypeLabel(value: MarketPaymentType) {
+  switch (value) {
+    case 'cash_pickup':
+      return 'Cash on pickup'
+    case 'etransfer':
+      return 'eTransfer'
+    case 'civil_wallet':
+      return 'Civil Pay'
+    default:
+      return 'Payment'
+  }
+}
+
+function resolveSelectedMarketPaymentType(messages: MessagePayload[], listingId?: string | null) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const meta = messages[index]?.systemMeta
+    if (!meta) continue
+    if (listingId && 'listingId' in meta && meta.listingId !== listingId) continue
+    if (meta.kind === 'market_payment_selected') return meta.selectedOption
+    if (meta.kind === 'market_payment_prompt' && meta.selectedOption) return meta.selectedOption
+  }
+  return null
 }
 
 const getThreadTitle = (thread: ThreadSummary) => {
@@ -1249,6 +1328,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [marketThreadContext, setMarketThreadContext] = useState<MarketThreadContext | null>(null)
   const [marketThreadContextLoading, setMarketThreadContextLoading] = useState(false)
   const [marketHeaderActionError, setMarketHeaderActionError] = useState<string | null>(null)
+  const [marketPaymentSelectionSubmitting, setMarketPaymentSelectionSubmitting] = useState<MarketPaymentType | null>(null)
   const [marketSelectBuyerConfirmOpen, setMarketSelectBuyerConfirmOpen] = useState(false)
   const [marketSelectBuyerSubmitting, setMarketSelectBuyerSubmitting] = useState(false)
   const [marketUnselectBuyerConfirmOpen, setMarketUnselectBuyerConfirmOpen] = useState(false)
@@ -1657,7 +1737,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         const payload = (await response.json()) as ThreadListResponse
         setThreadCursor(payload.nextCursor ?? null)
         setThreads((prev) => {
-          const base = append ? [...prev] : []
+          const base = append ? [...prev] : prev.filter((thread) => thread.contextType === 'market_listing')
           payload.items.forEach((thread) => {
             const index = base.findIndex((item) => item.id === thread.id)
             if (index >= 0) {
@@ -2464,6 +2544,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const messages = messagesByThread[selectedThreadId] ?? []
     return sortMessagesChronologically(messages)
   }, [messagesByThread, selectedThreadId])
+  const activeMarketSelectedPaymentType = useMemo(
+    () =>
+      marketThreadContext?.listing?.selectedPaymentType ??
+      resolveSelectedMarketPaymentType(activeMessages, marketThreadContext?.listing?.id ?? activeThread?.contextId ?? null),
+    [activeMessages, activeThread?.contextId, marketThreadContext?.listing?.id, marketThreadContext?.listing?.selectedPaymentType],
+  )
   const activePendingAttachmentMessages = useMemo(() => {
     if (!selectedThreadId) return []
     return pendingAttachmentMessagesByThread[selectedThreadId] ?? []
@@ -2725,10 +2811,15 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     marketThreadContext?.viewerIsSelectedBuyer &&
       activeMarketThreadIsSelectedBuyer &&
       activeMarketSupportsCivilPay &&
+      activeMarketSelectedPaymentType === 'civil_wallet' &&
       activeMarketListingStatus === 'pending' &&
       marketThreadContext?.listing?.civilPayStatus !== 'completed' &&
       activeMarketCivilPayHref,
   )
+  const activeMarketDeliveryVisible = Boolean(marketThreadContext?.deliveryContract && activeMarketThreadIsSelectedBuyer)
+  const activeMarketDeliveryChatHref = marketThreadContext?.deliveryContract?.groupThreadId
+    ? `/messages?thread=${encodeURIComponent(marketThreadContext.deliveryContract.groupThreadId)}`
+    : null
   const activeMarketPickupDirectionsHref = useMemo(() => {
     if (!marketThreadContext?.pickupAddress) return null
     return buildAddressesHrefFromAddress(marketThreadContext.pickupAddress, marketThreadContext.listing.title)
@@ -2793,6 +2884,60 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       setMarketSelectBuyerSubmitting(false)
     }
   }, [activeThread, authedFetch, loadActiveMarketThreadContext, loadMarketInbox, loadSupplementalUnreadCounts, loadThreads, marketThreadContext?.listing.id])
+
+  const handleChooseActiveMarketPayment = useCallback(
+    async (paymentType: MarketPaymentType) => {
+      if (!activeThread || !marketThreadContext?.listing.id) return
+
+      setMarketPaymentSelectionSubmitting(paymentType)
+      setMarketHeaderActionError(null)
+      try {
+        const response = await authedFetch(`/market/chats/${encodeURIComponent(activeThread.id)}/payment-selection`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ paymentType }),
+        })
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          return
+        }
+
+        const payload = (await response.json().catch(() => null)) as { error?: string; selectedPaymentType?: MarketPaymentType; message?: MessagePayload } | null
+        if (!response.ok) {
+          setMarketHeaderActionError(payload?.error || 'Unable to save that payment choice right now.')
+          return
+        }
+
+        if (payload?.message) {
+          setMessagesByThread((prev) => {
+            const existing = prev[activeThread.id] ?? []
+            if (existing.some((message) => message.id === payload.message!.id)) return prev
+            return { ...prev, [activeThread.id]: sortMessagesChronologically([...existing, payload.message!]) }
+          })
+          upsertThread({ ...activeThread, lastMessage: payload.message, lastMessageAt: payload.message.createdAt })
+        }
+
+        setMarketThreadContext((prev) =>
+          prev?.listing
+            ? {
+                ...prev,
+                listing: {
+                  ...prev.listing,
+                  selectedPaymentType: payload?.selectedPaymentType ?? paymentType,
+                },
+              }
+            : prev,
+        )
+        await loadMarketInbox()
+      } catch (error) {
+        console.error('Failed to choose market payment', error)
+        setMarketHeaderActionError('Unable to save that payment choice right now.')
+      } finally {
+        setMarketPaymentSelectionSubmitting(null)
+      }
+    },
+    [activeThread, authedFetch, loadMarketInbox, marketThreadContext?.listing.id, upsertThread],
+  )
 
   const handleUnselectActiveMarketBuyer = useCallback(async () => {
     if (!marketThreadContext?.listing.id) return
@@ -3967,13 +4112,11 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                             {formatMoney(marketThreadContext.listing.priceCents, marketThreadContext.listing.currency)} •{' '}
                             {formatPickupLocation(marketThreadContext.listing.pickupCity, marketThreadContext.listing.pickupProvince)}
                           </p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <div className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
-                              {marketThreadContext.viewerIsSeller ? 'Open listing management' : 'Open listing'}
+                          {marketThreadContext.listing.civilPayStatus === 'completed' ? (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-700 shadow-sm">Paid</span>
                             </div>
-                            {activeMarketSupportsCivilPay ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 shadow-sm">Civil Pay</span> : null}
-                            {marketThreadContext.listing.civilPayStatus === 'completed' ? <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-700 shadow-sm">Paid</span> : null}
-                          </div>
+                          ) : null}
                         </div>
                       </div>
                     </Link>
@@ -4059,6 +4202,63 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                     <p className="mt-3 text-xs font-medium text-slate-500">A different buyer is currently selected for this item.</p>
                   ) : null}
                   {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
+                  {activeMarketDeliveryVisible && marketThreadContext.deliveryContract ? (
+                    <div className="mt-3 rounded-[20px] border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.08),rgba(14,165,233,0.08))] p-3.5 shadow-sm">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Civil Driver</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{formatMarketDeliveryStatus(marketThreadContext.deliveryContract.status)}</p>
+                            {marketThreadContext.deliveryContract.bidAmountCents ? <span className="rounded-full border border-white/80 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700">Bid {formatMoney(marketThreadContext.deliveryContract.bidAmountCents, 'CAD')}</span> : null}
+                            {marketThreadContext.deliveryContract.estimatedDeliveryAt ? <span className="rounded-full border border-white/80 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">ETA {new Date(marketThreadContext.deliveryContract.estimatedDeliveryAt).toLocaleString()}</span> : null}
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-700">
+                            {(() => {
+                              const contract = marketThreadContext.deliveryContract
+                              const driverName = formatMarketDeliveryDriverName(contract.driver)
+                              const status = (contract.status || '').trim().toLowerCase()
+                              if (status === 'open') return 'The selected buyer requested Civil delivery. Drivers can place bids now.'
+                              if (status === 'bid_pending') return `${driverName} placed a delivery bid${contract.bidAmountCents ? ` for ${formatMoney(contract.bidAmountCents, 'CAD')}` : ''}.`
+                              if (status === 'assigned') return `${driverName} is assigned and the delivery chat is ready.`
+                              if (status === 'picked_up') return `${driverName} picked up the item and delivery is in progress.`
+                              if (status === 'delivered') return `${driverName} marked the delivery complete with proof.`
+                              return 'Civil delivery is active for this item.'
+                            })()}
+                          </p>
+                          {marketThreadContext.deliveryContract.itemTraits.length ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {marketThreadContext.deliveryContract.itemTraits.map((trait) => (
+                                <span key={trait} className="rounded-full border border-white/80 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">{trait}</span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="w-full max-w-sm rounded-2xl border border-white/80 bg-white/90 p-3">
+                          {marketThreadContext.deliveryContract.driver ? (
+                            <CivilCard
+                              size="rail"
+                              name={formatMarketDeliveryDriverName(marketThreadContext.deliveryContract.driver)}
+                              avatarAlt={formatMarketDeliveryDriverName(marketThreadContext.deliveryContract.driver)}
+                              avatarInitials={formatMarketDeliveryDriverName(marketThreadContext.deliveryContract.driver)}
+                              avatarSrc={marketThreadContext.deliveryContract.driver.avatarUrl || undefined}
+                              subtitle={marketThreadContext.deliveryContract.driver.handle ? `@${marketThreadContext.deliveryContract.driver.handle}` : 'Driver'}
+                            />
+                          ) : (
+                            <p className="text-sm text-slate-600">No driver is assigned yet.</p>
+                          )}
+                          {marketThreadContext.deliveryContract.pickupInstructions?.trim() ? <p className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">{marketThreadContext.deliveryContract.pickupInstructions.trim()}</p> : null}
+                          {activeMarketDeliveryChatHref ? (
+                            <Link
+                              href={activeMarketDeliveryChatHref}
+                              className="mt-3 inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+                            >
+                              Open delivery chat
+                            </Link>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -4120,6 +4320,92 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                               {message.systemMeta.mode === 'audio' ? <HiOutlinePhone className="h-4 w-4" /> : <HiOutlineVideoCamera className="h-4 w-4" />}
                               {callbackLabel}
                             </button>
+                          </div>
+                          <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (message.messageType === 'system' && message.systemMeta?.kind === 'market_payment_prompt') {
+                    const resolvedSelectedOption =
+                      message.systemMeta.selectedOption ??
+                      (marketThreadContext?.listing?.id === message.systemMeta.listingId ? activeMarketSelectedPaymentType : null)
+                    const canChoosePayment = Boolean(
+                      marketThreadContext?.viewerIsSelectedBuyer &&
+                        activeMarketThreadIsSelectedBuyer &&
+                        marketThreadContext.listing.id === message.systemMeta.listingId &&
+                        !resolvedSelectedOption,
+                    )
+                    return (
+                      <div key={message.id} className="flex w-full justify-center">
+                        <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-4 text-center shadow-sm">
+                          <p className="text-sm font-semibold text-slate-900">{message.body || 'How would you like to pay?'}</p>
+                          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                            {message.systemMeta.options.map((option) => {
+                              const active = resolvedSelectedOption === option
+                              return (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  onClick={() => {
+                                    if (!canChoosePayment || marketPaymentSelectionSubmitting) return
+                                    void handleChooseActiveMarketPayment(option)
+                                  }}
+                                  disabled={!canChoosePayment || Boolean(marketPaymentSelectionSubmitting)}
+                                  className={clsx(
+                                    'rounded-full border px-4 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
+                                    active
+                                      ? 'border-emerald-300 bg-emerald-100 text-emerald-800'
+                                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100',
+                                  )}
+                                >
+                                  {marketPaymentSelectionSubmitting === option ? 'Saving…' : formatMarketPaymentTypeLabel(option)}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <p className="mt-3 text-xs text-slate-500">
+                            {resolvedSelectedOption
+                              ? `${formatMarketPaymentTypeLabel(resolvedSelectedOption)} selected.`
+                              : canChoosePayment
+                                ? 'Choose one payment option to continue.'
+                                : 'Waiting for the buyer to choose a payment option.'}
+                          </p>
+                          <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (message.messageType === 'system' && message.systemMeta?.kind === 'market_payment_selected') {
+                    const canCompleteCivilPayFromMessage = Boolean(
+                      message.systemMeta.selectedOption === 'civil_wallet' &&
+                        marketThreadContext?.viewerIsSelectedBuyer &&
+                        activeMarketThreadIsSelectedBuyer &&
+                        activeMarketCivilPayHref,
+                    )
+                    return (
+                      <div key={message.id} className="flex w-full justify-center">
+                        <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-4 text-center shadow-sm">
+                          <p className="text-sm font-semibold text-slate-900">{message.body || `${message.systemMeta.selectedLabel} selected.`}</p>
+                          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                            <span className="rounded-full border border-emerald-300 bg-emerald-100 px-3 py-1 text-[11px] font-semibold text-emerald-800">
+                              {message.systemMeta.selectedLabel}
+                            </span>
+                            {message.systemMeta.selectedOption === 'etransfer' && message.systemMeta.eTransferEmail ? (
+                              <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">
+                                {message.systemMeta.eTransferEmail}
+                              </span>
+                            ) : null}
+                            {canCompleteCivilPayFromMessage ? (
+                              <Link
+                                href={activeMarketCivilPayHref!}
+                                className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                              >
+                                Complete Civil Pay
+                              </Link>
+                            ) : null}
                           </div>
                           <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
                         </div>

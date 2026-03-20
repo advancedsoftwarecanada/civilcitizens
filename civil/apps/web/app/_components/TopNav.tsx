@@ -581,6 +581,8 @@ export default function TopNav() {
           pushToast(action === 'accept' ? 'Guest speaker invite accepted.' : 'Guest speaker invite declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'event_sponsor_invite') {
           pushToast(action === 'accept' ? 'Sponsor invite accepted.' : 'Sponsor invite declined.', action === 'accept' ? 'success' : 'info')
+        } else if (notification.type === 'delivery_contract_bid') {
+          pushToast(action === 'accept' ? 'Delivery bid accepted.' : 'Delivery bid declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'profile_family_invite') {
           pushToast(action === 'accept' ? 'Family relationship accepted.' : 'Family relationship declined.', action === 'accept' ? 'success' : 'info')
         } else {

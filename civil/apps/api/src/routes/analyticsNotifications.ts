@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
-import { Prisma } from '@prisma/client'
+import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
+import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readWalletSummary } from '../walletHelpers.js'
 
 type AnalyticsNotificationDeps = Record<string, any>
 
@@ -116,6 +117,8 @@ const RECIPROCAL_FAMILY_RELATIONSHIP_OPTIONS_BY_TYPE: Partial<Record<string, str
   other: ['other'],
 }
 
+const DELIVERY_GROUP_CONTEXT_TYPE = 'market_delivery'
+
 function resolveReciprocalFamilyRelationship(value: string) {
   return RECIPROCAL_FAMILY_RELATIONSHIP_OPTIONS_BY_TYPE[value]?.[0] ?? value
 }
@@ -124,6 +127,70 @@ function isAllowedReciprocalFamilyRelationship(sourceRelationship: string, recip
   const allowedOptions = RECIPROCAL_FAMILY_RELATIONSHIP_OPTIONS_BY_TYPE[sourceRelationship]
   if (!allowedOptions?.length) return reciprocalRelationship === resolveReciprocalFamilyRelationship(sourceRelationship)
   return allowedOptions.includes(reciprocalRelationship)
+}
+
+function formatMoney(cents: number) {
+  return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format((Number(cents) || 0) / 100)
+}
+
+async function ensureDeliveryGroupThread(args: {
+  tx: Prisma.TransactionClient
+  deps: AnalyticsNotificationDeps
+  contractId: string
+  sellerUserId: string
+  buyerUserId: string
+  driverUserId: string
+  driverName: string | null
+  listingTitle: string
+}) {
+  const uniqueKey = `delivery_contract:${args.contractId}`
+  let thread = await args.tx.messageThread.findUnique({
+    where: { uniqueKey },
+    include: { participants: { select: { userId: true, mutedUntil: true } } },
+  })
+  let created = false
+
+  if (!thread) {
+    const now = new Date()
+    thread = await args.tx.messageThread.create({
+      data: {
+        type: MessageThreadType.group,
+        uniqueKey,
+        contextType: DELIVERY_GROUP_CONTEXT_TYPE,
+        contextId: args.contractId,
+        lastMessageAt: now,
+        participants: {
+          create: [
+            { userId: args.sellerUserId, role: MessageParticipantRole.member, lastActivityAt: now },
+            { userId: args.buyerUserId, role: MessageParticipantRole.member, lastActivityAt: now },
+            { userId: args.driverUserId, role: MessageParticipantRole.member, lastReadAt: now, lastActivityAt: now },
+          ],
+        },
+      },
+      include: { participants: { select: { userId: true, mutedUntil: true } } },
+    })
+    created = true
+  }
+
+  const joinMessageBody = `${args.driverName?.trim() || 'Your delivery driver'} has joined the chat as your delivery driver for ${args.listingTitle}.`
+  const joinMessage = await args.tx.message.create({
+    data: {
+      threadId: thread.id,
+      senderId: args.driverUserId,
+      body: joinMessageBody,
+      messageType: MessageType.text,
+    },
+    select: args.deps.MESSAGE_SELECT,
+  })
+
+  await args.tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: joinMessage.createdAt } })
+  await args.tx.messageParticipant.updateMany({ where: { threadId: thread.id }, data: { lastActivityAt: joinMessage.createdAt } })
+  await args.tx.messageParticipant.update({
+    where: { threadId_userId: { threadId: thread.id, userId: args.driverUserId } },
+    data: { lastReadAt: joinMessage.createdAt, lastActivityAt: joinMessage.createdAt },
+  })
+
+  return { thread, joinMessage, created }
 }
 
 export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: AnalyticsNotificationDeps) {
@@ -342,6 +409,247 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
         ])
 
         return reply.send({ ok: true, status: nextStatus })
+      }
+
+      if (notification.type === deps.DELIVERY_NOTIFICATION_TYPES.BID) {
+        const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+          ? (notification.payload as Record<string, unknown>)
+          : null
+        if (!payload) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        const statusRaw = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : 'pending'
+        if (statusRaw !== 'pending') return reply.code(409).send({ error: 'invitation_not_pending' })
+
+        const contractId = typeof payload.contractId === 'string' ? payload.contractId.trim() : ''
+        if (!contractId) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        await ensureCitizenWalletTables()
+        await deps.ensureCitizenMarketplaceTables?.()
+
+        const contractRows = await prisma.$queryRaw<Array<{
+          id: string
+          listing_id: string
+          seller_user_id: string
+          buyer_user_id: string
+          status: string
+          driver_user_id: string | null
+          bid_driver_user_id: string | null
+          bid_amount_cents: number | null
+          group_thread_id: string | null
+          listing_title: string
+        }>>`
+          SELECT c.id, c.listing_id, c.seller_user_id, c.buyer_user_id, c.status, c.driver_user_id, c.bid_driver_user_id, c.bid_amount_cents, c.group_thread_id, l.title AS listing_title
+          FROM citizen_market_delivery_contract c
+          INNER JOIN citizen_market_listing l ON l.id = c.listing_id
+          WHERE c.id = ${contractId}
+          LIMIT 1
+        `
+
+        const contract = contractRows[0]
+        if (!contract || contract.buyer_user_id !== userId) return reply.code(404).send({ error: 'contract_not_found' })
+        if (!contract.bid_driver_user_id || !contract.bid_amount_cents) return reply.code(400).send({ error: 'invalid_notification_payload' })
+        if (contract.driver_user_id) return reply.code(409).send({ error: 'contract_already_assigned' })
+        if (contract.status !== 'bid_pending' && contract.status !== 'open') return reply.code(409).send({ error: 'contract_not_open' })
+
+        const nextStatus = body.data.action === 'accept' ? 'accepted' : 'rejected'
+        const nowIso = new Date().toISOString()
+
+        if (body.data.action === 'reject') {
+          await prisma.$transaction([
+            prisma.notification.update({
+              where: { id: notification.id },
+              data: { payload: { ...payload, status: nextStatus, respondedAt: nowIso } as Prisma.InputJsonValue, readAt: notification.readAt ?? new Date() },
+            }),
+            prisma.$executeRaw`
+              UPDATE citizen_market_delivery_contract
+              SET status = 'open',
+                  bid_driver_user_id = NULL,
+                  bid_amount_cents = NULL,
+                  bid_requested_at = NULL,
+                  bid_responded_at = NOW(),
+                  updated_at = NOW()
+              WHERE id = ${contract.id}
+            `,
+          ])
+
+          if (contract.bid_driver_user_id !== userId) {
+            await deps.createNotificationRecord({
+              userId: contract.bid_driver_user_id,
+              actorId: userId,
+              type: deps.DELIVERY_NOTIFICATION_TYPES.BID_RESPONSE,
+              payload: {
+                contractId: contract.id,
+                listingId: contract.listing_id,
+                listingTitle: contract.listing_title,
+                amountCents: contract.bid_amount_cents,
+                status: nextStatus,
+                respondedAt: nowIso,
+                url: '/delivery',
+              },
+            })
+          }
+
+          return reply.send({ ok: true, status: nextStatus })
+        }
+
+        const [buyer, driver] = await Promise.all([
+          prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+          prisma.user.findUnique({ where: { id: contract.bid_driver_user_id }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+        ])
+        if (!buyer || !driver) return reply.code(404).send({ error: 'user_not_found' })
+
+        const buyerMeta = deps.readBaseCommunityMeta(buyer.communityMeta ?? null)
+        const driverMeta = deps.readBaseCommunityMeta(driver.communityMeta ?? null)
+        const buyerWallet = readWalletSummary(deps.parseCommunityMeta(buyer.communityMeta ?? null))
+        const driverWallet = readWalletSummary(deps.parseCommunityMeta(driver.communityMeta ?? null))
+
+        if (!buyerWallet.enabled) return reply.code(400).send({ error: 'buyer_wallet_required' })
+        if (buyerWallet.civilCreditsCents < contract.bid_amount_cents) {
+          return reply.code(400).send({ error: 'insufficient_wallet_balance' })
+        }
+
+        buyerMeta.wallet = buildWalletMetaValue({ ...buyerWallet, civilCreditsCents: buyerWallet.civilCreditsCents - contract.bid_amount_cents })
+        driverMeta.wallet = buildWalletMetaValue({ ...driverWallet, civilCreditsCents: driverWallet.civilCreditsCents + contract.bid_amount_cents })
+
+        const walletTransactionId = `${contract.id}-delivery-${Date.now()}`
+        const eventId = walletTransactionId
+        let threadId: string | null = null
+        let joinMessage: any = null
+        let threadParticipants: Array<{ userId: string; mutedUntil: Date | null }> = []
+
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          await tx.user.update({ where: { id: buyer.id }, data: { communityMeta: buyerMeta as Prisma.InputJsonValue } })
+          await tx.user.update({ where: { id: driver.id }, data: { communityMeta: driverMeta as Prisma.InputJsonValue } })
+
+          await tx.$executeRaw`
+            INSERT INTO citizen_wallet_transaction (
+              id,
+              kind,
+              status,
+              user_id,
+              counterparty_user_id,
+              amount_cents,
+              currency,
+              metadata,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              ${walletTransactionId},
+              ${'delivery_contract'},
+              ${'completed'},
+              ${buyer.id},
+              ${driver.id},
+              ${contract.bid_amount_cents},
+              ${'cad'},
+              ${JSON.stringify({ kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id, buyerUserId: buyer.id, driverUserId: driver.id })}::jsonb,
+              NOW(),
+              NOW()
+            )
+          `
+
+          await insertCivilCreditLedgerEntry(tx, {
+            id: `${walletTransactionId}-ledger`,
+            eventId,
+            entryType: 'transfer',
+            status: 'completed',
+            amountCents: contract.bid_amount_cents,
+            currency: 'cad',
+            from: {
+              userId: buyer.id,
+              handle: buyer.handle,
+              name: buyer.name,
+              entityType: 'user',
+              entityLabel: buyer.name ?? buyer.handle,
+            },
+            to: {
+              userId: driver.id,
+              handle: driver.handle,
+              name: driver.name,
+              entityType: 'user',
+              entityLabel: driver.name ?? driver.handle,
+            },
+            sourceType: 'delivery_contract',
+            sourceReferenceId: contract.id,
+            description: `Delivery contract for ${contract.listing_title}`,
+            metadata: { kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id },
+          })
+
+          const threadResult = await ensureDeliveryGroupThread({
+            tx,
+            deps,
+            contractId: contract.id,
+            sellerUserId: contract.seller_user_id,
+            buyerUserId: contract.buyer_user_id,
+            driverUserId: driver.id,
+            driverName: driver.name,
+            listingTitle: contract.listing_title,
+          })
+
+          threadId = threadResult.thread.id
+          joinMessage = threadResult.joinMessage
+          threadParticipants = threadResult.thread.participants
+
+          await tx.$executeRaw`
+            UPDATE citizen_market_delivery_contract
+            SET status = 'assigned',
+                driver_user_id = ${driver.id},
+                accepted_at = NOW(),
+                bid_responded_at = NOW(),
+                group_thread_id = ${threadResult.thread.id},
+                updated_at = NOW()
+            WHERE id = ${contract.id}
+          `
+
+          await tx.notification.update({
+            where: { id: notification.id },
+            data: {
+              payload: {
+                ...payload,
+                status: nextStatus,
+                respondedAt: nowIso,
+                threadId: threadResult.thread.id,
+                url: `/messages?thread=${encodeURIComponent(threadResult.thread.id)}`,
+              } as Prisma.InputJsonValue,
+              readAt: notification.readAt ?? new Date(),
+            },
+          })
+        })
+
+        if (threadId && joinMessage) {
+          await Promise.all(
+            threadParticipants.map((participant: { userId: string }) =>
+              deps.dispatchRealtimeEvent(participant.userId, {
+                type: 'message.created',
+                data: { threadId, message: deps.formatMessage(joinMessage, participant.userId) },
+              }),
+            ),
+          )
+
+          void deps.sendMobilePushForMessageCreated({
+            threadId,
+            message: joinMessage,
+            participants: threadParticipants,
+            pushUrl: `/messages?thread=${encodeURIComponent(threadId)}`,
+          })
+        }
+
+        await deps.createNotificationRecord({
+          userId: driver.id,
+          actorId: buyer.id,
+          type: deps.DELIVERY_NOTIFICATION_TYPES.BID_RESPONSE,
+          payload: {
+            contractId: contract.id,
+            listingId: contract.listing_id,
+            listingTitle: contract.listing_title,
+            amountCents: contract.bid_amount_cents,
+            status: nextStatus,
+            respondedAt: nowIso,
+            url: threadId ? `/messages?thread=${encodeURIComponent(threadId)}` : '/delivery/my',
+          },
+        })
+
+        return reply.send({ ok: true, status: nextStatus, threadId })
       }
 
       if (notification.type !== deps.EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE && notification.type !== deps.EVENT_NOTIFICATION_TYPES.SPONSOR_INVITE) {
