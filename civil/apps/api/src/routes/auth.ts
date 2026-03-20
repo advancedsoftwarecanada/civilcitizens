@@ -2,7 +2,7 @@ import { prisma } from '@civil/db'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'crypto'
 import bcrypt from 'bcryptjs'
-import { FriendshipStatus } from '@prisma/client'
+import { FriendshipStatus, type Prisma } from '@prisma/client'
 import { buildHandleBase, LoginInput, RegisterInput } from '@civil/shared'
 import { z, type ZodTypeAny } from 'zod'
 import {
@@ -624,12 +624,14 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
         },
       })
 
+      const userId = payload.sub
+
       try {
-        await prisma.$transaction(async (tx) => {
-          const freshUser = await tx.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          const freshUser = await tx.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
           if (!freshUser) throw new Error('unauthorized')
           const freshWallet = readWalletSummary(freshUser.communityMeta)
-          const freshWalletView = await buildWalletView(payload.sub, freshUser.communityMeta, 1)
+          const freshWalletView = await buildWalletView(userId, freshUser.communityMeta, 1)
           if (freshWalletView.availableCreditsCents < body.data.amountCents) {
             throw new Error('insufficient_available_wallet_balance')
           }
@@ -641,7 +643,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
           })
 
           const transactionId = randomUUID()
-          await tx.user.update({ where: { id: payload.sub }, data: { communityMeta: baseMeta } })
+          await tx.user.update({ where: { id: userId }, data: { communityMeta: baseMeta } })
           await tx.$executeRaw`
             INSERT INTO citizen_wallet_transaction (
               id,
@@ -659,7 +661,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
               ${transactionId},
               ${'payout'},
               ${'completed'},
-              ${payload.sub},
+              ${userId},
               ${body.data.amountCents},
               ${'cad'},
               ${transfer.id},
@@ -771,7 +773,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
         return reply.code(403).send({ error: 'wallet_not_available' })
       }
 
-      await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const [freshSender, freshRecipient] = await Promise.all([
           tx.user.findUnique({ where: { id: sender.id }, select: { communityMeta: true } }),
           tx.user.findUnique({ where: { id: recipient.id }, select: { communityMeta: true } }),

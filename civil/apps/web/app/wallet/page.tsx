@@ -117,6 +117,7 @@ function applyWalletSummaryToViewer(wallet: WalletSummaryPayload) {
   store.setMe({
     ...store.me,
     wallet: {
+      civilCreditsCents: wallet.civilCreditsCents ?? store.me.wallet?.civilCreditsCents ?? 0,
       ...(store.me.wallet ?? {}),
       ...wallet,
     },

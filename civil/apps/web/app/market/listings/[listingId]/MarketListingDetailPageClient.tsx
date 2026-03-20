@@ -261,6 +261,8 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
       return
     }
 
+    const approximatePickup = listing.approximatePickup
+
     let cancelled = false
     const controller = new AbortController()
 
@@ -268,8 +270,8 @@ export default function MarketListingDetailPageClient({ listingId }: { listingId
       setNearbyStatus('loading')
       try {
         const params = new URLSearchParams({
-          lat: String(listing.approximatePickup.latitude),
-          lng: String(listing.approximatePickup.longitude),
+          lat: String(approximatePickup.latitude),
+          lng: String(approximatePickup.longitude),
           limit: '6',
         })
         const res = await fetch(buildApiUrl(`/market/listings/public/${encodeURIComponent(listing.id)}/nearby?${params.toString()}`), {
