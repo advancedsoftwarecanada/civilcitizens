@@ -367,7 +367,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       `
 
       return reply.send({
-        items: rows.map((row) => ({
+        items: rows.map((row: OpenContractRow) => ({
           id: row.id,
           status: row.status,
           listingId: row.listing_id,
@@ -376,7 +376,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           pickupInstructions: row.pickup_instructions,
-          itemTraits: Array.isArray(row.item_traits) ? row.item_traits.filter((entry): entry is string => typeof entry === 'string') : [],
+          itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
           bidPending: Boolean(row.bid_driver_user_id),
           bidDriverUserId: row.bid_driver_user_id,
           bidAmountCents: row.bid_amount_cents,
@@ -465,7 +465,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       `
 
       return reply.send({
-        items: rows.map((row) => ({
+        items: rows.map((row: DriverContractRow) => ({
           id: row.id,
           status: row.status,
           listingId: row.listing_id,
@@ -474,7 +474,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           pickupCity: row.pickup_city,
           pickupProvince: row.pickup_province,
           pickupInstructions: row.pickup_instructions,
-          itemTraits: Array.isArray(row.item_traits) ? row.item_traits.filter((entry): entry is string => typeof entry === 'string') : [],
+          itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
           bidAmountCents: row.bid_amount_cents,
           estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
           pickedUpAt: row.picked_up_at?.toISOString() ?? null,
@@ -518,7 +518,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
 
       return reply.send({
         active: true,
-        items: rows.map((row) => ({
+        items: rows.map((row: { id: string; status: string; listing_id: string; listing_title: string; listing_photo_urls: unknown }) => ({
           id: row.id,
           status: row.status,
           listingId: row.listing_id,

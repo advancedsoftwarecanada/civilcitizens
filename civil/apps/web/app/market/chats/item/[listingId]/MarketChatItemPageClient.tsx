@@ -465,7 +465,7 @@ export default function MarketChatItemPageClient({ listingId }: { listingId: str
                   <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                     {deliveryContract.bidAmountCents ? <span className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-emerald-700">Bid {formatMoney(deliveryContract.bidAmountCents, 'CAD')}</span> : null}
                     {deliveryContract.estimatedDeliveryAt ? <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">ETA {formatTimestamp(deliveryContract.estimatedDeliveryAt)}</span> : null}
-                    {deliveryContract.deliveredAt ? <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-sky-700">Delivered {formatTimestamp(deliveryContract.deliveredAt)}</span> : null} : null}
+                    {deliveryContract.deliveredAt ? <span className="rounded-full border border-sky-200 bg-white px-3 py-1 text-sky-700">Delivered {formatTimestamp(deliveryContract.deliveredAt)}</span> : null}
                     {deliveryContract.itemTraits.map((trait) => (
                       <span key={trait} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">{trait}</span>
                     ))}
