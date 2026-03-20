@@ -239,7 +239,7 @@ export async function buildWalletView(userId: string, communityMeta: any, transa
   `
   const pendingCreditsCents = Math.min(
     wallet.civilCreditsCents,
-    pendingRows.reduce((sum, row) => sum + Math.max(0, Math.round(row.amount_cents || 0)), 0),
+    pendingRows.reduce((sum: number, row: { amount_cents: number }) => sum + Math.max(0, Math.round(row.amount_cents || 0)), 0),
   )
   const availableCreditsCents = Math.max(0, wallet.civilCreditsCents - pendingCreditsCents)
 
@@ -273,7 +273,7 @@ export async function buildWalletView(userId: string, communityMeta: any, transa
     availableCreditsCents,
     pendingCreditsCents,
     settlementHoldDays: WALLET_SETTLEMENT_HOLD_DAYS,
-    recentTransactions: recentRows.map((row) => buildWalletTransactionSummary(row, userId, now)),
+    recentTransactions: recentRows.map((row: WalletLedgerRow) => buildWalletTransactionSummary(row, userId, now)),
   }
 }
 
@@ -628,7 +628,7 @@ export async function applyWalletTopUpFromPaymentIntent(paymentIntent: Stripe.Pa
   await ensureCitizenWalletTables()
 
   let applied = false
-  await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const existing = await tx.$queryRaw<Array<{ id: string }>>`
       SELECT id
       FROM citizen_wallet_transaction

@@ -910,7 +910,7 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
       let createdMessage: any = null
 
       try {
-        await prisma.$transaction(async (tx) => {
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           const [freshBuyer, freshSeller, freshListingRows] = await Promise.all([
             tx.user.findUnique({ where: { id: buyer.id }, select: { communityMeta: true } }),
             tx.user.findUnique({ where: { id: seller.id }, select: { communityMeta: true } }),
