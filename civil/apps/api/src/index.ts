@@ -418,6 +418,7 @@ import { createCivilAiExecutionHelpers } from './civilAiExecution.js'
 import {
   COMMENT_NOTIFICATION_TYPES,
   CONNECTION_NOTIFICATION_TYPES,
+  DELIVERY_NOTIFICATION_TYPES,
   EVENT_NOTIFICATION_TYPES,
   FAMILY_NOTIFICATION_TYPES,
   FRIEND_NOTIFICATION_TYPES,
@@ -467,6 +468,7 @@ import { registerBillingWebhookRoutes } from './routes/billingWebhook.js'
 import { registerJobRoutes } from './routes/jobs.js'
 import { registerAnalyticsNotificationRoutes } from './routes/analyticsNotifications.js'
 import { registerCommunityBootstrapRoutes } from './routes/communityBootstrap.js'
+import { registerDeliveryRoutes } from './routes/delivery.js'
 import { registerGeographyRoutes } from './routes/geography.js'
 import { registerOrgChannelRoutes } from './routes/orgChannels.js'
 import { registerOrganizationCollectionRoutes } from './routes/organizationCollections.js'
@@ -6532,6 +6534,16 @@ function ensureCitizenMarketplaceTables() {
       `)
 
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS selected_payment_type TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_listing
+        ADD COLUMN IF NOT EXISTS selected_payment_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_market_listing_scope_idx
         ON citizen_market_listing (listing_province_code, listing_community_slug, created_at DESC);
       `)
@@ -6569,6 +6581,111 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_market_chat_interest_user_idx
         ON citizen_market_chat_interest (user_id, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS citizen_market_delivery_contract (
+          id TEXT PRIMARY KEY,
+          listing_id TEXT NOT NULL REFERENCES citizen_market_listing(id) ON DELETE CASCADE,
+          seller_user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          buyer_user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          driver_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          pickup_instructions TEXT,
+          item_traits JSONB NOT NULL DEFAULT '[]'::jsonb,
+          bid_driver_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          bid_amount_cents INTEGER,
+          bid_requested_at TIMESTAMPTZ,
+          bid_responded_at TIMESTAMPTZ,
+          accepted_at TIMESTAMPTZ,
+          picked_up_at TIMESTAMPTZ,
+          estimated_delivery_at TIMESTAMPTZ,
+          delivered_at TIMESTAMPTZ,
+          delivery_photo_url TEXT,
+          group_thread_id TEXT REFERENCES "MessageThread"(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS pickup_instructions TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS item_traits JSONB NOT NULL DEFAULT '[]'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS bid_driver_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS bid_amount_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS bid_requested_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS bid_responded_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS picked_up_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS estimated_delivery_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS delivery_photo_url TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS group_thread_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS citizen_market_delivery_contract_listing_uniq
+        ON citizen_market_delivery_contract (listing_id);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_delivery_contract_status_idx
+        ON citizen_market_delivery_contract (status, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_delivery_contract_driver_idx
+        ON citizen_market_delivery_contract (driver_user_id, status, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_market_delivery_contract_bid_driver_idx
+        ON citizen_market_delivery_contract (bid_driver_user_id, status, updated_at DESC);
       `)
     } catch (err) {
       citizenMarketplaceTablesReady = null
@@ -9082,9 +9199,10 @@ const MarketRelistBody = z
 
 const MarketDeliveryOptionsSchema = z
   .object({
-    short50km: z.coerce.number().int().min(0).max(500000000).optional(),
-    medium100km: z.coerce.number().int().min(0).max(500000000).optional(),
-    long250km: z.coerce.number().int().min(0).max(500000000).optional(),
+    pickupInstructions: z.string().trim().max(2000).optional().nullable(),
+    itemIsHeavy: z.boolean().optional(),
+    itemIsBulky: z.boolean().optional(),
+    itemIsSmall: z.boolean().optional(),
   })
   .strict()
 
@@ -9651,9 +9769,10 @@ function readStringList(raw: unknown): string[] {
 }
 
 type MarketDeliveryOptions = {
-  short50km?: number
-  medium100km?: number
-  long250km?: number
+  pickupInstructions?: string
+  itemIsHeavy?: boolean
+  itemIsBulky?: boolean
+  itemIsSmall?: boolean
 }
 
 function readDeliveryOptions(raw: unknown): MarketDeliveryOptions {
@@ -9661,14 +9780,20 @@ function readDeliveryOptions(raw: unknown): MarketDeliveryOptions {
   const typed = raw as Record<string, unknown>
   const options: MarketDeliveryOptions = {}
 
-  const short50km = typed.short50km
-  if (typeof short50km === 'number' && Number.isFinite(short50km) && short50km >= 0) options.short50km = Math.round(short50km)
+  const pickupInstructions = typed.pickupInstructions
+  if (typeof pickupInstructions === 'string' && pickupInstructions.trim()) {
+    options.pickupInstructions = pickupInstructions.trim().slice(0, 2000)
+  }
 
-  const medium100km = typed.medium100km
-  if (typeof medium100km === 'number' && Number.isFinite(medium100km) && medium100km >= 0) options.medium100km = Math.round(medium100km)
+  if (typed.itemIsHeavy === true) options.itemIsHeavy = true
+  if (typed.itemIsBulky === true) options.itemIsBulky = true
+  if (typed.itemIsSmall === true) options.itemIsSmall = true
 
-  const long250km = typed.long250km
-  if (typeof long250km === 'number' && Number.isFinite(long250km) && long250km >= 0) options.long250km = Math.round(long250km)
+  if (!Object.keys(options).length) {
+    if (typeof typed.short50km === 'number' && Number.isFinite(typed.short50km) && typed.short50km >= 0) options.itemIsSmall = true
+    if (typeof typed.medium100km === 'number' && Number.isFinite(typed.medium100km) && typed.medium100km >= 0) options.itemIsBulky = true
+    if (typeof typed.long250km === 'number' && Number.isFinite(typed.long250km) && typed.long250km >= 0) options.itemIsHeavy = true
+  }
 
   return options
 }
@@ -9740,6 +9865,24 @@ registerMarketListingRoutes(app, {
   withSchemaGuard,
 })
 
+registerDeliveryRoutes(app, {
+  DELIVERY_NOTIFICATION_TYPES,
+  MESSAGE_SELECT,
+  createNotificationRecord,
+  dispatchRealtimeEvent,
+  ensureCitizenMarketplaceTables,
+  formatMessage,
+  isSelfVerifiedCanadianCitizen,
+  parseCommunityMeta,
+  readBaseCommunityMeta,
+  readGalleryUrls,
+  readMarketShippingAddresses,
+  resolveUserId,
+  sanitizePlainText,
+  sendMobilePushForMessageCreated,
+  withSchemaGuard,
+})
+
 registerMarketChatRoutes(app, {
   MARKET_LISTING_CHAT_CONTEXT_TYPE,
   MESSAGE_SELECT,
@@ -9763,7 +9906,10 @@ registerMarketChatRoutes(app, {
   loadViewerBlockState,
   moderationLockedErrorCode,
   normalizeMediaUrl,
+  readBaseCommunityMeta,
+  readDeliveryOptions,
   readGalleryUrls,
+  readStringList,
   resolveUserId,
   sanitizePlainText,
   sendMobilePushForMessageCreated,
@@ -10733,8 +10879,10 @@ async function loadAdminUserOrReply(req: FastifyRequest, reply: FastifyReply) {
 }
 
 registerAnalyticsNotificationRoutes(app, {
+  DELIVERY_NOTIFICATION_TYPES,
   EVENT_NOTIFICATION_TYPES,
   FAMILY_NOTIFICATION_TYPES,
+  MESSAGE_SELECT,
   NOTIFICATION_SELECT,
   NotificationRespondBody,
   NotificationRespondParams,
@@ -10745,13 +10893,18 @@ registerAnalyticsNotificationRoutes(app, {
   FamilyFriendRequestStatus: null,
   OrgEventDefinition: null,
   createNotificationRecord,
+  dispatchRealtimeEvent,
+  ensureCitizenMarketplaceTables,
+  formatMessage,
   getStoredFamilyFriendRequests,
   getStoredFamilyFriendships,
   getStoredProfileFamilyRelationships,
   mergeOrganizationSystemStateIntoMetadata,
   notifyProfileFamilyInviteResponse,
+  parseCommunityMeta,
   readBaseCommunityMeta,
   readOrganizationSystemState,
+  sendMobilePushForMessageCreated,
   upsertFamilyFriendRequest,
   upsertFamilyFriendship,
   upsertProfileFamilyRelationship,

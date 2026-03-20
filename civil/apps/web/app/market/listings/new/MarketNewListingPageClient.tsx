@@ -82,9 +82,10 @@ type ListingDetail = {
   paymentTypes: string[]
   willingToDeliver: boolean
   deliveryOptions?: {
-    short50km?: number
-    medium100km?: number
-    long250km?: number
+    pickupInstructions?: string
+    itemIsHeavy?: boolean
+    itemIsBulky?: boolean
+    itemIsSmall?: boolean
   } | null
   eTransferEmail: string | null
   status: string
@@ -149,27 +150,17 @@ type DraftForm = {
   pickupAddressLine2: string
   pickupPostalCode: string
   willingToDeliver: boolean
-  deliverySelection: {
-    short50km: boolean
-    medium100km: boolean
-    long250km: boolean
-  }
-  deliveryPrices: {
-    short50km: string
-    medium100km: string
-    long250km: string
+  deliveryPickupInstructions: string
+  deliveryTraits: {
+    itemIsHeavy: boolean
+    itemIsBulky: boolean
+    itemIsSmall: boolean
   }
   paymentTypes: Array<'cash_pickup' | 'etransfer' | 'civil_wallet'>
   photoUrls: string[]
 }
 
 type ListingEditorStatus = 'draft' | 'active' | 'pending' | 'sold' | 'canceled'
-
-const DEFAULT_DELIVERY_PRICES = {
-  short50km: '10.00',
-  medium100km: '20.00',
-  long250km: '80.00',
-} as const
 
 const EMPTY_FORM: DraftForm = {
   title: 'Draft Listing',
@@ -193,15 +184,11 @@ const EMPTY_FORM: DraftForm = {
   pickupAddressLine2: '',
   pickupPostalCode: '',
   willingToDeliver: false,
-  deliverySelection: {
-    short50km: false,
-    medium100km: false,
-    long250km: false,
-  },
-  deliveryPrices: {
-    short50km: DEFAULT_DELIVERY_PRICES.short50km,
-    medium100km: DEFAULT_DELIVERY_PRICES.medium100km,
-    long250km: DEFAULT_DELIVERY_PRICES.long250km,
+  deliveryPickupInstructions: '',
+  deliveryTraits: {
+    itemIsHeavy: false,
+    itemIsBulky: false,
+    itemIsSmall: false,
   },
   paymentTypes: ['cash_pickup'],
   photoUrls: [],
@@ -235,12 +222,6 @@ type OrganizationsOwnedResponse = {
 type OrganizationsMembershipsResponse = {
   items?: Array<{ id: string }>
 }
-
-const DELIVERY_RANGES: Array<{ key: 'short50km' | 'medium100km' | 'long250km'; label: string; distance: string }> = [
-  { key: 'short50km', label: 'Short', distance: '50km' },
-  { key: 'medium100km', label: 'Medium', distance: '100km' },
-  { key: 'long250km', label: 'Long', distance: '250km' },
-]
 
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
@@ -579,9 +560,6 @@ export default function MarketNewListingPageClient() {
     if (!listing) throw new Error('listing_not_found')
 
     const deliveryOptions = listing.deliveryOptions ?? {}
-    const hasShort = typeof deliveryOptions.short50km === 'number'
-    const hasMedium = typeof deliveryOptions.medium100km === 'number'
-    const hasLong = typeof deliveryOptions.long250km === 'number'
 
     setListingId(listing.id)
     const normalizedFoodPath = normalizeLegacyFoodListingPath({
@@ -615,15 +593,11 @@ export default function MarketNewListingPageClient() {
       pickupAddressLine2: listing.pickupAddressLine2 ?? '',
       pickupPostalCode: listing.pickupPostalCode ?? '',
       willingToDeliver: Boolean(listing.willingToDeliver),
-      deliverySelection: {
-        short50km: hasShort,
-        medium100km: hasMedium,
-        long250km: hasLong,
-      },
-      deliveryPrices: {
-        short50km: hasShort ? formatMoneyInput(Number(deliveryOptions.short50km) || 0) : DEFAULT_DELIVERY_PRICES.short50km,
-        medium100km: hasMedium ? formatMoneyInput(Number(deliveryOptions.medium100km) || 0) : DEFAULT_DELIVERY_PRICES.medium100km,
-        long250km: hasLong ? formatMoneyInput(Number(deliveryOptions.long250km) || 0) : DEFAULT_DELIVERY_PRICES.long250km,
+      deliveryPickupInstructions: typeof deliveryOptions.pickupInstructions === 'string' ? deliveryOptions.pickupInstructions : '',
+      deliveryTraits: {
+        itemIsHeavy: deliveryOptions.itemIsHeavy === true,
+        itemIsBulky: deliveryOptions.itemIsBulky === true,
+        itemIsSmall: deliveryOptions.itemIsSmall === true,
       },
       paymentTypes: (Array.isArray(listing.paymentTypes) ? listing.paymentTypes : []).filter(
         (entry): entry is 'cash_pickup' | 'etransfer' | 'civil_wallet' => entry === 'cash_pickup' || entry === 'etransfer' || entry === 'civil_wallet',
@@ -1492,19 +1466,19 @@ export default function MarketNewListingPageClient() {
           }
         }
         if (form.willingToDeliver) {
-          const hasDeliveryRange = Object.values(form.deliverySelection).some(Boolean)
-          if (!hasDeliveryRange) {
-            pushToast('Select at least one delivery range.', 'error')
+          if (!form.deliveryPickupInstructions.trim()) {
+            pushToast('Pickup instructions are required when requesting a Civil driver.', 'error')
             return
           }
         }
       }
 
-      const deliveryOptions: { short50km?: number; medium100km?: number; long250km?: number } = {}
+      const deliveryOptions: { pickupInstructions?: string; itemIsHeavy?: boolean; itemIsBulky?: boolean; itemIsSmall?: boolean } = {}
       if (form.willingToDeliver) {
-        if (form.deliverySelection.short50km) deliveryOptions.short50km = toCents(form.deliveryPrices.short50km)
-        if (form.deliverySelection.medium100km) deliveryOptions.medium100km = toCents(form.deliveryPrices.medium100km)
-        if (form.deliverySelection.long250km) deliveryOptions.long250km = toCents(form.deliveryPrices.long250km)
+        deliveryOptions.pickupInstructions = form.deliveryPickupInstructions.trim()
+        if (form.deliveryTraits.itemIsHeavy) deliveryOptions.itemIsHeavy = true
+        if (form.deliveryTraits.itemIsBulky) deliveryOptions.itemIsBulky = true
+        if (form.deliveryTraits.itemIsSmall) deliveryOptions.itemIsSmall = true
       }
 
       setSaving(true)
@@ -2076,66 +2050,80 @@ export default function MarketNewListingPageClient() {
 
             <section className={editorCardClassName}>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Delivery Addon?</p>
+              <p className="text-sm font-semibold text-slate-900">Delivery</p>
               <p className="mt-1 text-xs text-slate-600">
-                If you are willing to deliver this item, you can set an additional price so its not a surprise to potential buyers.
+                Request delivery from a Certified Civil Driver after you select a buyer.
               </p>
 
               <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={form.willingToDeliver}
-                  onChange={(event) => setForm((prev) => ({ ...prev, willingToDeliver: event.target.checked }))}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      willingToDeliver: event.target.checked,
+                      ...(event.target.checked
+                        ? {}
+                        : {
+                            deliveryPickupInstructions: '',
+                            deliveryTraits: {
+                              itemIsHeavy: false,
+                              itemIsBulky: false,
+                              itemIsSmall: false,
+                            },
+                          }),
+                    }))
+                  }
                 />
-                Willing to deliver for an extra fee
+                Request Delivery from a Certified Civil Driver
               </label>
 
               {form.willingToDeliver ? (
-                <div className="mt-3 space-y-2">
-                  {DELIVERY_RANGES.map((range) => {
-                    const checked = form.deliverySelection[range.key]
-                    return (
-                      <div key={range.key} className="rounded-xl border border-slate-200 bg-white p-3">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800">
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(event) =>
-                                setForm((prev) => ({
-                                  ...prev,
-                                  deliverySelection: {
-                                    ...prev.deliverySelection,
-                                    [range.key]: event.target.checked,
-                                  },
-                                }))
-                              }
-                            />
-                            {range.label} ({range.distance})
-                          </label>
+                <div className="mt-3 space-y-4">
+                  <label className="block space-y-1.5">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pickup instructions</span>
+                    <textarea
+                      value={form.deliveryPickupInstructions}
+                      onChange={(event) => setForm((prev) => ({ ...prev, deliveryPickupInstructions: event.target.value }))}
+                      rows={4}
+                      disabled={saving || initializing || !canEditActiveDraftListing}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)]"
+                      placeholder="Door code, preferred pickup window, stairs, parking notes, loading instructions, or anything your Civil driver should know."
+                    />
+                  </label>
 
-                          <label className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Addon price (CAD)
-                            <input
-                              value={form.deliveryPrices[range.key]}
-                              onChange={(event) =>
-                                setForm((prev) => ({
-                                  ...prev,
-                                  deliveryPrices: {
-                                    ...prev.deliveryPrices,
-                                    [range.key]: event.target.value,
-                                  },
-                                }))
-                              }
-                              disabled={!checked}
-                              className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
-                              placeholder="0.00"
-                            />
-                          </label>
-                        </div>
-                      </div>
-                    )
-                  })}
+                  <div className="space-y-2">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Item details</span>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { key: 'itemIsHeavy', label: 'Item is heavy' },
+                        { key: 'itemIsBulky', label: 'Item is bulky' },
+                        { key: 'itemIsSmall', label: 'Item is small' },
+                      ].map((option) => (
+                        <label key={option.key} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={form.deliveryTraits[option.key as keyof DraftForm['deliveryTraits']]}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                deliveryTraits: {
+                                  ...prev.deliveryTraits,
+                                  [option.key]: event.target.checked,
+                                },
+                              }))
+                            }
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                    Civil drivers will see the buyer, seller, product photo, and your pickup notes before bidding on the contract.
+                  </div>
                 </div>
               ) : null}
             </div>
