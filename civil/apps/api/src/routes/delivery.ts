@@ -52,6 +52,22 @@ const DriverManageBody = z
   })
   .strict()
 
+function isDeliveryStatusCancellable(value: string | null | undefined) {
+  const normalized = (value || '').trim().toLowerCase()
+  return ![
+    'picked_up',
+    'in_progress',
+    'inprogress',
+    'delivered',
+    'completed',
+    'cancelled',
+    'canceled',
+    'rejected',
+    'declined',
+    'failed',
+  ].includes(normalized)
+}
+
 type DriverVehicle = {
   id: string
   name: string
@@ -646,6 +662,51 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
         })),
       })
+    }),
+  )
+
+  app.post('/drive/delivery/:contractId/cancel', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = DeliveryContractParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const rows = await prisma.$queryRaw<Array<{
+        id: string
+        status: string
+        seller_user_id: string
+        buyer_user_id: string
+        driver_user_id: string | null
+      }>>`
+        SELECT id, status, seller_user_id, buyer_user_id, driver_user_id
+        FROM citizen_market_delivery_contract
+        WHERE id = ${params.data.contractId}
+        LIMIT 1
+      `
+
+      const contract = rows[0]
+      if (!contract) return reply.code(404).send({ error: 'contract_not_found' })
+
+      const canManage =
+        contract.seller_user_id === userId ||
+        contract.buyer_user_id === userId ||
+        contract.driver_user_id === userId
+
+      if (!canManage) return reply.code(403).send({ error: 'forbidden' })
+      if (!isDeliveryStatusCancellable(contract.status)) return reply.code(409).send({ error: 'contract_not_cancellable' })
+
+      await prisma.$executeRaw`
+        UPDATE citizen_market_delivery_contract
+        SET status = 'cancelled',
+            updated_at = NOW()
+        WHERE id = ${contract.id}
+      `
+
+      return reply.send({ success: true, status: 'cancelled' })
     }),
   )
 

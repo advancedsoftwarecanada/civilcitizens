@@ -203,10 +203,10 @@ function normalizeFriendRequestStatus(value: unknown): FriendRequestStatus | nul
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase()
     if (!normalized) return null
-    if (['accepted', 'accept', 'approved', 'complete', 'completed', 'resolved', 'yes', 'true'].includes(normalized)) {
+    if (['accepted', 'accept', 'approved', 'complete', 'completed', 'resolved', 'confirmed', 'auto_completed', 'yes', 'true'].includes(normalized)) {
       return 'accepted'
     }
-    if (['rejected', 'reject', 'declined', 'dismissed', 'denied', 'cancelled', 'canceled', 'no', 'false'].includes(normalized)) {
+    if (['rejected', 'reject', 'declined', 'dismissed', 'denied', 'cancelled', 'canceled', 'reported_issue', 'no', 'false'].includes(normalized)) {
       return 'rejected'
     }
     if (['pending', 'awaiting', 'waiting', 'open'].includes(normalized)) {
@@ -315,6 +315,7 @@ export function isActionableNotification(notification: NotificationItem): boolea
     notification.type === 'profile_family_invite' ||
     notification.type === 'family_child_friend_request' ||
     notification.type === 'delivery_contract_bid' ||
+    notification.type === 'drive_ride_complete_confirmation' ||
     notification.type === 'event_guest_speaker_invite' ||
     notification.type === 'event_sponsor_invite'
   )
@@ -400,6 +401,25 @@ export function getNotificationMessage(notification: NotificationItem) {
       if (deliveryListingTitle) return `wants to deliver your ${deliveryListingTitle}`
       if (deliveryAmountLabel) return `wants to deliver your item for ${deliveryAmountLabel}`
       return 'wants to deliver your item'
+    case 'drive_ride_offer':
+      if (deliveryAmountLabel) return `offered you a ride for ${deliveryAmountLabel}`
+      return 'offered you a ride'
+    case 'drive_ride_offer_accepted':
+      return deliveryAmountLabel ? `accepted your ride offer for ${deliveryAmountLabel}` : 'accepted your ride offer'
+    case 'drive_ride_complete_confirmation': {
+      const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+      if (status === 'confirmed') return 'trip completion was confirmed'
+      if (status === 'reported_issue') return 'trip issue was reported to support'
+      if (status === 'auto_completed') return 'trip auto-completed after no issue was reported'
+      return 'marked trip complete'
+    }
+    case 'drive_ride_complete_response': {
+      const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
+      if (status === 'confirmed') return 'confirmed the trip is complete'
+      if (status === 'reported_issue') return 'reported an issue with the trip'
+      if (status === 'auto_completed') return 'did not report an issue, so the trip auto-completed'
+      return 'responded to the trip completion request'
+    }
     case 'delivery_contract_bid_response': {
       const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
       if (status === 'accepted') {
@@ -482,11 +502,29 @@ export function getNotificationOpenLabel(notification: NotificationItem): string
   if (notification.type === 'profile_organization_invite') return 'View organization'
   if (notification.type === 'profile_family_invite') return 'View profile'
   if (notification.type === 'profile_family_invite_response') return 'View profile'
+  if (notification.type === 'drive_ride_offer') return 'View Details'
+  if (notification.type === 'drive_ride_offer_accepted') return 'View ride'
+  if (notification.type === 'drive_ride_complete_confirmation') return 'View ride'
+  if (notification.type === 'drive_ride_complete_response') return 'View ride'
   if (notification.type === 'delivery_contract_bid_response') {
     const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
     return status === 'accepted' ? 'Open chat' : 'View delivery'
   }
   return null
+}
+
+export function getNotificationActionLabels(notification: NotificationItem): { acceptLabel: string; rejectLabel: string } {
+  if (notification.type === 'drive_ride_complete_confirmation') {
+    return {
+      acceptLabel: 'Confirm',
+      rejectLabel: 'Report issue',
+    }
+  }
+
+  return {
+    acceptLabel: 'Accept',
+    rejectLabel: notification.type === 'delivery_contract_bid' ? 'Decline' : 'Decline',
+  }
 }
 
 export function getNotificationTargetUrl(notification: NotificationItem): string | null {

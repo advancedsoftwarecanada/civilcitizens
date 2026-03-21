@@ -311,6 +311,10 @@ type ConnectionListItem = {
   user: ThreadUser
 }
 
+type DriveContactBucketResponse = {
+  ids?: string[]
+}
+
 type FamilyProfileListItem = {
   id: string
   handle: string
@@ -1362,6 +1366,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   )
   const [friendContactIds, setFriendContactIds] = useState<string[]>([])
   const [networkContactIds, setNetworkContactIds] = useState<string[]>([])
+  const [driverContactIds, setDriverContactIds] = useState<string[]>([])
   const [familyProfileContacts, setFamilyProfileContacts] = useState<FamilyProfileListItem[]>([])
   const [startingFamilyThreadUserId, setStartingFamilyThreadUserId] = useState<string | null>(null)
   const [marketUnreadCount, setMarketUnreadCount] = useState(0)
@@ -1812,22 +1817,24 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (isFamilySession) {
       setFriendContactIds([])
       setNetworkContactIds([])
+      setDriverContactIds([])
       setContactsBucketReady(true)
       return
     }
 
     setContactsBucketReady(false)
     try {
-      const [friendsRes, connectionsRes] = await Promise.all([authedFetch('/friends'), authedFetch('/connections')])
-      if (friendsRes.status === 401 || connectionsRes.status === 401) {
+      const [friendsRes, connectionsRes, driveContactsRes] = await Promise.all([authedFetch('/friends'), authedFetch('/connections'), authedFetch('/drive/contacts')])
+      if (friendsRes.status === 401 || connectionsRes.status === 401 || driveContactsRes.status === 401) {
         redirectToAuthModal('login')
         return
       }
-      if (!friendsRes.ok || !connectionsRes.ok) {
+      if (!friendsRes.ok || !connectionsRes.ok || !driveContactsRes.ok) {
         throw new Error('failed_contact_buckets')
       }
       const friendsPayload = (await friendsRes.json().catch(() => null)) as { items?: FriendListItem[] } | null
       const connectionsPayload = (await connectionsRes.json().catch(() => null)) as { items?: ConnectionListItem[] } | null
+      const driveContactsPayload = (await driveContactsRes.json().catch(() => null)) as DriveContactBucketResponse | null
 
       const friendIds = (Array.isArray(friendsPayload?.items) ? friendsPayload.items : [])
         .map((entry) => entry.user?.id)
@@ -1835,13 +1842,17 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       const networkIds = (Array.isArray(connectionsPayload?.items) ? connectionsPayload.items : [])
         .map((entry) => entry.user?.id)
         .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      const driveIds = (Array.isArray(driveContactsPayload?.ids) ? driveContactsPayload.ids : [])
+        .filter((value): value is string => typeof value === 'string' && value.length > 0)
 
       setFriendContactIds(Array.from(new Set(friendIds)))
       setNetworkContactIds(Array.from(new Set(networkIds)))
+      setDriverContactIds(Array.from(new Set(driveIds)))
     } catch (error) {
       console.error('Failed to load message contact buckets', error)
       setFriendContactIds([])
       setNetworkContactIds([])
+      setDriverContactIds([])
     } finally {
       setContactsBucketReady(true)
     }
@@ -2275,6 +2286,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const orderedThreads = useMemo(() => sortThreadsForInbox(threads), [threads])
   const friendContactIdSet = useMemo(() => new Set(friendContactIds), [friendContactIds])
   const networkContactIdSet = useMemo(() => new Set(networkContactIds), [networkContactIds])
+  const driverContactIdSet = useMemo(() => new Set(driverContactIds), [driverContactIds])
   const familyProfileContactIdSet = useMemo(() => new Set(familyProfileContacts.map((entry) => entry.id)), [familyProfileContacts])
   const categorizedThreads = useMemo(() => {
     const groups = sortThreadsForInbox(orderedThreads.filter((thread) => thread.type === 'group'))
@@ -2301,6 +2313,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         friends: sortThreadsForInbox(directThreads),
         family: [] as ThreadSummary[],
         network: [] as ThreadSummary[],
+        drivers: [] as ThreadSummary[],
         groups,
       }
     }
@@ -2309,41 +2322,53 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         friends: sortThreadsForInbox(directThreads),
         family,
         network: [] as ThreadSummary[],
+        drivers: [] as ThreadSummary[],
         groups,
       }
     }
+    const drivers = directThreads.filter((thread) =>
+      getOtherParticipants(thread, me?.id).some((participant) => driverContactIdSet.has(participant.userId)),
+    )
     const friends = directThreads.filter((thread) =>
-      getOtherParticipants(thread, me?.id).some((participant) => friendContactIdSet.has(participant.userId)),
+      getOtherParticipants(thread, me?.id).some(
+        (participant) => friendContactIdSet.has(participant.userId) && !driverContactIdSet.has(participant.userId),
+      ),
     )
     const network = directThreads.filter((thread) =>
       getOtherParticipants(thread, me?.id).some(
-        (participant) => networkContactIdSet.has(participant.userId) && !friendContactIdSet.has(participant.userId),
+        (participant) =>
+          networkContactIdSet.has(participant.userId) &&
+          !friendContactIdSet.has(participant.userId) &&
+          !driverContactIdSet.has(participant.userId),
       ),
     )
     return {
       friends: sortThreadsForInbox(friends),
       family,
+      drivers: sortThreadsForInbox(drivers),
       network: sortThreadsForInbox(network),
       groups,
     }
-  }, [contactsBucketReady, familyProfileContactIdSet, friendContactIdSet, isFamilySession, me?.id, networkContactIdSet, orderedThreads, showFamilyInbox])
+  }, [contactsBucketReady, driverContactIdSet, familyProfileContactIdSet, friendContactIdSet, isFamilySession, me?.id, networkContactIdSet, orderedThreads, showFamilyInbox])
   const messagesNavUnreadCounts = useMemo(
     () => ({
       friends: countUnreadInThreads(categorizedThreads.friends),
       family: countUnreadInThreads(categorizedThreads.family),
+      drivers: countUnreadInThreads(categorizedThreads.drivers),
       network: countUnreadInThreads(categorizedThreads.network),
       groups: countUnreadInThreads(categorizedThreads.groups),
       market: Math.max(0, marketUnreadCount),
     }),
-    [categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadCount],
+    [categorizedThreads.drivers, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadCount],
   )
   const filteredOrderedThreads = useMemo(() => {
     if (activeInboxSection === 'market') return [] as ThreadSummary[]
     if (activeInboxSection === 'family') return categorizedThreads.family
+    if (activeInboxSection === 'drivers') return categorizedThreads.drivers
     if (activeInboxSection === 'network') return categorizedThreads.network
     if (activeInboxSection === 'groups') return categorizedThreads.groups
     return categorizedThreads.friends
-  }, [activeInboxSection, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network])
+  }, [activeInboxSection, categorizedThreads.drivers, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network])
   const familyContactsWithoutThreads = useMemo(() => {
     if (!showFamilyInbox) return []
     const threadedUserIds = new Set(
@@ -2419,11 +2444,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     () => [
       { key: 'family', label: 'Family', threads: categorizedThreads.family.filter((thread) => threadHasUnread(thread)) },
       { key: 'friends', label: 'Friends', threads: categorizedThreads.friends.filter((thread) => threadHasUnread(thread)) },
-      { key: 'network', label: 'Network', threads: categorizedThreads.network.filter((thread) => threadHasUnread(thread)) },
       { key: 'groups', label: 'Groups', threads: categorizedThreads.groups.filter((thread) => threadHasUnread(thread)) },
+      { key: 'network', label: 'Network', threads: categorizedThreads.network.filter((thread) => threadHasUnread(thread)) },
       { key: 'market', label: 'Market', items: marketUnreadEntries },
+      { key: 'drivers', label: 'Drivers', threads: categorizedThreads.drivers.filter((thread) => threadHasUnread(thread)) },
     ],
-    [categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadEntries],
+    [categorizedThreads.drivers, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, marketUnreadEntries],
   )
 
   const loadActiveMarketThreadContext = useCallback(async () => {
@@ -2538,6 +2564,11 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (activeInboxSection === 'market') {
       return
     }
+    // Preserve deep-linked thread opens while contact buckets are still classifying
+    // the conversation into Friends / Network / Drivers.
+    if (!isFamilySession && !contactsBucketReady && selectedThreadId) {
+      return
+    }
     if (filteredOrderedThreads.length === 0) {
       if (familyParentThreadId && selectedThreadId === familyParentThreadId) return
       if (threadsLoading || threads.length === 0) return
@@ -2553,7 +2584,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (selectedThreadId) {
       setSelectedThreadId(null)
     }
-  }, [activeInboxSection, familyParentThreadId, filteredOrderedThreads, selectedThreadId, threads.length, threadsLoading])
+  }, [activeInboxSection, contactsBucketReady, familyParentThreadId, filteredOrderedThreads, isFamilySession, selectedThreadId, threads.length, threadsLoading])
 
   useEffect(() => {
     if (!selectedThreadId) return
@@ -3434,6 +3465,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       const emptyLabel =
         activeInboxSection === 'groups'
           ? 'No group chats yet.'
+          : activeInboxSection === 'drivers'
+            ? 'No driver messages yet.'
           : activeInboxSection === 'network'
             ? 'No network messages yet.'
             : activeInboxSection === 'family'
@@ -4691,6 +4724,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     ? 'Friends Inbox'
     : activeInboxSection === 'family'
       ? 'Family Inbox'
+      : activeInboxSection === 'drivers'
+        ? 'Drivers Inbox'
       : activeInboxSection === 'market'
         ? 'Market Inbox'
       : activeInboxSection === 'network'
@@ -4700,6 +4735,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           : 'Friends Inbox'
   const activeContextUnreadCount = activeInboxSection === 'family'
     ? messagesNavUnreadCounts.family
+    : activeInboxSection === 'drivers'
+      ? messagesNavUnreadCounts.drivers
     : activeInboxSection === 'market'
     ? messagesNavUnreadCounts.market
     : activeInboxSection === 'network'
@@ -4729,7 +4766,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             setActiveInboxSection(next)
           }}
           unreadCounts={messagesNavUnreadCounts}
-          visibleItems={isFamilySession ? ['friends', 'groups'] : showFamilyInbox ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+          visibleItems={isFamilySession ? ['friends', 'groups'] : showFamilyInbox ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
           footerAction={!isFamilySession && me?.handle ? { label: 'My Contacts', href: contactsHref } : undefined}
           className="border border-slate-200/90 bg-slate-50/70"
         />

@@ -7,6 +7,7 @@ import type { FriendActionState, NotificationActionOptions, NotificationItem, Pr
 import {
   formatRelativeTime,
   getActorDisplayName,
+  getNotificationActionLabels,
   getFriendshipId,
   getNotificationFamilyInviteOptions,
   getNotificationOpenLabel,
@@ -54,6 +55,7 @@ export function NotificationCard({
   const message = getNotificationMessage(notification)
   const targetUrl = getNotificationTargetUrl(notification)
   const openLabel = getNotificationOpenLabel(notification)
+  const actionLabels = getNotificationActionLabels(notification)
   const actorAvatarUrl = typeof notification.payload?.childAvatarUrl === 'string' && notification.payload.childAvatarUrl.trim()
     ? notification.payload.childAvatarUrl
     : null
@@ -206,7 +208,7 @@ export function NotificationCard({
               }}
               disabled={!actionableRequestId || isResponding}
             >
-              {isAccepting ? 'Accepting…' : 'Accept'}
+              {isAccepting ? `${actionLabels.acceptLabel}ing…` : actionLabels.acceptLabel}
             </button>
             <button
               type="button"
@@ -217,7 +219,7 @@ export function NotificationCard({
               }}
               disabled={!actionableRequestId || isResponding}
             >
-              {isRejecting ? 'Declining…' : 'Decline'}
+              {isRejecting ? `${actionLabels.rejectLabel}…` : actionLabels.rejectLabel}
             </button>
           </div>
         ) : null}

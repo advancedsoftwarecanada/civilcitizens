@@ -6,16 +6,25 @@ import { RightRail } from '../_components/RightRail'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { DriveCardSkeleton, DriveDeliveryPreviewCard } from './DrivePreviewCards'
+import DriveModeRail from './DriveModeRail'
 import DriveRouteNav from './DriveRouteNav'
+import { DriveDeliveryTable, DriveDriverAccessGate } from './DriveTables'
 import type { DriveDeliveryItem, DriveFeedResponse } from './driveShared'
+import { useDriveViewerState } from './useDriveViewerState'
 
 export default function DriveDeliveryPageClient() {
+  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<DriveDeliveryItem[]>([])
+  const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (viewerLoading || !isDriverActive) {
+      if (!viewerLoading) setLoading(false)
+      return
+    }
+
     let cancelled = false
 
     async function load() {
@@ -28,7 +37,7 @@ export default function DriveDeliveryPageClient() {
       setLoading(true)
       setError(null)
       try {
-        const response = await fetch(buildApiUrl('/drive/delivery?limit=48'), {
+        const response = await fetch(buildApiUrl('/drive/delivery?scope=open&limit=48'), {
           headers: { authorization: `Bearer ${token}` },
           cache: 'no-store',
         })
@@ -43,15 +52,18 @@ export default function DriveDeliveryPageClient() {
 
         if (!response.ok) {
           setItems([])
+          setTotal(0)
           setError('Unable to load delivery requests right now.')
           return
         }
 
         setItems(Array.isArray(payload?.items) ? payload.items : [])
+        setTotal(Number(payload?.total) || 0)
       } catch (loadError) {
         console.error('Failed to load drive delivery feed', loadError)
         if (cancelled) return
         setItems([])
+        setTotal(0)
         setError('Unable to load delivery requests right now.')
       } finally {
         if (!cancelled) setLoading(false)
@@ -62,38 +74,43 @@ export default function DriveDeliveryPageClient() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [isDriverActive, viewerLoading])
 
   return (
     <DashboardShell
-      rightRail={<RightRail mode="drive" organizationLinkTarget="chat" />}
+      rightRail={
+        <div className="space-y-5">
+          <DriveModeRail
+            isDriverActive={isDriverActive}
+            loading={viewerLoading}
+            rideRequestCount={rideRequestCount}
+            deliveryRequestCount={deliveryRequestCount}
+          />
+          <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
+        </div>
+      }
       showMobileRightRail
       mainClassName="space-y-6 pb-12"
       rightRailClassName="pb-12"
     >
       <DriveRouteNav />
 
-      {error ? <div className="rounded-[1.6rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <DriveCardSkeleton key={index} />
-          ))}
-        </div>
-      ) : null}
-
-      {!loading && !error && !items.length ? (
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">No delivery requests are open right now.</div>
-      ) : null}
-
-      {!loading && items.length ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {items.map((item) => (
-            <DriveDeliveryPreviewCard key={item.id} item={item} />
-          ))}
-        </div>
-      ) : null}
+      {!viewerLoading && !isDriverActive ? (
+        <DriveDriverAccessGate
+          title="Delivery Requests Are Driver-Only"
+          description="Live delivery requests are part of driver mode. Activate Drive and Deliver for Civil from the right rail to browse nearby contracts."
+        />
+      ) : (
+        <DriveDeliveryTable
+          title="Delivery Requests"
+          items={items}
+          total={total}
+          loading={loading}
+          error={error}
+          emptyMessage="No delivery requests are live right now."
+          variant="open"
+        />
+      )}
     </DashboardShell>
   )
 }

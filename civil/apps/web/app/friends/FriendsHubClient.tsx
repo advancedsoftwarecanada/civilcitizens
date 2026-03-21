@@ -818,7 +818,7 @@ export default function FriendsHubClient() {
   const rightRail = (
     <div className="space-y-4">
       <MessagesNavBlock
-        visibleItems={showFamilyNav ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+        visibleItems={showFamilyNav ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
         footerAction={viewer?.handle ? { label: 'All Contacts', href: `/u/${viewer.handle}/family#all` } : undefined}
       />
       <FriendsRightRail />

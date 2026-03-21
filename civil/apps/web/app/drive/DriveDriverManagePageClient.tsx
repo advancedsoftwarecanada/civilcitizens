@@ -9,8 +9,10 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { getDeliveryRequirementItems, pickMediaVariantUrl, type DeliveryOnboardingResponse } from '../delivery/deliveryShared'
+import DriveModeRail from './DriveModeRail'
 import DriveRouteNav from './DriveRouteNav'
 import { formatDriveMoney, type DriveDriverManageResponse, type DriveDriverVehicle } from './driveShared'
+import { useDriveViewerState } from './useDriveViewerState'
 
 type MediaAssetStatusResponse = {
   asset?: {
@@ -120,6 +122,17 @@ function centsToDollarInput(value: number) {
   return (value / 100).toFixed(2)
 }
 
+function buildVehicleSavePayload(vehicles: DriveDriverVehicle[]) {
+  return vehicles.map((vehicle) => ({
+    id: vehicle.id.startsWith('draft-') ? undefined : vehicle.id,
+    name: vehicle.name.trim(),
+    photoUrls: vehicle.photoUrls,
+    minimumRideAmountCents: vehicle.minimumRideAmountCents,
+    perKmFeeCents: vehicle.perKmFeeCents,
+    featured: vehicle.featured,
+  }))
+}
+
 function createEmptyVehicle(index: number): DriveDriverVehicle {
   const now = new Date().toISOString()
   return {
@@ -135,6 +148,7 @@ function createEmptyVehicle(index: number): DriveDriverVehicle {
 }
 
 export default function DriveDriverManagePageClient() {
+  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploadingVehicleId, setUploadingVehicleId] = useState<string | null>(null)
@@ -291,7 +305,7 @@ export default function DriveDriverManagePageClient() {
           authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          vehicles,
+          vehicles: buildVehicleSavePayload(vehicles),
         }),
       })
       const payload = (await response.json().catch(() => null)) as DriveDriverManageResponse | null
@@ -320,7 +334,17 @@ export default function DriveDriverManagePageClient() {
 
   return (
     <DashboardShell
-      rightRail={<RightRail mode="drive" organizationLinkTarget="chat" />}
+      rightRail={
+        <div className="space-y-5">
+          <DriveModeRail
+            isDriverActive={isDriverActive}
+            loading={viewerLoading}
+            rideRequestCount={rideRequestCount}
+            deliveryRequestCount={deliveryRequestCount}
+          />
+          <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
+        </div>
+      }
       showMobileRightRail
       mainClassName="space-y-6 pb-12"
       rightRailClassName="pb-12"

@@ -36,8 +36,10 @@ import {
   type SavedShippingAddress,
 } from '../_lib/canadianAddresses'
 import { getStoredToken } from '../_lib/tokenStorage'
+import DriveModeRail from './DriveModeRail'
 import DriveRouteNav from './DriveRouteNav'
-import { formatDriveMoney } from './driveShared'
+import { canEditDriveRideStatus, formatDriveMoney, type DriveRideRequestItem } from './driveShared'
+import { useDriveViewerState } from './useDriveViewerState'
 
 type ShippingAddressListResponse = {
   items?: SavedShippingAddress[]
@@ -45,11 +47,17 @@ type ShippingAddressListResponse = {
   error?: string
 }
 
-type RideCreateResponse = {
+type RideMutationResponse = {
+  item?: DriveRideRequestItem | null
   error?: string
 }
 
-type RideTiming = 'once' | 'scheduled'
+type DriveRideRequestPageClientProps = {
+  mode?: 'create' | 'edit'
+  rideId?: string
+}
+
+type RideTiming = 'now' | 'later_today'
 type PickupSource = 'saved' | 'current' | 'manual'
 
 type RidePreview = {
@@ -61,6 +69,9 @@ type RidePreview = {
 const RIDE_DRIVER_FLAT_FEE_CENTS = 1000
 const RIDE_FUEL_RATE_CENTS_PER_KM = 65
 const RIDE_MIN_FUEL_CHARGE_CENTS = 500
+const RIDE_TIME_STEP_MINUTES = 5
+const RIDE_NOW_BUFFER_MINUTES = 5
+const RIDE_LATER_TODAY_BUFFER_MINUTES = 60
 
 function hasMappedAddress(address: CanadianAddress | null | undefined) {
   return Boolean(
@@ -75,9 +86,45 @@ function hasMappedAddress(address: CanadianAddress | null | undefined) {
   )
 }
 
-function toDateTimeLocalValue(value: Date) {
-  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 16)
+function roundDateToStepMinutes(value: Date, stepMinutes = RIDE_TIME_STEP_MINUTES) {
+  const next = new Date(value)
+  next.setSeconds(0, 0)
+  const remainder = next.getMinutes() % stepMinutes
+  if (remainder !== 0) {
+    next.setMinutes(next.getMinutes() + (stepMinutes - remainder))
+  }
+  return next
+}
+
+function toTimeInputValue(value: Date) {
+  const hours = String(value.getHours()).padStart(2, '0')
+  const minutes = String(value.getMinutes()).padStart(2, '0')
+  return `${hours}:${minutes}`
+}
+
+function getImmediatePickupDate() {
+  return roundDateToStepMinutes(new Date(Date.now() + RIDE_NOW_BUFFER_MINUTES * 60_000))
+}
+
+function getDefaultLaterTodayPickupDate() {
+  const candidate = roundDateToStepMinutes(new Date(Date.now() + RIDE_LATER_TODAY_BUFFER_MINUTES * 60_000))
+  const endOfDay = new Date()
+  endOfDay.setHours(23, 55, 0, 0)
+  return candidate.getTime() > endOfDay.getTime() ? endOfDay : candidate
+}
+
+function buildLaterTodayPickupDate(timeValue: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(timeValue)
+  if (!match) return null
+
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+
+  const next = new Date()
+  next.setHours(hours, minutes, 0, 0)
+  return next
 }
 
 function formatSavedAddressTitle(address: SavedShippingAddress, fallback: string) {
@@ -173,7 +220,7 @@ function SavedAddressesDropdown({
         type="button"
         onClick={onToggle}
         disabled={disabled}
-        className="flex w-full items-center justify-between gap-3 rounded-[1.35rem] border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex w-full items-center justify-between gap-3 rounded-[1.35rem] border border-[var(--cc-primary)]/40 bg-white px-4 py-3 text-left transition hover:border-[var(--cc-primary)] disabled:cursor-not-allowed disabled:opacity-60"
       >
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">{selectedTitle}</p>
@@ -226,10 +273,13 @@ function SavedAddressesDropdown({
   )
 }
 
-export default function DriveRideRequestPageClient() {
+export default function DriveRideRequestPageClient({ mode = 'create', rideId }: DriveRideRequestPageClientProps) {
+  const isEditMode = mode === 'edit' && Boolean(rideId)
+  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
   const router = useRouter()
   const pickupDropdownRef = useRef<HTMLDivElement | null>(null)
   const initializedPickupRef = useRef(false)
+  const initializedEditRideRef = useRef(false)
 
   const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
   const [pickupAddress, setPickupAddress] = useState<CanadianAddress>(() => createEmptyCanadianAddress())
@@ -238,11 +288,14 @@ export default function DriveRideRequestPageClient() {
   const [selectedPickupAddressId, setSelectedPickupAddressId] = useState<string | null>(null)
   const [pickupMenuOpen, setPickupMenuOpen] = useState(false)
   const [locatingPickup, setLocatingPickup] = useState(false)
-  const [timing, setTiming] = useState<RideTiming>('once')
-  const [pickupAt, setPickupAt] = useState(() => toDateTimeLocalValue(new Date(Date.now() + 60 * 60 * 1000)))
+  const [timing, setTiming] = useState<RideTiming>('now')
+  const [pickupTime, setPickupTime] = useState(() => toTimeInputValue(getDefaultLaterTodayPickupDate()))
   const [preview, setPreview] = useState<RidePreview | null>(null)
   const [savedLoading, setSavedLoading] = useState(true)
   const [savingDestinationAddress, setSavingDestinationAddress] = useState(false)
+  const [existingRide, setExistingRide] = useState<DriveRideRequestItem | null>(null)
+  const [rideLoading, setRideLoading] = useState(isEditMode)
+  const [rideLoadError, setRideLoadError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   const normalizedPickupAddress = useMemo(() => normalizeCanadianAddress(pickupAddress), [pickupAddress])
@@ -292,7 +345,7 @@ export default function DriveRideRequestPageClient() {
 
         setSavedAddresses(items)
 
-        if (!initializedPickupRef.current) {
+        if (!initializedPickupRef.current && !isEditMode) {
           initializedPickupRef.current = true
           const defaultPickup = items.find((item) => item.isDefault) ?? items[0] ?? null
           if (defaultPickup) {
@@ -313,7 +366,102 @@ export default function DriveRideRequestPageClient() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [isEditMode])
+
+  useEffect(() => {
+    if (!isEditMode || !rideId) {
+      setExistingRide(null)
+      setRideLoadError(null)
+      setRideLoading(false)
+      initializedEditRideRef.current = false
+      return
+    }
+
+    let cancelled = false
+
+    async function loadRide() {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      setRideLoading(true)
+      setRideLoadError(null)
+      initializedEditRideRef.current = false
+
+      try {
+        const response = await fetch(buildApiUrl(`/drive/rides/${rideId}`), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const payload = (await response.json().catch(() => null)) as RideMutationResponse | null
+
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          return
+        }
+
+        if (cancelled) return
+
+        if (!response.ok || !payload?.item) {
+          setRideLoadError(payload?.error === 'ride_not_found' ? 'That ride request could not be found.' : 'Unable to load that ride request right now.')
+          setExistingRide(null)
+          return
+        }
+
+        const nextRide = payload.item
+        const nextPickupAddress = normalizeCanadianAddress(nextRide.pickupAddress ?? createEmptyCanadianAddress())
+        const nextDestinationAddress = normalizeCanadianAddress(nextRide.dropoffAddress ?? createEmptyCanadianAddress())
+        const scheduledPickupAt = new Date(nextRide.pickupAt)
+        const isSameLocalDay = Number.isFinite(scheduledPickupAt.getTime()) && scheduledPickupAt.toDateString() === new Date().toDateString()
+        const shouldUseLaterToday =
+          Number.isFinite(scheduledPickupAt.getTime()) &&
+          scheduledPickupAt.getTime() > Date.now() + RIDE_NOW_BUFFER_MINUTES * 60_000 &&
+          isSameLocalDay
+
+        setExistingRide(nextRide)
+        setPickupAddress(nextPickupAddress)
+        setDestinationAddress(nextDestinationAddress)
+        setPickupSource('manual')
+        setSelectedPickupAddressId(null)
+        setPickupMenuOpen(false)
+        setTiming(shouldUseLaterToday ? 'later_today' : 'now')
+        setPickupTime(shouldUseLaterToday ? toTimeInputValue(roundDateToStepMinutes(scheduledPickupAt)) : toTimeInputValue(getDefaultLaterTodayPickupDate()))
+      } catch (loadError) {
+        console.error('Failed to load ride request for editing', loadError)
+        if (cancelled) return
+        setRideLoadError('Unable to load that ride request right now.')
+        setExistingRide(null)
+      } finally {
+        if (!cancelled) setRideLoading(false)
+      }
+    }
+
+    void loadRide()
+    return () => {
+      cancelled = true
+    }
+  }, [isEditMode, rideId])
+
+  useEffect(() => {
+    if (!isEditMode || !existingRide || savedLoading || initializedEditRideRef.current) return
+
+    initializedEditRideRef.current = true
+    const ridePickupAddress = normalizeCanadianAddress(existingRide.pickupAddress ?? createEmptyCanadianAddress())
+    const matchedSavedPickupAddress = savedAddresses.find((address) => matchesSavedAddress(ridePickupAddress, address))
+
+    if (matchedSavedPickupAddress) {
+      setPickupSource('saved')
+      setSelectedPickupAddressId(matchedSavedPickupAddress.id)
+      setPickupAddress(normalizeCanadianAddress(matchedSavedPickupAddress))
+      return
+    }
+
+    setPickupSource('manual')
+    setSelectedPickupAddressId(null)
+    setPickupAddress(ridePickupAddress)
+  }, [existingRide, isEditMode, savedAddresses, savedLoading])
 
   useEffect(() => {
     if (!hasMappedAddress(normalizedPickupAddress) || !hasMappedAddress(normalizedDestinationAddress)) {
@@ -395,8 +543,40 @@ export default function DriveRideRequestPageClient() {
     () => savedAddresses.some((address) => matchesSavedAddress(normalizedDestinationAddress, address)),
     [normalizedDestinationAddress, savedAddresses],
   )
+  const destinationSearchAnchor = useMemo(() => {
+    if (
+      typeof normalizedPickupAddress.latitude === 'number' &&
+      Number.isFinite(normalizedPickupAddress.latitude) &&
+      typeof normalizedPickupAddress.longitude === 'number' &&
+      Number.isFinite(normalizedPickupAddress.longitude)
+    ) {
+      return {
+        latitude: normalizedPickupAddress.latitude,
+        longitude: normalizedPickupAddress.longitude,
+      }
+    }
+
+    const fallbackSavedAddress = savedAddresses.find(
+      (address) =>
+        typeof address.latitude === 'number' &&
+        Number.isFinite(address.latitude) &&
+        typeof address.longitude === 'number' &&
+        Number.isFinite(address.longitude),
+    )
+
+    return fallbackSavedAddress
+      ? {
+          latitude: fallbackSavedAddress.latitude as number,
+          longitude: fallbackSavedAddress.longitude as number,
+        }
+      : null
+  }, [normalizedPickupAddress, savedAddresses])
 
   const canSaveDestinationAddress = hasMappedAddress(normalizedDestinationAddress) && !destinationAlreadySaved && !savingDestinationAddress
+  const rideCanBeEdited = !isEditMode || (existingRide ? canEditDriveRideStatus(existingRide.status) : false)
+  const submitDisabled = submitting || (isEditMode && (rideLoading || !existingRide || !rideCanBeEdited))
+  const pageTitle = isEditMode ? 'Edit Ride Request' : 'Request Ride'
+  const submitLabel = submitting ? (isEditMode ? 'Saving…' : 'Posting…') : isEditMode ? 'Save Changes' : 'Post Request'
 
   const applySavedPickupAddress = useCallback((address: SavedShippingAddress) => {
     setPickupSource('saved')
@@ -514,16 +694,20 @@ export default function DriveRideRequestPageClient() {
       return
     }
 
-    const pickupDate = new Date(pickupAt)
-    if (!Number.isFinite(pickupDate.getTime())) {
-      pushToast('Choose a valid pickup date and time.', 'error')
+    const pickupDate = timing === 'later_today' ? buildLaterTodayPickupDate(pickupTime) : getImmediatePickupDate()
+    if (!pickupDate || !Number.isFinite(pickupDate.getTime())) {
+      pushToast('Choose a valid pickup time.', 'error')
+      return
+    }
+    if (timing === 'later_today' && pickupDate.getTime() <= Date.now()) {
+      pushToast('Choose a pickup time later today.', 'error')
       return
     }
 
     setSubmitting(true)
     try {
-      const response = await fetch(buildApiUrl('/drive/rides'), {
-        method: 'POST',
+      const response = await fetch(buildApiUrl(isEditMode && rideId ? `/drive/rides/${rideId}` : '/drive/rides'), {
+        method: isEditMode ? 'PUT' : 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${token}`,
@@ -531,12 +715,12 @@ export default function DriveRideRequestPageClient() {
         body: JSON.stringify({
           pickupAddress: normalizedPickupAddress,
           dropoffAddress: normalizedDestinationAddress,
-          recurrence: timing === 'scheduled' ? 'recurring' : 'once',
+          recurrence: existingRide?.recurrence ?? 'once',
           pickupAt: pickupDate.toISOString(),
           dropoffAt: estimateDropoffAt(pickupDate, preview).toISOString(),
         }),
       })
-      const payload = (await response.json().catch(() => null)) as RideCreateResponse | null
+      const payload = (await response.json().catch(() => null)) as RideMutationResponse | null
 
       if (response.status === 401) {
         redirectToAuthModal('login')
@@ -544,19 +728,24 @@ export default function DriveRideRequestPageClient() {
       }
 
       if (!response.ok) {
-        pushToast(payload?.error ?? 'Unable to post that ride request right now.', 'error')
+        pushToast(
+          payload?.error === 'ride_not_editable'
+            ? 'This ride can no longer be edited.'
+            : payload?.error ?? (isEditMode ? 'Unable to save that ride request right now.' : 'Unable to post that ride request right now.'),
+          'error',
+        )
         return
       }
 
-      pushToast('Ride request posted to Drive.', 'success')
-      router.push('/drive/ride')
+      pushToast(isEditMode ? 'Ride request updated.' : 'Ride request posted to Drive.', 'success')
+      router.push('/drive')
     } catch (submitError) {
-      console.error('Failed to post ride request', submitError)
-      pushToast('Unable to post that ride request right now.', 'error')
+      console.error(`Failed to ${isEditMode ? 'update' : 'post'} ride request`, submitError)
+      pushToast(isEditMode ? 'Unable to save that ride request right now.' : 'Unable to post that ride request right now.', 'error')
     } finally {
       setSubmitting(false)
     }
-  }, [normalizedDestinationAddress, normalizedPickupAddress, pickupAt, preview, router, timing])
+  }, [existingRide?.recurrence, isEditMode, normalizedDestinationAddress, normalizedPickupAddress, pickupTime, preview, rideId, router, timing])
 
   const mapOrigin = hasMappedAddress(normalizedPickupAddress)
     ? {
@@ -573,10 +762,21 @@ export default function DriveRideRequestPageClient() {
         label: formatCanadianPhysicalAddressInline(normalizedDestinationAddress) ?? 'Destination',
       }
     : null
+  const showRideForm = !isEditMode || (!rideLoading && !rideLoadError && Boolean(existingRide))
 
   return (
     <DashboardShell
-      rightRail={<RightRail mode="drive" organizationLinkTarget="chat" />}
+      rightRail={
+        <div className="space-y-5">
+          <DriveModeRail
+            isDriverActive={isDriverActive}
+            loading={viewerLoading}
+            rideRequestCount={rideRequestCount}
+            deliveryRequestCount={deliveryRequestCount}
+          />
+          <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
+        </div>
+      }
       showMobileRightRail
       mainClassName="space-y-6 pb-12"
       rightRailClassName="pb-12"
@@ -584,20 +784,39 @@ export default function DriveRideRequestPageClient() {
       <DriveRouteNav />
 
       <section className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold text-slate-950">Request Ride</h1>
+        <h1 className="text-2xl font-semibold text-slate-950">{pageTitle}</h1>
 
         <button
           type="button"
           onClick={() => void handleSubmit()}
-          disabled={submitting}
+          disabled={submitDisabled}
           className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {submitting ? 'Posting…' : 'Post Request'}
+          {submitLabel}
         </button>
       </section>
 
-      <section className="space-y-5">
-        <article className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
+      {isEditMode && rideLoadError ? (
+        <section className="rounded-[1.8rem] border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
+          {rideLoadError}
+        </section>
+      ) : null}
+
+      {isEditMode && !rideLoadError && rideLoading ? (
+        <section className="rounded-[1.8rem] border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 shadow-sm">
+          Loading ride request…
+        </section>
+      ) : null}
+
+      {isEditMode && showRideForm && !rideCanBeEdited ? (
+        <section className="rounded-[1.8rem] border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+          This ride can no longer be edited. If the details changed, cancel it and post a new request.
+        </section>
+      ) : null}
+
+      {showRideForm ? (
+        <section className="space-y-5">
+          <article className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm font-semibold text-slate-950">Pickup Address</p>
@@ -607,6 +826,16 @@ export default function DriveRideRequestPageClient() {
             </div>
 
             <div ref={pickupDropdownRef} className="space-y-3">
+              <button
+                type="button"
+                onClick={() => void handleUseCurrentLocation()}
+                disabled={locatingPickup}
+                className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <HiOutlineMap className="h-4 w-4" />
+                {locatingPickup ? 'Finding location…' : 'Use My Current Location'}
+              </button>
+
               <SavedAddressesDropdown
                 items={savedAddresses}
                 selectedId={pickupSource === 'saved' ? selectedPickupAddressId : null}
@@ -619,32 +848,13 @@ export default function DriveRideRequestPageClient() {
                 onSelect={applySavedPickupAddress}
                 onManual={selectManualPickupAddress}
               />
-
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void handleUseCurrentLocation()}
-                  disabled={locatingPickup}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <HiOutlineMap className="h-4 w-4" />
-                  {locatingPickup ? 'Finding location…' : 'Use My Current Location'}
-                </button>
-              </div>
             </div>
 
-            {pickupSource === 'manual' ? (
-              <CanadianAddressEditor value={pickupAddress} onChange={setPickupAddress} mode="shipping" layout="stacked" required />
-            ) : (
-              <div className="rounded-[1.35rem] border border-slate-200 bg-slate-50 px-4 py-4">
-                <p className="text-sm font-semibold text-slate-900">{pickupSelectionTitle}</p>
-                <p className="mt-1 text-sm text-slate-600">{pickupSelectionDetail}</p>
-              </div>
-            )}
+            {pickupSource === 'manual' ? <CanadianAddressEditor value={pickupAddress} onChange={setPickupAddress} mode="shipping" layout="stacked" required /> : null}
           </div>
-        </article>
+          </article>
 
-        <article className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <article className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm font-semibold text-slate-950">Destination</p>
@@ -661,45 +871,60 @@ export default function DriveRideRequestPageClient() {
               </div>
             </div>
 
-            <CanadianAddressEditor value={destinationAddress} onChange={setDestinationAddress} mode="organization" layout="stacked" required />
+            <CanadianAddressEditor
+              value={destinationAddress}
+              onChange={setDestinationAddress}
+              mode="organization"
+              layout="stacked"
+              display="search-only"
+              searchLatitude={destinationSearchAnchor?.latitude ?? null}
+              searchLongitude={destinationSearchAnchor?.longitude ?? null}
+              searchRadiusKm={500}
+              required
+            />
           </div>
-        </article>
+          </article>
 
-        <article className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <article className="rounded-[1.8rem] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="space-y-4">
             <div className="space-y-3">
               <p className="text-sm font-semibold text-slate-950">Ride Timing</p>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setTiming('once')}
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${timing === 'once' ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900'}`}
+                  onClick={() => setTiming('now')}
+                  className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${timing === 'now' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20' : 'border-[var(--cc-primary)]/25 bg-white text-[var(--cc-primary)] hover:border-[var(--cc-primary)]/45 hover:bg-[var(--cc-primary)]/5'}`}
                 >
-                  One Time
+                  Now
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTiming('scheduled')}
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${timing === 'scheduled' ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900'}`}
+                  onClick={() => setTiming('later_today')}
+                  className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${timing === 'later_today' ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20' : 'border-[var(--cc-primary)]/25 bg-white text-[var(--cc-primary)] hover:border-[var(--cc-primary)]/45 hover:bg-[var(--cc-primary)]/5'}`}
                 >
-                  Scheduled
+                  Later Today
                 </button>
               </div>
             </div>
 
-            <label className="space-y-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Pickup date and time</span>
-              <input
-                type="datetime-local"
-                value={pickupAt}
-                onChange={(event) => setPickupAt(event.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)]"
-              />
-            </label>
+            {timing === 'later_today' ? (
+              <label className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Pickup time</span>
+                <input
+                  type="time"
+                  step={RIDE_TIME_STEP_MINUTES * 60}
+                  min={toTimeInputValue(getImmediatePickupDate())}
+                  max="23:55"
+                  value={pickupTime}
+                  onChange={(event) => setPickupTime(event.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)]"
+                />
+              </label>
+            ) : null}
           </div>
-        </article>
+          </article>
 
-        <article className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm">
+          <article className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <p className="text-lg font-semibold text-slate-950">Mapped Preview</p>
           </div>
@@ -754,7 +979,7 @@ export default function DriveRideRequestPageClient() {
                 <div className="text-right text-sm text-emerald-900">
                   <p className="inline-flex items-center justify-end gap-1.5">
                     <HiOutlineCalendarDays className="h-4 w-4" />
-                    {timing === 'scheduled' ? 'Scheduled' : 'One Time'}
+                    {timing === 'later_today' ? 'Later Today' : 'Now'}
                   </p>
                 </div>
               </div>
@@ -770,8 +995,9 @@ export default function DriveRideRequestPageClient() {
               </div>
             </div>
           </div>
-        </article>
-      </section>
+          </article>
+        </section>
+      ) : null}
     </DashboardShell>
   )
 }

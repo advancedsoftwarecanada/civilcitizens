@@ -9,10 +9,12 @@ import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
+import DriveModeRail from './DriveModeRail'
 import { DriveCardSkeleton, DriveDriverPreviewCard } from './DrivePreviewCards'
 import DriveRouteNav from './DriveRouteNav'
 import { getAvatarInitials } from './driveShared'
 import type { DriveDriverItem, DriveFeedResponse } from './driveShared'
+import { useDriveViewerState } from './useDriveViewerState'
 
 const PREFERRED_DRIVERS_STORAGE_KEY = 'drivePreferredDrivers'
 
@@ -58,6 +60,7 @@ function PreferredDriversRail({ items }: { items: DriveDriverItem[] }) {
 }
 
 export default function DriveDriversPageClient() {
+  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<DriveDriverItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -156,8 +159,14 @@ export default function DriveDriversPageClient() {
     <DashboardShell
       rightRail={
         <div className="space-y-5">
+          <DriveModeRail
+            isDriverActive={isDriverActive}
+            loading={viewerLoading}
+            rideRequestCount={rideRequestCount}
+            deliveryRequestCount={deliveryRequestCount}
+          />
           {preferredDrivers.length ? <PreferredDriversRail items={preferredDrivers} /> : null}
-          <RightRail mode="drive" organizationLinkTarget="chat" />
+          <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
       showMobileRightRail

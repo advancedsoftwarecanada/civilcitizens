@@ -24,6 +24,66 @@ const MessageCallIdParam = z.object({ id: z.string().cuid() })
 
 type MessageCoreDeps = Record<string, any>
 
+function isConnectionTableMissingError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === 'P2021' || error.code === 'P2010') return true
+  }
+  const message = typeof (error as { message?: unknown })?.message === 'string' ? (error as { message: string }).message : ''
+  return /"Connection"|ConnectionStatus|relation .*Connection.* does not exist/i.test(message)
+}
+
+async function usersShareAcceptedDriveRelationship(userId: string, targetUserId: string) {
+  const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT id
+    FROM citizen_drive_ride_request
+    WHERE driver_user_id IS NOT NULL
+      AND (
+        (requester_user_id = ${userId} AND driver_user_id = ${targetUserId})
+        OR
+        (requester_user_id = ${targetUserId} AND driver_user_id = ${userId})
+      )
+    LIMIT 1
+  `
+
+  return rows.length > 0
+}
+
+async function ensureAcceptedDriveConnection(userId: string, targetUserId: string) {
+  if (!userId || !targetUserId || userId === targetUserId) return
+
+  try {
+    const rows = await prisma.$queryRaw<Array<{ id: string; status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'BLOCKED' }>>`
+      SELECT "id", "status"
+      FROM "Connection"
+      WHERE ("requesterId" = ${userId} AND "addresseeId" = ${targetUserId})
+         OR ("requesterId" = ${targetUserId} AND "addresseeId" = ${userId})
+      LIMIT 1
+    `
+
+    const existing = rows[0] ?? null
+    if (existing) {
+      if (existing.status === 'ACCEPTED' || existing.status === 'BLOCKED') return
+
+      await prisma.$executeRaw`
+        UPDATE "Connection"
+        SET "status" = 'ACCEPTED',
+            "respondedAt" = ${new Date()}
+        WHERE "id" = ${existing.id}
+      `
+      return
+    }
+
+    const now = new Date()
+    await prisma.$executeRaw`
+      INSERT INTO "Connection" ("id", "requesterId", "addresseeId", "status", "requestedAt", "respondedAt")
+      VALUES (${randomUUID()}, ${userId}, ${targetUserId}, 'ACCEPTED', ${now}, ${now})
+    `
+  } catch (error) {
+    if (isConnectionTableMissingError(error)) return
+    throw error
+  }
+}
+
 export function registerMessagesCoreRoutes(app: FastifyInstance, deps: MessageCoreDeps) {
   app.get('/messages/threads', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
@@ -174,7 +234,11 @@ export function registerMessagesCoreRoutes(app: FastifyInstance, deps: MessageCo
         Array.isArray(acceptedProfileFamilyRelationshipIds) && acceptedProfileFamilyRelationshipIds.includes(targetUserId)
           ? true
           : Boolean(familyAudienceStatus)
-      if (!friendStatus && !connectionStatus && !familyStatus) return reply.code(403).send({ error: 'not_friends' })
+      if (!friendStatus && !connectionStatus && !familyStatus) {
+        const driveStatus = await usersShareAcceptedDriveRelationship(userId, targetUserId).catch(() => false)
+        if (!driveStatus) return reply.code(403).send({ error: 'not_friends' })
+        await ensureAcceptedDriveConnection(userId, targetUserId)
+      }
 
       const existingFamilyThread =
         authContext.actor === 'family_member'

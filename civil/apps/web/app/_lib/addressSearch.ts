@@ -46,6 +46,13 @@ export type DrivingRouteStep = {
   maneuverLocation: [number, number] | null
 }
 
+export type AddressSearchOptions = {
+  limit?: number
+  latitude?: number | null
+  longitude?: number | null
+  radiusKm?: number | null
+}
+
 type AddressCorrectionResolveResponse = {
   items?: Array<{
     latitude: number
@@ -84,6 +91,10 @@ type OsrmRouteResponse = {
 }
 
 const MIN_ADDRESS_QUERY_LENGTH = 3
+
+function hasFiniteCoordinate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
 
 function normalizeText(value: unknown) {
   return typeof value === 'string' ? value.trim() : ''
@@ -322,7 +333,38 @@ export function buildAddressSearchQueries(address: CanadianAddress | null | unde
   })
 }
 
-export function buildNominatimSearchUrl(query: string, limit = 5) {
+function buildBoundedViewbox(latitude: number, longitude: number, radiusKm: number) {
+  const safeRadiusKm = Math.max(1, radiusKm)
+  const latitudeDelta = safeRadiusKm / 111
+  const longitudeDelta = safeRadiusKm / (111 * Math.max(0.2, Math.cos((latitude * Math.PI) / 180)))
+
+  const minLongitude = Math.max(-180, longitude - longitudeDelta)
+  const maxLongitude = Math.min(180, longitude + longitudeDelta)
+  const minLatitude = Math.max(-90, latitude - latitudeDelta)
+  const maxLatitude = Math.min(90, latitude + latitudeDelta)
+
+  return `${minLongitude},${maxLatitude},${maxLongitude},${minLatitude}`
+}
+
+function normalizeAddressSearchOptions(options?: number | AddressSearchOptions) {
+  if (typeof options === 'number') {
+    return {
+      limit: options,
+      latitude: null,
+      longitude: null,
+      radiusKm: null,
+    }
+  }
+
+  return {
+    limit: typeof options?.limit === 'number' && Number.isFinite(options.limit) ? options.limit : 5,
+    latitude: hasFiniteCoordinate(options?.latitude) ? options.latitude : null,
+    longitude: hasFiniteCoordinate(options?.longitude) ? options.longitude : null,
+    radiusKm: typeof options?.radiusKm === 'number' && Number.isFinite(options.radiusKm) && options.radiusKm > 0 ? options.radiusKm : null,
+  }
+}
+
+export function buildNominatimSearchUrl(query: string, limit = 5, options?: Pick<AddressSearchOptions, 'latitude' | 'longitude' | 'radiusKm'>) {
   const params = new URLSearchParams({
     q: query.trim(),
     format: 'jsonv2',
@@ -331,6 +373,12 @@ export function buildNominatimSearchUrl(query: string, limit = 5) {
     dedupe: '1',
     countrycodes: 'ca',
   })
+
+  if (hasFiniteCoordinate(options?.latitude) && hasFiniteCoordinate(options?.longitude) && typeof options?.radiusKm === 'number' && Number.isFinite(options.radiusKm) && options.radiusKm > 0) {
+    params.set('viewbox', buildBoundedViewbox(options.latitude, options.longitude, options.radiusKm))
+    params.set('bounded', '1')
+  }
+
   return `/nominatim/search?${params.toString()}`
 }
 
@@ -407,16 +455,29 @@ async function applyPostalCorrections(results: NominatimAddress[], signal?: Abor
   }
 }
 
-export async function fetchAddressSearchResults(query: string, signal?: AbortSignal, limit = 5): Promise<NominatimAddress[]> {
+export async function fetchAddressSearchResults(
+  query: string,
+  signal?: AbortSignal,
+  options?: number | AddressSearchOptions,
+): Promise<NominatimAddress[]> {
   const trimmedQuery = query.trim()
   if (trimmedQuery.length < MIN_ADDRESS_QUERY_LENGTH) return []
 
-  const response = await fetch(buildNominatimSearchUrl(trimmedQuery, limit), {
+  const normalizedOptions = normalizeAddressSearchOptions(options)
+
+  const response = await fetch(
+    buildNominatimSearchUrl(trimmedQuery, normalizedOptions.limit, {
+      latitude: normalizedOptions.latitude,
+      longitude: normalizedOptions.longitude,
+      radiusKm: normalizedOptions.radiusKm,
+    }),
+    {
     method: 'GET',
     headers: { accept: 'application/json' },
     signal,
     cache: 'no-store',
-  })
+    },
+  )
 
   if (!response.ok) {
     throw new Error(`nominatim_search_failed:${response.status}`)
@@ -432,7 +493,25 @@ export async function fetchAddressSearchResults(query: string, signal?: AbortSig
       return mapped ? [mapped] : []
     })
 
-  return applyPostalCorrections(results, signal)
+  let filteredResults = results
+  if (
+    hasFiniteCoordinate(normalizedOptions.latitude) &&
+    hasFiniteCoordinate(normalizedOptions.longitude) &&
+    typeof normalizedOptions.radiusKm === 'number'
+  ) {
+    const anchorLatitude = normalizedOptions.latitude
+    const anchorLongitude = normalizedOptions.longitude
+    const radiusKm = normalizedOptions.radiusKm
+    filteredResults = results.filter(
+      (result) =>
+        calculateDistanceKm(
+          { latitude: anchorLatitude, longitude: anchorLongitude },
+          { latitude: result.latitude, longitude: result.longitude },
+        ) <= radiusKm,
+    )
+  }
+
+  return applyPostalCorrections(filteredResults, signal)
 }
 
 export async function fetchReverseGeocodeResult(latitude: number, longitude: number, signal?: AbortSignal): Promise<NominatimAddress | null> {

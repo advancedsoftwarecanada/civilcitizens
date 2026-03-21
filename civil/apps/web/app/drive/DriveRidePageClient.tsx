@@ -3,39 +3,62 @@
 import { useEffect, useState } from 'react'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
+import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { DriveCardSkeleton, DriveRidePreviewCard } from './DrivePreviewCards'
-import DriveRideRequestRail from './DriveRideRequestRail'
+import DriveModeRail from './DriveModeRail'
+import DriveRideOfferModal from './DriveRideOfferModal'
 import DriveRouteNav from './DriveRouteNav'
-import type { DriveFeedResponse, DriveRideRequestItem } from './driveShared'
+import { DriveDriverAccessGate, DriveRideTable } from './DriveTables'
+import type { DriveDriverManageResponse, DriveFeedResponse, DriveRideRequestItem } from './driveShared'
+import { useDriveViewerState } from './useDriveViewerState'
 
 export default function DriveRidePageClient() {
+  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<DriveRideRequestItem[]>([])
+  const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [selectedRide, setSelectedRide] = useState<DriveRideRequestItem | null>(null)
+  const [submittingOfferId, setSubmittingOfferId] = useState<string | null>(null)
+  const [defaultOfferPerKmCents, setDefaultOfferPerKmCents] = useState(100)
 
   useEffect(() => {
-    let cancelled = false
+    if (viewerLoading || !isDriverActive) {
+      if (!viewerLoading) setLoading(false)
+      return
+    }
 
-    async function load() {
+    let cancelled = false
+    let intervalId: number | null = null
+
+    async function load(showLoading: boolean) {
       const token = getStoredToken()
       if (!token) {
         redirectToAuthModal('login')
         return
       }
 
-      setLoading(true)
-      setError(null)
+      if (showLoading) setLoading(true)
       try {
-        const response = await fetch(buildApiUrl('/drive/rides?limit=48'), {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        })
-        const payload = (await response.json().catch(() => null)) as DriveFeedResponse<DriveRideRequestItem> | null
+        const [response, manageResponse] = await Promise.all([
+          fetch(buildApiUrl('/drive/rides?scope=open&limit=48'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+          fetch(buildApiUrl('/drive/driver/manage'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        ])
 
-        if (response.status === 401) {
+        const [payload, managePayload] = await Promise.all([
+          response.json().catch(() => null) as Promise<DriveFeedResponse<DriveRideRequestItem> | null>,
+          manageResponse.json().catch(() => null) as Promise<DriveDriverManageResponse | null>,
+        ])
+
+        if (response.status === 401 || manageResponse.status === 401) {
           redirectToAuthModal('login')
           return
         }
@@ -43,34 +66,119 @@ export default function DriveRidePageClient() {
         if (cancelled) return
 
         if (!response.ok) {
-          setItems([])
+          if (showLoading) {
+            setItems([])
+            setTotal(0)
+          }
           setError('Unable to load ride requests right now.')
           return
         }
 
-        setItems(Array.isArray(payload?.items) ? payload.items : [])
+        const nextItems = Array.isArray(payload?.items) ? payload.items : []
+        setItems(nextItems)
+        setTotal(Number(payload?.total) || 0)
+        setError(null)
+
+        if (selectedRide?.id) {
+          const refreshedSelectedRide = nextItems.find((entry) => entry.id === selectedRide.id) ?? null
+          if (!refreshedSelectedRide) {
+            setSelectedRide(null)
+            pushToast('This ride request changed and is no longer available.', 'info')
+          } else {
+            setSelectedRide(refreshedSelectedRide)
+          }
+        }
+
+        const featuredVehicle =
+          Array.isArray(managePayload?.vehicles)
+            ? managePayload.vehicles.find((vehicle) => vehicle.featured) ?? managePayload.vehicles[0] ?? null
+            : null
+        if (featuredVehicle?.perKmFeeCents) {
+          setDefaultOfferPerKmCents(featuredVehicle.perKmFeeCents)
+        }
       } catch (loadError) {
         console.error('Failed to load drive rides feed', loadError)
         if (cancelled) return
-        setItems([])
+        if (showLoading) {
+          setItems([])
+          setTotal(0)
+        }
         setError('Unable to load ride requests right now.')
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled && showLoading) setLoading(false)
       }
     }
 
-    void load()
+    void load(true)
+    intervalId = window.setInterval(() => {
+      void load(false)
+    }, 10000)
+
     return () => {
       cancelled = true
+      if (intervalId) window.clearInterval(intervalId)
     }
-  }, [])
+  }, [isDriverActive, selectedRide?.id, viewerLoading])
+
+  async function handleSubmitOffer(ride: DriveRideRequestItem, perKmFeeCents: number) {
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setSubmittingOfferId(ride.id)
+    try {
+      const response = await fetch(buildApiUrl(`/drive/rides/${ride.id}/offer`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ perKmFeeCents }),
+      })
+      const payload = (await response.json().catch(() => null)) as { error?: string; item?: DriveRideRequestItem } | null
+
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      if (!response.ok || !payload?.item) {
+        const errorMessage =
+          payload?.error === 'driver_not_active'
+            ? 'Activate your Drive account before sending offers.'
+            : payload?.error === 'ride_not_open'
+                ? 'This ride is no longer accepting offers.'
+                : payload?.error === 'forbidden'
+                  ? 'You cannot make an offer on your own ride request.'
+                  : 'Unable to submit that offer right now.'
+        pushToast(errorMessage, 'error')
+        return
+      }
+
+      setItems((current) => current.map((entry) => (entry.id === ride.id ? payload.item ?? entry : entry)))
+      setSelectedRide(null)
+      pushToast('Offer sent to the customer.', 'success')
+    } catch (error) {
+      console.error('Failed to submit ride offer', error)
+      pushToast('Unable to submit that offer right now.', 'error')
+    } finally {
+      setSubmittingOfferId((current) => (current === ride.id ? null : current))
+    }
+  }
 
   return (
     <DashboardShell
       rightRail={
         <div className="space-y-5">
-          <DriveRideRequestRail />
-          <RightRail mode="drive" organizationLinkTarget="chat" />
+          <DriveModeRail
+            isDriverActive={isDriverActive}
+            loading={viewerLoading}
+            rideRequestCount={rideRequestCount}
+            deliveryRequestCount={deliveryRequestCount}
+          />
+          <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
       showMobileRightRail
@@ -79,40 +187,33 @@ export default function DriveRidePageClient() {
     >
       <DriveRouteNav />
 
-      <section className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold text-slate-950">Ride Requests</h1>
-          {!loading ? (
-            <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-              {items.length} live
-            </span>
-          ) : null}
-        </div>
-      </section>
+      {!viewerLoading && !isDriverActive ? (
+        <DriveDriverAccessGate
+          title="Ride Requests Are Driver-Only"
+          description="Live ride requests are part of driver mode. Activate Drive and Deliver for Civil from the right rail to browse pickup requests."
+        />
+      ) : (
+        <DriveRideTable
+          title="Ride Requests"
+          items={items}
+          total={total}
+          loading={loading}
+          error={error}
+          emptyMessage="No ride requests are live right now."
+          variant="open"
+          onMakeOffer={setSelectedRide}
+          submittingOfferId={submittingOfferId}
+        />
+      )}
 
-      {error ? <div className="rounded-[1.6rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <DriveCardSkeleton key={index} />
-          ))}
-        </div>
-      ) : null}
-
-      {!loading && !error && !items.length ? (
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">
-          No ride requests have been posted yet.
-        </div>
-      ) : null}
-
-      {!loading && items.length ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {items.map((item) => (
-            <DriveRidePreviewCard key={item.id} item={item} />
-          ))}
-        </div>
-      ) : null}
+      <DriveRideOfferModal
+        open={Boolean(selectedRide)}
+        item={selectedRide}
+        defaultPerKmFeeCents={defaultOfferPerKmCents}
+        submitting={Boolean(selectedRide && submittingOfferId === selectedRide.id)}
+        onClose={() => setSelectedRide(null)}
+        onSubmit={handleSubmitOffer}
+      />
     </DashboardShell>
   )
 }

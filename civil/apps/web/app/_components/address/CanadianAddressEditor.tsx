@@ -35,6 +35,10 @@ type CanadianAddressEditorProps = {
   disabled?: boolean
   mode?: 'shipping' | 'organization'
   layout?: 'default' | 'stacked'
+  display?: 'full' | 'search-only'
+  searchLatitude?: number | null
+  searchLongitude?: number | null
+  searchRadiusKm?: number | null
   isDefault?: boolean
   onDefaultChange?: (next: boolean) => void
   required?: boolean
@@ -111,6 +115,10 @@ export function CanadianAddressEditor({
   disabled = false,
   mode = 'organization',
   layout = 'default',
+  display = 'full',
+  searchLatitude = null,
+  searchLongitude = null,
+  searchRadiusKm = null,
   isDefault = false,
   onDefaultChange,
   required = false,
@@ -176,7 +184,12 @@ export function CanadianAddressEditor({
     setSearchLoading(true)
     setSearchError(null)
 
-    void fetchAddressSearchResults(trimmedQuery, controller.signal, 5)
+    void fetchAddressSearchResults(trimmedQuery, controller.signal, {
+      limit: 5,
+      latitude: searchLatitude,
+      longitude: searchLongitude,
+      radiusKm: searchRadiusKm,
+    })
       .then((results) => {
         setSearchResults(results)
       })
@@ -189,9 +202,16 @@ export function CanadianAddressEditor({
       })
 
     return () => controller.abort()
-  }, [searchFocused, searchQuery])
+  }, [searchFocused, searchLatitude, searchLongitude, searchQuery, searchRadiusKm])
 
   useEffect(() => {
+    if (display === 'search-only') {
+      setPreview(null)
+      setPreviewError(null)
+      setPreviewLoading(false)
+      return
+    }
+
     const token = readToken()
     if (!token) {
       setPreview(null)
@@ -247,7 +267,7 @@ export function CanadianAddressEditor({
       cancelled = true
       window.clearTimeout(timeoutId)
     }
-  }, [normalizedValue.latitude, normalizedValue.longitude, normalizedValue.postalCode])
+  }, [display, normalizedValue.latitude, normalizedValue.longitude, normalizedValue.postalCode])
 
   function patchAddress(patch: Partial<CanadianAddress>) {
     onChange({ ...displayValue, ...patch })
@@ -317,7 +337,8 @@ export function CanadianAddressEditor({
   }
 
   const canSearch = isUsableAddressQuery(searchQuery)
-  const showShippingFields = mode === 'shipping'
+  const isSearchOnly = display === 'search-only'
+  const showShippingFields = mode === 'shipping' && !isSearchOnly
   const hasAnyAddress = hasCanadianAddressValue(displayValue)
   const hasCivilPostalVerification = isCanadianAddressPostalVerified(normalizedValue)
   const postalActionLabel = hasCivilPostalVerification ? 'Update Verification' : 'Verify Postal'
@@ -436,77 +457,81 @@ export function CanadianAddressEditor({
           ) : null}
         </div>
 
-        <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Street
-            <input
-              value={displayValue.line1 ?? ''}
-              disabled
-              readOnly
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
-              placeholder="Resolved from address search"
-            />
-          </label>
+        {!isSearchOnly ? (
+          <>
+            <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
+              <label className="grid gap-1 text-sm font-medium text-slate-700">
+                Street
+                <input
+                  value={displayValue.line1 ?? ''}
+                  disabled
+                  readOnly
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
+                  placeholder="Resolved from address search"
+                />
+              </label>
 
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Apt / Suite
-            <input
-              value={displayValue.line2 ?? ''}
-              disabled
-              readOnly
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
-              placeholder="Optional secondary line"
-            />
-          </label>
+              <label className="grid gap-1 text-sm font-medium text-slate-700">
+                Apt / Suite
+                <input
+                  value={displayValue.line2 ?? ''}
+                  disabled
+                  readOnly
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
+                  placeholder="Optional secondary line"
+                />
+              </label>
 
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            City
-            <input
-              value={displayValue.city ?? ''}
-              disabled
-              readOnly
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
-              placeholder="Resolved from address search"
-            />
-          </label>
+              <label className="grid gap-1 text-sm font-medium text-slate-700">
+                City
+                <input
+                  value={displayValue.city ?? ''}
+                  disabled
+                  readOnly
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
+                  placeholder="Resolved from address search"
+                />
+              </label>
 
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Province
-            <input
-              value={displayValue.province ?? ''}
-              disabled
-              readOnly
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
-              placeholder="Resolved from address search"
-            />
-          </label>
-        </div>
+              <label className="grid gap-1 text-sm font-medium text-slate-700">
+                Province
+                <input
+                  value={displayValue.province ?? ''}
+                  disabled
+                  readOnly
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 disabled:opacity-100"
+                  placeholder="Resolved from address search"
+                />
+              </label>
+            </div>
 
-        <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end'}>
-          <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Postal code{required ? ' *' : ''}
-            <input
-              value={postalInput}
-              onChange={(event) => {
-                const nextPostalCode = normalizeCanadianPostalCode(event.target.value)
-                setPostalInput(nextPostalCode)
-                patchAddress({ postalCode: nextPostalCode })
-              }}
-              disabled={disabled}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm uppercase tracking-[0.08em] focus:border-[var(--cc-primary)] focus:outline-none disabled:bg-slate-50 disabled:text-slate-500"
-              placeholder="A1A 1A1"
-            />
-          </label>
+            <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end'}>
+              <label className="grid gap-1 text-sm font-medium text-slate-700">
+                Postal code{required ? ' *' : ''}
+                <input
+                  value={postalInput}
+                  onChange={(event) => {
+                    const nextPostalCode = normalizeCanadianPostalCode(event.target.value)
+                    setPostalInput(nextPostalCode)
+                    patchAddress({ postalCode: nextPostalCode })
+                  }}
+                  disabled={disabled}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm uppercase tracking-[0.08em] focus:border-[var(--cc-primary)] focus:outline-none disabled:bg-slate-50 disabled:text-slate-500"
+                  placeholder="A1A 1A1"
+                />
+              </label>
 
-          <button
-            type="button"
-            onClick={() => setPostalVerifyModalOpen(true)}
-            disabled={disabled || !normalizeCanadianPostalCode(postalInput)}
-            className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${hasCivilPostalVerification ? 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700' : 'border-slate-200 bg-white text-slate-700 hover:border-[var(--cc-primary)]/40 hover:text-[var(--cc-primary)]'}`}
-          >
-            {postalActionLabel}
-          </button>
-        </div>
+              <button
+                type="button"
+                onClick={() => setPostalVerifyModalOpen(true)}
+                disabled={disabled || !normalizeCanadianPostalCode(postalInput)}
+                className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${hasCivilPostalVerification ? 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700' : 'border-slate-200 bg-white text-slate-700 hover:border-[var(--cc-primary)]/40 hover:text-[var(--cc-primary)]'}`}
+              >
+                {postalActionLabel}
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -524,49 +549,53 @@ export function CanadianAddressEditor({
         ) : null}
       </div>
 
-      <section>
-        {preview ? (
-          <CivilDistrictMap context={preview} />
-        ) : (
-          <div className="flex h-[220px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-white px-6 text-center text-sm text-slate-500">
-            {previewLoading
-              ? 'Loading map preview…'
-              : hasAnyAddress
-                ? previewError ?? 'Map preview will appear here once we can resolve the location.'
-                : 'Add an address to preview the map.'}
-          </div>
-        )}
-      </section>
+      {!isSearchOnly ? (
+        <section>
+          {preview ? (
+            <CivilDistrictMap context={preview} />
+          ) : (
+            <div className="flex h-[220px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-white px-6 text-center text-sm text-slate-500">
+              {previewLoading
+                ? 'Loading map preview…'
+                : hasAnyAddress
+                  ? previewError ?? 'Map preview will appear here once we can resolve the location.'
+                  : 'Add an address to preview the map.'}
+            </div>
+          )}
+        </section>
+      ) : null}
 
-      <Modal open={postalVerifyModalOpen} onClose={() => setPostalVerifyModalOpen(false)} title={postalActionLabel} maxWidthClassName="max-w-lg">
-        <div className="space-y-5">
-          <p className="text-sm leading-6 text-slate-700">
-            Civil needs its users to verify postal codes before shipping can be received.
-          </p>
-          <div className="flex flex-wrap justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => setPostalVerifyModalOpen(false)}
-              disabled={savingCorrection}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void confirmPostalCorrection().then((verified) => {
-                  if (verified) setPostalVerifyModalOpen(false)
-                })
-              }}
-              disabled={disabled || savingCorrection || !normalizeCanadianPostalCode(postalInput)}
-              className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-60 ${hasCivilPostalVerification ? 'border-sky-600 bg-sky-600 hover:bg-sky-700' : 'border-[var(--cc-primary)] bg-[var(--cc-primary)] hover:brightness-95'}`}
-            >
-              {savingCorrection ? `${postalActionLabel}…` : postalActionLabel}
-            </button>
+      {!isSearchOnly ? (
+        <Modal open={postalVerifyModalOpen} onClose={() => setPostalVerifyModalOpen(false)} title={postalActionLabel} maxWidthClassName="max-w-lg">
+          <div className="space-y-5">
+            <p className="text-sm leading-6 text-slate-700">
+              Civil needs its users to verify postal codes before shipping can be received.
+            </p>
+            <div className="flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setPostalVerifyModalOpen(false)}
+                disabled={savingCorrection}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void confirmPostalCorrection().then((verified) => {
+                    if (verified) setPostalVerifyModalOpen(false)
+                  })
+                }}
+                disabled={disabled || savingCorrection || !normalizeCanadianPostalCode(postalInput)}
+                className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-60 ${hasCivilPostalVerification ? 'border-sky-600 bg-sky-600 hover:bg-sky-700' : 'border-[var(--cc-primary)] bg-[var(--cc-primary)] hover:brightness-95'}`}
+              >
+                {savingCorrection ? `${postalActionLabel}…` : postalActionLabel}
+              </button>
+            </div>
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      ) : null}
     </div>
   )
 }
