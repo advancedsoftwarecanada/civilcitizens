@@ -334,48 +334,41 @@ export function buildNominatimSearchUrl(query: string, limit = 5) {
   return `/nominatim/search?${params.toString()}`
 }
 
-export async function fetchAddressSearchResults(query: string, signal?: AbortSignal, limit = 5): Promise<NominatimAddress[]> {
-  const trimmedQuery = query.trim()
-  if (trimmedQuery.length < MIN_ADDRESS_QUERY_LENGTH) return []
-
-  const response = await fetch(buildNominatimSearchUrl(trimmedQuery, limit), {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-    signal,
-    cache: 'no-store',
+export function buildNominatimReverseUrl(latitude: number, longitude: number) {
+  const params = new URLSearchParams({
+    format: 'jsonv2',
+    addressdetails: '1',
+    lat: String(latitude),
+    lon: String(longitude),
+    zoom: '18',
   })
+  return `/nominatim/reverse?${params.toString()}`
+}
 
-  if (!response.ok) {
-    throw new Error(`nominatim_search_failed:${response.status}`)
-  }
+function mapNominatimRecord(record: Record<string, unknown>): NominatimAddress | null {
+  const displayName = normalizeText(record.display_name)
+  const latitude = normalizeNumber(record.lat)
+  const longitude = normalizeNumber(record.lon)
+  if (!displayName || latitude === null || longitude === null) return null
 
-  const payload = (await response.json().catch(() => [])) as unknown
-  if (!Array.isArray(payload)) return []
+  return {
+    placeId: normalizeNumber(record.place_id),
+    osmType: normalizeText(record.osm_type) || null,
+    osmId: normalizeNumber(record.osm_id),
+    displayName,
+    latitude,
+    longitude,
+    className: normalizeText(record.class) || null,
+    typeName: normalizeText(record.type) || null,
+    importance: normalizeNumber(record.importance),
+    address: normalizeAddressRecord(record.address),
+    originalPostalCode: normalizeCanadianPostalCode(normalizeText((record.address as Record<string, unknown> | undefined)?.postcode)) || null,
+    postalCodeVerified: false,
+    nominatimRaw: record,
+  } satisfies NominatimAddress
+}
 
-    const results = payload.flatMap((entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
-      const record = entry as Record<string, unknown>
-      const displayName = normalizeText(record.display_name)
-      const latitude = normalizeNumber(record.lat)
-      const longitude = normalizeNumber(record.lon)
-      if (!displayName || latitude === null || longitude === null) return []
-      return [{
-        placeId: normalizeNumber(record.place_id),
-        osmType: normalizeText(record.osm_type) || null,
-        osmId: normalizeNumber(record.osm_id),
-        displayName,
-        latitude,
-        longitude,
-        className: normalizeText(record.class) || null,
-        typeName: normalizeText(record.type) || null,
-        importance: normalizeNumber(record.importance),
-        address: normalizeAddressRecord(record.address),
-        originalPostalCode: normalizeCanadianPostalCode(normalizeText((record.address as Record<string, unknown> | undefined)?.postcode)) || null,
-        postalCodeVerified: false,
-        nominatimRaw: record,
-      } satisfies NominatimAddress]
-    })
-
+async function applyPostalCorrections(results: NominatimAddress[], signal?: AbortSignal) {
   if (!results.length) return results
 
   try {
@@ -412,6 +405,55 @@ export async function fetchAddressSearchResults(query: string, signal?: AbortSig
   } catch {
     return results
   }
+}
+
+export async function fetchAddressSearchResults(query: string, signal?: AbortSignal, limit = 5): Promise<NominatimAddress[]> {
+  const trimmedQuery = query.trim()
+  if (trimmedQuery.length < MIN_ADDRESS_QUERY_LENGTH) return []
+
+  const response = await fetch(buildNominatimSearchUrl(trimmedQuery, limit), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`nominatim_search_failed:${response.status}`)
+  }
+
+  const payload = (await response.json().catch(() => [])) as unknown
+  if (!Array.isArray(payload)) return []
+
+  const results = payload
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+      const mapped = mapNominatimRecord(entry as Record<string, unknown>)
+      return mapped ? [mapped] : []
+    })
+
+  return applyPostalCorrections(results, signal)
+}
+
+export async function fetchReverseGeocodeResult(latitude: number, longitude: number, signal?: AbortSignal): Promise<NominatimAddress | null> {
+  const response = await fetch(buildNominatimReverseUrl(latitude, longitude), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`nominatim_reverse_failed:${response.status}`)
+  }
+
+  const payload = (await response.json().catch(() => null)) as unknown
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
+
+  const mapped = mapNominatimRecord(payload as Record<string, unknown>)
+  if (!mapped) return null
+  const corrected = await applyPostalCorrections([mapped], signal)
+  return corrected[0] ?? mapped
 }
 
 export function formatAddressPrimaryLabel(result: NominatimAddress) {

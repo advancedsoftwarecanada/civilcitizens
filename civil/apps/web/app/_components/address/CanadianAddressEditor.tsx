@@ -1,7 +1,7 @@
 'use client'
 
 import type { ElectoralDistrictContextResponse } from '@civil/shared'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HiOutlineCheckBadge, HiOutlineMagnifyingGlass, HiOutlineMapPin } from 'react-icons/hi2'
 import Modal from '../Modal'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
@@ -34,6 +34,7 @@ type CanadianAddressEditorProps = {
   onSearchQueryChange?: (next: string) => void
   disabled?: boolean
   mode?: 'shipping' | 'organization'
+  layout?: 'default' | 'stacked'
   isDefault?: boolean
   onDefaultChange?: (next: boolean) => void
   required?: boolean
@@ -109,6 +110,7 @@ export function CanadianAddressEditor({
   onSearchQueryChange,
   disabled = false,
   mode = 'organization',
+  layout = 'default',
   isDefault = false,
   onDefaultChange,
   required = false,
@@ -319,6 +321,7 @@ export function CanadianAddressEditor({
   const hasAnyAddress = hasCanadianAddressValue(displayValue)
   const hasCivilPostalVerification = isCanadianAddressPostalVerified(normalizedValue)
   const postalActionLabel = hasCivilPostalVerification ? 'Update Verification' : 'Verify Postal'
+  const isStackedLayout = layout === 'stacked'
 
   return (
     <div className="space-y-4">
@@ -336,7 +339,7 @@ export function CanadianAddressEditor({
       </div>
 
       {showShippingFields ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
             Nickname (optional, eg: Home, Work, School)
             <input
@@ -433,7 +436,7 @@ export function CanadianAddressEditor({
           ) : null}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-2'}>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
             Street
             <input
@@ -479,7 +482,7 @@ export function CanadianAddressEditor({
           </label>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+        <div className={isStackedLayout ? 'grid gap-3' : 'grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end'}>
           <label className="grid gap-1 text-sm font-medium text-slate-700">
             Postal code{required ? ' *' : ''}
             <input

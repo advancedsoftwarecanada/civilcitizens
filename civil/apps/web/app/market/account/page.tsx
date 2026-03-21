@@ -37,7 +37,7 @@ export default function MarketAccountPage() {
           <section className="surface-card p-4 shadow-subtle">
             <div className="grid gap-4 lg:grid-cols-2">
               <YourOrdersPanel title="Your Orders" limit={10} />
-              <ShippingAddressesPanel title="Shipping Addresses" />
+              <ShippingAddressesPanel title="Addresses" basePath="/settings/addresses" />
             </div>
           </section>
         </div>

@@ -322,7 +322,7 @@ export function RightRail({
   showPendingFriendRequests = false,
   showPendingConnectionRequests = false,
 }: {
-  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed' | 'work'
+  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed' | 'work' | 'drive'
   showOrganizations?: boolean
   showRsvps?: boolean
   organizationLinkTarget?: 'org' | 'chat'
@@ -363,7 +363,7 @@ export function RightRail({
     [organizationLinkTarget],
   )
 
-  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community' || mode === 'work'
+  const hideSocialBlocks = hideContactsAndCommunities || mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'network' || mode === 'events' || mode === 'community' || mode === 'work' || mode === 'drive'
   const shouldLoadOrganizations = !isFamilyLockedSession && (mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'community' || showOrganizations)
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
@@ -373,7 +373,7 @@ export function RightRail({
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
   const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps)
   const shouldLoadWorkApplications = mode === 'work'
-  const shouldLoadDeliverySummary = mode === 'work'
+  const shouldLoadDeliverySummary = mode === 'drive'
   const shouldLoadHomeRail = !hideSocialBlocks
   const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
 
@@ -864,7 +864,7 @@ export function RightRail({
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, viewer?.handle, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
 
   useEffect(() => {
     void loadData()
@@ -1342,9 +1342,8 @@ export function RightRail({
         </>
       ) : null}
 
-      {mode === 'work' ? (
-        <>
-          <Block title="Drive and Deliver for Civil" action={{ label: deliverySummaryActive ? 'Open delivery' : 'Get started', href: deliverySummaryActive ? '/delivery' : '/delivery/onboarding' }}>
+      {mode === 'drive' ? (
+        <Block title="Drive and Deliver for Civil" action={{ label: deliverySummaryActive ? 'Open Drive' : 'Get started', href: deliverySummaryActive ? '/drive' : '/drive/onboarding' }}>
             <div className="rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.10),rgba(14,165,233,0.10))] p-4">
               <div className="flex items-start gap-3">
                 <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-emerald-600 shadow-sm">
@@ -1374,11 +1373,14 @@ export function RightRail({
                   ))}
                 </ul>
               ) : (
-                <p className="mt-4 text-sm text-slate-500">Your Civil Driver account is active. Open delivery to claim your first contract.</p>
+                <p className="mt-4 text-sm text-slate-500">Your Civil Driver account is active. Open Drive to claim your first contract.</p>
               )
             ) : null}
           </Block>
+      ) : null}
 
+      {mode === 'work' ? (
+        <>
           <Block title="Your Applications" action={{ label: 'View all', href: '/work/applications' }}>
             {workApplications.length ? (
               <ul className="space-y-3">

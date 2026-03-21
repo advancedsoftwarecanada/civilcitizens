@@ -469,6 +469,7 @@ import { registerJobRoutes } from './routes/jobs.js'
 import { registerAnalyticsNotificationRoutes } from './routes/analyticsNotifications.js'
 import { registerCommunityBootstrapRoutes } from './routes/communityBootstrap.js'
 import { registerDeliveryRoutes } from './routes/delivery.js'
+import { registerDriveRideRoutes } from './routes/driveRides.js'
 import { registerGeographyRoutes } from './routes/geography.js'
 import { registerOrgChannelRoutes } from './routes/orgChannels.js'
 import { registerOrganizationCollectionRoutes } from './routes/organizationCollections.js'
@@ -6687,6 +6688,135 @@ function ensureCitizenMarketplaceTables() {
         CREATE INDEX IF NOT EXISTS citizen_market_delivery_contract_bid_driver_idx
         ON citizen_market_delivery_contract (bid_driver_user_id, status, updated_at DESC);
       `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS citizen_drive_ride_request (
+          id TEXT PRIMARY KEY,
+          requester_user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'open',
+          recurrence TEXT NOT NULL DEFAULT 'once',
+          pickup_address JSONB NOT NULL DEFAULT '{}'::jsonb,
+          pickup_city TEXT,
+          pickup_province TEXT,
+          pickup_postal_code TEXT,
+          pickup_latitude DOUBLE PRECISION,
+          pickup_longitude DOUBLE PRECISION,
+          dropoff_address JSONB NOT NULL DEFAULT '{}'::jsonb,
+          dropoff_city TEXT,
+          dropoff_province TEXT,
+          dropoff_postal_code TEXT,
+          dropoff_latitude DOUBLE PRECISION,
+          dropoff_longitude DOUBLE PRECISION,
+          pickup_at TIMESTAMPTZ NOT NULL,
+          dropoff_at TIMESTAMPTZ NOT NULL,
+          route_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0,
+          fuel_charge_cents INTEGER NOT NULL DEFAULT 0,
+          driver_fee_cents INTEGER NOT NULL DEFAULT 1000,
+          total_cost_cents INTEGER NOT NULL DEFAULT 1000,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_address JSONB NOT NULL DEFAULT '{}'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_city TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_province TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_postal_code TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_latitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_longitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_address JSONB NOT NULL DEFAULT '{}'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_city TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_province TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_postal_code TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_latitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_longitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS pickup_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS dropoff_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS route_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS fuel_charge_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS driver_fee_cents INTEGER NOT NULL DEFAULT 1000;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS total_cost_cents INTEGER NOT NULL DEFAULT 1000;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_status_idx
+        ON citizen_drive_ride_request (status, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_requester_idx
+        ON citizen_drive_ride_request (requester_user_id, created_at DESC);
+      `)
     } catch (err) {
       citizenMarketplaceTablesReady = null
       throw err
@@ -9880,6 +10010,15 @@ registerDeliveryRoutes(app, {
   resolveUserId,
   sanitizePlainText,
   sendMobilePushForMessageCreated,
+  withSchemaGuard,
+})
+
+registerDriveRideRoutes(app, {
+  ensureCitizenMarketplaceTables,
+  readGalleryUrls,
+  readMarketShippingAddresses,
+  resolveUserId,
+  sanitizePlainText,
   withSchemaGuard,
 })
 

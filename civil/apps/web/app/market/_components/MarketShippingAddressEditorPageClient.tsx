@@ -114,14 +114,16 @@ function AddressEditorRightRail({
   homeAddress,
   nextAddress,
   favoriteAddresses,
+  manageHref,
 }: {
   homeAddress: SavedShippingAddress | null
   nextAddress: SavedShippingAddress | null
   favoriteAddresses: FavoriteAddress[]
+  manageHref: string
 }) {
   return (
     <>
-      <Block title="My Addresses" action={{ label: 'Manage', href: '/market/account' }} className="mb-4">
+      <Block title="My Addresses" action={{ label: 'Manage', href: manageHref }} className="mb-4">
         <div className="space-y-3">
           {homeAddress ? (
             <Link
@@ -173,7 +175,13 @@ function AddressEditorRightRail({
   )
 }
 
-export default function MarketShippingAddressEditorPageClient({ addressId }: { addressId?: string | null }) {
+export default function MarketShippingAddressEditorPageClient({
+  addressId,
+  context = 'settings',
+}: {
+  addressId?: string | null
+  context?: 'market' | 'settings'
+}) {
   const router = useRouter()
   const isEditing = Boolean(addressId)
   const [loading, setLoading] = useState(true)
@@ -185,6 +193,11 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
   const [favoriteAddresses, setFavoriteAddresses] = useState<FavoriteAddress[]>([])
   const [value, setValue] = useState<CanadianAddress>(createEmptyCanadianAddress())
   const [isDefault, setIsDefault] = useState(false)
+
+  const returnHref = context === 'market' ? '/market/account' : '/settings/addresses'
+  const eyebrow = context === 'market' ? 'Market · Buyer Account' : 'Settings'
+  const title = useMemo(() => (isEditing ? 'Edit address' : 'Add address'), [isEditing])
+  const saveButtonLabel = useMemo(() => (isEditing ? 'Save address' : 'Add address'), [isEditing])
 
   useEffect(() => {
     setFavoriteAddresses(readFavoriteAddresses())
@@ -221,7 +234,7 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
             setIsDefault(Boolean(current.isDefault))
           } else {
             pushToast('That shipping address was not found.', 'error')
-            router.replace('/market/account')
+            router.replace(returnHref)
             return
           }
         } else {
@@ -239,9 +252,8 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
     return () => {
       cancelled = true
     }
-  }, [addressId, router])
+  }, [addressId, returnHref, router])
 
-  const title = useMemo(() => (isEditing ? 'Edit shipping address' : 'Add shipping address'), [isEditing])
   const orderedSavedAddresses = useMemo(
     () => [...items].sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || String(left.label ?? '').localeCompare(String(right.label ?? ''))),
     [items],
@@ -252,8 +264,8 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
     [homeAddress, orderedSavedAddresses],
   )
   const rightRail = useMemo(
-    () => <AddressEditorRightRail homeAddress={homeAddress} nextAddress={nextAddress} favoriteAddresses={favoriteAddresses} />,
-    [favoriteAddresses, homeAddress, nextAddress],
+    () => <AddressEditorRightRail homeAddress={homeAddress} nextAddress={nextAddress} favoriteAddresses={favoriteAddresses} manageHref={returnHref} />,
+    [favoriteAddresses, homeAddress, nextAddress, returnHref],
   )
 
   async function saveAddress() {
@@ -338,11 +350,11 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
 
       const saved = json?.item ?? null
       if (saved?.isDefault) writeStoredMarketShippingAddress(saved)
-      pushToast(isEditing ? 'Shipping address updated.' : 'Shipping address saved.', 'success')
-      router.push('/market/account')
+      pushToast(isEditing ? 'Address updated.' : 'Address saved.', 'success')
+      router.push(returnHref)
       router.refresh()
     } catch {
-      pushToast('Unable to save this shipping address.', 'error')
+      pushToast('Unable to save this address.', 'error')
     } finally {
       setSaving(false)
     }
@@ -367,12 +379,12 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
         pushToast(friendlyApiError(json, 'Unable to delete this shipping address.'), 'error')
         return false
       }
-      pushToast('Shipping address deleted.', 'success')
-      router.push('/market/account')
+      pushToast('Address deleted.', 'success')
+      router.push(returnHref)
       router.refresh()
       return true
     } catch {
-      pushToast('Unable to delete this shipping address.', 'error')
+      pushToast('Unable to delete this address.', 'error')
       return false
     } finally {
       setDeleting(false)
@@ -384,7 +396,7 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Market · Buyer Account</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{eyebrow}</p>
             <h1 className="mt-1 text-xl font-semibold text-slate-900">{title}</h1>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-3">
@@ -394,7 +406,7 @@ export default function MarketShippingAddressEditorPageClient({ addressId }: { a
               disabled={loading || saving || deleting}
               className="inline-flex items-center justify-center rounded-full border border-emerald-600 bg-emerald-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60"
             >
-              {saving ? 'Saving…' : isEditing ? 'Save address' : 'Add address'}
+              {saving ? 'Saving…' : saveButtonLabel}
             </button>
             {addressId ? (
               <button

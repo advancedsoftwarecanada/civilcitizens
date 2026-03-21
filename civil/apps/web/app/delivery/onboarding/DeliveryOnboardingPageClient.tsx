@@ -27,7 +27,7 @@ export default function DeliveryOnboardingPageClient() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(buildApiUrl('/delivery/onboarding'), {
+      const res = await fetch(buildApiUrl('/drive/onboarding'), {
         headers: { authorization: `Bearer ${token}` },
         cache: 'no-store',
       })
@@ -42,7 +42,7 @@ export default function DeliveryOnboardingPageClient() {
       }
       setData(payload)
     } catch (err) {
-      console.error('Failed to load delivery onboarding', err)
+      console.error('Failed to load drive onboarding', err)
       setError('Unable to load onboarding right now.')
     } finally {
       setLoading(false)
@@ -61,7 +61,7 @@ export default function DeliveryOnboardingPageClient() {
     }
     setActivating(true)
     try {
-      const res = await fetch(buildApiUrl('/delivery/onboarding/activate'), {
+      const res = await fetch(buildApiUrl('/drive/onboarding/activate'), {
         method: 'POST',
         headers: { authorization: `Bearer ${token}` },
       })
@@ -80,7 +80,7 @@ export default function DeliveryOnboardingPageClient() {
       pushToast('Civil Driver account activated.', 'success')
       setData((prev) => ({ ...(prev ?? {}), active: true, activeAt: payload?.activeAt ?? new Date().toISOString() }))
     } catch (err) {
-      console.error('Failed to activate delivery onboarding', err)
+      console.error('Failed to activate drive onboarding', err)
       pushToast('Unable to activate your driver account.', 'error')
     } finally {
       setActivating(false)
@@ -110,12 +110,12 @@ export default function DeliveryOnboardingPageClient() {
   }, [data?.requirements])
 
   return (
-    <DashboardShell rightRail={<RightRail mode="work" organizationLinkTarget="chat" />} showMobileRightRail mainClassName="space-y-5 pb-12">
+    <DashboardShell rightRail={<RightRail mode="drive" organizationLinkTarget="chat" />} showMobileRightRail mainClassName="space-y-5 pb-12">
       <div className="space-y-5">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Civil Delivery</p>
-          <h1 className="mt-3 text-3xl font-semibold text-slate-900">Delivery Driver Onboarding</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Civil only activates delivery drivers who have a funded wallet, verified Canadian citizenship status, real profile photos, and a home address.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Drive</p>
+          <h1 className="mt-3 text-3xl font-semibold text-slate-900">Driver Onboarding</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Civil only activates Drive drivers who have a funded wallet, verified Canadian citizenship status, real profile photos, and a home address.</p>
         </section>
 
         {error ? <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
@@ -129,13 +129,13 @@ export default function DeliveryOnboardingPageClient() {
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Status</p>
                   <h2 className="mt-2 text-2xl font-semibold text-slate-900">{data?.active ? 'Driver account active' : 'Activation pending'}</h2>
-                  <p className="mt-2 text-sm text-slate-600">{data?.active ? 'You can now bid on open delivery contracts and manage your assigned contracts.' : 'Every checklist item below must be ready before you can activate your Civil Driver account.'}</p>
+                  <p className="mt-2 text-sm text-slate-600">{data?.active ? 'You can now add vehicles and manage the cars you want to offer on Drive.' : 'Every checklist item below must be ready before you can activate your Civil Driver account.'}</p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">
                   {data?.active ? (
-                    <Link href="/delivery" className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
-                      Open delivery contracts
+                    <Link href="/drive/driver/manage" className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
+                      Add Vehicle
                     </Link>
                   ) : (
                     <button

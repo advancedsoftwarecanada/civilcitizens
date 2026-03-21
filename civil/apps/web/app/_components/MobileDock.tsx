@@ -545,6 +545,9 @@ export default function MobileDock() {
     if (pathname?.startsWith('/work')) {
       return <RightRail mode="work" organizationLinkTarget="chat" />
     }
+    if (pathname?.startsWith('/drive') || pathname?.startsWith('/delivery')) {
+      return <RightRail mode="drive" organizationLinkTarget="chat" />
+    }
     if (pathname?.startsWith('/market')) {
       return <RightRail mode="default" hideContacts hideCommunities />
     }

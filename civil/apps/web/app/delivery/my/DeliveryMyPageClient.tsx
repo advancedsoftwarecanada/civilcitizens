@@ -266,7 +266,7 @@ export default function DeliveryMyPageClient() {
   const requirementItems = getDeliveryRequirementItems(onboarding?.requirements)
 
   return (
-    <DashboardShell rightRail={<RightRail mode="work" organizationLinkTarget="chat" />} showMobileRightRail mainClassName="space-y-5 pb-12">
+    <DashboardShell rightRail={<RightRail mode="drive" organizationLinkTarget="chat" />} showMobileRightRail mainClassName="space-y-5 pb-12">
       <div className="space-y-5">
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-end justify-between gap-4">
@@ -275,7 +275,7 @@ export default function DeliveryMyPageClient() {
               <h1 className="mt-3 text-3xl font-semibold text-slate-900">My Deliveries</h1>
               <p className="mt-2 text-sm leading-6 text-slate-600">Manage accepted delivery contracts, share ETAs with the buyer and seller, and upload proof when the item is delivered.</p>
             </div>
-            <Link href="/delivery" className="inline-flex rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
+            <Link href="/drive" className="inline-flex rounded-full border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]">
               Browse open contracts
             </Link>
           </div>
@@ -293,7 +293,7 @@ export default function DeliveryMyPageClient() {
               ))}
             </div>
             <div className="mt-5">
-              <Link href="/delivery/onboarding" className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
+              <Link href="/drive/onboarding" className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
                 Open onboarding
               </Link>
             </div>
