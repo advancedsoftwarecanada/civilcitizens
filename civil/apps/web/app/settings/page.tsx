@@ -12,6 +12,7 @@ import {
   HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
   HiOutlineDocumentText,
+  HiOutlineMapPin,
   HiOutlineShoppingBag,
   HiOutlineTrash,
   HiOutlineUserGroup,
@@ -470,6 +471,13 @@ export default function SettingsPage() {
         description: 'Edit your bio, cover photo, profile photo, and civic identity.',
         href: '/profile/edit',
         icon: HiOutlineUserCircle,
+      },
+      {
+        key: 'addresses',
+        label: 'Addresses',
+        description: 'Manage your saved pickup, destination, and shipping addresses.',
+        href: '/settings/addresses',
+        icon: HiOutlineMapPin,
       },
       {
         key: 'communities',

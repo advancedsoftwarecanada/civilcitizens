@@ -2,14 +2,18 @@ import { randomUUID } from 'node:crypto'
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
-import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
+import { MessageType, Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
+import { readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type DeliveryDeps = Record<string, any>
 
-const DELIVERY_GROUP_CONTEXT_TYPE = 'market_delivery'
 const DELIVERY_BID_OPTIONS = new Set([500, 1000, 2000, 5000, 10000])
+const DRIVER_VEHICLE_LIMIT = 10
+const DRIVER_VEHICLE_PHOTO_LIMIT = 8
+const DRIVER_MIN_RIDE_AMOUNT_CENTS_MIN = 500
+const DRIVER_PER_KM_FEE_CENTS_MIN = 100
+const DRIVER_PER_KM_FEE_CENTS_MAX = 300
 
 const DeliveryContractParams = z.object({ contractId: z.string().trim().min(1).max(128) })
 
@@ -31,19 +35,138 @@ const DeliveryDeliverBody = z
   })
   .strict()
 
-function readDriverAccountState(raw: unknown) {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { activeAt: null as string | null }
+const DriverVehicleInput = z
+  .object({
+    id: z.string().trim().min(1).max(64).optional(),
+    name: z.string().trim().min(1).max(120),
+    photoUrls: z.array(z.string().trim().url().max(2048)).max(DRIVER_VEHICLE_PHOTO_LIMIT),
+    minimumRideAmountCents: z.number().int().min(DRIVER_MIN_RIDE_AMOUNT_CENTS_MIN).max(100_000),
+    perKmFeeCents: z.number().int().min(DRIVER_PER_KM_FEE_CENTS_MIN).max(DRIVER_PER_KM_FEE_CENTS_MAX),
+    featured: z.boolean().optional(),
+  })
+  .strict()
+
+const DriverManageBody = z
+  .object({
+    vehicles: z.array(DriverVehicleInput).max(DRIVER_VEHICLE_LIMIT),
+  })
+  .strict()
+
+type DriverVehicle = {
+  id: string
+  name: string
+  photoUrls: string[]
+  minimumRideAmountCents: number
+  perKmFeeCents: number
+  featured: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+type DriverAccountState = {
+  activeAt: string | null
+  vehicles: DriverVehicle[]
+}
+
+function readDriverAccountRecord(raw: unknown) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const driver = (raw as Record<string, unknown>).deliveryDriver
-  if (!driver || typeof driver !== 'object' || Array.isArray(driver)) return { activeAt: null as string | null }
+  if (!driver || typeof driver !== 'object' || Array.isArray(driver)) return null
+  return driver as Record<string, unknown>
+}
+
+function normalizeDriverVehiclePhotoUrls(value: unknown) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean)
+    .slice(0, DRIVER_VEHICLE_PHOTO_LIMIT)
+}
+
+export function readDriverAccountState(raw: unknown): DriverAccountState {
+  const driver = readDriverAccountRecord(raw)
+  if (!driver) return { activeAt: null, vehicles: [] }
   const activeAt = typeof (driver as Record<string, unknown>).activeAt === 'string' && (driver as Record<string, unknown>).activeAt
     ? String((driver as Record<string, unknown>).activeAt)
     : null
-  return { activeAt }
+  const vehicles = Array.isArray(driver.vehicles)
+    ? driver.vehicles
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
+          const record = entry as Record<string, unknown>
+          const id = typeof record.id === 'string' && record.id.trim() ? record.id.trim().slice(0, 64) : null
+          const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim().slice(0, 120) : null
+          const minimumRideAmountCents = typeof record.minimumRideAmountCents === 'number' && Number.isInteger(record.minimumRideAmountCents)
+            ? Math.max(DRIVER_MIN_RIDE_AMOUNT_CENTS_MIN, Math.min(100_000, record.minimumRideAmountCents))
+            : null
+          const perKmFeeCents = typeof record.perKmFeeCents === 'number' && Number.isInteger(record.perKmFeeCents)
+            ? Math.max(DRIVER_PER_KM_FEE_CENTS_MIN, Math.min(DRIVER_PER_KM_FEE_CENTS_MAX, record.perKmFeeCents))
+            : null
+          if (!id || !name || minimumRideAmountCents === null || perKmFeeCents === null) return null
+
+          return {
+            id,
+            name,
+            photoUrls: normalizeDriverVehiclePhotoUrls(record.photoUrls),
+            minimumRideAmountCents,
+            perKmFeeCents,
+            featured: record.featured === true,
+            createdAt: typeof record.createdAt === 'string' && record.createdAt.trim() ? record.createdAt.trim() : new Date(0).toISOString(),
+            updatedAt: typeof record.updatedAt === 'string' && record.updatedAt.trim() ? record.updatedAt.trim() : new Date(0).toISOString(),
+          } satisfies DriverVehicle
+        })
+        .filter((entry): entry is DriverVehicle => Boolean(entry))
+        .slice(0, DRIVER_VEHICLE_LIMIT)
+    : []
+
+  const featuredIndex = vehicles.findIndex((vehicle) => vehicle.featured)
+  const normalizedVehicles = vehicles.map((vehicle, index) => ({ ...vehicle, featured: featuredIndex >= 0 ? index === featuredIndex : index === 0 }))
+
+  return { activeAt, vehicles: normalizedVehicles }
 }
 
-function writeDriverAccountState(meta: Record<string, unknown>, activeAt: string) {
-  meta.deliveryDriver = { activeAt }
+function normalizeDriverVehicleInputs(input: z.infer<typeof DriverManageBody>['vehicles'], existing: DriverVehicle[]) {
+  const existingMap = new Map(existing.map((vehicle) => [vehicle.id, vehicle]))
+  const now = new Date().toISOString()
+
+  const normalized = input.slice(0, DRIVER_VEHICLE_LIMIT).map((vehicle) => {
+    const existingVehicle = vehicle.id ? existingMap.get(vehicle.id) ?? null : null
+    const id = vehicle.id?.trim() ? vehicle.id.trim().slice(0, 64) : existingVehicle?.id ?? randomUUID()
+    const createdAt = existingVehicle?.createdAt ?? now
+    return {
+      id,
+      name: vehicle.name.trim().slice(0, 120),
+      photoUrls: [...new Set(vehicle.photoUrls.map((entry) => entry.trim()).filter(Boolean))].slice(0, DRIVER_VEHICLE_PHOTO_LIMIT),
+      minimumRideAmountCents: Math.max(DRIVER_MIN_RIDE_AMOUNT_CENTS_MIN, Math.min(100_000, vehicle.minimumRideAmountCents)),
+      perKmFeeCents: Math.max(DRIVER_PER_KM_FEE_CENTS_MIN, Math.min(DRIVER_PER_KM_FEE_CENTS_MAX, vehicle.perKmFeeCents)),
+      featured: vehicle.featured === true,
+      createdAt,
+      updatedAt: now,
+    } satisfies DriverVehicle
+  })
+
+  const firstFeaturedIndex = normalized.findIndex((vehicle) => vehicle.featured)
+  return normalized.map((vehicle, index) => ({ ...vehicle, featured: firstFeaturedIndex >= 0 ? index === firstFeaturedIndex : index === 0 }))
+}
+
+function writeDriverAccountState(meta: Record<string, unknown>, next: { activeAt?: string | null; vehicles?: DriverVehicle[] }) {
+  const current = readDriverAccountState(meta)
+  const activeAt = next.activeAt !== undefined ? next.activeAt : current.activeAt
+  const vehicles = next.vehicles !== undefined ? next.vehicles : current.vehicles
+  if (!activeAt && !vehicles.length) {
+    delete meta.deliveryDriver
+    return meta
+  }
+  meta.deliveryDriver = {
+    ...(activeAt ? { activeAt } : {}),
+    ...(vehicles.length ? { vehicles } : {}),
+  }
   return meta
+}
+
+export function readFeaturedDriverVehicle(raw: unknown) {
+  const state = readDriverAccountState(raw)
+  return state.vehicles.find((vehicle) => vehicle.featured) ?? state.vehicles[0] ?? null
 }
 
 function hasHomeAddress(user: {
@@ -102,18 +225,6 @@ function resolveDriverHomeAddress(
   return hasStructuredHomeAddress(shippingAddress) ? shippingAddress : null
 }
 
-function buildDeliveryItemTraits(deliveryOptions: Record<string, unknown> | null | undefined) {
-  const traits: string[] = []
-  if (deliveryOptions?.itemIsHeavy === true) traits.push('Heavy')
-  if (deliveryOptions?.itemIsBulky === true) traits.push('Bulky')
-  if (deliveryOptions?.itemIsSmall === true) traits.push('Small')
-  return traits
-}
-
-function formatMoney(cents: number) {
-  return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format((Number(cents) || 0) / 100)
-}
-
 async function loadDriverEligibility(userId: string, deps: DeliveryDeps) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -163,74 +274,8 @@ async function ensureDriverActive(userId: string, deps: DeliveryDeps, reply: Fas
   return eligibility
 }
 
-async function ensureDeliveryGroupThread(args: {
-  contractId: string
-  sellerUserId: string
-  buyerUserId: string
-  driverUserId: string
-  driverName: string | null
-  listingTitle: string
-  tx: Prisma.TransactionClient
-  deps: DeliveryDeps
-}) {
-  const uniqueKey = `delivery_contract:${args.contractId}`
-  let thread = await args.tx.messageThread.findUnique({
-    where: { uniqueKey },
-    include: { participants: { select: { userId: true, mutedUntil: true } } },
-  })
-
-  let created = false
-  if (!thread) {
-    const now = new Date()
-    thread = await args.tx.messageThread.create({
-      data: {
-        type: MessageThreadType.group,
-        uniqueKey,
-        contextType: DELIVERY_GROUP_CONTEXT_TYPE,
-        contextId: args.contractId,
-        lastMessageAt: now,
-        participants: {
-          create: [
-            { userId: args.sellerUserId, role: MessageParticipantRole.member, lastActivityAt: now },
-            { userId: args.buyerUserId, role: MessageParticipantRole.member, lastActivityAt: now },
-            { userId: args.driverUserId, role: MessageParticipantRole.member, lastReadAt: now, lastActivityAt: now },
-          ],
-        },
-      },
-      include: { participants: { select: { userId: true, mutedUntil: true } } },
-    })
-    created = true
-  }
-
-  const joinBody = args.deps
-    .sanitizePlainText(`${args.driverName?.trim() || 'Your delivery driver'} has joined the chat as your delivery driver for ${args.listingTitle}.`)
-    .trim()
-
-  const createdMessage = await args.tx.message.create({
-    data: {
-      threadId: thread.id,
-      senderId: args.driverUserId,
-      body: joinBody || null,
-      messageType: MessageType.text,
-    },
-    select: args.deps.MESSAGE_SELECT,
-  })
-
-  await args.tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: createdMessage.createdAt } })
-  await args.tx.messageParticipant.updateMany({
-    where: { threadId: thread.id },
-    data: { lastActivityAt: createdMessage.createdAt },
-  })
-  await args.tx.messageParticipant.update({
-    where: { threadId_userId: { threadId: thread.id, userId: args.driverUserId } },
-    data: { lastReadAt: createdMessage.createdAt, lastActivityAt: createdMessage.createdAt },
-  })
-
-  return { thread, createdMessage, created }
-}
-
 export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps) {
-  app.get('/delivery/onboarding', async (req: FastifyRequest, reply: FastifyReply) =>
+  const loadOnboarding = async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined
       if (!userId) return reply.code(401).send({ error: 'unauthorized' })
@@ -243,10 +288,9 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         activeAt: eligibility.activeAt,
         requirements: eligibility.requirements,
       })
-    }),
-  )
+    })
 
-  app.post('/delivery/onboarding/activate', async (req: FastifyRequest, reply: FastifyReply) =>
+  const activateOnboarding = async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined
       if (!userId) return reply.code(401).send({ error: 'unauthorized' })
@@ -264,9 +308,85 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
 
       const activeAt = eligibility.activeAt ?? new Date().toISOString()
       const baseMeta = deps.readBaseCommunityMeta(user.communityMeta ?? null)
-      await prisma.user.update({ where: { id: userId }, data: { communityMeta: writeDriverAccountState(baseMeta, activeAt) as Prisma.InputJsonValue } })
+      await prisma.user.update({
+        where: { id: userId },
+        data: { communityMeta: writeDriverAccountState(baseMeta, { activeAt }) as Prisma.InputJsonValue },
+      })
 
       return reply.send({ success: true, active: true, activeAt })
+    })
+
+  app.get('/delivery/onboarding', loadOnboarding)
+  app.get('/drive/onboarding', loadOnboarding)
+
+  app.post('/delivery/onboarding/activate', activateOnboarding)
+  app.post('/drive/onboarding/activate', activateOnboarding)
+
+  app.get('/drive/driver/manage', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const eligibility = await loadDriverEligibility(userId, deps)
+      if (!eligibility?.activeAt) {
+        return reply.code(403).send({ error: 'driver_not_active', onboarding: eligibility })
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { communityMeta: true },
+      })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+
+      const baseMeta = deps.readBaseCommunityMeta(user.communityMeta ?? null)
+      const state = readDriverAccountState(baseMeta)
+      return reply.send({
+        active: true,
+        activeAt: state.activeAt,
+        vehicles: state.vehicles,
+      })
+    }),
+  )
+
+  app.put('/drive/driver/manage', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const eligibility = await loadDriverEligibility(userId, deps)
+      if (!eligibility?.activeAt) {
+        return reply.code(403).send({ error: 'driver_not_active', onboarding: eligibility })
+      }
+
+      const body = DriverManageBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: 'invalid_body' })
+
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { communityMeta: true },
+      })
+      if (!user) return reply.code(401).send({ error: 'unauthorized' })
+
+      const baseMeta = deps.readBaseCommunityMeta(user.communityMeta ?? null)
+      const currentState = readDriverAccountState(baseMeta)
+      const vehicles = normalizeDriverVehicleInputs(body.data.vehicles, currentState.vehicles)
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          communityMeta: writeDriverAccountState(baseMeta, {
+            activeAt: currentState.activeAt,
+            vehicles,
+          }) as Prisma.InputJsonValue,
+        },
+      })
+
+      return reply.send({
+        success: true,
+        active: true,
+        activeAt: currentState.activeAt,
+        vehicles,
+      })
     }),
   )
 

@@ -87,6 +87,10 @@ type MessageSystemMeta = {
   selectedLabel: string
   civilPayUrl: string | null
   eTransferEmail: string | null
+} | {
+  kind: 'market_relist_prompt'
+  listingId: string
+  relistLabel: string
 }
 
 type MarketPaymentType = 'cash_pickup' | 'etransfer' | 'civil_wallet'
@@ -434,6 +438,31 @@ function formatMarketPaymentTypeLabel(value: MarketPaymentType) {
   }
 }
 
+function sortMarketPaymentOptions(options: MarketPaymentType[]) {
+  const rank: Record<MarketPaymentType, number> = {
+    cash_pickup: 0,
+    etransfer: 1,
+    civil_wallet: 2,
+  }
+  return [...options].sort((left, right) => rank[left] - rank[right])
+}
+
+function formatCompactDeliveryStatus(status?: string | null) {
+  switch ((status || '').trim().toLowerCase()) {
+    case 'open':
+    case 'bid_pending':
+      return 'Awaiting assignment'
+    case 'assigned':
+      return 'Driver assigned'
+    case 'picked_up':
+      return 'Picked up'
+    case 'delivered':
+      return 'Delivered'
+    default:
+      return 'Awaiting assignment'
+  }
+}
+
 function resolveSelectedMarketPaymentType(messages: MessagePayload[], listingId?: string | null) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const meta = messages[index]?.systemMeta
@@ -443,6 +472,18 @@ function resolveSelectedMarketPaymentType(messages: MessagePayload[], listingId?
     if (meta.kind === 'market_payment_prompt' && meta.selectedOption) return meta.selectedOption
   }
   return null
+}
+
+function hasPendingMarketRelistPrompt(messages: MessagePayload[], listingId?: string | null) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const meta = messages[index]?.systemMeta
+    if (!meta) continue
+    if (!('listingId' in meta)) continue
+    if (listingId && meta.listingId !== listingId) continue
+    if (meta.kind === 'market_relist_prompt') return true
+    if (meta.kind === 'market_payment_prompt' || meta.kind === 'market_payment_selected') return false
+  }
+  return false
 }
 
 const getThreadTitle = (thread: ThreadSummary) => {
@@ -1335,6 +1376,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [marketSelectBuyerSubmitting, setMarketSelectBuyerSubmitting] = useState(false)
   const [marketUnselectBuyerConfirmOpen, setMarketUnselectBuyerConfirmOpen] = useState(false)
   const [marketUnselectBuyerSubmitting, setMarketUnselectBuyerSubmitting] = useState(false)
+  const [marketBuyerDeclineConfirmOpen, setMarketBuyerDeclineConfirmOpen] = useState(false)
+  const [marketBuyerDeclineSubmitting, setMarketBuyerDeclineSubmitting] = useState(false)
   const [marketMarkSoldConfirmOpen, setMarketMarkSoldConfirmOpen] = useState(false)
   const [marketMarkSoldSubmitting, setMarketMarkSoldSubmitting] = useState(false)
   const [contactsBucketReady, setContactsBucketReady] = useState(false)
@@ -2552,6 +2595,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       resolveSelectedMarketPaymentType(activeMessages, marketThreadContext?.listing?.id ?? activeThread?.contextId ?? null),
     [activeMessages, activeThread?.contextId, marketThreadContext?.listing?.id, marketThreadContext?.listing?.selectedPaymentType],
   )
+  const activeMarketHasRelistPrompt = useMemo(
+    () => hasPendingMarketRelistPrompt(activeMessages, marketThreadContext?.listing?.id ?? activeThread?.contextId ?? null),
+    [activeMessages, activeThread?.contextId, marketThreadContext?.listing?.id],
+  )
   const activePendingAttachmentMessages = useMemo(() => {
     if (!selectedThreadId) return []
     return pendingAttachmentMessagesByThread[selectedThreadId] ?? []
@@ -2789,10 +2836,22 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       activeMarketListingStatus !== 'canceled',
   )
   const canUnselectActiveMarketBuyer = Boolean(
-    marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
+    marketThreadContext?.viewerIsSeller &&
+      activeMarketThreadIsSelectedBuyer &&
+      activeMarketListingStatus === 'pending' &&
+      !activeMarketHasRelistPrompt,
+  )
+  const canDeclineActiveMarketSelection = Boolean(
+    marketThreadContext?.viewerIsSelectedBuyer &&
+      activeMarketThreadIsSelectedBuyer &&
+      activeMarketListingStatus === 'pending' &&
+      !activeMarketHasRelistPrompt,
   )
   const showMarkSoldFromActiveMarketThread = Boolean(
-    marketThreadContext?.viewerIsSeller && activeMarketThreadIsSelectedBuyer && activeMarketListingStatus === 'pending',
+    marketThreadContext?.viewerIsSeller &&
+      activeMarketThreadIsSelectedBuyer &&
+      activeMarketListingStatus === 'pending' &&
+      !activeMarketHasRelistPrompt,
   )
   const canMarkSoldFromActiveMarketThread = Boolean(
     marketThreadContext?.viewerIsSeller &&
@@ -2807,7 +2866,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     ((marketThreadContext?.viewerIsSeller && !marketThreadContext?.sellerPickedUpAt) ||
       (marketThreadContext?.viewerIsSelectedBuyer && !marketThreadContext?.buyerPickedUpAt)) &&
       activeMarketThreadIsSelectedBuyer &&
-      activeMarketListingStatus === 'pending',
+      activeMarketListingStatus === 'pending' &&
+      !activeMarketHasRelistPrompt,
   )
   const canCompleteActiveMarketCivilPay = Boolean(
     marketThreadContext?.viewerIsSelectedBuyer &&
@@ -2815,12 +2875,16 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       activeMarketSupportsCivilPay &&
       activeMarketSelectedPaymentType === 'civil_wallet' &&
       activeMarketListingStatus === 'pending' &&
+      !activeMarketHasRelistPrompt &&
       marketThreadContext?.listing?.civilPayStatus !== 'completed' &&
       activeMarketCivilPayHref,
   )
   const activeMarketDeliveryVisible = Boolean(marketThreadContext?.deliveryContract && activeMarketThreadIsSelectedBuyer)
   const activeMarketDeliveryChatHref = marketThreadContext?.deliveryContract?.groupThreadId
     ? `/messages?thread=${encodeURIComponent(marketThreadContext.deliveryContract.groupThreadId)}`
+    : null
+  const activeMarketManageDriversHref = marketThreadContext?.listing?.id
+    ? `/market/chats/item/${encodeURIComponent(marketThreadContext.listing.id)}`
     : null
   const activeMarketPickupDirectionsHref = useMemo(() => {
     if (!marketThreadContext?.pickupAddress) return null
@@ -2950,7 +3014,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       const response = await authedFetch(`/market/chats/item/${encodeURIComponent(marketThreadContext.listing.id)}/relist`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ notify: false }),
+        body: JSON.stringify({ notify: true }),
       })
       if (response.status === 401) {
         redirectToAuthModal('login')
@@ -2971,6 +3035,70 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       setMarketUnselectBuyerSubmitting(false)
     }
   }, [authedFetch, loadActiveMarketThreadContext, loadMarketInbox, loadSupplementalUnreadCounts, loadThreads, marketThreadContext?.listing.id])
+
+  const handleDeclineActiveMarketSelection = useCallback(async () => {
+    if (!activeThread) return
+
+    setMarketBuyerDeclineSubmitting(true)
+    setMarketHeaderActionError(null)
+    try {
+      const response = await authedFetch(`/market/chats/${encodeURIComponent(activeThread.id)}/no-longer-interested`, {
+        method: 'POST',
+      })
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+        interested?: boolean
+        selectedBuyerDeclined?: boolean
+        messages?: MessagePayload[] | null
+      } | null
+      if (!response.ok) {
+        setMarketHeaderActionError(payload?.error || 'Unable to update this market conversation right now.')
+        return
+      }
+
+      if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
+        setMessagesByThread((prev) => {
+          const existing = prev[activeThread.id] ?? []
+          const nextMessages = payload.messages!.filter((message) => !existing.some((entry) => entry.id === message.id))
+          if (nextMessages.length === 0) return prev
+          return { ...prev, [activeThread.id]: sortMessagesChronologically([...existing, ...nextMessages]) }
+        })
+        const lastCreatedMessage = payload.messages[payload.messages.length - 1] ?? null
+        if (lastCreatedMessage) {
+          upsertThread({ ...activeThread, lastMessage: lastCreatedMessage, lastMessageAt: lastCreatedMessage.createdAt })
+        }
+      }
+
+      if (payload?.selectedBuyerDeclined) {
+        setMarketThreadContext((prev) =>
+          prev?.listing
+            ? {
+                ...prev,
+                listing: {
+                  ...prev.listing,
+                  status: 'active',
+                  selectedPaymentType: null,
+                },
+                selectedBuyerUserId: null,
+                selectedThreadId: null,
+              }
+            : prev,
+        )
+      }
+
+      setMarketBuyerDeclineConfirmOpen(false)
+      await Promise.all([loadActiveMarketThreadContext(), loadThreads(), loadSupplementalUnreadCounts(), loadMarketInbox()])
+    } catch (error) {
+      console.error('Failed to decline selected market item', error)
+      setMarketHeaderActionError('Unable to update this market conversation right now.')
+    } finally {
+      setMarketBuyerDeclineSubmitting(false)
+    }
+  }, [activeThread, authedFetch, loadActiveMarketThreadContext, loadMarketInbox, loadSupplementalUnreadCounts, loadThreads, upsertThread])
 
   const handleMarkSoldFromActiveMarketThread = useCallback(async () => {
     if (!marketThreadContext?.listing.id) return
@@ -4123,142 +4251,127 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                       </div>
                     </Link>
                     <div className="rounded-[20px] border border-slate-200 bg-white/90 p-2.5 shadow-sm xl:w-[420px] xl:self-center">
-                      <div className="flex flex-wrap items-center gap-2">
-                      {canCompleteActiveMarketCivilPay && activeMarketCivilPayHref ? (
-                        <Link
-                          href={activeMarketCivilPayHref}
-                          className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
-                        >
-                          Complete Civil Pay
-                        </Link>
-                      ) : null}
-                      {canSelectActiveMarketBuyer ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMarketHeaderActionError(null)
-                            setMarketSelectBuyerConfirmOpen(true)
-                          }}
-                          disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
-                          className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          Select This Buyer
-                        </button>
-                      ) : null}
-                      {canUnselectActiveMarketBuyer ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMarketHeaderActionError(null)
-                            setMarketUnselectBuyerConfirmOpen(true)
-                          }}
-                          disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
-                          className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          Relist
-                        </button>
-                      ) : null}
-                      {showMarkSoldFromActiveMarketThread ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!canMarkSoldFromActiveMarketThread) return
-                            setMarketHeaderActionError(null)
-                            setMarketMarkSoldConfirmOpen(true)
-                          }}
-                          disabled={!canMarkSoldFromActiveMarketThread || marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketMarkSoldSubmitting}
-                          className={clsx(
-                            'rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-70',
-                            canMarkSoldFromActiveMarketThread
-                              ? 'bg-blue-600 text-white hover:bg-blue-700'
-                              : 'border border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100',
-                          )}
-                        >
-                          Mark sold
-                        </button>
-                      ) : null}
-                      {canAccessActiveMarketPickupDirections && activeMarketPickupDirectionsHref ? (
-                        <Link
-                          href={activeMarketPickupDirectionsHref}
-                          className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
-                        >
-                          Directions for pickup
-                        </Link>
-                      ) : null}
-                      {canMarkActiveMarketPickupComplete ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleMarkActiveMarketPickupComplete()
-                          }}
-                          disabled={marketPickupCompleteSubmitting}
-                          className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
-                        >
-                          {marketPickupCompleteSubmitting ? 'Marking…' : 'Mark picked up'}
-                        </button>
-                      ) : null}
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {canCompleteActiveMarketCivilPay && activeMarketCivilPayHref ? (
+                            <Link
+                              href={activeMarketCivilPayHref}
+                              className="rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+                            >
+                              Complete Civil Pay
+                            </Link>
+                          ) : null}
+                          {canSelectActiveMarketBuyer ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMarketHeaderActionError(null)
+                                setMarketSelectBuyerConfirmOpen(true)
+                              }}
+                              disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketBuyerDeclineSubmitting || marketMarkSoldSubmitting}
+                              className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              Select This Buyer
+                            </button>
+                          ) : null}
+                          {canUnselectActiveMarketBuyer ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMarketHeaderActionError(null)
+                                setMarketUnselectBuyerConfirmOpen(true)
+                              }}
+                              disabled={marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketBuyerDeclineSubmitting || marketMarkSoldSubmitting}
+                              className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              Relist
+                            </button>
+                          ) : null}
+                          {canAccessActiveMarketPickupDirections && activeMarketPickupDirectionsHref ? (
+                            <Link
+                              href={activeMarketPickupDirectionsHref}
+                              className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+                            >
+                              Directions for pickup
+                            </Link>
+                          ) : null}
+                          {canDeclineActiveMarketSelection ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMarketHeaderActionError(null)
+                                setMarketBuyerDeclineConfirmOpen(true)
+                              }}
+                              disabled={marketBuyerDeclineSubmitting}
+                              className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {marketBuyerDeclineSubmitting ? 'Updating…' : 'I no longer want this item'}
+                            </button>
+                          ) : null}
+                        </div>
+                        {showMarkSoldFromActiveMarketThread || canMarkActiveMarketPickupComplete ? (
+                          <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
+                            {showMarkSoldFromActiveMarketThread ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!canMarkSoldFromActiveMarketThread) return
+                                  setMarketHeaderActionError(null)
+                                  setMarketMarkSoldConfirmOpen(true)
+                                }}
+                                disabled={!canMarkSoldFromActiveMarketThread || marketSelectBuyerSubmitting || marketUnselectBuyerSubmitting || marketBuyerDeclineSubmitting || marketMarkSoldSubmitting}
+                                className={clsx(
+                                  'rounded-full px-4 py-2 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-70',
+                                  canMarkSoldFromActiveMarketThread
+                                    ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                    : 'border border-slate-200 bg-slate-100 text-slate-400 hover:bg-slate-100',
+                                )}
+                              >
+                                Mark sold
+                              </button>
+                            ) : null}
+                            {canMarkActiveMarketPickupComplete ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleMarkActiveMarketPickupComplete()
+                                }}
+                                disabled={marketPickupCompleteSubmitting || marketBuyerDeclineSubmitting}
+                                className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+                              >
+                                {marketPickupCompleteSubmitting ? 'Marking…' : 'Mark picked up'}
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
                   </div>
                   {marketThreadContext.viewerIsSeller && marketThreadContext.selectedThreadId && !activeMarketThreadIsSelectedBuyer ? (
                     <p className="mt-3 text-xs font-medium text-slate-500">A different buyer is currently selected for this item.</p>
                   ) : null}
                   {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
                   {activeMarketDeliveryVisible && marketThreadContext.deliveryContract ? (
-                    <div className="mt-3 rounded-[20px] border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.08),rgba(14,165,233,0.08))] p-3.5 shadow-sm">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Civil Driver</p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <p className="text-sm font-semibold text-slate-900">{formatMarketDeliveryStatus(marketThreadContext.deliveryContract.status)}</p>
-                            {marketThreadContext.deliveryContract.bidAmountCents ? <span className="rounded-full border border-white/80 bg-white px-3 py-1 text-[11px] font-semibold text-emerald-700">Bid {formatMoney(marketThreadContext.deliveryContract.bidAmountCents, 'CAD')}</span> : null}
-                            {marketThreadContext.deliveryContract.estimatedDeliveryAt ? <span className="rounded-full border border-white/80 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">ETA {new Date(marketThreadContext.deliveryContract.estimatedDeliveryAt).toLocaleString()}</span> : null}
-                          </div>
-                          <p className="mt-2 text-sm leading-6 text-slate-700">
-                            {(() => {
-                              const contract = marketThreadContext.deliveryContract
-                              const driverName = formatMarketDeliveryDriverName(contract.driver)
-                              const status = (contract.status || '').trim().toLowerCase()
-                              if (status === 'open') return 'The selected buyer requested Civil delivery. Drivers can place bids now.'
-                              if (status === 'bid_pending') return `${driverName} placed a delivery bid${contract.bidAmountCents ? ` for ${formatMoney(contract.bidAmountCents, 'CAD')}` : ''}.`
-                              if (status === 'assigned') return `${driverName} is assigned and the delivery chat is ready.`
-                              if (status === 'picked_up') return `${driverName} picked up the item and delivery is in progress.`
-                              if (status === 'delivered') return `${driverName} marked the delivery complete with proof.`
-                              return 'Civil delivery is active for this item.'
-                            })()}
-                          </p>
-                          {marketThreadContext.deliveryContract.itemTraits.length ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {marketThreadContext.deliveryContract.itemTraits.map((trait) => (
-                                <span key={trait} className="rounded-full border border-white/80 bg-white px-3 py-1 text-[11px] font-semibold text-slate-700">{trait}</span>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="w-full max-w-sm rounded-2xl border border-white/80 bg-white/90 p-3">
-                          {marketThreadContext.deliveryContract.driver ? (
-                            <CivilCard
-                              size="rail"
-                              name={formatMarketDeliveryDriverName(marketThreadContext.deliveryContract.driver)}
-                              avatarAlt={formatMarketDeliveryDriverName(marketThreadContext.deliveryContract.driver)}
-                              avatarInitials={formatMarketDeliveryDriverName(marketThreadContext.deliveryContract.driver)}
-                              avatarSrc={marketThreadContext.deliveryContract.driver.avatarUrl || undefined}
-                              subtitle={marketThreadContext.deliveryContract.driver.handle ? `@${marketThreadContext.deliveryContract.driver.handle}` : 'Driver'}
-                            />
-                          ) : (
-                            <p className="text-sm text-slate-600">No driver is assigned yet.</p>
-                          )}
-                          {marketThreadContext.deliveryContract.pickupInstructions?.trim() ? <p className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-700">{marketThreadContext.deliveryContract.pickupInstructions.trim()}</p> : null}
-                          {activeMarketDeliveryChatHref ? (
-                            <Link
-                              href={activeMarketDeliveryChatHref}
-                              className="mt-3 inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-                            >
-                              Open delivery chat
-                            </Link>
-                          ) : null}
-                        </div>
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.08),rgba(14,165,233,0.08))] px-4 py-3 shadow-sm">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Civil Driver</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">{formatCompactDeliveryStatus(marketThreadContext.deliveryContract.status)}</p>
                       </div>
+                      {marketThreadContext.viewerIsSeller && activeMarketManageDriversHref ? (
+                        <Link
+                          href={activeMarketManageDriversHref}
+                          className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+                        >
+                          Manage Drivers
+                        </Link>
+                      ) : activeMarketDeliveryChatHref ? (
+                        <Link
+                          href={activeMarketDeliveryChatHref}
+                          className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
+                        >
+                          Open delivery chat
+                        </Link>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -4339,14 +4452,16 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                       marketThreadContext?.viewerIsSelectedBuyer &&
                         activeMarketThreadIsSelectedBuyer &&
                         marketThreadContext.listing.id === message.systemMeta.listingId &&
-                        !resolvedSelectedOption,
+                        !resolvedSelectedOption &&
+                        !activeMarketHasRelistPrompt,
                     )
+                    if (!canChoosePayment) return null
                     return (
                       <div key={message.id} className="flex w-full justify-center">
                         <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-4 text-center shadow-sm">
                           <p className="text-sm font-semibold text-slate-900">{message.body || 'How would you like to pay?'}</p>
                           <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                            {message.systemMeta.options.map((option) => {
+                            {sortMarketPaymentOptions(message.systemMeta.options).map((option) => {
                               const active = resolvedSelectedOption === option
                               return (
                                 <button
@@ -4410,6 +4525,34 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                                 Complete Civil Pay
                               </Link>
                             ) : null}
+                          </div>
+                          <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (message.messageType === 'system' && message.systemMeta?.kind === 'market_relist_prompt') {
+                    const canRelistFromPrompt = Boolean(
+                      marketThreadContext?.viewerIsSeller &&
+                        marketThreadContext.listing.id === message.systemMeta.listingId,
+                    )
+                    if (!canRelistFromPrompt) return null
+                    return (
+                      <div key={message.id} className="flex w-full justify-center">
+                        <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-4 text-center shadow-sm">
+                          <p className="text-sm font-semibold text-slate-900">{message.body || 'Would you like to notify the other buyers?'}</p>
+                          <div className="mt-3 flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleUnselectActiveMarketBuyer()
+                              }}
+                              disabled={marketUnselectBuyerSubmitting}
+                              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                            >
+                              {marketUnselectBuyerSubmitting ? 'Notifying…' : message.systemMeta.relistLabel}
+                            </button>
                           </div>
                           <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
                         </div>
@@ -4728,6 +4871,38 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
           >
             {marketUnselectBuyerSubmitting ? 'Relisting…' : 'Relist'}
+          </button>
+        </div>
+      </Modal>
+      <Modal
+        open={marketBuyerDeclineConfirmOpen}
+        onClose={() => {
+          if (marketBuyerDeclineSubmitting) return
+          setMarketBuyerDeclineConfirmOpen(false)
+        }}
+        title="Leave this sale?"
+        maxWidthClassName="max-w-lg"
+      >
+        <p className="text-sm text-slate-700">This will send the seller this message: "Sorry, I'm no longer interested in this item".</p>
+        {marketHeaderActionError ? <p className="mt-3 text-sm text-rose-700">{marketHeaderActionError}</p> : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setMarketBuyerDeclineConfirmOpen(false)}
+            disabled={marketBuyerDeclineSubmitting}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleDeclineActiveMarketSelection()
+            }}
+            disabled={marketBuyerDeclineSubmitting}
+            className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {marketBuyerDeclineSubmitting ? 'Updating…' : 'Confirm'}
           </button>
         </div>
       </Modal>

@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import CivilCard from '../../../_components/CivilCard'
 import DashboardShell from '../../../_components/DashboardShell'
+import Modal from '../../../_components/Modal'
 import VerifiedAvatar from '../../../_components/VerifiedAvatar'
 import { pushToast } from '../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../_lib/authModal'
@@ -46,6 +47,10 @@ type MessageSystemMeta = {
   selectedLabel: string
   civilPayUrl: string | null
   eTransferEmail: string | null
+} | {
+  kind: 'market_relist_prompt'
+  listingId: string
+  relistLabel: string
 }
 
 type MessagePayload = {
@@ -138,6 +143,15 @@ function formatMarketPaymentTypeLabel(value: MarketPaymentType) {
   }
 }
 
+function sortMarketPaymentOptions(options: MarketPaymentType[]) {
+  const rank: Record<MarketPaymentType, number> = {
+    cash_pickup: 0,
+    etransfer: 1,
+    civil_wallet: 2,
+  }
+  return [...options].sort((left, right) => rank[left] - rank[right])
+}
+
 function resolveSelectedMarketPaymentType(messages: MessagePayload[], listingId?: string | null) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const meta = messages[index]?.systemMeta
@@ -147,6 +161,17 @@ function resolveSelectedMarketPaymentType(messages: MessagePayload[], listingId?
     if (meta.kind === 'market_payment_prompt' && meta.selectedOption) return meta.selectedOption
   }
   return null
+}
+
+function hasPendingMarketRelistPrompt(messages: MessagePayload[], listingId?: string | null) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const meta = messages[index]?.systemMeta
+    if (!meta) continue
+    if (listingId && meta.listingId !== listingId) continue
+    if (meta.kind === 'market_relist_prompt') return true
+    if (meta.kind === 'market_payment_prompt' || meta.kind === 'market_payment_selected') return false
+  }
+  return false
 }
 
 export default function MarketChatThreadPageClient({ threadId }: { threadId: string }) {
@@ -159,11 +184,13 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [paymentSelectionSubmitting, setPaymentSelectionSubmitting] = useState<MarketPaymentType | null>(null)
+  const [relisting, setRelisting] = useState(false)
   const [inboxStatus, setInboxStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [activeInbox, setActiveInbox] = useState<MarketInboxItem[]>([])
   const [inactiveInbox, setInactiveInbox] = useState<MarketInboxItem[]>([])
   const [soldInbox, setSoldInbox] = useState<MarketInboxItem[]>([])
   const [markingNotInterested, setMarkingNotInterested] = useState(false)
+  const [confirmDeclineOpen, setConfirmDeclineOpen] = useState(false)
   const [isNotInterested, setIsNotInterested] = useState(false)
 
   const loadThread = async () => {
@@ -277,6 +304,7 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
     () => listing?.selectedPaymentType ?? resolveSelectedMarketPaymentType(messages, listing?.id ?? null),
     [listing?.id, listing?.selectedPaymentType, messages],
   )
+  const hasRelistPrompt = useMemo(() => hasPendingMarketRelistPrompt(messages, listing?.id ?? null), [listing?.id, messages])
 
   const threadIsInBuyerInbox = useMemo(() => {
     return (
@@ -463,11 +491,24 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
         method: 'POST',
         headers: { authorization: `Bearer ${token}` },
       })
+      const payload = (await res.json().catch(() => null)) as { error?: string; selectedBuyerDeclined?: boolean; messages?: MessagePayload[] | null } | null
 
       if (!res.ok) {
-        const payload = (await res.json().catch(() => null)) as { error?: string } | null
         pushToast(payload?.error ?? 'Unable to update interest right now.', 'error')
         return
+      }
+
+      if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
+        setMessages((prev) => {
+          const nextMessages = payload.messages!.filter((message) => !prev.some((entry) => entry.id === message.id))
+          if (nextMessages.length === 0) return prev
+          return [...prev, ...nextMessages]
+        })
+      }
+
+      if (payload?.selectedBuyerDeclined) {
+        setListing((prev) => (prev ? { ...prev, status: 'active', selectedPaymentType: null } : prev))
+        setViewerIsSelectedBuyer(false)
       }
 
       setIsNotInterested(true)
@@ -482,11 +523,47 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
           null
         return moved ? [moved, ...prev] : prev
       })
-      pushToast('Marked as not interested.', 'success')
+      setConfirmDeclineOpen(false)
+      await loadThread()
+      pushToast(payload?.selectedBuyerDeclined ? 'Civil asked the seller whether they want to relist the item.' : 'Marked as not interested.', 'success')
     } catch {
       pushToast('Unable to update interest right now.', 'error')
     } finally {
       setMarkingNotInterested(false)
+    }
+  }
+
+  const relistSelectedItem = async () => {
+    if (!listing?.id) return
+
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setRelisting(true)
+    try {
+      const res = await fetch(buildApiUrl(`/market/chats/item/${encodeURIComponent(listing.id)}/relist`), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ notify: true }),
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to relist this item right now.', 'error')
+        return
+      }
+
+      await loadThread()
+      pushToast('Item relisted.', 'success')
+    } catch {
+      pushToast('Unable to relist this item right now.', 'error')
+    } finally {
+      setRelisting(false)
     }
   }
 
@@ -597,11 +674,11 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
                 {!isNotInterested ? (
                   <button
                     type="button"
-                    onClick={() => void markNoLongerInterested()}
-                    disabled={markingNotInterested}
+                    onClick={() => setConfirmDeclineOpen(true)}
+                    disabled={markingNotInterested || hasRelistPrompt}
                     className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {markingNotInterested ? 'Updating…' : 'No longer interested'}
+                    {markingNotInterested ? 'Updating…' : viewerIsSelectedBuyer ? 'I no longer want this item' : 'No longer interested'}
                   </button>
                 ) : null}
               </div>
@@ -613,13 +690,14 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
             {messages.map((message) => {
               if (message.messageType === 'system' && message.systemMeta?.kind === 'market_payment_prompt') {
                 const resolvedSelectedOption = message.systemMeta.selectedOption ?? (listing?.id === message.systemMeta.listingId ? selectedPaymentType : null)
-                const canChoosePayment = Boolean(viewerIsSelectedBuyer && listing?.id === message.systemMeta.listingId && !resolvedSelectedOption)
+                const canChoosePayment = Boolean(viewerIsSelectedBuyer && listing?.id === message.systemMeta.listingId && !resolvedSelectedOption && !hasRelistPrompt)
+                if (!canChoosePayment) return null
                 return (
                   <div key={message.id} className="flex w-full justify-center">
                     <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-4 text-center shadow-sm">
                       <p className="text-sm font-semibold text-slate-900">{message.body || 'How would you like to pay?'}</p>
                       <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                        {message.systemMeta.options.map((option) => {
+                        {sortMarketPaymentOptions(message.systemMeta.options).map((option) => {
                           const active = resolvedSelectedOption === option
                           return (
                             <button
@@ -681,6 +759,31 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
                             Complete Civil Pay
                           </Link>
                         ) : null}
+                      </div>
+                      <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
+                    </div>
+                  </div>
+                )
+              }
+
+              if (message.messageType === 'system' && message.systemMeta?.kind === 'market_relist_prompt') {
+                const canRelistFromPrompt = Boolean(viewerIsSeller && listing?.id === message.systemMeta.listingId)
+                if (!canRelistFromPrompt) return null
+                return (
+                  <div key={message.id} className="flex w-full justify-center">
+                    <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-4 text-center shadow-sm">
+                      <p className="text-sm font-semibold text-slate-900">{message.body || 'Would you like to notify the other buyers?'}</p>
+                      <div className="mt-3 flex items-center justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void relistSelectedItem()
+                          }}
+                          disabled={relisting}
+                          className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
+                        >
+                          {relisting ? 'Notifying…' : message.systemMeta.relistLabel}
+                        </button>
                       </div>
                       <span className="mt-2 block text-[10px] uppercase tracking-wide text-slate-400">{formatTimestamp(message.createdAt)}</span>
                     </div>
@@ -755,6 +858,37 @@ export default function MarketChatThreadPageClient({ threadId }: { threadId: str
           </div>
         </section>
       ) : null}
+      <Modal
+        open={confirmDeclineOpen}
+        onClose={() => {
+          if (markingNotInterested) return
+          setConfirmDeclineOpen(false)
+        }}
+        title="Leave this sale?"
+        maxWidthClassName="max-w-lg"
+      >
+        <p className="text-sm text-slate-700">This will send the seller this message: "Sorry, I'm no longer interested in this item".</p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setConfirmDeclineOpen(false)}
+            disabled={markingNotInterested}
+            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void markNoLongerInterested()
+            }}
+            disabled={markingNotInterested}
+            className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {markingNotInterested ? 'Updating…' : 'Confirm'}
+          </button>
+        </div>
+      </Modal>
     </DashboardShell>
   )
 }

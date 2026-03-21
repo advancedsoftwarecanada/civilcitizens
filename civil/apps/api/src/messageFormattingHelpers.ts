@@ -38,7 +38,13 @@ type MarketPaymentSelectedSystemMeta = {
   eTransferEmail: string | null
 }
 
-type MessageSystemMeta = MessageCallSystemMeta | MarketPaymentPromptSystemMeta | MarketPaymentSelectedSystemMeta
+type MarketRelistPromptSystemMeta = {
+  kind: 'market_relist_prompt'
+  listingId: string
+  relistLabel: string
+}
+
+type MessageSystemMeta = MessageCallSystemMeta | MarketPaymentPromptSystemMeta | MarketPaymentSelectedSystemMeta | MarketRelistPromptSystemMeta
 
 type ParentConversationMember = {
   id: string
@@ -131,6 +137,18 @@ export function createMessageFormattingHelpers(deps: MessageFormattingDeps) {
         selectedLabel: selectedLabel.trim(),
         civilPayUrl: typeof typed.civilPayUrl === 'string' && typed.civilPayUrl.trim() ? typed.civilPayUrl.trim() : null,
         eTransferEmail: typeof typed.eTransferEmail === 'string' && typed.eTransferEmail.trim() ? typed.eTransferEmail.trim() : null,
+      }
+    }
+
+    if (typed.kind === 'market_relist_prompt') {
+      const listingId = typed.listingId
+      const relistLabel = typed.relistLabel
+      if (typeof listingId !== 'string' || !listingId.trim()) return null
+      if (typeof relistLabel !== 'string' || !relistLabel.trim()) return null
+      return {
+        kind: 'market_relist_prompt',
+        listingId,
+        relistLabel: relistLabel.trim(),
       }
     }
 

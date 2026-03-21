@@ -186,6 +186,46 @@ function normalizeConnectStatus(status: Partial<WalletConnectStatus> | null | un
   }
 }
 
+function getStripeVerificationMessage(status: WalletConnectStatus | null, loading: boolean) {
+  if (loading) {
+    return {
+      tone: 'text-slate-500',
+      text: 'Checking Stripe verification status…',
+      success: false,
+    }
+  }
+
+  if (status?.payoutsEnabled) {
+    return {
+      tone: 'text-emerald-700',
+      text: 'Stripe verification complete. Deposits to your bank account are enabled.',
+      success: true,
+    }
+  }
+
+  if (status?.accountId && status.detailsSubmitted) {
+    return {
+      tone: 'text-amber-700',
+      text: 'Stripe verification submitted. Stripe may take a few hours to verify your account, please be patient and check back later.',
+      success: false,
+    }
+  }
+
+  if (status?.accountId) {
+    return {
+      tone: 'text-amber-700',
+      text: 'Stripe still needs a little more information before payouts can be enabled.',
+      success: false,
+    }
+  }
+
+  return {
+    tone: 'text-slate-500',
+    text: 'Set up Stripe payouts to deposit Civil Credits to your bank account.',
+    success: false,
+  }
+}
+
 export default function WalletPage() {
   const viewer = useViewerStore((state) => state.me)
   const [loading, setLoading] = useState(true)
@@ -367,7 +407,7 @@ export default function WalletPage() {
         if (latestStatus?.payoutsEnabled) {
           pushToast('Stripe payouts are now enabled.', 'success')
         } else {
-          pushToast('Stripe still needs a little more information before payouts can be enabled.', 'warning', 6000)
+          pushToast('Stripe still needs a little more information before payouts can be enabled. Note, some times Stripe may take a few hours to verify, please be patient and check back later.', 'warning', 9000)
         }
       } else {
         pushToast('Stripe onboarding reopened.', 'info')
@@ -450,6 +490,10 @@ export default function WalletPage() {
       : connectStatus?.accountId
         ? 'Finish Payout Setup'
         : 'Set Up Payouts'
+  const stripeVerificationMessage = useMemo(
+    () => getStripeVerificationMessage(connectStatus, connectLoading),
+    [connectLoading, connectStatus],
+  )
   const rightRail = (
     <div className="space-y-4">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -529,6 +573,12 @@ export default function WalletPage() {
             >
               {bankActionLabel}
             </button>
+          </div>
+          <div className="w-full">
+            <p className={`flex items-center gap-2 text-sm ${stripeVerificationMessage.tone}`}>
+              {stripeVerificationMessage.success ? <HiOutlineCheckCircle className="h-4 w-4 shrink-0" /> : null}
+              <span>{stripeVerificationMessage.text}</span>
+            </p>
           </div>
         </div>
       </section>

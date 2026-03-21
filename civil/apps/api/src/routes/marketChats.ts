@@ -63,6 +63,14 @@ function buildMarketPaymentPromptBody() {
   return 'How would you like to pay?'
 }
 
+function buildMarketRelistPromptBody() {
+  return 'The selected buyer no longer wants this item. Your listing is active again. Would you like to notify the other buyers?'
+}
+
+function buildMarketBuyerDeclinedBody() {
+  return "Sorry, I'm no longer interested in this item"
+}
+
 function buildMarketPaymentPromptMeta(listingId: string, options: MarketPaymentType[]): Prisma.InputJsonValue {
   return {
     kind: 'market_payment_prompt',
@@ -85,6 +93,14 @@ function buildMarketPaymentSelectedMeta(args: {
     selectedLabel: formatMarketPaymentTypeLabel(args.selectedOption),
     civilPayUrl: args.civilPayUrl ?? null,
     eTransferEmail: args.eTransferEmail ?? null,
+  } satisfies Record<string, unknown> as Prisma.InputJsonValue
+}
+
+function buildMarketRelistPromptMeta(listingId: string): Prisma.InputJsonValue {
+  return {
+    kind: 'market_relist_prompt',
+    listingId,
+    relistLabel: 'Notify other buyers',
   } satisfies Record<string, unknown> as Prisma.InputJsonValue
 }
 
@@ -800,20 +816,125 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           userId,
           thread: { contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE },
         },
-        select: { threadId: true },
+        select: { threadId: true, thread: { select: { contextId: true } } },
       })
       if (!membership) return reply.code(404).send({ error: 'market_chat_not_found' })
 
       await deps.ensureCitizenMarketplaceTables()
 
-      await prisma.$executeRaw`
-        INSERT INTO citizen_market_chat_interest (thread_id, user_id, interested, updated_at)
-        VALUES (${params.data.threadId}, ${userId}, FALSE, NOW())
-        ON CONFLICT (thread_id, user_id)
-        DO UPDATE SET interested = FALSE, updated_at = NOW()
+      const listingId = membership.thread.contextId
+      const listingRows = await prisma.$queryRaw<Array<{
+        id: string
+        seller_user_id: string
+        selected_buyer_user_id: string | null
+        status: string
+      }>>`
+        SELECT id, seller_user_id, selected_buyer_user_id, status
+        FROM citizen_market_listing
+        WHERE id = ${listingId}
+        LIMIT 1
       `
 
-      return reply.send({ success: true, interested: false })
+      const listing = listingRows[0]
+      const isSelectedBuyerDecline = Boolean(
+        listing &&
+          listing.selected_buyer_user_id === userId &&
+          String(listing.status || '').toLowerCase() === 'pending',
+      )
+
+      let createdBuyerMessage: any = null
+      let createdPrompt: any = null
+      let threadParticipantIds: string[] = []
+
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.$executeRaw`
+          INSERT INTO citizen_market_chat_interest (thread_id, user_id, interested, updated_at)
+          VALUES (${params.data.threadId}, ${userId}, FALSE, NOW())
+          ON CONFLICT (thread_id, user_id)
+          DO UPDATE SET interested = FALSE, updated_at = NOW()
+        `
+
+        const thread = await tx.messageThread.findUnique({
+          where: { id: params.data.threadId },
+          select: { id: true, participants: { select: { userId: true } } },
+        })
+        if (!thread) return
+
+        threadParticipantIds = thread.participants.map((participant: { userId: string }) => participant.userId)
+
+        createdBuyerMessage = await tx.message.create({
+          data: {
+            threadId: thread.id,
+            senderId: userId,
+            body: buildMarketBuyerDeclinedBody(),
+            messageType: MessageType.text,
+          },
+          select: deps.MESSAGE_SELECT,
+        })
+
+        await tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: createdBuyerMessage.createdAt } })
+        await tx.messageParticipant.updateMany({
+          where: { threadId: thread.id, userId },
+          data: { lastActivityAt: createdBuyerMessage.createdAt, lastReadAt: createdBuyerMessage.createdAt },
+        })
+        await tx.messageParticipant.updateMany({
+          where: { threadId: thread.id, userId: { not: userId } },
+          data: { lastActivityAt: createdBuyerMessage.createdAt },
+        })
+
+        if (!isSelectedBuyerDecline || !listing) return
+
+        await tx.$executeRaw`
+          UPDATE citizen_market_listing
+          SET status = 'active',
+              selected_buyer_user_id = NULL,
+              selected_payment_type = NULL,
+              selected_payment_at = NULL,
+              updated_at = NOW()
+          WHERE id = ${listing.id}
+        `
+
+        await tx.$executeRaw`
+          DELETE FROM citizen_market_delivery_contract
+          WHERE listing_id = ${listing.id}
+        `
+
+        const civilSystemUser = await ensureCivilSystemUser(tx)
+        createdPrompt = await createMarketSystemMessage({
+          tx,
+          threadId: thread.id,
+          senderId: civilSystemUser.id,
+          actingUserId: userId,
+          body: buildMarketRelistPromptBody(),
+          attachments: buildMarketRelistPromptMeta(listing.id),
+          select: deps.MESSAGE_SELECT,
+        })
+      })
+
+      const createdMessages = [createdBuyerMessage, createdPrompt].filter(Boolean)
+
+      if (createdMessages.length && threadParticipantIds.length) {
+        await Promise.all(
+          createdMessages.flatMap((createdMessage) =>
+            threadParticipantIds.map((participantUserId) =>
+              deps.dispatchRealtimeEvent(participantUserId, {
+                type: 'message.created',
+                data: {
+                  threadId: params.data.threadId,
+                  message: deps.formatMessage(createdMessage, participantUserId),
+                },
+              }),
+            ),
+          ),
+        )
+      }
+
+      return reply.send({
+        success: true,
+        interested: false,
+        selectedBuyerDeclined: isSelectedBuyerDecline,
+        messages: createdMessages.map((message) => deps.formatMessage(message, userId)),
+      })
     }),
   )
 
@@ -830,8 +951,8 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
 
       await deps.ensureCitizenMarketplaceTables()
 
-      const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; is_active: boolean; moderation_status: string }>>`
-        SELECT id, seller_user_id, status, is_active, moderation_status
+      const listingRows = await prisma.$queryRaw<Array<{ id: string; seller_user_id: string; status: string; is_active: boolean; moderation_status: string; selected_buyer_user_id: string | null }>>`
+        SELECT id, seller_user_id, status, is_active, moderation_status, selected_buyer_user_id
         FROM citizen_market_listing
         WHERE id = ${params.data.listingId}
         LIMIT 1
@@ -843,10 +964,25 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
         return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_LISTING') })
       }
 
+      const selectedBuyerThread = listing.selected_buyer_user_id
+        ? await prisma.messageThread.findFirst({
+            where: {
+              contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
+              contextId: listing.id,
+              participants: {
+                some: { userId: listing.selected_buyer_user_id },
+              },
+            },
+            select: { id: true },
+          })
+        : null
+
       await prisma.$executeRaw`
         UPDATE citizen_market_listing
         SET status = 'active',
             selected_buyer_user_id = NULL,
+            selected_payment_type = NULL,
+            selected_payment_at = NULL,
             updated_at = NOW()
         WHERE id = ${listing.id}
           AND seller_user_id = ${userId}
@@ -863,17 +999,36 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
             contextType: deps.MARKET_LISTING_CHAT_CONTEXT_TYPE,
             contextId: listing.id,
             participants: { some: { userId } },
+            ...(selectedBuyerThread?.id ? { id: { not: selectedBuyerThread.id } } : {}),
           },
           select: { id: true, participants: { select: { userId: true } } },
           orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { id: 'desc' }],
           take: 200,
         })
 
-        const bodyText = deps.sanitizePlainText("This item is available again if you're interested.").trim()
+        const uninterestedThreadIds = threads.length
+          ? new Set(
+              (
+                await prisma.$queryRaw<Array<{ thread_id: string }>>`
+                  SELECT DISTINCT thread_id
+                  FROM citizen_market_chat_interest
+                  WHERE thread_id IN (${Prisma.join(threads.map((thread) => thread.id))})
+                    AND user_id <> ${userId}
+                    AND interested = FALSE
+                `
+              )
+                .map((row) => String(row.thread_id || ''))
+                .filter(Boolean),
+            )
+          : new Set<string>()
+
+        const eligibleThreads = threads.filter((thread) => !uninterestedThreadIds.has(thread.id))
+
+        const bodyText = deps.sanitizePlainText('I have relisted this item for sale, if you were still interested').trim()
 
         const createdMessages = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           const messageRecords: Array<{ threadId: string; record: any; participants: Array<{ userId: string }> }> = []
-          for (const thread of threads) {
+          for (const thread of eligibleThreads) {
             const created = await tx.message.create({
               data: {
                 threadId: thread.id,
