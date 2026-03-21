@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { Redis as IORedis } from 'ioredis'
 import { prisma } from '@civil/db'
 import { Prisma } from '@prisma/client'
+import { settleExpiredDriveRideEscrows } from './driveRides.js'
 
 const NotificationAckInput = z
   .object({
@@ -69,6 +70,7 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
       const { limit, cursor } = parse.data
+      await settleExpiredDriveRideEscrows()
       const baseWhere: Prisma.NotificationWhereInput = {
         userId,
         type: { notIn: [...deps.NOTIFICATION_FEED_EXCLUDED_TYPES] },

@@ -262,7 +262,14 @@ export default function NotificationsClient() {
             if (item.id !== notification.id) return item
             const nextPayload = {
               ...((item.payload ?? {}) as Record<string, unknown>),
-              status: action === 'accept' ? 'accepted' : 'rejected',
+              status:
+                notification.type === 'drive_ride_complete_confirmation'
+                  ? action === 'accept'
+                    ? 'confirmed'
+                    : 'reported_issue'
+                  : action === 'accept'
+                    ? 'accepted'
+                    : 'rejected',
                   reciprocalCompleted: notification.type === 'profile_family_invite' ? Boolean(options?.reciprocalRelationship) : item.payload?.reciprocalCompleted,
             }
             return {
@@ -279,6 +286,8 @@ export default function NotificationsClient() {
           pushToast(action === 'accept' ? 'Sponsor invite accepted.' : 'Sponsor invite declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'delivery_contract_bid') {
           pushToast(action === 'accept' ? 'Delivery bid accepted.' : 'Delivery bid declined.', action === 'accept' ? 'success' : 'info')
+        } else if (notification.type === 'drive_ride_complete_confirmation') {
+          pushToast(action === 'accept' ? 'Ride completion confirmed.' : 'Ride issue reported to support.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'profile_family_invite') {
           pushToast(action === 'accept' ? 'Family relationship accepted.' : 'Family relationship declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'family_child_friend_request') {

@@ -1,9 +1,9 @@
-export type MessagesNavSection = 'friends' | 'family' | 'network' | 'market' | 'groups'
+export type MessagesNavSection = 'friends' | 'family' | 'network' | 'market' | 'groups' | 'drivers'
 
 export const MESSAGES_NAV_STORAGE_KEY = 'civil.messages.nav.active'
 export const DEFAULT_MESSAGES_NAV_SECTION: MessagesNavSection = 'friends'
 
-const MESSAGES_NAV_SECTIONS = new Set<MessagesNavSection>(['friends', 'family', 'network', 'market', 'groups'])
+const MESSAGES_NAV_SECTIONS = new Set<MessagesNavSection>(['friends', 'family', 'network', 'market', 'groups', 'drivers'])
 
 export function isMessagesNavSection(value: unknown): value is MessagesNavSection {
   return typeof value === 'string' && MESSAGES_NAV_SECTIONS.has(value as MessagesNavSection)

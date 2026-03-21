@@ -386,6 +386,50 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       const questionPreview = typeof payload?.questionPreview === 'string' ? payload.questionPreview.trim() : ''
       return { title: 'Poll results available', message: questionPreview ? `${actorLabel}'s poll is ready: ${questionPreview}` : `${actorLabel}'s poll results are now available.` }
     }
+    if (record.type === 'drive_ride_offer') {
+      const payload = readPayloadRecord(record.payload)
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel =
+        typeof amountCents === 'number'
+          ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+          : ''
+      return {
+        title: 'New ride offer',
+        message: amountLabel ? `${actorLabel} offered you a ride for ${amountLabel}.` : `${actorLabel} offered you a ride.`,
+      }
+    }
+    if (record.type === 'drive_ride_offer_accepted') {
+      const payload = readPayloadRecord(record.payload)
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel =
+        typeof amountCents === 'number'
+          ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+          : ''
+      return {
+        title: 'Ride offer accepted',
+        message: amountLabel ? `${actorLabel} accepted your ride offer for ${amountLabel}.` : `${actorLabel} accepted your ride offer.`,
+      }
+    }
+    if (record.type === 'drive_ride_complete_confirmation') {
+      return {
+        title: 'Trip marked complete',
+        message: `${actorLabel} marked your trip complete.`,
+      }
+    }
+    if (record.type === 'drive_ride_complete_response') {
+      const payload = readPayloadRecord(record.payload)
+      const status = typeof payload?.status === 'string' ? payload.status.trim().toLowerCase() : ''
+      if (status === 'confirmed') {
+        return { title: 'Trip confirmed', message: `${actorLabel} confirmed the trip is complete.` }
+      }
+      if (status === 'reported_issue') {
+        return { title: 'Trip issue reported', message: `${actorLabel} reported an issue with the trip.` }
+      }
+      if (status === 'auto_completed') {
+        return { title: 'Trip auto-completed', message: `The trip auto-completed after ${actorLabel} did not report an issue.` }
+      }
+      return { title: 'Trip completion updated', message: `${actorLabel} responded to the trip completion request.` }
+    }
     if (record.type === FAMILY_NOTIFICATION_TYPES.MEDIA_CHANGED) {
       const payload = readPayloadRecord(record.payload)
       const childDisplayName = typeof payload?.childDisplayName === 'string' ? payload.childDisplayName.trim() : 'Your child'

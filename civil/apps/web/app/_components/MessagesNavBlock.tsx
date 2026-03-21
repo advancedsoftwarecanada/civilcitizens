@@ -13,9 +13,10 @@ import {
 const NAV_ITEMS: Array<{ key: MessagesNavSection; label: string; href: string }> = [
   { key: 'family', label: 'Family', href: '/messages?inbox=family' },
   { key: 'friends', label: 'Friends', href: '/messages?inbox=friends' },
-  { key: 'network', label: 'Network', href: '/messages?inbox=network' },
   { key: 'groups', label: 'Groups', href: '/messages?inbox=groups' },
+  { key: 'network', label: 'Network', href: '/messages?inbox=network' },
   { key: 'market', label: 'Market', href: '/messages?inbox=market' },
+  { key: 'drivers', label: 'Drivers', href: '/messages?inbox=drivers' },
 ]
 
 type MessagesNavBlockProps = {
@@ -73,7 +74,20 @@ export default function MessagesNavBlock({ active, className, onActiveChange, un
           </Link>
         ) : null}
       </div>
-      <div className={clsx('grid gap-2', allowedItems.length >= 5 ? 'grid-cols-5' : allowedItems.length === 4 ? 'grid-cols-4' : allowedItems.length === 3 ? 'grid-cols-3' : 'grid-cols-2')}>
+      <div
+        className={clsx(
+          'grid gap-2',
+          allowedItems.length >= 6
+            ? 'grid-cols-3'
+            : allowedItems.length === 5
+              ? 'grid-cols-5'
+              : allowedItems.length === 4
+                ? 'grid-cols-4'
+                : allowedItems.length === 3
+                  ? 'grid-cols-3'
+                  : 'grid-cols-2',
+        )}
+      >
         {allowedItems.map((item) => {
           const isActive = item.key === resolvedActive
           const unreadCount = Math.max(0, Number(unreadCounts?.[item.key] ?? 0) || 0)

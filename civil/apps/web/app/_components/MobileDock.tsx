@@ -528,7 +528,7 @@ export default function MobileDock() {
         <div className="space-y-4">
           <MessagesNavBlock
             active="friends"
-            visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+            visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
           />
           <RightRail hideCommunities showPendingFriendRequests />
         </div>
@@ -570,7 +570,7 @@ export default function MobileDock() {
           <div className="space-y-4">
             <MessagesNavBlock
               active={userRelationshipRoute.kind === 'connections' ? 'network' : 'friends'}
-              visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+              visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
               footerAction={effectiveViewer?.handle ? { label: 'My Contacts', href: `/u/${effectiveViewer.handle}/contacts` } : undefined}
             />
             <RightRail

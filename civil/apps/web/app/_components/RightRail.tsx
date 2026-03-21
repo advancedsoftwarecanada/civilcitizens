@@ -315,6 +315,7 @@ export function RightRail({
   showRsvps = false,
   organizationLinkTarget = 'org',
   organizationBlockVariant = 'combined',
+  showDriveCallout = true,
   hideContactsAndCommunities = false,
   hideContacts = false,
   hideCommunities = false,
@@ -327,6 +328,7 @@ export function RightRail({
   showRsvps?: boolean
   organizationLinkTarget?: 'org' | 'chat'
   organizationBlockVariant?: 'combined' | 'followed'
+  showDriveCallout?: boolean
   hideContactsAndCommunities?: boolean
   hideContacts?: boolean
   hideCommunities?: boolean
@@ -373,7 +375,7 @@ export function RightRail({
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
   const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps)
   const shouldLoadWorkApplications = mode === 'work'
-  const shouldLoadDeliverySummary = mode === 'drive'
+  const shouldLoadDeliverySummary = mode === 'drive' && showDriveCallout
   const shouldLoadHomeRail = !hideSocialBlocks
   const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
 
@@ -1342,7 +1344,7 @@ export function RightRail({
         </>
       ) : null}
 
-      {mode === 'drive' ? (
+      {mode === 'drive' && showDriveCallout ? (
         <Block title="Drive and Deliver for Civil" action={{ label: deliverySummaryActive ? 'Open Drive' : 'Get started', href: deliverySummaryActive ? '/drive' : '/drive/onboarding' }}>
             <div className="rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.10),rgba(14,165,233,0.10))] p-4">
               <div className="flex items-start gap-3">

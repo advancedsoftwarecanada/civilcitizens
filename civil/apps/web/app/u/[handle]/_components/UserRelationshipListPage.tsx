@@ -288,7 +288,7 @@ export default function UserRelationshipListPage({ handle, kind, title }: Props)
     <div className="space-y-4">
       {isContactKind ? (
         <MessagesNavBlock
-          visibleItems={hasFamilyProfilesAvailable(viewer) ? ['friends', 'family', 'network', 'groups', 'market'] : undefined}
+          visibleItems={hasFamilyProfilesAvailable(viewer) ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
           footerAction={viewer?.handle ? { label: 'My Contacts', href: `/u/${viewer.handle}/contacts` } : undefined}
         />
       ) : null}

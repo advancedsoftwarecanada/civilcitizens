@@ -13,7 +13,6 @@ import {
   HiOutlineClock,
   HiOutlineFlag,
   HiOutlineMapPin,
-  HiOutlineTruck,
   HiOutlineXMark,
 } from 'react-icons/hi2'
 import { calculateDistanceKm, fetchDrivingRoute, type DrivingRoute, type DrivingRouteStep } from '../../_lib/addressSearch'
@@ -24,12 +23,31 @@ type MapPoint = {
   latitude: number
   longitude: number
   label: string
+  kind?: 'pickup' | 'waypoint'
 }
 
 type AddressDirectionsMapProps = {
   destination: MapPoint | null
   origin?: MapPoint | null
   routeCoordinates?: Array<[number, number]> | null
+  approachRouteCoordinates?: Array<[number, number]> | null
+  riderRouteCoordinates?: Array<[number, number]> | null
+  waypoints?: MapPoint[] | null
+  showOriginAvatar?: boolean
+  originAvatarUrl?: string | null
+  originAvatarLabel?: string | null
+  originAvatarFallbackLabel?: string | null
+  avatarMarkers?: Array<{
+    id: string
+    point: MapPoint
+    avatarUrl?: string | null
+    label: string
+    fallbackLabel: string
+  }> | null
+  pulseRouteLine?: boolean
+  pulseApproachRoute?: boolean
+  idleCameraMode?: 'always-fit' | 'fit-once-per-key'
+  idleViewportKey?: string | null
   onNavigationOriginChange?: ((origin: MapPoint | null) => void) | undefined
 }
 
@@ -77,6 +95,14 @@ const LIVE_MARKER_ANIMATION_MS = 900
 const ROUTE_LINE_PULSE_DURATION_MS = 2200
 const ROUTE_LINE_BASE_RGB = { red: 37, green: 99, blue: 235 }
 const ROUTE_LINE_PULSE_RGB = { red: 96, green: 165, blue: 250 }
+const ROUTE_LINE_STATIC_COLOR = '#2563eb'
+const ROUTE_LINE_WIDTH = 7
+const RIDER_ROUTE_LINE_WIDTH = 5
+const RIDER_ROUTE_LINE_COLOR = '#10b981'
+const APPROACH_ROUTE_LINE_WIDTH = 6
+const APPROACH_ROUTE_LINE_COLOR = '#f59e0b'
+const AVATAR_OVERLAP_THRESHOLD_METERS = 20
+const AVATAR_OVERLAP_SPACING_METERS = 18
 
 function normalizeHeading(value: number) {
   const normalized = value % 360
@@ -92,6 +118,40 @@ function resolveRouteLineColor(progress: number) {
   const green = interpolateChannel(ROUTE_LINE_BASE_RGB.green, ROUTE_LINE_PULSE_RGB.green, progress)
   const blue = interpolateChannel(ROUTE_LINE_BASE_RGB.blue, ROUTE_LINE_PULSE_RGB.blue, progress)
   return `rgb(${red}, ${green}, ${blue})`
+}
+
+function resolveApproachRouteLineColor(progress: number) {
+  const start = { red: 245, green: 158, blue: 11 }
+  const end = { red: 250, green: 204, blue: 21 }
+  const red = interpolateChannel(start.red, end.red, progress)
+  const green = interpolateChannel(start.green, end.green, progress)
+  const blue = interpolateChannel(start.blue, end.blue, progress)
+  return `rgb(${red}, ${green}, ${blue})`
+}
+
+function renderLiveMarkerContents(
+  element: HTMLDivElement,
+  options: {
+    avatarUrl: string | null
+    alt: string
+    fallbackLabel: string
+  },
+) {
+  element.replaceChildren()
+
+  if (options.avatarUrl) {
+    const image = document.createElement('img')
+    image.src = options.avatarUrl
+    image.alt = options.alt
+    image.className = 'h-full w-full object-cover'
+    element.appendChild(image)
+    return
+  }
+
+  const fallback = document.createElement('div')
+  fallback.className = 'flex h-full w-full items-center justify-center bg-emerald-100 text-sm font-semibold text-slate-900'
+  fallback.textContent = options.fallbackLabel
+  element.appendChild(fallback)
 }
 
 function readHeadingFromOrientationEvent(event: Event) {
@@ -126,6 +186,17 @@ function formatArrivalTime(durationSeconds: number) {
   })
 }
 
+function offsetPointByMeters(point: { latitude: number; longitude: number }, eastMeters: number, northMeters = 0) {
+  const latitudeRadians = (point.latitude * Math.PI) / 180
+  const metersPerDegreeLatitude = 111_320
+  const metersPerDegreeLongitude = Math.max(1, Math.cos(latitudeRadians) * metersPerDegreeLatitude)
+
+  return {
+    latitude: point.latitude + northMeters / metersPerDegreeLatitude,
+    longitude: point.longitude + eastMeters / metersPerDegreeLongitude,
+  }
+}
+
 function blurActiveEditableElement() {
   if (typeof document === 'undefined') return
   const activeElement = document.activeElement
@@ -136,6 +207,52 @@ function blurActiveEditableElement() {
 
 function calculateDistanceMeters(origin: { latitude: number; longitude: number }, destination: { latitude: number; longitude: number }) {
   return calculateDistanceKm(origin, destination) * 1000
+}
+
+function resolveDisplayMarkerPoints(markers: Array<{ id: string; point: MapPoint }>) {
+  const resolved = new Map<string, MapPoint>()
+  const remaining = [...markers]
+
+  while (remaining.length > 0) {
+    const seed = remaining.shift()
+    if (!seed) break
+
+    const group = [seed]
+    let changed = true
+
+    while (changed) {
+      changed = false
+      for (let index = remaining.length - 1; index >= 0; index -= 1) {
+        const candidate = remaining[index]
+        if (!candidate) continue
+        const isNearGroup = group.some(
+          (member) => calculateDistanceMeters(member.point, candidate.point) <= AVATAR_OVERLAP_THRESHOLD_METERS,
+        )
+        if (!isNearGroup) continue
+        group.push(candidate)
+        remaining.splice(index, 1)
+        changed = true
+      }
+    }
+
+    if (group.length === 1) {
+      resolved.set(seed.id, seed.point)
+      continue
+    }
+
+    const middleIndex = (group.length - 1) / 2
+    group.forEach((entry, index) => {
+      const eastOffsetMeters = (index - middleIndex) * AVATAR_OVERLAP_SPACING_METERS
+      const adjustedPoint = offsetPointByMeters(entry.point, eastOffsetMeters)
+      resolved.set(entry.id, {
+        ...entry.point,
+        latitude: adjustedPoint.latitude,
+        longitude: adjustedPoint.longitude,
+      })
+    })
+  }
+
+  return resolved
 }
 
 function pickNextStep(route: DrivingRoute | null) {
@@ -295,22 +412,46 @@ function resolveDirectionIcon(step: DrivingRouteStep | null): IconType {
 }
 
 export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, AddressDirectionsMapProps>(function AddressDirectionsMap(
-  { destination, origin, routeCoordinates, onNavigationOriginChange }: AddressDirectionsMapProps,
+  {
+    destination,
+    origin,
+    routeCoordinates,
+    approachRouteCoordinates,
+    riderRouteCoordinates,
+    waypoints,
+    showOriginAvatar = false,
+    originAvatarUrl = null,
+    originAvatarLabel = null,
+    originAvatarFallbackLabel = null,
+    avatarMarkers = null,
+    pulseRouteLine = true,
+    pulseApproachRoute = false,
+    idleCameraMode = 'always-fit',
+    idleViewportKey = null,
+    onNavigationOriginChange,
+  }: AddressDirectionsMapProps,
   ref,
 ) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any>(null)
   const mapLibreRef = useRef<any>(null)
+  const initialViewRef = useRef<{
+    center: [number, number]
+    zoom: number
+  } | null>(null)
   const watchIdRef = useRef<number | null>(null)
   const routeAbortRef = useRef<AbortController | null>(null)
   const routeRequestAtRef = useRef<number>(0)
   const routePointRef = useRef<MapPoint | null>(null)
   const noticeTimeoutRef = useRef<number | null>(null)
   const liveMarkerRef = useRef<any>(null)
+  const avatarMarkerRefs = useRef<Map<string, any>>(new Map())
   const liveMarkerAnimationRef = useRef<number | null>(null)
   const routeLinePulseAnimationRef = useRef<number | null>(null)
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null)
+  const hasAppliedIdleFitRef = useRef(false)
+  const lastIdleViewportKeyRef = useRef<string | null>(null)
   const navStatusRef = useRef<'idle' | 'starting' | 'active'>('idle')
   const routeOverviewActiveRef = useRef(false)
   const followZoomRef = useRef<number | null>(null)
@@ -330,6 +471,16 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null)
   const [confirmExitOpen, setConfirmExitOpen] = useState(false)
   const viewerAvatarUrl = useViewerStore((state) => state.me?.avatarUrl ?? null)
+  const resolvedOriginAvatarUrl = originAvatarUrl ?? viewerAvatarUrl
+  const resolvedOriginAvatarLabel = originAvatarLabel?.trim() || (originAvatarUrl ? 'Driver location' : 'Your location')
+  const resolvedOriginAvatarFallbackLabel = originAvatarFallbackLabel?.trim() || 'You'
+
+  if (!initialViewRef.current) {
+    initialViewRef.current = {
+      center: destination ? [destination.longitude, destination.latitude] : [-79.3832, 43.6532],
+      zoom: destination ? (origin ? IDLE_ZOOM_WITH_ORIGIN : 13.4) : 5,
+    }
+  }
 
   useEffect(() => {
     navStatusRef.current = navStatus
@@ -345,6 +496,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   const activeRouteCoordinates = (navStatus === 'active' || navStatus === 'starting') && navigationRoute?.geometry?.length
     ? navigationRoute.geometry
     : routeCoordinates ?? null
+  const previewApproachRouteCoordinates = navStatus === 'idle' ? approachRouteCoordinates ?? null : null
   const activeBearing = useMemo(() => {
     if (typeof activeOrigin?.latitude === 'number' && typeof activeOrigin.longitude === 'number') {
       const routeBearing = resolveRouteFollowBearing(activeOrigin, activeRouteCoordinates)
@@ -388,8 +540,6 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     [nextTurnPreview],
   )
   const currentStreetLabel = navigationStep?.streetName || 'Current street'
-  const currentSegmentDistance = nextTurnPreview?.distanceMeters ?? navigationRoute?.distanceMeters ?? navigationStep?.distanceMeters ?? 0
-
   const refreshMapViewport = useCallback(() => {
     if (typeof window === 'undefined') return
 
@@ -695,6 +845,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
 
   useEffect(() => {
     let cancelled = false
+    const storedAvatarMarkers = avatarMarkerRefs.current
 
     void (async () => {
       if (!containerRef.current || mapRef.current) return
@@ -705,8 +856,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       const map = new maplibregl.Map({
         container: containerRef.current,
         style: ADDRESS_MAP_STYLE as any,
-        center: destination ? [destination.longitude, destination.latitude] : [-79.3832, 43.6532],
-        zoom: destination ? (origin ? IDLE_ZOOM_WITH_ORIGIN : 13.4) : 5,
+        center: initialViewRef.current?.center ?? [-79.3832, 43.6532],
+        zoom: initialViewRef.current?.zoom ?? 5,
         pitch: 0,
         bearing: 0,
         attributionControl: false,
@@ -737,13 +888,29 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           },
         })
 
+        map.addSource('address-rider-route', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [],
+          },
+        })
+
+        map.addSource('address-approach-route', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [],
+          },
+        })
+
         map.addLayer({
           id: 'address-point-rings',
           type: 'circle',
           source: 'address-points',
           paint: {
             'circle-radius': 14,
-            'circle-color': ['match', ['get', 'kind'], 'origin', 'rgba(2, 132, 199, 0.18)', 'start', 'rgba(37, 99, 235, 0.18)', 'rgba(213, 43, 30, 0.18)'],
+            'circle-color': ['match', ['get', 'kind'], 'origin', 'rgba(2, 132, 199, 0.18)', 'start', 'rgba(37, 99, 235, 0.18)', 'pickup', 'rgba(16, 185, 129, 0.22)', 'rgba(213, 43, 30, 0.18)'],
           },
         })
 
@@ -753,24 +920,24 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           source: 'address-points',
           paint: {
             'circle-radius': 7,
-            'circle-color': ['match', ['get', 'kind'], 'origin', '#0284c7', 'start', '#2563eb', '#d52b1e'],
+            'circle-color': ['match', ['get', 'kind'], 'origin', '#0284c7', 'start', '#2563eb', 'pickup', '#10b981', '#d52b1e'],
             'circle-stroke-width': 2,
             'circle-stroke-color': '#ffffff',
           },
         })
 
         map.addLayer({
-          id: 'address-point-start-label',
-          type: 'symbol',
-          source: 'address-points',
-          filter: ['==', ['get', 'kind'], 'start'],
+          id: 'address-rider-route-line',
+          type: 'line',
+          source: 'address-rider-route',
           layout: {
-            'text-field': 'S',
-            'text-size': 11,
-            'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+            'line-cap': 'round',
+            'line-join': 'round',
           },
           paint: {
-            'text-color': '#ffffff',
+            'line-color': RIDER_ROUTE_LINE_COLOR,
+            'line-width': RIDER_ROUTE_LINE_WIDTH,
+            'line-opacity': 0.9,
           },
         })
 
@@ -783,9 +950,24 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
             'line-join': 'round',
           },
           paint: {
-            'line-color': '#2563eb',
-            'line-width': 6,
+            'line-color': ROUTE_LINE_STATIC_COLOR,
+            'line-width': ROUTE_LINE_WIDTH,
             'line-opacity': 0.96,
+          },
+        })
+
+        map.addLayer({
+          id: 'address-approach-route-line',
+          type: 'line',
+          source: 'address-approach-route',
+          layout: {
+            'line-cap': 'round',
+            'line-join': 'round',
+          },
+          paint: {
+            'line-color': APPROACH_ROUTE_LINE_COLOR,
+            'line-width': APPROACH_ROUTE_LINE_WIDTH,
+            'line-opacity': 0.92,
           },
         })
 
@@ -813,6 +995,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       }
       liveMarkerRef.current?.remove?.()
       liveMarkerRef.current = null
+      storedAvatarMarkers.forEach((marker) => marker?.remove?.())
+      storedAvatarMarkers.clear()
       mapRef.current?.remove?.()
       mapRef.current = null
       mapLibreRef.current = null
@@ -825,12 +1009,37 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     const map = mapRef.current
     let cancelled = false
 
+    map.setPaintProperty?.('address-route-line', 'line-color', ROUTE_LINE_STATIC_COLOR)
+    map.setPaintProperty?.('address-route-line', 'line-width', ROUTE_LINE_WIDTH)
+    map.setPaintProperty?.('address-route-line', 'line-opacity', 0.96)
+    map.setPaintProperty?.('address-rider-route-line', 'line-color', RIDER_ROUTE_LINE_COLOR)
+    map.setPaintProperty?.('address-rider-route-line', 'line-width', RIDER_ROUTE_LINE_WIDTH)
+    map.setPaintProperty?.('address-rider-route-line', 'line-opacity', 0.9)
+    map.setPaintProperty?.('address-approach-route-line', 'line-color', APPROACH_ROUTE_LINE_COLOR)
+    map.setPaintProperty?.('address-approach-route-line', 'line-width', APPROACH_ROUTE_LINE_WIDTH)
+    map.setPaintProperty?.('address-approach-route-line', 'line-opacity', 0.92)
+
     const animateRouteLine = (timestamp: number) => {
       if (cancelled) return
 
       const cycleProgress = (Math.sin((timestamp / ROUTE_LINE_PULSE_DURATION_MS) * Math.PI * 2) + 1) / 2
-      map.setPaintProperty?.('address-route-line', 'line-color', resolveRouteLineColor(cycleProgress))
-      map.setPaintProperty?.('address-route-line', 'line-opacity', 0.88 + cycleProgress * 0.12)
+      if (pulseRouteLine) {
+        map.setPaintProperty?.('address-route-line', 'line-color', resolveRouteLineColor(cycleProgress))
+        map.setPaintProperty?.('address-route-line', 'line-opacity', 0.88 + cycleProgress * 0.12)
+      } else {
+        map.setPaintProperty?.('address-route-line', 'line-color', ROUTE_LINE_STATIC_COLOR)
+        map.setPaintProperty?.('address-route-line', 'line-opacity', 0.96)
+      }
+
+      if (pulseApproachRoute) {
+        map.setPaintProperty?.('address-approach-route-line', 'line-color', resolveApproachRouteLineColor(cycleProgress))
+        map.setPaintProperty?.('address-approach-route-line', 'line-width', APPROACH_ROUTE_LINE_WIDTH + cycleProgress * 1.5)
+        map.setPaintProperty?.('address-approach-route-line', 'line-opacity', 0.82 + cycleProgress * 0.18)
+      } else {
+        map.setPaintProperty?.('address-approach-route-line', 'line-color', APPROACH_ROUTE_LINE_COLOR)
+        map.setPaintProperty?.('address-approach-route-line', 'line-width', APPROACH_ROUTE_LINE_WIDTH)
+        map.setPaintProperty?.('address-approach-route-line', 'line-opacity', 0.92)
+      }
       routeLinePulseAnimationRef.current = window.requestAnimationFrame(animateRouteLine)
     }
 
@@ -843,7 +1052,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         routeLinePulseAnimationRef.current = null
       }
     }
-  }, [mapReady])
+  }, [mapReady, pulseApproachRoute, pulseRouteLine])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
@@ -951,9 +1160,11 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     const map = mapRef.current
     const pointSource = map.getSource('address-points')
     const routeSource = map.getSource('address-route')
-    if (!pointSource || !routeSource) return
+    const riderRouteSource = map.getSource('address-rider-route')
+    const approachRouteSource = map.getSource('address-approach-route')
+    if (!pointSource || !routeSource || !riderRouteSource || !approachRouteSource) return
 
-    const showLiveProfileMarker = Boolean(activeOrigin) && (navStatus === 'active' || navStatus === 'starting')
+    const showLiveProfileMarker = Boolean(activeOrigin) && (navStatus === 'active' || navStatus === 'starting' || showOriginAvatar)
 
     const features = [
       {
@@ -966,7 +1177,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       },
     ]
 
-    if (startPoint) {
+    if (!showLiveProfileMarker && startPoint) {
       features.push({
         type: 'Feature' as const,
         geometry: {
@@ -983,6 +1194,19 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           coordinates: [activeOrigin.longitude, activeOrigin.latitude] as [number, number],
         },
         properties: { kind: 'origin', label: activeOrigin.label },
+      })
+    }
+
+    if (Array.isArray(waypoints)) {
+      waypoints.forEach((waypoint, index) => {
+        features.push({
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Point' as const,
+            coordinates: [waypoint.longitude, waypoint.latitude] as [number, number],
+          },
+          properties: { kind: waypoint.kind ?? 'waypoint', label: waypoint.label || `Waypoint ${index + 1}` },
+        })
       })
     }
 
@@ -1007,34 +1231,76 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       features: routeFeature,
     })
 
+    const riderRouteFeature = riderRouteCoordinates?.length
+      ? [{
+          type: 'Feature' as const,
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: riderRouteCoordinates,
+          },
+          properties: {},
+        }]
+      : []
+
+    riderRouteSource.setData({
+      type: 'FeatureCollection',
+      features: riderRouteFeature,
+    })
+
+    const approachRouteFeature = activeOrigin && previewApproachRouteCoordinates?.length
+      ? [{
+          type: 'Feature' as const,
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: previewApproachRouteCoordinates,
+          },
+          properties: {},
+        }]
+      : []
+
+    approachRouteSource.setData({
+      type: 'FeatureCollection',
+      features: approachRouteFeature,
+    })
+
     const mapLibre = mapLibreRef.current
     if (!mapLibre) return
+
+    const nextAvatarMarkers = Array.isArray(avatarMarkers) ? avatarMarkers : []
+    const displayMarkerPoints = resolveDisplayMarkerPoints([
+      ...(showLiveProfileMarker && activeOrigin ? [{ id: '__origin__', point: activeOrigin }] : []),
+      ...nextAvatarMarkers.map((avatarMarker) => ({ id: avatarMarker.id, point: avatarMarker.point })),
+    ])
 
     if (showLiveProfileMarker && activeOrigin) {
       let marker = liveMarkerRef.current
       if (!marker) {
         const element = document.createElement('div')
         element.className = 'h-14 w-14 overflow-hidden rounded-full border-4 border-black bg-white shadow-[0_10px_28px_rgba(15,23,42,0.24)]'
-
-        if (viewerAvatarUrl) {
-          const image = document.createElement('img')
-          image.src = viewerAvatarUrl
-          image.alt = 'Your location'
-          image.className = 'h-full w-full object-cover'
-          element.appendChild(image)
-        } else {
-          const fallback = document.createElement('div')
-          fallback.className = 'flex h-full w-full items-center justify-center bg-emerald-100 text-sm font-semibold text-slate-900'
-          fallback.textContent = 'You'
-          element.appendChild(fallback)
-        }
+        element.style.zIndex = '40'
+        renderLiveMarkerContents(element, {
+          avatarUrl: resolvedOriginAvatarUrl,
+          alt: resolvedOriginAvatarLabel,
+          fallbackLabel: resolvedOriginAvatarFallbackLabel,
+        })
 
         marker = new mapLibre.Marker({ element, anchor: 'center' })
         marker.setLngLat([activeOrigin.longitude, activeOrigin.latitude])
         marker.addTo(map)
         liveMarkerRef.current = marker
+      } else {
+        const element = marker.getElement?.()
+        if (element instanceof HTMLDivElement) {
+          element.style.zIndex = '40'
+          renderLiveMarkerContents(element, {
+            avatarUrl: resolvedOriginAvatarUrl,
+            alt: resolvedOriginAvatarLabel,
+            fallbackLabel: resolvedOriginAvatarFallbackLabel,
+          })
+        }
       }
-      const targetLngLat: [number, number] = [activeOrigin.longitude, activeOrigin.latitude]
+      const displayOrigin = displayMarkerPoints.get('__origin__') ?? activeOrigin
+      const targetLngLat: [number, number] = [displayOrigin.longitude, displayOrigin.latitude]
       const previousLngLat = marker.getLngLat?.()
       if (!previousLngLat) {
         marker.setLngLat(targetLngLat)
@@ -1078,12 +1344,65 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       liveMarkerRef.current.remove()
       liveMarkerRef.current = null
     }
+    const seenAvatarMarkerIds = new Set<string>()
+
+    nextAvatarMarkers.forEach((avatarMarker) => {
+      seenAvatarMarkerIds.add(avatarMarker.id)
+      let marker = avatarMarkerRefs.current.get(avatarMarker.id)
+      const displayPoint = displayMarkerPoints.get(avatarMarker.id) ?? avatarMarker.point
+
+      if (!marker) {
+        const element = document.createElement('div')
+        element.className = 'h-12 w-12 overflow-hidden rounded-full border-4 border-white bg-white shadow-[0_10px_24px_rgba(15,23,42,0.2)]'
+        element.style.zIndex = '30'
+        renderLiveMarkerContents(element, {
+          avatarUrl: avatarMarker.avatarUrl ?? null,
+          alt: avatarMarker.label,
+          fallbackLabel: avatarMarker.fallbackLabel,
+        })
+
+        marker = new mapLibre.Marker({ element, anchor: 'center' })
+        marker.setLngLat([displayPoint.longitude, displayPoint.latitude])
+        marker.addTo(map)
+        avatarMarkerRefs.current.set(avatarMarker.id, marker)
+        return
+      }
+
+      const element = marker.getElement?.()
+      if (element instanceof HTMLDivElement) {
+        element.style.zIndex = '30'
+        renderLiveMarkerContents(element, {
+          avatarUrl: avatarMarker.avatarUrl ?? null,
+          alt: avatarMarker.label,
+          fallbackLabel: avatarMarker.fallbackLabel,
+        })
+      }
+      marker.setLngLat([displayPoint.longitude, displayPoint.latitude])
+    })
+
+    avatarMarkerRefs.current.forEach((marker, markerId) => {
+      if (seenAvatarMarkerIds.has(markerId)) return
+      marker?.remove?.()
+      avatarMarkerRefs.current.delete(markerId)
+    })
 
     if (navStatus === 'active' || navStatus === 'starting') {
       if (routeOverviewActive) {
         const bounds = new mapLibre.LngLatBounds([destination.longitude, destination.latitude], [destination.longitude, destination.latitude])
-        if (startPoint) bounds.extend([startPoint.longitude, startPoint.latitude])
+        if (startPoint && !showLiveProfileMarker) bounds.extend([startPoint.longitude, startPoint.latitude])
         if (activeOrigin) bounds.extend([activeOrigin.longitude, activeOrigin.latitude])
+        if (Array.isArray(avatarMarkers)) {
+          avatarMarkers.forEach((avatarMarker) => bounds.extend([avatarMarker.point.longitude, avatarMarker.point.latitude]))
+        }
+        if (Array.isArray(waypoints)) {
+          waypoints.forEach((waypoint) => bounds.extend([waypoint.longitude, waypoint.latitude]))
+        }
+        if (previewApproachRouteCoordinates?.length) {
+          previewApproachRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate))
+        }
+        if (riderRouteCoordinates?.length) {
+          riderRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate))
+        }
         if (activeRouteCoordinates?.length) {
           activeRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate))
         }
@@ -1109,8 +1428,27 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       return
     }
 
+    const shouldLockIdleCamera = idleCameraMode === 'fit-once-per-key'
+    const nextIdleViewportKey = idleViewportKey ?? null
+    const idleViewportChanged = nextIdleViewportKey !== lastIdleViewportKeyRef.current
+    if (shouldLockIdleCamera && hasAppliedIdleFitRef.current && !idleViewportChanged) {
+      return
+    }
+
     const bounds = new mapLibre.LngLatBounds([destination.longitude, destination.latitude], [destination.longitude, destination.latitude])
     if (activeOrigin) bounds.extend([activeOrigin.longitude, activeOrigin.latitude])
+    if (Array.isArray(avatarMarkers)) {
+      avatarMarkers.forEach((avatarMarker) => bounds.extend([avatarMarker.point.longitude, avatarMarker.point.latitude]))
+    }
+    if (Array.isArray(waypoints)) {
+      waypoints.forEach((waypoint) => bounds.extend([waypoint.longitude, waypoint.latitude]))
+    }
+    if (previewApproachRouteCoordinates?.length) {
+      previewApproachRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate))
+    }
+    if (riderRouteCoordinates?.length) {
+      riderRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate))
+    }
     if (activeRouteCoordinates?.length) {
       activeRouteCoordinates.forEach((coordinate) => bounds.extend(coordinate))
     }
@@ -1124,7 +1462,30 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       bearing: 0,
       duration: 0,
     })
-  }, [activeBearing, activeOrigin, activeRouteCoordinates, destination, mapReady, navStatus, routeOverviewActive, startPoint, viewerAvatarUrl])
+    hasAppliedIdleFitRef.current = true
+    lastIdleViewportKeyRef.current = nextIdleViewportKey
+  }, [
+    activeBearing,
+    activeOrigin,
+    activeRouteCoordinates,
+    avatarMarkers,
+    destination,
+    idleCameraMode,
+    idleViewportKey,
+    mapReady,
+    navStatus,
+    originAvatarUrl,
+    previewApproachRouteCoordinates,
+    riderRouteCoordinates,
+    resolvedOriginAvatarFallbackLabel,
+    resolvedOriginAvatarLabel,
+    resolvedOriginAvatarUrl,
+    routeOverviewActive,
+    showOriginAvatar,
+    startPoint,
+    viewerAvatarUrl,
+    waypoints,
+  ])
 
   return (
     <div

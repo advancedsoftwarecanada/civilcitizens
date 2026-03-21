@@ -6713,6 +6713,18 @@ function ensureCitizenMarketplaceTables() {
           fuel_charge_cents INTEGER NOT NULL DEFAULT 0,
           driver_fee_cents INTEGER NOT NULL DEFAULT 1000,
           total_cost_cents INTEGER NOT NULL DEFAULT 1000,
+          bid_driver_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          bid_amount_cents INTEGER,
+          bid_per_km_fee_cents INTEGER,
+          bid_requested_at TIMESTAMPTZ,
+          bid_responded_at TIMESTAMPTZ,
+          driver_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          driver_location_latitude DOUBLE PRECISION,
+          driver_location_longitude DOUBLE PRECISION,
+          driver_location_recorded_at TIMESTAMPTZ,
+          requester_location_latitude DOUBLE PRECISION,
+          requester_location_longitude DOUBLE PRECISION,
+          requester_location_recorded_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
@@ -6809,6 +6821,126 @@ function ensureCitizenMarketplaceTables() {
       `)
 
       await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS bid_driver_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS bid_amount_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS bid_per_km_fee_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS bid_requested_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS bid_responded_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS driver_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS driver_location_latitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS driver_location_longitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS driver_location_recorded_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS requester_location_latitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS requester_location_longitude DOUBLE PRECISION;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS requester_location_recorded_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS accepted_offer_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS accepted_offer_amount_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS accepted_offer_per_km_fee_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS accepted_offer_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS escrow_status TEXT NOT NULL DEFAULT 'none';
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS wallet_transaction_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS completion_requested_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS completion_confirmation_due_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS rider_confirmed_complete_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS rider_reported_issue_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS auto_completed_at TIMESTAMPTZ;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS support_request_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_status_idx
         ON citizen_drive_ride_request (status, created_at DESC);
       `)
@@ -6816,6 +6948,113 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_requester_idx
         ON citizen_drive_ride_request (requester_user_id, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_bid_idx
+        ON citizen_drive_ride_request (bid_driver_user_id, status, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_driver_idx
+        ON citizen_drive_ride_request (driver_user_id, status, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_request_completion_due_idx
+        ON citizen_drive_ride_request (escrow_status, completion_confirmation_due_at);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS citizen_drive_ride_offer (
+          id TEXT PRIMARY KEY,
+          ride_request_id TEXT NOT NULL REFERENCES citizen_drive_ride_request(id) ON DELETE CASCADE,
+          driver_user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'pending',
+          amount_cents INTEGER NOT NULL DEFAULT 0,
+          per_km_fee_cents INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS ride_request_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS driver_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS amount_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS per_km_fee_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_offer
+        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS citizen_drive_ride_offer_request_driver_uniq
+        ON citizen_drive_ride_offer (ride_request_id, driver_user_id);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_offer_request_idx
+        ON citizen_drive_ride_offer (ride_request_id, status, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS citizen_drive_ride_offer_driver_idx
+        ON citizen_drive_ride_offer (driver_user_id, status, updated_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        INSERT INTO citizen_drive_ride_offer (
+          id,
+          ride_request_id,
+          driver_user_id,
+          status,
+          amount_cents,
+          per_km_fee_cents,
+          created_at,
+          updated_at
+        )
+        SELECT
+          r.id || ':' || r.bid_driver_user_id,
+          r.id,
+          r.bid_driver_user_id,
+          'pending',
+          COALESCE(r.bid_amount_cents, 0),
+          COALESCE(r.bid_per_km_fee_cents, 0),
+          COALESCE(r.bid_requested_at, r.updated_at, r.created_at, NOW()),
+          COALESCE(r.bid_requested_at, r.updated_at, r.created_at, NOW())
+        FROM citizen_drive_ride_request r
+        WHERE r.bid_driver_user_id IS NOT NULL
+          AND COALESCE(r.bid_amount_cents, 0) > 0
+        ON CONFLICT (ride_request_id, driver_user_id) DO UPDATE
+        SET amount_cents = EXCLUDED.amount_cents,
+            per_km_fee_cents = EXCLUDED.per_km_fee_cents,
+            updated_at = GREATEST(citizen_drive_ride_offer.updated_at, EXCLUDED.updated_at);
       `)
     } catch (err) {
       citizenMarketplaceTablesReady = null
@@ -10014,7 +10253,9 @@ registerDeliveryRoutes(app, {
 })
 
 registerDriveRideRoutes(app, {
+  createNotificationRecord,
   ensureCitizenMarketplaceTables,
+  readBaseCommunityMeta,
   readGalleryUrls,
   readMarketShippingAddresses,
   resolveUserId,

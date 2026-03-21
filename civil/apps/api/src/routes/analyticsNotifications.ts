@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
-import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
+import { MessageParticipantRole, MessageThreadType, MessageType, Prisma, SupportRequestStatus } from '@prisma/client'
 import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readWalletSummary } from '../walletHelpers.js'
+import { releaseDriveRideEscrow, settleExpiredDriveRideEscrows } from './driveRides.js'
 
 type AnalyticsNotificationDeps = Record<string, any>
 
@@ -221,6 +222,8 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
       if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
       const body = deps.NotificationRespondBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      await settleExpiredDriveRideEscrows()
 
       const notification = await prisma.notification.findFirst({
         where: { id: params.data.id, userId },
@@ -650,6 +653,179 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
         })
 
         return reply.send({ ok: true, status: nextStatus, threadId })
+      }
+
+      if (notification.type === 'drive_ride_complete_confirmation') {
+        const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+          ? (notification.payload as Record<string, unknown>)
+          : null
+        if (!payload) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        const statusRaw = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : 'pending'
+        if (statusRaw !== 'pending') return reply.code(409).send({ error: 'invitation_not_pending' })
+
+        const rideId = typeof payload.rideRequestId === 'string' ? payload.rideRequestId.trim() : ''
+        if (!rideId) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        await ensureCitizenWalletTables()
+        await deps.ensureCitizenMarketplaceTables?.()
+
+        const rideRows = await prisma.$queryRaw<Array<{
+          id: string
+          requester_user_id: string
+          driver_user_id: string | null
+          escrow_status: string | null
+          total_cost_cents: number
+          accepted_offer_amount_cents: number | null
+        }>>`
+          SELECT
+            id,
+            requester_user_id,
+            driver_user_id,
+            escrow_status,
+            total_cost_cents,
+            accepted_offer_amount_cents
+          FROM citizen_drive_ride_request
+          WHERE id = ${rideId}
+          LIMIT 1
+        `
+
+        const ride = rideRows[0]
+        if (!ride || ride.requester_user_id !== userId) return reply.code(404).send({ error: 'ride_not_found' })
+        if (!ride.driver_user_id) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        const [requester, driver] = await Promise.all([
+          prisma.user.findUnique({
+            where: { id: ride.requester_user_id },
+            select: { id: true, handle: true, name: true },
+          }),
+          prisma.user.findUnique({
+            where: { id: ride.driver_user_id },
+            select: { id: true, handle: true, name: true },
+          }),
+        ])
+        if (!requester || !driver) return reply.code(404).send({ error: 'user_not_found' })
+
+        const now = new Date()
+        const nowIso = now.toISOString()
+
+        if (body.data.action === 'reject') {
+          if (ride.escrow_status !== 'held') return reply.code(409).send({ error: 'ride_not_in_escrow' })
+
+          const supportRequest = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            const created = await tx.supportRequest.create({
+              data: {
+                requesterUserId: requester.id,
+                type: 'CUSTOMER_SERVICE',
+                subject: `Drive dispute: ride ${ride.id}`,
+                body: [
+                  'Passenger reported an issue with a completed Drive trip.',
+                  `Ride request ID: ${ride.id}`,
+                  `Passenger: ${requester.name ?? requester.handle ?? requester.id}`,
+                  `Driver: ${driver.name ?? driver.handle ?? driver.id}`,
+                  `Customer charge: ${formatMoney(ride.total_cost_cents)}`,
+                  `Driver payout: ${formatMoney(ride.accepted_offer_amount_cents ?? 0)}`,
+                  `Reported at: ${nowIso}`,
+                ].join('\n'),
+                status: SupportRequestStatus.OPEN,
+              },
+              select: { id: true },
+            })
+
+            await tx.$executeRaw`
+              UPDATE citizen_drive_ride_request
+              SET escrow_status = ${'disputed'},
+                  rider_reported_issue_at = ${now},
+                  support_request_id = ${created.id},
+                  updated_at = NOW()
+              WHERE id = ${ride.id}
+                AND escrow_status = ${'held'}
+            `
+
+            await tx.$executeRaw`
+              UPDATE citizen_wallet_transaction
+              SET updated_at = NOW()
+              WHERE id = ${`drive-ride:${ride.id}:escrow`}
+            `
+
+            await tx.notification.update({
+              where: { id: notification.id },
+              data: {
+                payload: {
+                  ...payload,
+                  status: 'reported_issue',
+                  respondedAt: nowIso,
+                  supportRequestId: created.id,
+                  url: '/settings/support',
+                  sourceUrl: '/settings/support',
+                } as Prisma.InputJsonValue,
+                readAt: notification.readAt ?? now,
+              },
+            })
+
+            return created
+          })
+
+          await deps.createNotificationRecord({
+            userId: driver.id,
+            actorId: requester.id,
+            type: 'drive_ride_complete_response',
+            payload: {
+              rideRequestId: ride.id,
+              status: 'reported_issue',
+              supportRequestId: supportRequest.id,
+              url: '/drive',
+              sourceUrl: '/drive',
+            },
+          })
+
+          return reply.send({ ok: true, status: 'reported_issue', supportRequestId: supportRequest.id })
+        }
+
+        if (ride.escrow_status !== 'held') return reply.code(409).send({ error: 'ride_not_in_escrow' })
+
+        try {
+          await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            const result = await releaseDriveRideEscrow(tx, ride.id, 'confirmed', now)
+            if (!result.settled) {
+              throw new Error('ride_not_in_escrow')
+            }
+
+            await tx.notification.update({
+              where: { id: notification.id },
+              data: {
+                payload: {
+                  ...payload,
+                  status: 'confirmed',
+                  respondedAt: nowIso,
+                  url: `/drive/myrides/${ride.id}/offers`,
+                  sourceUrl: `/drive/myrides/${ride.id}/offers`,
+                } as Prisma.InputJsonValue,
+                readAt: notification.readAt ?? now,
+              },
+            })
+          })
+        } catch (error) {
+          if (error instanceof Error && error.message === 'ride_not_in_escrow') {
+            return reply.code(409).send({ error: 'ride_not_in_escrow' })
+          }
+          throw error
+        }
+
+        await deps.createNotificationRecord({
+          userId: driver.id,
+          actorId: requester.id,
+          type: 'drive_ride_complete_response',
+          payload: {
+            rideRequestId: ride.id,
+            status: 'confirmed',
+            amountCents: ride.accepted_offer_amount_cents ?? null,
+            url: '/drive',
+            sourceUrl: '/drive',
+          },
+        })
+
+        return reply.send({ ok: true, status: 'confirmed' })
       }
 
       if (notification.type !== deps.EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE && notification.type !== deps.EVENT_NOTIFICATION_TYPES.SPONSOR_INVITE) {
