@@ -132,6 +132,12 @@ Android:
   -H 'x-admin-secret: <choose-a-secret>' \
   -d '{"platform":"android","deviceToken":"<fcm-token>","title":"Civil","message":"Hello from FCM"}'`
 
+## Custom notification sounds
+
+- iOS custom push sounds must exist in the app bundle as CAF, WAV, or AIFF files. Civil ride contract updates use `NotificationSFX/honk-honk.caf` and the API sends `sound: "honk-honk.caf"` for those pushes.
+- Android 8+ custom notification sounds are controlled by the notification channel, not only by the push payload. Civil ride contract updates use the `drive_ride_updates` channel, which is configured in `MainActivity.java` to play `res/raw/honk_honk.mp3`.
+- If you change an existing Android channel's sound, the OS may keep the old sound for installed builds. Use a new channel id or reinstall/clear app notification settings when testing channel sound changes.
+
 ## Troubleshooting
 
 - If APNs returns `400 BadDeviceToken`:

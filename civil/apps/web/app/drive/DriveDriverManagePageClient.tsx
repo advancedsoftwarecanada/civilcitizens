@@ -9,6 +9,7 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { getDeliveryRequirementItems, pickMediaVariantUrl, type DeliveryOnboardingResponse } from '../delivery/deliveryShared'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import DriveRouteNav from './DriveRouteNav'
 import { formatDriveMoney, type DriveDriverManageResponse, type DriveDriverVehicle } from './driveShared'
@@ -148,7 +149,7 @@ function createEmptyVehicle(index: number): DriveDriverVehicle {
 }
 
 export default function DriveDriverManagePageClient() {
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const { isDriverActive, isDriverMode, loading: viewerLoading, rideRequestCount, deliveryRequestCount, enterDriverMode, exitDriverMode } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploadingVehicleId, setUploadingVehicleId] = useState<string | null>(null)
@@ -338,10 +339,14 @@ export default function DriveDriverManagePageClient() {
         <div className="space-y-5">
           <DriveModeRail
             isDriverActive={isDriverActive}
+            isDriverMode={isDriverMode}
             loading={viewerLoading}
             rideRequestCount={rideRequestCount}
             deliveryRequestCount={deliveryRequestCount}
+            onEnterDriverMode={enterDriverMode}
+            onExitDriverMode={exitDriverMode}
           />
+          <DriveDriverEarningsRail enabled={isDriverActive} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }

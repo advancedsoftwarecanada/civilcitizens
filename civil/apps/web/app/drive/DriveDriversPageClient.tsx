@@ -9,6 +9,7 @@ import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import { DriveCardSkeleton, DriveDriverPreviewCard } from './DrivePreviewCards'
 import DriveRouteNav from './DriveRouteNav'
@@ -60,7 +61,7 @@ function PreferredDriversRail({ items }: { items: DriveDriverItem[] }) {
 }
 
 export default function DriveDriversPageClient() {
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const { isDriverActive, isDriverMode, loading: viewerLoading, rideRequestCount, deliveryRequestCount, enterDriverMode, exitDriverMode } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<DriveDriverItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -161,10 +162,14 @@ export default function DriveDriversPageClient() {
         <div className="space-y-5">
           <DriveModeRail
             isDriverActive={isDriverActive}
+            isDriverMode={isDriverMode}
             loading={viewerLoading}
             rideRequestCount={rideRequestCount}
             deliveryRequestCount={deliveryRequestCount}
+            onEnterDriverMode={enterDriverMode}
+            onExitDriverMode={exitDriverMode}
           />
+          <DriveDriverEarningsRail enabled={isDriverActive} />
           {preferredDrivers.length ? <PreferredDriversRail items={preferredDrivers} /> : null}
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>

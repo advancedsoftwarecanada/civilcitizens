@@ -186,8 +186,12 @@ function userDisplayName(user: ThreadUser | null | undefined) {
 
 export default function MessageCallClient({
   threadId,
+  embedded = false,
+  onClose,
 }: {
   threadId: string
+  embedded?: boolean
+  onClose?: () => void
 }) {
   const router = useRouter()
   const [status, setStatus] = useState<'loading' | 'ready' | 'ended' | 'error'>('loading')
@@ -269,11 +273,26 @@ export default function MessageCallClient({
   }, [])
 
   const callTitle = thread ? getThreadTitle(thread) : 'Call'
-  const callSubtitle = activeCall?.mode === 'video' ? 'Video call' : 'Audio call'
+  const shellClassName = embedded ? 'h-full overflow-hidden rounded-[1.75rem] bg-[#080b14] text-white' : 'h-dvh overflow-hidden bg-[#080b14] text-white'
+  const stageClassName = embedded
+    ? 'relative h-full overflow-hidden rounded-[1.75rem] bg-[radial-gradient(circle_at_top,#1f2d52_0%,rgba(8,11,20,0.96)_38%,#05070d_100%)]'
+    : 'relative h-full overflow-hidden bg-[radial-gradient(circle_at_top,#1f2d52_0%,rgba(8,11,20,0.96)_38%,#05070d_100%)]'
+  const loadingShellClassName = embedded
+    ? 'flex h-full min-h-[22rem] items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4'
+    : 'flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4'
+  const messageRouteHref = `/messages?thread=${encodeURIComponent(threadId)}`
   const addableFriends = useMemo(() => {
     const existingIds = new Set(thread?.participants.map((participant) => participant.userId) ?? [])
     return friends.filter((friend) => !existingIds.has(friend.id))
   }, [friends, thread?.participants])
+
+  const closeCallView = useCallback(() => {
+    if (embedded) {
+      onClose?.()
+      return
+    }
+    router.replace(messageRouteHref)
+  }, [embedded, messageRouteHref, onClose, router])
 
   const stopLocalPreview = useCallback(() => {
     const stream = localStreamRef.current
@@ -765,9 +784,9 @@ export default function MessageCallClient({
       closeAllPeerConnections()
       stopLocalPreview()
       setEndingCall(false)
-      router.replace(`/messages?thread=${encodeURIComponent(threadId)}`)
+      closeCallView()
     }
-  }, [activeCall?.id, authedFetch, closeAllPeerConnections, closeRtcSocket, endingCall, router, stopLocalPreview, threadId])
+  }, [activeCall?.id, authedFetch, closeAllPeerConnections, closeCallView, closeRtcSocket, endingCall, stopLocalPreview])
 
   const loadFriends = useCallback(async () => {
     setFriendsLoading(true)
@@ -823,6 +842,10 @@ export default function MessageCallClient({
         }
 
         setAddPeopleOpen(false)
+        if (embedded) {
+          pushToast('Group calling is only available from Messages right now.', 'error')
+          return
+        }
         router.replace(`/messages/call/${encodeURIComponent(nextThread.id)}?call=${encodeURIComponent(startJson.call.id)}`)
       } catch (error) {
         console.error('message_call_add_friend_failed', error)
@@ -831,7 +854,7 @@ export default function MessageCallClient({
         setAddPersonLoadingId(null)
       }
     },
-    [activeCall, authedFetch, router, thread],
+    [activeCall, authedFetch, embedded, router, thread],
   )
 
   useEffect(() => {
@@ -915,8 +938,12 @@ export default function MessageCallClient({
   useEffect(() => {
     if (!thread) return
     if (status !== 'ended' && activeCall) return
+    if (embedded) {
+      onClose?.()
+      return
+    }
     router.replace(`/messages?thread=${encodeURIComponent(thread.id)}`)
-  }, [activeCall, router, status, thread])
+  }, [activeCall, embedded, onClose, router, status, thread])
 
   const firstRtcPeer = rtcPeers[0] ?? null
   const firstRemoteStream = firstRtcPeer ? remoteStreams[firstRtcPeer.peerId] ?? null : null
@@ -952,7 +979,7 @@ export default function MessageCallClient({
 
   if (status === 'loading') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4">
+      <div className={loadingShellClassName}>
         <div className="rounded-3xl border border-white/70 bg-white/92 px-6 py-5 text-sm text-slate-600 shadow-[0_25px_60px_rgba(15,23,42,0.12)]">
           Loading call…
         </div>
@@ -962,16 +989,26 @@ export default function MessageCallClient({
 
   if (status === 'error' || !thread) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4">
+      <div className={loadingShellClassName}>
         <div className="w-full max-w-md rounded-[2rem] border border-white/70 bg-white/92 p-6 shadow-[0_30px_70px_rgba(15,23,42,0.12)]">
           <p className="text-lg font-semibold text-slate-900">This call is unavailable.</p>
           <p className="mt-2 text-sm text-slate-500">It may have already ended, or you may no longer have access to this thread.</p>
-          <Link
-            href={`/messages?thread=${encodeURIComponent(threadId)}`}
-            className="mt-5 inline-flex rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            Back to messages
-          </Link>
+          {embedded ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-5 inline-flex rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Close
+            </button>
+          ) : (
+            <Link
+              href={messageRouteHref}
+              className="mt-5 inline-flex rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Back to messages
+            </Link>
+          )}
         </div>
       </div>
     )
@@ -979,9 +1016,9 @@ export default function MessageCallClient({
 
   if (status === 'ended' || !activeCall) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#eff6ff,transparent_40%),linear-gradient(180deg,#f8fafc_0%,#eef2ff_45%,#f8fafc_100%)] px-4">
+      <div className={loadingShellClassName}>
         <div className="rounded-3xl border border-white/70 bg-white/92 px-6 py-5 text-sm text-slate-600 shadow-[0_25px_60px_rgba(15,23,42,0.12)]">
-          Returning to thread…
+          {embedded ? 'Closing call…' : 'Returning to thread…'}
         </div>
       </div>
     )
@@ -1008,8 +1045,8 @@ export default function MessageCallClient({
       : primaryPeerDisplayName
 
   return (
-    <div className="h-dvh overflow-hidden bg-[#080b14] text-white">
-      <div className="relative h-full overflow-hidden bg-[radial-gradient(circle_at_top,#1f2d52_0%,rgba(8,11,20,0.96)_38%,#05070d_100%)]">
+    <div className={shellClassName}>
+      <div className={stageClassName}>
         {mediaError ? (
           <div className="absolute left-4 right-4 top-4 z-40 rounded-2xl border border-rose-400/30 bg-rose-500/16 px-4 py-3 text-sm text-rose-100 backdrop-blur">
             {mediaError}
@@ -1153,19 +1190,21 @@ export default function MessageCallClient({
                 <HiOutlineVideoCamera className="h-5 w-5" />
               </button>
             ) : null}
-            <button
-              type="button"
-              onClick={() => {
-                setAddPeopleOpen(true)
-                if (friends.length === 0 && !friendsLoading) {
-                  void loadFriends()
-                }
-              }}
-              className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-white/12 text-xs font-semibold text-white transition hover:bg-white/18 sm:h-16 sm:w-16"
-              aria-label="Add people"
-            >
-              <span className="text-base leading-none">+</span>
-            </button>
+            {!embedded ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddPeopleOpen(true)
+                  if (friends.length === 0 && !friendsLoading) {
+                    void loadFriends()
+                  }
+                }}
+                className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-white/20 bg-white/12 text-xs font-semibold text-white transition hover:bg-white/18 sm:h-16 sm:w-16"
+                aria-label="Add people"
+              >
+                <span className="text-base leading-none">+</span>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => {

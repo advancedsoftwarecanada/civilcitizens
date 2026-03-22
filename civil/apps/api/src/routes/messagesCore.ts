@@ -593,6 +593,7 @@ export function registerMessagesCoreRoutes(app: FastifyInstance, deps: MessageCo
               data: {
                 thread: deps.formatThreadSummaryRecord(updatedThread, participant.userId),
                 call: deps.formatMessageCall(createdCall, participant.userId),
+                inviteMeta: parse.data.inviteMeta ?? null,
               },
             })
 

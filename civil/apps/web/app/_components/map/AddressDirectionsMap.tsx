@@ -1,7 +1,7 @@
 'use client'
 
 import type { IconType } from 'react-icons'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   HiOutlineArrowLongDown,
   HiOutlineArrowLongLeft,
@@ -48,6 +48,7 @@ type AddressDirectionsMapProps = {
   pulseApproachRoute?: boolean
   idleCameraMode?: 'always-fit' | 'fit-once-per-key'
   idleViewportKey?: string | null
+  fullscreenOverlay?: ReactNode
   onNavigationOriginChange?: ((origin: MapPoint | null) => void) | undefined
 }
 
@@ -428,6 +429,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     pulseApproachRoute = false,
     idleCameraMode = 'always-fit',
     idleViewportKey = null,
+    fullscreenOverlay = null,
     onNavigationOriginChange,
   }: AddressDirectionsMapProps,
   ref,
@@ -1538,6 +1540,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                 </div>
               </div>
             ) : null}
+
+            {fullscreenActive && fullscreenOverlay ? <div className="pointer-events-auto">{fullscreenOverlay}</div> : null}
           </div>
 
           <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="top-1/2 -translate-y-1/2" />
@@ -1602,7 +1606,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                     className="pointer-events-auto inline-flex items-center gap-2 rounded-full border-2 border-black bg-red-600 px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-red-700 md:text-xs"
                   >
                     <HiOutlineXMark className="h-4 w-4" />
-                    End trip
+                    Exit Full Screen
                   </button>
                 </div>
               </div>
@@ -1633,7 +1637,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                     <HiOutlineXMark className="h-6 w-6" />
                   </span>
                   <div>
-                    <p className="text-lg font-semibold">Exit trip?</p>
+                    <p className="text-lg font-semibold">Exit full screen?</p>
                     <p className="text-sm text-slate-600">This will stop live navigation and close fullscreen mode.</p>
                   </div>
                 </div>
@@ -1652,7 +1656,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                     }}
                     className="inline-flex items-center rounded-full border-2 border-black bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
                   >
-                    End trip
+                    Exit Full Screen
                   </button>
                 </div>
               </div>
