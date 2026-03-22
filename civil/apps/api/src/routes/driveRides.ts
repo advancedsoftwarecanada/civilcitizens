@@ -150,6 +150,7 @@ type RideRequestRow = {
   requester_handle: string | null
   requester_name: string | null
   requester_avatar_url: string | null
+  requester_cover_url?: string | null
   driver_community_meta?: unknown
   offer_count: number | null
   viewer_offer_amount_cents: number | null
@@ -798,6 +799,7 @@ function mapRideRequestRow(row: RideRequestRow, viewerUserId: string | null) {
       handle: row.requester_handle,
       name: row.requester_name,
       avatarUrl: row.requester_avatar_url,
+      coverUrl: row.requester_cover_url ?? null,
     },
     driverVehicle: driverVehicle
       ? {
@@ -1227,6 +1229,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           requester.handle AS requester_handle,
           requester.name AS requester_name,
           requester."avatarUrl" AS requester_avatar_url,
+          requester."coverUrl" AS requester_cover_url,
           driver."communityMeta" AS driver_community_meta
         FROM citizen_drive_ride_request r
         INNER JOIN "User" requester ON requester.id = r.requester_user_id

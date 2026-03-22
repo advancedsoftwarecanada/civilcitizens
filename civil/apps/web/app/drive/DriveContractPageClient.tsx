@@ -4,9 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
+  HiOutlineArrowUturnLeft,
   HiOutlineCalendarDays,
   HiOutlineChatBubbleOvalLeft,
+  HiOutlineCheckCircle,
   HiOutlineClock,
+  HiOutlineFlag,
   HiOutlineMap,
   HiOutlineMapPin,
   HiOutlinePhone,
@@ -14,6 +17,7 @@ import {
 } from 'react-icons/hi2'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
+import Modal from '../_components/Modal'
 import { RightRail } from '../_components/RightRail'
 import { AddressDirectionsMap, type AddressDirectionsMapHandle } from '../_components/map/AddressDirectionsMap'
 import { pushToast } from '../_components/useToasts'
@@ -158,15 +162,15 @@ function getContractActions(status: string | null | undefined) {
   if (normalized === 'driver_arrived') {
     return {
       primary: { key: 'picked_up' as const, label: 'Passengers picked up' },
-      secondary: { key: 'cancel_arrival' as const, label: 'Cancel Arrival' },
-      helperText: 'Undo arrival if you need to return to en route status.',
+      secondary: { key: 'cancel_arrival' as const, label: 'Undo Arrival' },
+      helperText: 'Use Undo if you need to return this contract to en route status.',
     }
   }
 
   if (normalized === 'picked_up' || normalized === 'in_progress') {
     return {
       primary: { key: 'dropped_off' as const, label: 'Passengers Dropped off' },
-      secondary: { key: 'cancel_pickup' as const, label: 'Cancel passenger pickup' },
+      secondary: { key: 'cancel_pickup' as const, label: 'Undo Passenger Pickup' },
       helperText: 'Mark dropoff once the ride reaches its destination.',
     }
   }
@@ -174,7 +178,7 @@ function getContractActions(status: string | null | undefined) {
   if (normalized === 'arrived') {
     return {
       primary: { key: 'complete' as const, label: 'Complete Contract' },
-      secondary: { key: 'cancel_dropoff' as const, label: 'Cancel passenger drop off' },
+      secondary: { key: 'cancel_dropoff' as const, label: 'Undo Dropoff Arrival' },
       helperText: 'Completing the contract pays out the driver wallet immediately.',
     }
   }
@@ -183,6 +187,54 @@ function getContractActions(status: string | null | undefined) {
     primary: null,
     secondary: null,
     helperText: normalized === 'completed' ? 'This contract has been completed and settled.' : 'The next contract action will appear here when it is available.',
+  }
+}
+
+function renderContractActionIcon(action: ContractActionKey) {
+  switch (action) {
+    case 'arrived_pickup':
+      return <HiOutlineMapPin className="h-5 w-5" />
+    case 'picked_up':
+      return <HiOutlineCheckCircle className="h-5 w-5" />
+    case 'dropped_off':
+      return <HiOutlineFlag className="h-5 w-5" />
+    case 'complete':
+      return <HiOutlineCheckCircle className="h-5 w-5" />
+    case 'cancel_arrival':
+    case 'cancel_pickup':
+    case 'cancel_dropoff':
+      return <HiOutlineArrowUturnLeft className="h-5 w-5" />
+    default:
+      return null
+  }
+}
+
+function getContractActionButtonClass(action: ContractActionKey) {
+  if (action === 'cancel_arrival' || action === 'cancel_pickup' || action === 'cancel_dropoff') {
+    return 'border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+  }
+
+  return 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-500'
+}
+
+function getContractActionConfirmationLabel(action: ContractActionKey) {
+  switch (action) {
+    case 'arrived_pickup':
+      return 'Arrived for Pickup'
+    case 'picked_up':
+      return 'Passengers Picked Up'
+    case 'dropped_off':
+      return 'Passengers Dropped Off'
+    case 'complete':
+      return 'Complete Contract'
+    case 'cancel_arrival':
+      return 'Undo Arrival'
+    case 'cancel_pickup':
+      return 'Undo Passenger Pickup'
+    case 'cancel_dropoff':
+      return 'Undo Dropoff Arrival'
+    default:
+      return 'Continue'
   }
 }
 
@@ -210,6 +262,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
   const [messageLoading, setMessageLoading] = useState(false)
   const [callMode, setCallMode] = useState<'audio' | 'video' | null>(null)
   const [activeCallOverlay, setActiveCallOverlay] = useState<ActiveDriveCallOverlay | null>(null)
+  const [confirmContractAction, setConfirmContractAction] = useState<ContractActionKey | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -647,24 +700,90 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
   const riderProfileHref = riderHandle ? `/u/${encodeURIComponent(riderHandle)}` : undefined
   const contractActions = getContractActions(ride?.status)
   const payoutSettled = ride?.status === 'completed' && ride.escrowStatus === 'released'
+  const confirmContractActionLabel = confirmContractAction ? getContractActionConfirmationLabel(confirmContractAction) : ''
   const fullscreenRiderOverlay = ride ? (
-    <div className="w-full max-w-sm rounded-[1.6rem] border border-white/60 bg-white/94 p-4 text-slate-950 shadow-[0_22px_60px_rgba(15,23,42,0.24)] backdrop-blur">
-      <div className="flex items-start justify-between gap-3">
+    <div className="w-full rounded-[1.6rem] border border-white/60 bg-white/94 p-4 text-slate-950 shadow-[0_22px_60px_rgba(15,23,42,0.24)] backdrop-blur md:max-w-sm">
+      <div className="hidden items-start justify-between gap-3 md:flex">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Your Rider</p>
-          <p className="mt-1 text-sm text-slate-600">Stay in touch without leaving navigation.</p>
         </div>
         <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${getDriveStatusTone(ride.status)}`}>
           {formatDriveStatus(ride.status)}
         </span>
       </div>
-      <div className="[&_.cc-civil-card__title]:!whitespace-normal [&_.cc-civil-card__title]:!line-clamp-none [&_.cc-civil-card__title]:!overflow-visible">
+      <div className="md:hidden">
+        <div className="grid grid-cols-5 gap-2">
+          <a
+            href={riderProfileHref}
+            aria-label={riderLabel}
+            className="inline-flex min-h-[3.5rem] items-center justify-center rounded-full bg-transparent shadow-none transition"
+          >
+            {ride.requester.avatarUrl ? (
+              <img src={ride.requester.avatarUrl} alt={riderLabel} className="h-10 w-10 rounded-full object-cover" />
+            ) : (
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-700">
+                {getAvatarInitials(riderLabel)}
+              </span>
+            )}
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              void handleStartMessage()
+            }}
+            disabled={contactButtonsDisabled}
+            aria-label={messageLoading ? 'Opening messages' : 'Open messages'}
+            className="inline-flex min-h-[3.5rem] items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-3 text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <HiOutlineChatBubbleOvalLeft className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleStartCall('audio')
+            }}
+            disabled={contactButtonsDisabled}
+            aria-label={callMode === 'audio' ? 'Starting audio call' : 'Start audio call'}
+            className="inline-flex min-h-[3.5rem] items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-3 text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <HiOutlinePhone className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handleStartCall('video')
+            }}
+            disabled={contactButtonsDisabled}
+            aria-label={callMode === 'video' ? 'Starting video call' : 'Start video call'}
+            className="inline-flex min-h-[3.5rem] items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-3 text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <HiOutlineVideoCamera className="h-5 w-5" />
+          </button>
+          {contractActions.primary ? (
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmContractAction(contractActions.primary.key)
+              }}
+              disabled={Boolean(contractActionLoading)}
+              aria-label={contractActions.primary.label}
+              className={`inline-flex min-h-[3.5rem] items-center justify-center rounded-full transition disabled:cursor-not-allowed disabled:opacity-60 ${getContractActionButtonClass(contractActions.primary.key)}`}
+            >
+              {renderContractActionIcon(contractActions.primary.key)}
+            </button>
+          ) : (
+            <div aria-hidden="true" className="min-h-[3.5rem]" />
+          )}
+        </div>
+      </div>
+      <div className="hidden md:block [&_.cc-civil-card__title]:!whitespace-normal [&_.cc-civil-card__title]:!line-clamp-none [&_.cc-civil-card__title]:!overflow-visible">
         <CivilCard
           size="md"
           name={riderLabel}
           avatarAlt={riderLabel}
           avatarSrc={ride.requester.avatarUrl}
           avatarInitials={getAvatarInitials(riderLabel)}
+          coverUrl={ride.requester.coverUrl}
           href={riderProfileHref}
           titleLines={0}
           subtitleLines={0}
@@ -672,18 +791,21 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
         />
       </div>
       {contractActions.primary ? (
-        <button
-          type="button"
-          onClick={() => {
-            void handleContractAction(contractActions.primary.key)
-          }}
-          disabled={Boolean(contractActionLoading)}
-          className="mt-3 inline-flex w-full items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {contractActionLoading === contractActions.primary.key ? 'Working…' : contractActions.primary.label}
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              void handleContractAction(contractActions.primary.key)
+            }}
+            disabled={Boolean(contractActionLoading)}
+            className={`mt-3 hidden w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 md:inline-flex ${getContractActionButtonClass(contractActions.primary.key)}`}
+          >
+            {renderContractActionIcon(contractActions.primary.key)}
+            {contractActionLoading === contractActions.primary.key ? 'Working…' : contractActions.primary.label}
+          </button>
+        </>
       ) : null}
-      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      <div className="mt-3 hidden gap-2 sm:grid-cols-2 md:grid">
         <button
           type="button"
           onClick={() => {
@@ -728,8 +850,51 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
         )
       : null
 
+  const fullscreenActionConfirmationModal = confirmContractAction ? (
+    <Modal
+      open
+      onClose={() => {
+        if (contractActionLoading) return
+        setConfirmContractAction(null)
+      }}
+      title="Confirm Contract Action"
+      maxWidthClassName="max-w-sm"
+      closeOnBackdrop={!contractActionLoading}
+      closeOnEscape={!contractActionLoading}
+    >
+      <div className="space-y-4">
+        <p className="text-base font-semibold text-slate-950">{`Confirm ${confirmContractActionLabel}?`}</p>
+        <div className="flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => setConfirmContractAction(null)}
+            disabled={Boolean(contractActionLoading)}
+            className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const action = confirmContractAction
+              if (!action) return
+              void handleContractAction(action).finally(() => {
+                setConfirmContractAction(null)
+              })
+            }}
+            disabled={Boolean(contractActionLoading)}
+            className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {contractActionLoading === confirmContractAction ? 'Working…' : 'Yes'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  ) : null
+
   return (
     <>
+      {fullscreenActionConfirmationModal}
       <DashboardShell
         rightRail={
           <div className="space-y-5">
@@ -789,6 +954,9 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
                     destination={pickupPoint}
                     routeCoordinates={approachRouteCoordinates}
                     showOriginAvatar={Boolean(driverPoint)}
+                    originAvatarUrl={ride.driverVehicle?.photoUrl ?? null}
+                    originAvatarLabel={ride.driverVehicle?.name ?? 'Driver vehicle'}
+                    originAvatarFallbackLabel={getAvatarInitials(ride.driverVehicle?.name || 'Vehicle')}
                     onNavigationOriginChange={setNavigationOrigin}
                     fullscreenOverlay={fullscreenRiderOverlay}
                   />
@@ -827,6 +995,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
                       avatarAlt={riderLabel}
                       avatarSrc={ride.requester.avatarUrl}
                       avatarInitials={getAvatarInitials(riderLabel)}
+                      coverUrl={ride.requester.coverUrl}
                       href={riderProfileHref}
                       titleLines={0}
                       subtitleLines={0}
@@ -882,8 +1051,9 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
                             void handleContractAction(contractActions.primary.key)
                           }}
                           disabled={Boolean(contractActionLoading)}
-                          className="inline-flex w-full items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                          className={`inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${getContractActionButtonClass(contractActions.primary.key)}`}
                         >
+                          {renderContractActionIcon(contractActions.primary.key)}
                           {contractActionLoading === contractActions.primary.key ? 'Working…' : contractActions.primary.label}
                         </button>
                       ) : null}
@@ -894,8 +1064,9 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
                             void handleContractAction(contractActions.secondary.key)
                           }}
                           disabled={Boolean(contractActionLoading)}
-                          className="inline-flex w-full items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          className={`inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${getContractActionButtonClass(contractActions.secondary.key)}`}
                         >
+                          {renderContractActionIcon(contractActions.secondary.key)}
                           {contractActionLoading === contractActions.secondary.key ? 'Working…' : contractActions.secondary.label}
                         </button>
                       ) : null}

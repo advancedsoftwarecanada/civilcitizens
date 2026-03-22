@@ -49,6 +49,7 @@ export type DriveRideRequestItem = {
     handle: string | null
     name: string | null
     avatarUrl: string | null
+    coverUrl: string | null
   }
   driverVehicle: {
     id: string
