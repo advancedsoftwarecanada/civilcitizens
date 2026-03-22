@@ -29,6 +29,13 @@ type ThreadCall = {
   initiator: ThreadUser
 }
 
+type IncomingInviteMeta = {
+  contextLabel?: string | null
+  imageUrl?: string | null
+  imageAlt?: string | null
+  imageLabel?: string | null
+}
+
 type ThreadSummary = {
   id: string
   participants: ThreadParticipant[]
@@ -37,6 +44,7 @@ type ThreadSummary = {
 type IncomingInvite = {
   thread: ThreadSummary
   call: ThreadCall
+  inviteMeta?: IncomingInviteMeta | null
 }
 
 function isThreadUser(value: unknown): value is ThreadUser {
@@ -54,6 +62,14 @@ function isThreadParticipant(value: unknown): value is ThreadParticipant {
 function isIncomingInvitePayload(payload: RealtimePayload): payload is { type: 'message.call.invited'; data: IncomingInvite } {
   if (payload.type !== 'message.call.invited') return false
   const data = payload.data as Partial<IncomingInvite> | undefined
+  const meta = data?.inviteMeta as IncomingInviteMeta | null | undefined
+  const metaValid =
+    meta === undefined ||
+    meta === null ||
+    ((meta.contextLabel === undefined || meta.contextLabel === null || typeof meta.contextLabel === 'string') &&
+      (meta.imageUrl === undefined || meta.imageUrl === null || typeof meta.imageUrl === 'string') &&
+      (meta.imageAlt === undefined || meta.imageAlt === null || typeof meta.imageAlt === 'string') &&
+      (meta.imageLabel === undefined || meta.imageLabel === null || typeof meta.imageLabel === 'string'))
   return (
     typeof data?.call?.id === 'string' &&
     typeof data.call?.threadId === 'string' &&
@@ -61,7 +77,8 @@ function isIncomingInvitePayload(payload: RealtimePayload): payload is { type: '
     isThreadUser(data.call?.initiator) &&
     typeof data?.thread?.id === 'string' &&
     Array.isArray(data.thread?.participants) &&
-    data.thread.participants.every((participant) => isThreadParticipant(participant))
+    data.thread.participants.every((participant) => isThreadParticipant(participant)) &&
+    metaValid
   )
 }
 
@@ -129,6 +146,10 @@ export default function IncomingMessageCallOverlay() {
 
   const inviterName = formatUserDisplayName(invite.call.initiator.name, invite.call.initiator.handle) || invite.call.initiator.handle
   const callLabel = invite.call.mode === 'video' ? 'Video call' : 'Audio call'
+  const contextLabel = invite.inviteMeta?.contextLabel?.trim() || null
+  const contextImageUrl = invite.inviteMeta?.imageUrl?.trim() || null
+  const contextImageAlt = invite.inviteMeta?.imageAlt?.trim() || contextLabel || inviterName
+  const contextImageLabel = invite.inviteMeta?.imageLabel?.trim() || null
 
   return createPortal(
     <div className="pointer-events-none fixed inset-0 z-[115] flex items-end justify-center px-3 pb-[calc(var(--mobile-dock-clearance)+1rem)] sm:items-start sm:justify-end sm:p-5">
@@ -159,7 +180,20 @@ export default function IncomingMessageCallOverlay() {
               <div className="min-w-0">
                 <p className="truncate text-lg font-semibold text-slate-900">{inviterName}</p>
                 <p className="text-sm text-slate-500">{callLabel}</p>
+                {contextLabel ? <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--cc-primary)]">{contextLabel}</p> : null}
               </div>
+              {contextImageUrl ? (
+                <div className="ml-auto w-24 shrink-0">
+                  <div className="overflow-hidden rounded-[1.1rem] border border-white/80 bg-white shadow-sm">
+                    <img src={contextImageUrl} alt={contextImageAlt} className="h-16 w-full object-cover" loading="lazy" />
+                    {contextImageLabel ? (
+                      <div className="border-t border-slate-100 px-2 py-1">
+                        <p className="truncate text-[11px] font-semibold text-slate-700">{contextImageLabel}</p>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

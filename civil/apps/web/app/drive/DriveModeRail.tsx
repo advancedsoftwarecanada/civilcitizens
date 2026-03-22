@@ -1,23 +1,32 @@
 'use client'
 
 import Link from 'next/link'
+import { HiOutlineShieldCheck, HiOutlineTruck } from 'react-icons/hi2'
 import Block from '../_components/Block'
 
 export default function DriveModeRail({
   isDriverActive,
+  isDriverMode,
   loading,
   rideRequestCount,
   deliveryRequestCount,
+  onEnterDriverMode,
+  onExitDriverMode,
 }: {
   isDriverActive: boolean
+  isDriverMode?: boolean
   loading: boolean
   rideRequestCount: number
   deliveryRequestCount: number
+  onEnterDriverMode?: () => void
+  onExitDriverMode?: () => void
 }) {
-  const action = isDriverActive ? { label: 'Manage', href: '/drive/driver/manage' } : undefined
+  const driverModeEnabled = isDriverActive && (isDriverMode ?? true)
+  const title = !isDriverActive ? 'Drive for Civil' : 'Driver Mode'
+  const action = driverModeEnabled && onExitDriverMode ? { label: 'Exit Driver Mode', onClick: onExitDriverMode } : undefined
 
   return (
-    <Block title="Drive for Civil" action={action}>
+    <Block title={title} action={action}>
       {!isDriverActive ? (
         <div className="-mt-1 px-1 py-1">
           <ul className="space-y-2 text-sm text-slate-700">
@@ -27,10 +36,22 @@ export default function DriveModeRail({
           </ul>
           <Link
             href="/drive/onboarding"
-            className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
           >
+            <HiOutlineShieldCheck className="h-4 w-4 shrink-0" />
             Create Drive Account
           </Link>
+        </div>
+      ) : !driverModeEnabled ? (
+        <div className="-mt-1 px-1 py-1">
+          <button
+            type="button"
+            onClick={onEnterDriverMode}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
+          >
+            <HiOutlineTruck className="h-4 w-4 shrink-0" />
+            Enter Driver Mode
+          </button>
         </div>
       ) : (
         <div className="space-y-3">

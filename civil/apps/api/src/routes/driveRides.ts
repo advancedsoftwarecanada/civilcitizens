@@ -19,6 +19,7 @@ const RIDE_OFFER_PER_KM_FEE_CENTS_MAX = 500
 const DRIVE_RIDE_NOTIFICATION_TYPES = {
   OFFER: 'drive_ride_offer',
   OFFER_ACCEPTED: 'drive_ride_offer_accepted',
+  CONTRACT_UPDATE: 'drive_ride_contract_update',
   COMPLETE_CONFIRMATION: 'drive_ride_complete_confirmation',
   COMPLETE_RESPONSE: 'drive_ride_complete_response',
 } as const
@@ -77,6 +78,12 @@ const RideLocationUpdateBody = z
   })
   .strict()
 
+const RideContractActionBody = z
+  .object({
+    action: z.enum(['arrived_pickup', 'cancel_arrival', 'picked_up', 'cancel_pickup', 'dropped_off', 'cancel_dropoff']),
+  })
+  .strict()
+
 type RideAddress = {
   name: string | null
   label: string | null
@@ -116,6 +123,7 @@ type RideRequestRow = {
   driver_fee_cents: number
   total_cost_cents: number
   driver_user_id?: string | null
+  contract_started_at?: Date | null
   driver_location_latitude?: number | null
   driver_location_longitude?: number | null
   driver_location_recorded_at?: Date | null
@@ -142,6 +150,7 @@ type RideRequestRow = {
   requester_handle: string | null
   requester_name: string | null
   requester_avatar_url: string | null
+  driver_community_meta?: unknown
   offer_count: number | null
   viewer_offer_amount_cents: number | null
   viewer_offer_per_km_fee_cents: number | null
@@ -632,6 +641,68 @@ function isDriveStatusLocationTrackable(value: string | null | undefined) {
   return ['accepted', 'assigned', 'matched', 'driver_selected', 'driver_en_route', 'en_route', 'driver_arrived', 'arrived', 'picked_up', 'in_progress'].includes(normalized)
 }
 
+function resolveDriveRideContractStatusAction(
+  currentStatus: string | null | undefined,
+  action: z.infer<typeof RideContractActionBody>['action'],
+) {
+  const normalized = (currentStatus || '').trim().toLowerCase()
+
+  switch (action) {
+    case 'arrived_pickup':
+      return ['accepted', 'assigned', 'matched', 'driver_selected', 'driver_en_route', 'en_route'].includes(normalized)
+        ? 'driver_arrived'
+        : null
+    case 'cancel_arrival':
+      return normalized === 'driver_arrived' ? 'driver_en_route' : null
+    case 'picked_up':
+      return normalized === 'driver_arrived' ? 'picked_up' : null
+    case 'cancel_pickup':
+      return normalized === 'picked_up' || normalized === 'in_progress' ? 'driver_arrived' : null
+    case 'dropped_off':
+      return normalized === 'picked_up' || normalized === 'in_progress' ? 'arrived' : null
+    case 'cancel_dropoff':
+      return normalized === 'arrived' ? 'picked_up' : null
+    default:
+      return null
+  }
+}
+
+function formatDriveRideContractNotificationActionLabel(action: z.infer<typeof RideContractActionBody>['action'] | 'complete_contract') {
+  switch (action) {
+    case 'arrived_pickup':
+      return 'arrived for pickup'
+    case 'cancel_arrival':
+      return 'cancelled pickup arrival'
+    case 'picked_up':
+      return 'picked up the passengers'
+    case 'cancel_pickup':
+      return 'cancelled passenger pickup'
+    case 'dropped_off':
+      return 'arrived at the dropoff'
+    case 'cancel_dropoff':
+      return 'cancelled dropoff arrival'
+    case 'complete_contract':
+      return 'completed the contract'
+    default:
+      return 'updated the contract'
+  }
+}
+
+function buildDriveRideContractUpdatePayload(args: {
+  rideId: string
+  action: z.infer<typeof RideContractActionBody>['action'] | 'complete_contract'
+  status: string
+}) {
+  return {
+    rideRequestId: args.rideId,
+    action: args.action,
+    status: args.status,
+    url: `/drive/${args.rideId}/contract`,
+    sourceUrl: `/drive/${args.rideId}/contract`,
+    message: formatDriveRideContractNotificationActionLabel(args.action),
+  } satisfies Prisma.InputJsonValue
+}
+
 function mapRideRequestRow(row: RideRequestRow, viewerUserId: string | null) {
   const pickupAddress = readStoredRideAddress(row.pickup_address)
   const dropoffAddress = readStoredRideAddress(row.dropoff_address)
@@ -677,6 +748,7 @@ function mapRideRequestRow(row: RideRequestRow, viewerUserId: string | null) {
         ? row.bid_requested_at.toISOString()
         : null
   const mappedStatus = row.status === 'open' && offerCount > 0 ? 'bid_pending' : row.status
+  const driverVehicle = readFeaturedDriverVehicle(row.driver_community_meta)
   const viewerRole =
     viewerUserId && viewerUserId === row.requester_user_id
       ? 'requester'
@@ -710,6 +782,7 @@ function mapRideRequestRow(row: RideRequestRow, viewerUserId: string | null) {
     acceptedOfferPerKmFeeCents:
       typeof row.accepted_offer_per_km_fee_cents === 'number' ? Number(row.accepted_offer_per_km_fee_cents) : null,
     acceptedOfferAt: row.accepted_offer_at ? row.accepted_offer_at.toISOString() : null,
+    contractStartedAt: row.contract_started_at ? row.contract_started_at.toISOString() : null,
     escrowStatus: row.escrow_status ?? 'none',
     walletTransactionId: row.wallet_transaction_id ?? null,
     completionRequestedAt: row.completion_requested_at ? row.completion_requested_at.toISOString() : null,
@@ -726,6 +799,15 @@ function mapRideRequestRow(row: RideRequestRow, viewerUserId: string | null) {
       name: row.requester_name,
       avatarUrl: row.requester_avatar_url,
     },
+    driverVehicle: driverVehicle
+      ? {
+          id: driverVehicle.id,
+          name: driverVehicle.name,
+          photoUrl: driverVehicle.photoUrls[0] ?? null,
+          minimumRideAmountCents: driverVehicle.minimumRideAmountCents,
+          perKmFeeCents: driverVehicle.perKmFeeCents,
+        }
+      : null,
     isOwner: Boolean(viewerUserId && viewerUserId === row.requester_user_id),
   }
 }
@@ -932,6 +1014,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
                 r.driver_fee_cents,
                 r.total_cost_cents,
                 r.driver_user_id,
+                r.contract_started_at,
                 r.driver_location_latitude,
                 r.driver_location_longitude,
                 r.driver_location_recorded_at,
@@ -1002,6 +1085,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
                 r.driver_fee_cents,
                 r.total_cost_cents,
                 r.driver_user_id,
+                r.contract_started_at,
                 r.driver_location_latitude,
                 r.driver_location_longitude,
                 r.driver_location_recorded_at,
@@ -1112,6 +1196,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           r.driver_fee_cents,
           r.total_cost_cents,
           r.driver_user_id,
+          r.contract_started_at,
           r.driver_location_latitude,
           r.driver_location_longitude,
           r.driver_location_recorded_at,
@@ -1141,9 +1226,11 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           viewer_offer.created_at AS viewer_offer_requested_at,
           requester.handle AS requester_handle,
           requester.name AS requester_name,
-          requester."avatarUrl" AS requester_avatar_url
+          requester."avatarUrl" AS requester_avatar_url,
+          driver."communityMeta" AS driver_community_meta
         FROM citizen_drive_ride_request r
         INNER JOIN "User" requester ON requester.id = r.requester_user_id
+        LEFT JOIN "User" driver ON driver.id = r.driver_user_id
         LEFT JOIN LATERAL (
           SELECT COUNT(*)::int AS offer_count
           FROM citizen_drive_ride_offer o
@@ -1163,7 +1250,10 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           LIMIT 1
         ) viewer_offer ON TRUE
         WHERE r.id = ${params.data.rideId}
-          AND r.requester_user_id = ${userId}
+          AND (
+            r.requester_user_id = ${userId}
+            OR r.driver_user_id = ${userId}
+          )
         LIMIT 1
       `
 
@@ -1202,6 +1292,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           r.driver_fee_cents,
           r.total_cost_cents,
           r.driver_user_id,
+          r.contract_started_at,
           r.driver_location_latitude,
           r.driver_location_longitude,
           r.driver_location_recorded_at,
@@ -1539,6 +1630,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           acceptedOfferAmountCents: null,
           acceptedOfferPerKmFeeCents: null,
           acceptedOfferAt: null,
+          contractStartedAt: null,
           escrowStatus: 'none',
           walletTransactionId: null,
           completionRequestedAt: null,
@@ -2065,6 +2157,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               accepted_offer_amount_cents = ${offer.amount_cents},
               accepted_offer_per_km_fee_cents = ${offer.per_km_fee_cents},
               accepted_offer_at = NOW(),
+              contract_started_at = NULL,
               escrow_status = ${'held'},
               wallet_transaction_id = ${walletTransactionId},
               fuel_charge_cents = ${RIDE_CIVIL_FEE_CENTS},
@@ -2098,6 +2191,133 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
       })
 
       return reply.send({ success: true, status: 'driver_selected' })
+    }),
+  )
+
+  app.post('/drive/rides/:rideId/start', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? null
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = RideRequestParams.safeParse(req.params ?? {})
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      await deps.ensureCitizenMarketplaceTables()
+      await settleExpiredDriveRideEscrows()
+
+      const rows = await prisma.$queryRaw<Array<{
+        id: string
+        driver_user_id: string | null
+        status: string
+        accepted_offer_id: string | null
+        contract_started_at: Date | null
+      }>>`
+        SELECT
+          id,
+          driver_user_id,
+          status,
+          accepted_offer_id,
+          contract_started_at
+        FROM citizen_drive_ride_request
+        WHERE id = ${params.data.rideId}
+        LIMIT 1
+      `
+
+      const ride = rows[0]
+      if (!ride || ride.driver_user_id !== userId) return reply.code(404).send({ error: 'ride_not_found' })
+      if (!ride.accepted_offer_id) return reply.code(409).send({ error: 'ride_not_startable' })
+      if (!['accepted', 'assigned', 'matched', 'driver_selected', 'driver_en_route', 'en_route', 'driver_arrived', 'arrived', 'picked_up', 'in_progress'].includes(ride.status)) {
+        return reply.code(409).send({ error: 'ride_not_startable' })
+      }
+
+      const nextStatus =
+        ['accepted', 'assigned', 'matched', 'driver_selected'].includes(ride.status) ? 'driver_en_route' : ride.status
+      const contractStartedAt = ride.contract_started_at ? ride.contract_started_at.toISOString() : new Date().toISOString()
+
+      await prisma.$executeRaw`
+        UPDATE citizen_drive_ride_request
+        SET contract_started_at = COALESCE(contract_started_at, NOW()),
+            status = ${nextStatus},
+            updated_at = NOW()
+        WHERE id = ${ride.id}
+          AND driver_user_id = ${userId}
+      `
+
+      return reply.send({
+        success: true,
+        status: nextStatus,
+        contractStartedAt,
+      })
+    }),
+  )
+
+  app.post('/drive/rides/:rideId/contract-action', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? null
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = RideRequestParams.safeParse(req.params ?? {})
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const body = RideContractActionBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: 'invalid_body' })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const rows = await prisma.$queryRaw<Array<{
+        id: string
+        requester_user_id: string
+        driver_user_id: string | null
+        status: string
+        accepted_offer_id: string | null
+        contract_started_at: Date | null
+      }>>`
+        SELECT
+          id,
+          requester_user_id,
+          driver_user_id,
+          status,
+          accepted_offer_id,
+          contract_started_at
+        FROM citizen_drive_ride_request
+        WHERE id = ${params.data.rideId}
+        LIMIT 1
+      `
+
+      const ride = rows[0]
+      if (!ride || ride.driver_user_id !== userId) return reply.code(404).send({ error: 'ride_not_found' })
+      if (!ride.accepted_offer_id) return reply.code(409).send({ error: 'ride_not_startable' })
+
+      const nextStatus = resolveDriveRideContractStatusAction(ride.status, body.data.action)
+      if (!nextStatus) return reply.code(409).send({ error: 'invalid_contract_action' })
+
+      const contractStartedAt = ride.contract_started_at ? ride.contract_started_at.toISOString() : new Date().toISOString()
+
+      await prisma.$executeRaw`
+        UPDATE citizen_drive_ride_request
+        SET status = ${nextStatus},
+            contract_started_at = COALESCE(contract_started_at, NOW()),
+            updated_at = NOW()
+        WHERE id = ${ride.id}
+          AND driver_user_id = ${userId}
+      `
+
+      await deps.createNotificationRecord({
+        userId: ride.requester_user_id,
+        actorId: userId,
+        type: DRIVE_RIDE_NOTIFICATION_TYPES.CONTRACT_UPDATE,
+        payload: buildDriveRideContractUpdatePayload({
+          rideId: ride.id,
+          action: body.data.action,
+          status: nextStatus,
+        }),
+      })
+
+      return reply.send({
+        success: true,
+        status: nextStatus,
+        contractStartedAt,
+      })
     }),
   )
 
@@ -2171,66 +2391,163 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
       await ensureCitizenWalletTables()
       await settleExpiredDriveRideEscrows()
 
-      const rows = await prisma.$queryRaw<Array<{
-        id: string
-        requester_user_id: string
-        driver_user_id: string | null
-        status: string
-        escrow_status: string | null
-        completion_requested_at: Date | null
-        total_cost_cents: number
-        accepted_offer_id: string | null
-      }>>`
-        SELECT
-          id,
-          requester_user_id,
-          driver_user_id,
-          status,
-          escrow_status,
-          completion_requested_at,
-          total_cost_cents,
-          accepted_offer_id
-        FROM citizen_drive_ride_request
-        WHERE id = ${params.data.rideId}
-        LIMIT 1
-      `
+      try {
+        const result = await prisma.$transaction(async (tx) => {
+          const rows = await tx.$queryRaw<Array<{
+            id: string
+            requester_user_id: string
+            driver_user_id: string | null
+            status: string
+            escrow_status: string | null
+            completion_requested_at: Date | null
+            accepted_offer_id: string | null
+            accepted_offer_amount_cents: number | null
+            driver_fee_cents: number
+          }>>`
+            SELECT
+              id,
+              requester_user_id,
+              driver_user_id,
+              status,
+              escrow_status,
+              completion_requested_at,
+              accepted_offer_id,
+              accepted_offer_amount_cents,
+              driver_fee_cents
+            FROM citizen_drive_ride_request
+            WHERE id = ${params.data.rideId}
+            LIMIT 1
+            FOR UPDATE
+          `
 
-      const ride = rows[0]
-      if (!ride || ride.driver_user_id !== userId) return reply.code(404).send({ error: 'ride_not_found' })
-      if (ride.escrow_status !== 'held') return reply.code(409).send({ error: 'ride_not_in_escrow' })
-      if (!['accepted', 'assigned', 'matched', 'driver_selected', 'driver_en_route', 'en_route', 'driver_arrived', 'arrived', 'picked_up', 'in_progress'].includes(ride.status)) {
-        return reply.code(409).send({ error: 'ride_not_completable' })
+          const ride = rows[0]
+          if (!ride || ride.driver_user_id !== userId) throw new Error('ride_not_found')
+          if (ride.escrow_status !== 'held') throw new Error('ride_not_in_escrow')
+          if (!['accepted', 'assigned', 'matched', 'driver_selected', 'driver_en_route', 'en_route', 'driver_arrived', 'arrived', 'picked_up', 'in_progress'].includes(ride.status)) {
+            throw new Error('ride_not_completable')
+          }
+          if (ride.completion_requested_at) throw new Error('ride_completion_already_requested')
+
+          const completedAt = new Date()
+
+          await tx.$executeRaw`
+            UPDATE citizen_drive_ride_request
+            SET status = ${'completed'},
+                contract_started_at = COALESCE(contract_started_at, NOW()),
+                completion_requested_at = ${completedAt},
+                completion_confirmation_due_at = NULL,
+                updated_at = NOW()
+            WHERE id = ${ride.id}
+              AND driver_user_id = ${userId}
+          `
+
+          const settlement = await releaseDriveRideEscrow(tx, ride.id, 'confirmed', completedAt)
+          if (!settlement.settled) throw new Error('ride_not_in_escrow')
+
+          return {
+            requesterUserId: ride.requester_user_id,
+            status: 'completed',
+            completedAt: completedAt.toISOString(),
+            earningsCreditedCents: Math.max(0, Number(ride.accepted_offer_amount_cents) || Number(ride.driver_fee_cents) || 0),
+          }
+        })
+
+        await deps.createNotificationRecord({
+          userId: result.requesterUserId,
+          actorId: userId,
+          type: DRIVE_RIDE_NOTIFICATION_TYPES.CONTRACT_UPDATE,
+          payload: buildDriveRideContractUpdatePayload({
+            rideId: params.data.rideId,
+            action: 'complete_contract',
+            status: 'completed',
+          }),
+        })
+
+        const { requesterUserId: _requesterUserId, ...response } = result
+
+        return reply.send({ success: true, ...response })
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message === 'ride_not_found') return reply.code(404).send({ error: 'ride_not_found' })
+          if (error.message === 'ride_not_in_escrow') return reply.code(409).send({ error: 'ride_not_in_escrow' })
+          if (error.message === 'ride_not_completable') return reply.code(409).send({ error: 'ride_not_completable' })
+          if (error.message === 'ride_completion_already_requested') return reply.code(409).send({ error: 'ride_completion_already_requested' })
+        }
+        throw error
       }
-      if (ride.completion_requested_at) return reply.code(409).send({ error: 'ride_completion_already_requested' })
+    }),
+  )
 
-      const completionDueAt = new Date(Date.now() + RIDE_AUTO_COMPLETE_MINUTES * 60 * 1000)
+  app.get('/drive/driver/earnings-summary', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? null
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
 
-      await prisma.$executeRaw`
-        UPDATE citizen_drive_ride_request
-        SET status = ${'completed'},
-            completion_requested_at = NOW(),
-            completion_confirmation_due_at = ${completionDueAt},
-            updated_at = NOW()
-        WHERE id = ${ride.id}
-          AND driver_user_id = ${userId}
+      await deps.ensureCitizenMarketplaceTables()
+      await ensureCitizenWalletTables()
+
+      const rows = await prisma.$queryRaw<Array<{
+        today_earnings_cents: number | null
+        today_hourly_earnings_cents: number | null
+        this_week_earnings_cents: number | null
+        this_week_hourly_earnings_cents: number | null
+        today_km: number | null
+        this_week_km: number | null
+      }>>`
+        WITH completed_rides AS (
+          SELECT
+            COALESCE(NULLIF(r.accepted_offer_amount_cents, 0), NULLIF(r.driver_fee_cents, 0), 0)::int AS payout_cents,
+            COALESCE(r.route_distance_km, 0)::numeric AS distance_km,
+            COALESCE(r.rider_confirmed_complete_at, r.auto_completed_at, r.completion_requested_at, r.updated_at) AS completed_at,
+            GREATEST(
+              EXTRACT(
+                EPOCH FROM (
+                  COALESCE(r.rider_confirmed_complete_at, r.auto_completed_at, r.completion_requested_at, r.updated_at) -
+                  COALESCE(r.contract_started_at, r.accepted_offer_at, r.created_at)
+                )
+              ) / 3600.0,
+              0
+            )::numeric AS active_hours
+          FROM citizen_drive_ride_request r
+          WHERE r.driver_user_id = ${userId}
+            AND r.status = ${'completed'}
+            AND r.escrow_status = ${'released'}
+            AND r.accepted_offer_id IS NOT NULL
+        )
+        SELECT
+          COALESCE(SUM(CASE WHEN completed_at >= date_trunc('day', NOW()) THEN payout_cents ELSE 0 END), 0)::int AS today_earnings_cents,
+          CASE
+            WHEN COALESCE(SUM(CASE WHEN completed_at >= date_trunc('day', NOW()) THEN active_hours ELSE 0 END), 0) > 0
+              THEN ROUND(
+                COALESCE(SUM(CASE WHEN completed_at >= date_trunc('day', NOW()) THEN payout_cents ELSE 0 END), 0)::numeric /
+                SUM(CASE WHEN completed_at >= date_trunc('day', NOW()) THEN active_hours ELSE 0 END)
+              )::int
+            ELSE 0
+          END AS today_hourly_earnings_cents,
+          COALESCE(SUM(CASE WHEN completed_at >= date_trunc('week', NOW()) THEN payout_cents ELSE 0 END), 0)::int AS this_week_earnings_cents,
+          CASE
+            WHEN COALESCE(SUM(CASE WHEN completed_at >= date_trunc('week', NOW()) THEN active_hours ELSE 0 END), 0) > 0
+              THEN ROUND(
+                COALESCE(SUM(CASE WHEN completed_at >= date_trunc('week', NOW()) THEN payout_cents ELSE 0 END), 0)::numeric /
+                SUM(CASE WHEN completed_at >= date_trunc('week', NOW()) THEN active_hours ELSE 0 END)
+              )::int
+            ELSE 0
+          END AS this_week_hourly_earnings_cents,
+          COALESCE(ROUND(SUM(CASE WHEN completed_at >= date_trunc('day', NOW()) THEN distance_km ELSE 0 END), 1), 0)::float8 AS today_km,
+          COALESCE(ROUND(SUM(CASE WHEN completed_at >= date_trunc('week', NOW()) THEN distance_km ELSE 0 END), 1), 0)::float8 AS this_week_km
+        FROM completed_rides
       `
 
-      await deps.createNotificationRecord?.({
-        userId: ride.requester_user_id,
-        actorId: userId,
-        type: DRIVE_RIDE_NOTIFICATION_TYPES.COMPLETE_CONFIRMATION,
-        payload: {
-          rideRequestId: ride.id,
-          offerId: ride.accepted_offer_id,
-          amountCents: ride.total_cost_cents,
-          status: 'pending',
-          completionDueAt: completionDueAt.toISOString(),
-          url: `/drive/myrides/${ride.id}/offers`,
-          sourceUrl: `/drive/myrides/${ride.id}/offers`,
-        },
-      })
+      const summary = rows[0] ?? null
 
-      return reply.send({ success: true, status: 'completed', completionDueAt: completionDueAt.toISOString() })
+      return reply.send({
+        todayEarningsCents: Math.max(0, Number(summary?.today_earnings_cents) || 0),
+        todayHourlyEarningsCents: Math.max(0, Number(summary?.today_hourly_earnings_cents) || 0),
+        thisWeekEarningsCents: Math.max(0, Number(summary?.this_week_earnings_cents) || 0),
+        thisWeekHourlyEarningsCents: Math.max(0, Number(summary?.this_week_hourly_earnings_cents) || 0),
+        todayKm: Number(summary?.today_km) || 0,
+        thisWeekKm: Number(summary?.this_week_km) || 0,
+      })
     }),
   )
 

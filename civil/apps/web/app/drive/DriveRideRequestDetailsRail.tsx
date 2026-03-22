@@ -1,11 +1,13 @@
 'use client'
 
+import { HiOutlineClock } from 'react-icons/hi2'
 import Block from '../_components/Block'
 import { formatCanadianPhysicalAddressInline } from '../_lib/canadianAddresses'
 import {
   canEditDriveRideStatus,
   formatDriveDateTime,
   formatDriveMoney,
+  formatDriveRelativePickupTime,
   formatDriveStatus,
   getDriveStatusTone,
   type DriveRideRequestItem,
@@ -16,6 +18,7 @@ export default function DriveRideRequestDetailsRail({ item }: { item: DriveRideR
 
   const pickupLabel = formatCanadianPhysicalAddressInline(item.pickupAddress) ?? 'Pickup pending'
   const destinationLabel = formatCanadianPhysicalAddressInline(item.dropoffAddress) ?? 'Destination pending'
+  const pickupTimingLabel = formatDriveRelativePickupTime(item.pickupAt)
 
   return (
     <Block
@@ -46,7 +49,11 @@ export default function DriveRideRequestDetailsRail({ item }: { item: DriveRideR
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Pickup time</p>
-            <p className="mt-2 text-sm font-semibold text-slate-950">{formatDriveDateTime(item.pickupAt)}</p>
+            <p className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
+              <HiOutlineClock className="h-4 w-4 text-slate-400" />
+              {pickupTimingLabel}
+            </p>
+            <p className="mt-2 text-sm text-slate-500">{formatDriveDateTime(item.pickupAt)}</p>
           </div>
           <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Estimated cost</p>

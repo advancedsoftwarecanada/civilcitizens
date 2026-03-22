@@ -36,6 +36,7 @@ import {
   type SavedShippingAddress,
 } from '../_lib/canadianAddresses'
 import { getStoredToken } from '../_lib/tokenStorage'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import DriveRouteNav from './DriveRouteNav'
 import { canEditDriveRideStatus, formatDriveMoney, type DriveRideRequestItem } from './driveShared'
@@ -275,7 +276,7 @@ function SavedAddressesDropdown({
 
 export default function DriveRideRequestPageClient({ mode = 'create', rideId }: DriveRideRequestPageClientProps) {
   const isEditMode = mode === 'edit' && Boolean(rideId)
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const { isDriverActive, isDriverMode, loading: viewerLoading, rideRequestCount, deliveryRequestCount, enterDriverMode, exitDriverMode } = useDriveViewerState()
   const router = useRouter()
   const pickupDropdownRef = useRef<HTMLDivElement | null>(null)
   const initializedPickupRef = useRef(false)
@@ -770,10 +771,14 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
         <div className="space-y-5">
           <DriveModeRail
             isDriverActive={isDriverActive}
+            isDriverMode={isDriverMode}
             loading={viewerLoading}
             rideRequestCount={rideRequestCount}
             deliveryRequestCount={deliveryRequestCount}
+            onEnterDriverMode={enterDriverMode}
+            onExitDriverMode={exitDriverMode}
           />
+          <DriveDriverEarningsRail enabled={isDriverActive} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }

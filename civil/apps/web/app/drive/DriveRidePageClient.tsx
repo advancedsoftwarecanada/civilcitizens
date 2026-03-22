@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import DriveRideOfferModal from './DriveRideOfferModal'
 import DriveRouteNav from './DriveRouteNav'
@@ -15,7 +17,8 @@ import type { DriveDriverManageResponse, DriveFeedResponse, DriveRideRequestItem
 import { useDriveViewerState } from './useDriveViewerState'
 
 export default function DriveRidePageClient() {
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const { isDriverActive, isDriverMode, loading: viewerLoading, rideRequestCount, deliveryRequestCount, exitDriverMode } = useDriveViewerState()
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<DriveRideRequestItem[]>([])
   const [total, setTotal] = useState(0)
@@ -25,7 +28,7 @@ export default function DriveRidePageClient() {
   const [defaultOfferPerKmCents, setDefaultOfferPerKmCents] = useState(100)
 
   useEffect(() => {
-    if (viewerLoading || !isDriverActive) {
+    if (viewerLoading || !isDriverMode) {
       if (!viewerLoading) setLoading(false)
       return
     }
@@ -118,7 +121,12 @@ export default function DriveRidePageClient() {
       cancelled = true
       if (intervalId) window.clearInterval(intervalId)
     }
-  }, [isDriverActive, selectedRide?.id, viewerLoading])
+  }, [isDriverMode, selectedRide?.id, viewerLoading])
+
+  const handleExitDriverMode = () => {
+    exitDriverMode()
+    router.push('/drive')
+  }
 
   async function handleSubmitOffer(ride: DriveRideRequestItem, perKmFeeCents: number) {
     const token = getStoredToken()
@@ -174,10 +182,13 @@ export default function DriveRidePageClient() {
         <div className="space-y-5">
           <DriveModeRail
             isDriverActive={isDriverActive}
+            isDriverMode={isDriverMode}
             loading={viewerLoading}
             rideRequestCount={rideRequestCount}
             deliveryRequestCount={deliveryRequestCount}
+            onExitDriverMode={handleExitDriverMode}
           />
+          <DriveDriverEarningsRail enabled={isDriverActive} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
@@ -187,10 +198,10 @@ export default function DriveRidePageClient() {
     >
       <DriveRouteNav />
 
-      {!viewerLoading && !isDriverActive ? (
+      {!viewerLoading && !isDriverMode ? (
         <DriveDriverAccessGate
           title="Ride Requests Are Driver-Only"
-          description="Live ride requests are part of driver mode. Activate Drive and Deliver for Civil from the right rail to browse pickup requests."
+          description="Live ride requests are part of driver mode. Enter Driver Mode from /drive to browse pickup requests."
         />
       ) : (
         <DriveRideTable

@@ -406,6 +406,17 @@ export function getNotificationMessage(notification: NotificationItem) {
       return 'offered you a ride'
     case 'drive_ride_offer_accepted':
       return deliveryAmountLabel ? `accepted your ride offer for ${deliveryAmountLabel}` : 'accepted your ride offer'
+    case 'drive_ride_contract_update': {
+      const action = typeof notification.payload?.action === 'string' ? notification.payload.action.toLowerCase() : ''
+      if (action === 'arrived_pickup') return 'arrived for pickup'
+      if (action === 'cancel_arrival') return 'cancelled the pickup arrival update'
+      if (action === 'picked_up') return 'picked up the passengers'
+      if (action === 'cancel_pickup') return 'cancelled the passenger pickup update'
+      if (action === 'dropped_off') return 'arrived at the dropoff'
+      if (action === 'cancel_dropoff') return 'cancelled the dropoff arrival update'
+      if (action === 'complete_contract') return 'completed the contract'
+      return 'updated the ride contract'
+    }
     case 'drive_ride_complete_confirmation': {
       const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
       if (status === 'confirmed') return 'trip completion was confirmed'
@@ -504,6 +515,7 @@ export function getNotificationOpenLabel(notification: NotificationItem): string
   if (notification.type === 'profile_family_invite_response') return 'View profile'
   if (notification.type === 'drive_ride_offer') return 'View Details'
   if (notification.type === 'drive_ride_offer_accepted') return 'View ride'
+  if (notification.type === 'drive_ride_contract_update') return 'View ride'
   if (notification.type === 'drive_ride_complete_confirmation') return 'View ride'
   if (notification.type === 'drive_ride_complete_response') return 'View ride'
   if (notification.type === 'delivery_contract_bid_response') {

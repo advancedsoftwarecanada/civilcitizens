@@ -1,28 +1,94 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
 import type { DeliveryOnboardingResponse } from '../delivery/deliveryShared'
 import type { DriveDeliveryItem, DriveFeedResponse, DriveRideRequestItem } from './driveShared'
 
-type DriveViewerState = {
+type DriveViewerStateSnapshot = {
   loading: boolean
   isDriverActive: boolean
   rideRequestCount: number
   deliveryRequestCount: number
 }
 
-const INITIAL_STATE: DriveViewerState = {
+type DriveViewerState = DriveViewerStateSnapshot & {
+  isDriverMode: boolean
+  enterDriverMode: () => void
+  exitDriverMode: () => void
+}
+
+type DriveModePreference = 'driver' | 'request'
+
+const DRIVE_MODE_STORAGE_KEY = 'civil.drive.mode'
+const DRIVE_MODE_EVENT = 'civil:drive-mode-change'
+
+function readStoredDriveModePreference(): DriveModePreference | null {
+  if (typeof window === 'undefined') return null
+
+  const raw = window.localStorage.getItem(DRIVE_MODE_STORAGE_KEY)
+  if (!raw) return null
+
+  if (raw === 'driver' || raw === 'request') return raw
+
+  try {
+    const parsed = JSON.parse(raw) as { mode?: unknown } | null
+    return parsed?.mode === 'driver' || parsed?.mode === 'request' ? parsed.mode : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredDriveModePreference(mode: DriveModePreference) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(DRIVE_MODE_STORAGE_KEY, JSON.stringify({ mode }))
+  window.dispatchEvent(new CustomEvent(DRIVE_MODE_EVENT, { detail: { mode } }))
+}
+
+const INITIAL_STATE: DriveViewerStateSnapshot = {
   loading: true,
   isDriverActive: false,
   rideRequestCount: 0,
   deliveryRequestCount: 0,
 }
 
-export function useDriveViewerState() {
-  const [state, setState] = useState<DriveViewerState>(INITIAL_STATE)
+export function useDriveViewerState(): DriveViewerState {
+  const [state, setState] = useState<DriveViewerStateSnapshot>(INITIAL_STATE)
+  const [modePreference, setModePreference] = useState<DriveModePreference | null>(null)
+
+  const enterDriverMode = useCallback(() => {
+    setModePreference('driver')
+    writeStoredDriveModePreference('driver')
+  }, [])
+
+  const exitDriverMode = useCallback(() => {
+    setModePreference('request')
+    writeStoredDriveModePreference('request')
+  }, [])
+
+  useEffect(() => {
+    setModePreference(readStoredDriveModePreference())
+
+    if (typeof window === 'undefined') return
+
+    const syncModePreference = () => {
+      setModePreference(readStoredDriveModePreference())
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && event.key !== DRIVE_MODE_STORAGE_KEY) return
+      syncModePreference()
+    }
+
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener(DRIVE_MODE_EVENT, syncModePreference)
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener(DRIVE_MODE_EVENT, syncModePreference)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -88,5 +154,18 @@ export function useDriveViewerState() {
     }
   }, [])
 
-  return state
+  const isDriverMode = state.isDriverActive && (modePreference ?? 'driver') === 'driver'
+
+  useEffect(() => {
+    if (!state.isDriverActive || modePreference !== null) return
+    setModePreference('driver')
+    writeStoredDriveModePreference('driver')
+  }, [modePreference, state.isDriverActive])
+
+  return {
+    ...state,
+    isDriverMode,
+    enterDriverMode,
+    exitDriverMode,
+  }
 }

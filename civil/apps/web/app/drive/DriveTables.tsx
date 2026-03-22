@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import {
-  HiOutlineCalendarDays,
   HiOutlineCheckCircle,
   HiOutlineClock,
   HiOutlineCube,
@@ -22,6 +21,7 @@ import {
   formatDriveLocation,
   formatDriveMoney,
   formatDrivePersonName,
+  formatDriveRelativePickupTime,
   formatDriveRecurrence,
   formatDriveStatus,
   getAvatarInitials,
@@ -155,6 +155,7 @@ function DriveRideQueueCard({
   const requesterLabel = formatDrivePersonName(item.requester)
   const pickupLabel = formatCanadianPhysicalAddressInline(item.pickupAddress) ?? 'Pickup pending'
   const dropoffLabel = formatCanadianPhysicalAddressInline(item.dropoffAddress) ?? 'Destination pending'
+  const pickupTimingLabel = formatDriveRelativePickupTime(item.pickupAt)
   const offerPending = item.bidPending && item.isBidByViewer
   const actionLabel = offerPending ? 'Edit Offer' : 'Make Offer'
 
@@ -192,8 +193,13 @@ function DriveRideQueueCard({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2">
           <QueueFact
             label="Pickup time"
-            icon={<HiOutlineCalendarDays className="h-4 w-4" />}
-            value={formatDriveDateTime(item.pickupAt)}
+            icon={<HiOutlineClock className="h-4 w-4" />}
+            value={
+              <div>
+                <p className="font-semibold text-slate-950">{pickupTimingLabel}</p>
+                <p className="text-sm text-slate-500">{formatDriveDateTime(item.pickupAt)}</p>
+              </div>
+            }
           />
           <QueueFact
             label="Distance"

@@ -218,6 +218,23 @@ function mapNotificationPushType(type: string): PushPayloadType {
   return 'system'
 }
 
+function getNativeNotificationSound(type: string, platform: NativePushPlatform): string {
+  const normalized = type.trim().toLowerCase()
+  if (normalized === 'drive_ride_contract_update') {
+    return platform === 'android' ? 'honk_honk' : 'honk-honk.caf'
+  }
+  return 'civil-general.caf'
+}
+
+function getNativeNotificationChannelId(type: string, platform: NativePushPlatform): string | undefined {
+  if (platform !== 'android') return undefined
+  const normalized = type.trim().toLowerCase()
+  if (normalized === 'drive_ride_contract_update') {
+    return 'drive_ride_updates'
+  }
+  return undefined
+}
+
 export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
   async function deliverNativePushToToken(args: {
     platform: NativePushPlatform
@@ -410,6 +427,32 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
         message: amountLabel ? `${actorLabel} accepted your ride offer for ${amountLabel}.` : `${actorLabel} accepted your ride offer.`,
       }
     }
+    if (record.type === 'drive_ride_contract_update') {
+      const payload = readPayloadRecord(record.payload)
+      const action = typeof payload?.action === 'string' ? payload.action.trim().toLowerCase() : ''
+      if (action === 'arrived_pickup') {
+        return { title: 'Driver arrived', message: `${actorLabel} arrived for pickup.` }
+      }
+      if (action === 'cancel_arrival') {
+        return { title: 'Pickup arrival updated', message: `${actorLabel} cancelled the pickup arrival update.` }
+      }
+      if (action === 'picked_up') {
+        return { title: 'Passengers picked up', message: `${actorLabel} picked up the passengers.` }
+      }
+      if (action === 'cancel_pickup') {
+        return { title: 'Pickup updated', message: `${actorLabel} cancelled the passenger pickup update.` }
+      }
+      if (action === 'dropped_off') {
+        return { title: 'At dropoff', message: `${actorLabel} arrived at the dropoff.` }
+      }
+      if (action === 'cancel_dropoff') {
+        return { title: 'Dropoff updated', message: `${actorLabel} cancelled the dropoff arrival update.` }
+      }
+      if (action === 'complete_contract') {
+        return { title: 'Contract completed', message: `${actorLabel} completed the contract.` }
+      }
+      return { title: 'Ride update', message: `${actorLabel} updated the ride contract.` }
+    }
     if (record.type === 'drive_ride_complete_confirmation') {
       return {
         title: 'Trip marked complete',
@@ -525,7 +568,8 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
           deviceToken: token,
           title: alert.title,
           message: alert.message,
-          sound: 'civil-general.caf',
+          sound: getNativeNotificationSound(record.type, platform),
+          channelId: getNativeNotificationChannelId(record.type, platform),
           data: {
             kind: 'notification',
             url: getNotificationDeepLink(record) ?? '/notifications',

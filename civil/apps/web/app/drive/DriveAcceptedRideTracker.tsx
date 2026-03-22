@@ -12,8 +12,11 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { formatCanadianPhysicalAddressInline } from '../_lib/canadianAddresses'
 import { getStoredToken } from '../_lib/tokenStorage'
 import {
+  formatDriveDurationMinutes,
   formatDriveDateTime,
   formatDrivePersonName,
+  formatDriveRelativePickupTime,
+  getDrivePickupTimingStatus,
   getAvatarInitials,
   type DriveRideOfferItem,
   type DriveRideRequestItem,
@@ -127,7 +130,6 @@ export default function DriveAcceptedRideTracker({
         : localRequesterPoint,
     [localRequesterPoint, ride.requesterLocation],
   )
-  const [routeLoading, setRouteLoading] = useState(false)
   const [tripRouteCoordinates, setTripRouteCoordinates] = useState<Array<[number, number]> | null>(null)
   const [approachRouteCoordinates, setApproachRouteCoordinates] = useState<Array<[number, number]> | null>(null)
   const [riderRouteCoordinates, setRiderRouteCoordinates] = useState<Array<[number, number]> | null>(null)
@@ -178,7 +180,6 @@ export default function DriveAcceptedRideTracker({
       setTravelMinutesTrip(null)
       setDistanceKmToPickup(null)
       setDistanceKmTrip(null)
-      setRouteLoading(false)
       return
     }
 
@@ -187,7 +188,6 @@ export default function DriveAcceptedRideTracker({
     const destination = destinationPoint
     const driver = driverPoint
     const rider = requesterPoint
-    setRouteLoading(true)
 
     async function loadRoute() {
       const tripRoute = await fetchDrivingRoute(pickup, destination, controller.signal)
@@ -249,11 +249,6 @@ export default function DriveAcceptedRideTracker({
         setDistanceKmToPickup(null)
         setDistanceKmTrip(null)
       })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setRouteLoading(false)
-        }
-      })
 
     return () => controller.abort()
   }, [destinationPoint, driverPoint, pickupPoint, requesterPoint])
@@ -287,10 +282,29 @@ export default function DriveAcceptedRideTracker({
     isRequesterView && requesterPoint && pickupPoint ? calculateDistanceKm(requesterPoint, pickupPoint) * 1000 : null
   const showPickupDistanceWarning = typeof requesterDistanceFromPickupMeters === 'number' && requesterDistanceFromPickupMeters > 50
   const updateLabel = formatDriverUpdatedLabel(ride.driverLocation?.recordedAt ?? null)
+  const pickupTimingLabel = formatDriveRelativePickupTime(ride.pickupAt)
+  const pickupTimingStatus = getDrivePickupTimingStatus(ride.pickupAt, travelMinutesToPickup)
+  const contractStarted = Boolean(ride.contractStartedAt)
   const summaryHeadline =
-    driverPoint && travelMinutesToPickup !== null && distanceKmToPickup !== null
+    !contractStarted
+      ? 'Your driver has not started the contract yet.'
+      : driverPoint && travelMinutesToPickup !== null && distanceKmToPickup !== null
       ? `Your driver will arrive in ${formatTripTimeLabel(travelMinutesToPickup)} and is ${formatDistanceLabel(distanceKmToPickup)} away.`
       : 'We are waiting for your driver to share live location.'
+  const pickupTimingSummary =
+    !pickupTimingStatus
+      ? null
+      : pickupTimingStatus.state === 'late'
+        ? `Driver is running ${formatDriveDurationMinutes(pickupTimingStatus.deltaMinutes)} late for pickup.`
+        : pickupTimingStatus.state === 'early'
+          ? `Driver is on pace and should arrive ${formatDriveDurationMinutes(Math.abs(pickupTimingStatus.deltaMinutes))} early.`
+          : 'Driver is on time for pickup.'
+  const pickupTimingValueTone =
+    pickupTimingStatus?.state === 'late'
+      ? 'text-rose-700'
+      : pickupTimingStatus?.state === 'early'
+        ? 'text-emerald-700'
+        : 'text-sky-700'
   const counterpartySummary = isRequesterView ? summaryHeadline : 'This rider selected your offer for this trip.'
 
   async function handleStartMessage() {
@@ -337,6 +351,22 @@ export default function DriveAcceptedRideTracker({
     <section className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm">
       <div className="grid gap-5 p-5 sm:p-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(19rem,0.82fr)]">
         <div className="space-y-4">
+          {isRequesterView && !contractStarted ? (
+            <div className="rounded-[1.35rem] border border-amber-200 bg-amber-50 px-4 py-4 shadow-sm">
+              <div className="flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                  <HiOutlineExclamationTriangle className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-amber-950">Your driver has not started the contract yet.</p>
+                  <p className="mt-1 text-sm text-amber-800">
+                    They have not opened the trip and started driving yet. If this does not change soon, you may want to cancel.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {showPickupDistanceWarning ? (
             <div className="rounded-[1.35rem] border border-amber-200 bg-amber-50 px-4 py-4 shadow-sm">
               <div className="flex items-start gap-3">
@@ -432,6 +462,9 @@ export default function DriveAcceptedRideTracker({
               {messageLoading ? 'Opening…' : 'Message'}
             </button>
             <p className="mt-3 text-sm font-medium leading-6 text-emerald-950">{counterpartySummary}</p>
+            {isRequesterView && pickupTimingSummary ? (
+              <p className={`mt-2 text-sm font-semibold leading-6 ${pickupTimingValueTone}`}>{pickupTimingSummary}</p>
+            ) : null}
             {isRequesterView && updateLabel ? <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700/80">{updateLabel}</p> : null}
           </div>
 
@@ -458,7 +491,11 @@ export default function DriveAcceptedRideTracker({
           <div className="grid gap-3">
             <div className="rounded-[1.2rem] border border-slate-200 bg-slate-50 px-4 py-3">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Pickup time</p>
-              <p className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
+              <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-slate-950">
+                <HiOutlineClock className="h-4 w-4 text-slate-400" />
+                {pickupTimingLabel}
+              </p>
+              <p className="mt-2 flex items-center gap-2 text-sm text-slate-500">
                 <HiOutlineCalendarDays className="h-4 w-4 text-slate-400" />
                 {formatDriveDateTime(ride.pickupAt)}
               </p>
@@ -472,7 +509,7 @@ export default function DriveAcceptedRideTracker({
                     Time to pickup
                   </span>
                   <span className="font-semibold text-slate-950">
-                    {routeLoading ? 'Loading driver route…' : driverPoint ? formatTripTimeLabel(travelMinutesToPickup) : 'Waiting for driver'}
+                    {driverPoint ? formatTripTimeLabel(travelMinutesToPickup) : 'Waiting for driver'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -481,20 +518,26 @@ export default function DriveAcceptedRideTracker({
                     Driver distance
                   </span>
                   <span className="font-semibold text-slate-950">
-                    {routeLoading ? 'Loading driver route…' : driverPoint ? formatDistanceLabel(distanceKmToPickup) : 'Waiting for driver'}
+                    {driverPoint ? formatDistanceLabel(distanceKmToPickup) : 'Waiting for driver'}
                   </span>
                 </div>
+                {pickupTimingStatus ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-600">Pickup timing</span>
+                    <span className={`font-semibold ${pickupTimingValueTone}`}>{pickupTimingStatus.label}</span>
+                  </div>
+                ) : null}
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-slate-600">Pickup to destination</span>
-                  <span className="font-semibold text-slate-950">{routeLoading ? 'Loading route…' : formatTripTimeLabel(travelMinutesTrip)}</span>
+                  <span className="font-semibold text-slate-950">{formatTripTimeLabel(travelMinutesTrip)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3 border-t border-amber-200 pt-3">
                   <span className="text-slate-600">Total trip time</span>
-                  <span className="font-semibold text-slate-950">{routeLoading ? 'Loading route…' : formatTripTimeLabel(totalTripMinutes)}</span>
+                  <span className="font-semibold text-slate-950">{formatTripTimeLabel(totalTripMinutes)}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-slate-600">Total distance</span>
-                  <span className="font-semibold text-slate-950">{routeLoading ? 'Loading route…' : formatDistanceLabel(totalTripDistanceKm)}</span>
+                  <span className="font-semibold text-slate-950">{formatDistanceLabel(totalTripDistanceKm)}</span>
                 </div>
               </div>
             </div>

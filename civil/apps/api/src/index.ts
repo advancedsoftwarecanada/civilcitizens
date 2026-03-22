@@ -6719,6 +6719,7 @@ function ensureCitizenMarketplaceTables() {
           bid_requested_at TIMESTAMPTZ,
           bid_responded_at TIMESTAMPTZ,
           driver_user_id TEXT REFERENCES "User"(id) ON DELETE SET NULL,
+          contract_started_at TIMESTAMPTZ,
           driver_location_latitude DOUBLE PRECISION,
           driver_location_longitude DOUBLE PRECISION,
           driver_location_recorded_at TIMESTAMPTZ,
@@ -6848,6 +6849,11 @@ function ensureCitizenMarketplaceTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_drive_ride_request
         ADD COLUMN IF NOT EXISTS driver_user_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_drive_ride_request
+        ADD COLUMN IF NOT EXISTS contract_started_at TIMESTAMPTZ;
       `)
 
       await prisma.$executeRawUnsafe(`

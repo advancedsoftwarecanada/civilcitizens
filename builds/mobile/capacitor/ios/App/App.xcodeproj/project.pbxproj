@@ -24,6 +24,7 @@
 		C0DE0000C0DE0000C0DE0024 /* NotificationSFX/civil-xyz.caf in Resources */ = {isa = PBXBuildFile; fileRef = C0DE0000C0DE0000C0DE0014 /* NotificationSFX/civil-xyz.caf */; };
 		C0DE0000C0DE0000C0DE0025 /* NotificationSFX/ringtone.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = C0DE0000C0DE0000C0DE0015 /* NotificationSFX/ringtone.mp4 */; };
 		C0DE0000C0DE0000C0DE0026 /* NotificationSFX/ringtone.caf in Resources */ = {isa = PBXBuildFile; fileRef = C0DE0000C0DE0000C0DE0016 /* NotificationSFX/ringtone.caf */; };
+		C0DE0000C0DE0000C0DE0027 /* NotificationSFX/honk-honk.caf in Resources */ = {isa = PBXBuildFile; fileRef = C0DE0000C0DE0000C0DE0017 /* NotificationSFX/honk-honk.caf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +51,7 @@
 		C0DE0000C0DE0000C0DE0014 /* NotificationSFX/civil-xyz.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "NotificationSFX/civil-xyz.caf"; sourceTree = "<group>"; };
 		C0DE0000C0DE0000C0DE0015 /* NotificationSFX/ringtone.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = NotificationSFX/ringtone.mp4; sourceTree = "<group>"; };
 		C0DE0000C0DE0000C0DE0016 /* NotificationSFX/ringtone.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = NotificationSFX/ringtone.caf; sourceTree = "<group>"; };
+		C0DE0000C0DE0000C0DE0017 /* NotificationSFX/honk-honk.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = NotificationSFX/honk-honk.caf; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -114,6 +116,7 @@
 				C0DE0000C0DE0000C0DE0014 /* NotificationSFX/civil-xyz.caf */,
 				C0DE0000C0DE0000C0DE0015 /* NotificationSFX/ringtone.mp4 */,
 				C0DE0000C0DE0000C0DE0016 /* NotificationSFX/ringtone.caf */,
+				C0DE0000C0DE0000C0DE0017 /* NotificationSFX/honk-honk.caf */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -199,6 +202,7 @@
 				C0DE0000C0DE0000C0DE0024 /* NotificationSFX/civil-xyz.caf in Resources */,
 				C0DE0000C0DE0000C0DE0025 /* NotificationSFX/ringtone.mp4 in Resources */,
 				C0DE0000C0DE0000C0DE0026 /* NotificationSFX/ringtone.caf in Resources */,
+				C0DE0000C0DE0000C0DE0027 /* NotificationSFX/honk-honk.caf in Resources */,
 				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,

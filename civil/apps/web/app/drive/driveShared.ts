@@ -25,6 +25,7 @@ export type DriveRideRequestItem = {
   acceptedOfferAmountCents: number | null
   acceptedOfferPerKmFeeCents: number | null
   acceptedOfferAt: string | null
+  contractStartedAt: string | null
   escrowStatus: string
   walletTransactionId: string | null
   completionRequestedAt: string | null
@@ -49,6 +50,13 @@ export type DriveRideRequestItem = {
     name: string | null
     avatarUrl: string | null
   }
+  driverVehicle: {
+    id: string
+    name: string
+    photoUrl: string | null
+    minimumRideAmountCents: number
+    perKmFeeCents: number
+  } | null
   isOwner: boolean
 }
 
@@ -147,6 +155,16 @@ export type DriveFeedResponse<T> = {
   error?: string
 }
 
+export type DriveDriverEarningsSummary = {
+  todayEarningsCents: number
+  todayHourlyEarningsCents: number
+  thisWeekEarningsCents: number
+  thisWeekHourlyEarningsCents: number
+  todayKm: number
+  thisWeekKm: number
+  error?: string
+}
+
 export type DriveRideOffersResponse = {
   item?: DriveRideRequestItem
   offers?: DriveRideOfferItem[]
@@ -168,6 +186,70 @@ export function formatDriveDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+export function formatDriveRelativePickupTime(value: string, options?: { nowThresholdMinutes?: number }) {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return 'Not scheduled'
+
+  const nowThresholdMinutes = options?.nowThresholdMinutes ?? 5
+  const diffMinutes = Math.max(0, Math.round((date.getTime() - Date.now()) / 60_000))
+  if (diffMinutes <= nowThresholdMinutes) return 'Now'
+  if (diffMinutes < 60) return `In ${diffMinutes} minute${diffMinutes === 1 ? '' : 's'}`
+
+  const hours = Math.floor(diffMinutes / 60)
+  const remainingMinutes = diffMinutes % 60
+  if (remainingMinutes === 0) return `In ${hours} hour${hours === 1 ? '' : 's'}`
+  return `In ${hours} hour${hours === 1 ? '' : 's'} ${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}`
+}
+
+export function formatDriveDurationMinutes(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'Unavailable'
+
+  const roundedMinutes = Math.max(0, Math.round(value))
+  if (roundedMinutes < 60) return `${roundedMinutes} minute${roundedMinutes === 1 ? '' : 's'}`
+
+  const hours = Math.floor(roundedMinutes / 60)
+  const remainingMinutes = roundedMinutes % 60
+  if (remainingMinutes === 0) return `${hours} hour${hours === 1 ? '' : 's'}`
+  return `${hours} hour${hours === 1 ? '' : 's'} ${remainingMinutes} minute${remainingMinutes === 1 ? '' : 's'}`
+}
+
+export function getDrivePickupTimingStatus(
+  pickupAt: string,
+  etaMinutes: number | null | undefined,
+  options?: { onTimeThresholdMinutes?: number },
+) {
+  if (etaMinutes === null || etaMinutes === undefined || !Number.isFinite(etaMinutes)) return null
+
+  const pickupDate = new Date(pickupAt)
+  if (!Number.isFinite(pickupDate.getTime())) return null
+
+  const onTimeThresholdMinutes = options?.onTimeThresholdMinutes ?? 2
+  const scheduledMinutesFromNow = Math.round((pickupDate.getTime() - Date.now()) / 60_000)
+  const deltaMinutes = Math.round(etaMinutes) - scheduledMinutesFromNow
+
+  if (deltaMinutes > onTimeThresholdMinutes) {
+    return {
+      state: 'late' as const,
+      deltaMinutes,
+      label: `Late by ${formatDriveDurationMinutes(deltaMinutes)}`,
+    }
+  }
+
+  if (deltaMinutes < -onTimeThresholdMinutes) {
+    return {
+      state: 'early' as const,
+      deltaMinutes,
+      label: `${formatDriveDurationMinutes(Math.abs(deltaMinutes))} early`,
+    }
+  }
+
+  return {
+    state: 'on_time' as const,
+    deltaMinutes,
+    label: 'On time',
+  }
 }
 
 export function formatDriveDate(value: string | null | undefined) {
@@ -200,12 +282,14 @@ export function formatDriveStatus(value: string | null | undefined) {
     case 'en_route':
       return 'Driver en route'
     case 'driver_arrived':
+      return 'At Pickup'
     case 'arrived':
-      return 'Driver Arrived'
+      return 'At Dropoff'
     case 'picked_up':
+      return 'Passengers Picked Up'
     case 'in_progress':
     case 'inprogress':
-      return 'In Progress'
+      return 'In Transit'
     case 'delivered':
     case 'completed':
       return 'Completed'

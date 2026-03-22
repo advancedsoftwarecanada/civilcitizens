@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { HiOutlineBell, HiOutlineTruck } from 'react-icons/hi2'
+import { FaCarSide } from 'react-icons/fa'
+import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { formatUserDisplayName } from '../_lib/text'
@@ -1349,7 +1350,7 @@ export function RightRail({
             <div className="rounded-2xl border border-emerald-200 bg-[linear-gradient(135deg,rgba(16,185,129,0.10),rgba(14,165,233,0.10))] p-4">
               <div className="flex items-start gap-3">
                 <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-emerald-600 shadow-sm">
-                  <HiOutlineTruck className="h-5 w-5" />
+                  <FaCarSide className="h-5 w-5" />
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-slate-900">Pick up local contracts and get paid in Civil Credits.</p>

@@ -1,6 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { HiOutlineMap, HiOutlineTruck } from 'react-icons/hi2'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import { isNotificationPayload, subscribeToNotificationsStream } from '../_components/notifications/notificationStream'
@@ -9,6 +11,9 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
 import DriveAcceptedRideTracker from './DriveAcceptedRideTracker'
+import DriveActiveContractCard from './DriveActiveContractCard'
+import DriveContractHistoryRail from './DriveContractHistoryRail'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import DriveRideRequestRail from './DriveRideRequestRail'
 import DriveRouteNav from './DriveRouteNav'
@@ -22,8 +27,39 @@ type FeedState<T> = {
   error: string | null
 }
 
+function DriverModeLandingNav() {
+  return (
+    <nav className="w-full" aria-label="Driver dispatch sections">
+      <div className="grid w-full gap-3 md:grid-cols-2">
+        <Link
+          href="/drive/ride"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)]/25 hover:text-[var(--cc-primary)]"
+        >
+          <HiOutlineMap className="h-4 w-4 shrink-0" />
+          Ride Requests
+        </Link>
+        <Link
+          href="/drive/delivery"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)]/25 hover:text-[var(--cc-primary)]"
+        >
+          <HiOutlineTruck className="h-4 w-4 shrink-0" />
+          Delivery Requests
+        </Link>
+      </div>
+    </nav>
+  )
+}
+
 export default function DriveLandingPageClient() {
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const {
+    isDriverActive,
+    isDriverMode,
+    loading: viewerLoading,
+    rideRequestCount,
+    deliveryRequestCount,
+    enterDriverMode,
+    exitDriverMode,
+  } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [reloadKey, setReloadKey] = useState(0)
   const [rides, setRides] = useState<FeedState<DriveRideRequestItem>>({ items: [], total: 0, error: null })
@@ -36,7 +72,7 @@ export default function DriveLandingPageClient() {
   useEffect(() => {
     return subscribeToNotificationsStream((payload) => {
       if (!isNotificationPayload(payload)) return
-      if (!['drive_ride_offer', 'drive_ride_complete_confirmation', 'drive_ride_complete_response'].includes(payload.data.type)) return
+      if (!['drive_ride_offer', 'drive_ride_contract_update', 'drive_ride_complete_confirmation', 'drive_ride_complete_response'].includes(payload.data.type)) return
       setReloadKey((current) => current + 1)
     })
   }, [])
@@ -114,6 +150,20 @@ export default function DriveLandingPageClient() {
         if (item.viewerRole !== 'requester' || !item.acceptedOfferId) return false
         return !['completed', 'cancelled', 'canceled', 'rejected', 'declined', 'failed'].includes(item.status.trim().toLowerCase())
       }) ?? null,
+    [rides.items],
+  )
+  const activeDriverContracts = useMemo(
+    () =>
+      rides.items
+        .filter((item) => {
+          if (item.viewerRole !== 'driver' || !item.acceptedOfferId) return false
+          return !['completed', 'cancelled', 'canceled', 'rejected', 'declined', 'failed'].includes(item.status.trim().toLowerCase())
+        })
+        .sort((left, right) => {
+          const leftDate = new Date(left.pickupAt)
+          const rightDate = new Date(right.pickupAt)
+          return leftDate.getTime() - rightDate.getTime()
+        }),
     [rides.items],
   )
 
@@ -328,13 +378,20 @@ export default function DriveLandingPageClient() {
     <DashboardShell
       rightRail={
         <div className="space-y-5">
-          <DriveRideRequestRail />
-          <DriveModeRail
-            isDriverActive={isDriverActive}
-            loading={viewerLoading}
-            rideRequestCount={rideRequestCount}
-            deliveryRequestCount={deliveryRequestCount}
-          />
+          {!isDriverMode ? <DriveRideRequestRail secondaryAction={isDriverActive ? { label: 'Enter Driver Mode', onClick: enterDriverMode } : undefined} /> : null}
+          {!isDriverActive || isDriverMode ? (
+            <DriveModeRail
+              isDriverActive={isDriverActive}
+              isDriverMode={isDriverMode}
+              loading={viewerLoading}
+              rideRequestCount={rideRequestCount}
+              deliveryRequestCount={deliveryRequestCount}
+              onEnterDriverMode={enterDriverMode}
+              onExitDriverMode={exitDriverMode}
+            />
+          ) : null}
+          <DriveDriverEarningsRail enabled={isDriverActive} />
+          {isDriverMode ? <DriveContractHistoryRail rides={rides.items} delivery={delivery.items} activeRideIds={activeDriverContracts.map((item) => item.id)} /> : null}
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
@@ -342,44 +399,68 @@ export default function DriveLandingPageClient() {
       mainClassName="space-y-8 pb-12"
       rightRailClassName="pb-12"
     >
-      <DriveRouteNav />
+      {isDriverMode ? <DriverModeLandingNav /> : <DriveRouteNav />}
 
-      {activeAcceptedRide ? (
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-2xl font-semibold text-slate-950">Current Ride</h2>
-          </div>
-          <DriveAcceptedRideTracker ride={activeAcceptedRide} acceptedOffer={activeAcceptedOffer} />
-        </section>
-      ) : null}
+      {isDriverMode ? (
+        activeDriverContracts.length ? (
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-2xl font-semibold text-slate-950">Active Contracts</h2>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
+                {activeDriverContracts.length} live
+              </span>
+            </div>
+            <div className="space-y-4">
+              {activeDriverContracts.map((item) => (
+                <DriveActiveContractCard key={item.id} item={item} />
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="rounded-[1.8rem] border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 shadow-sm">
+            No active contracts are assigned to you right now.
+          </section>
+        )
+      ) : (
+        <>
+          {activeAcceptedRide ? (
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-2xl font-semibold text-slate-950">Current Ride</h2>
+              </div>
+              <DriveAcceptedRideTracker ride={activeAcceptedRide} acceptedOffer={activeAcceptedOffer} />
+            </section>
+          ) : null}
 
-      <DriveRideTable
-        title="Ride History"
-        items={rides.items}
-        total={rides.total}
-        loading={loading}
-        error={rides.error}
-        emptyMessage="You have not posted any ride requests yet."
-        variant="mine"
-        onCancel={handleCancelRide}
-        cancelingId={cancelingRideId}
-        onMarkComplete={handleCompleteRide}
-        completingId={completingRideId}
-        getEditHref={(item) => (item.viewerRole === 'requester' ? `/drive/ride/request/${item.id}` : null)}
-        getOffersHref={(item) => (item.viewerRole === 'requester' && item.offerCount > 0 ? `/drive/myrides/${item.id}/offers` : null)}
-      />
+          <DriveRideTable
+            title="Ride History"
+            items={rides.items}
+            total={rides.total}
+            loading={loading}
+            error={rides.error}
+            emptyMessage="You have not posted any ride requests yet."
+            variant="mine"
+            onCancel={handleCancelRide}
+            cancelingId={cancelingRideId}
+            onMarkComplete={handleCompleteRide}
+            completingId={completingRideId}
+            getEditHref={(item) => (item.viewerRole === 'requester' ? `/drive/ride/request/${item.id}` : null)}
+            getOffersHref={(item) => (item.viewerRole === 'requester' && item.offerCount > 0 ? `/drive/myrides/${item.id}/offers` : null)}
+          />
 
-      <DriveDeliveryTable
-        title="Delivery History"
-        items={delivery.items}
-        total={delivery.total}
-        loading={loading}
-        error={delivery.error}
-        emptyMessage={isDriverActive ? 'No Drive delivery activity is showing up yet.' : 'You have not had any Drive deliveries yet.'}
-        variant="mine"
-        onCancel={handleCancelDelivery}
-        cancelingId={cancelingDeliveryId}
-      />
+          <DriveDeliveryTable
+            title="Delivery History"
+            items={delivery.items}
+            total={delivery.total}
+            loading={loading}
+            error={delivery.error}
+            emptyMessage={isDriverActive ? 'No Drive delivery activity is showing up yet.' : 'You have not had any Drive deliveries yet.'}
+            variant="mine"
+            onCancel={handleCancelDelivery}
+            cancelingId={cancelingDeliveryId}
+          />
+        </>
+      )}
     </DashboardShell>
   )
 }

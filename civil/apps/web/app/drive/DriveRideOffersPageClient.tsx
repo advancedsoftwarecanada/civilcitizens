@@ -11,6 +11,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { getStoredToken } from '../_lib/tokenStorage'
 import DriveAcceptedRideTracker from './DriveAcceptedRideTracker'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import DriveRideRequestDetailsRail from './DriveRideRequestDetailsRail'
 import DriveRouteNav from './DriveRouteNav'
@@ -50,7 +51,7 @@ function DriverAvatar({ offer }: { offer: DriveRideOfferItem }) {
 }
 
 export default function DriveRideOffersPageClient({ rideId }: { rideId: string }) {
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const { isDriverActive, isDriverMode, loading: viewerLoading, rideRequestCount, deliveryRequestCount, enterDriverMode, exitDriverMode } = useDriveViewerState()
   const [loading, setLoading] = useState(true)
   const [ride, setRide] = useState<DriveRideRequestItem | null>(null)
   const [offers, setOffers] = useState<DriveRideOfferItem[]>([])
@@ -192,12 +193,16 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
             <DriveRideRequestDetailsRail item={ride} />
             <DriveModeRail
               isDriverActive={isDriverActive}
+              isDriverMode={isDriverMode}
               loading={viewerLoading}
               rideRequestCount={rideRequestCount}
               deliveryRequestCount={deliveryRequestCount}
+              onEnterDriverMode={enterDriverMode}
+              onExitDriverMode={exitDriverMode}
             />
+            <DriveDriverEarningsRail enabled={isDriverActive} />
             <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
-          </div>
+        </div>
         }
         showMobileRightRail
         mainClassName="space-y-6 pb-12"

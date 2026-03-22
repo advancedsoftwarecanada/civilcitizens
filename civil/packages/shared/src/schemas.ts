@@ -661,8 +661,19 @@ export const ResolveGroupThreadInput = z.object({
 })
 export type ResolveGroupThreadInput = z.infer<typeof ResolveGroupThreadInput>
 
+export const MessageCallInviteMetaInput = z
+  .object({
+    contextLabel: z.string().trim().max(80).nullable().optional(),
+    imageUrl: z.string().trim().url().max(2048).nullable().optional(),
+    imageAlt: z.string().trim().max(140).nullable().optional(),
+    imageLabel: z.string().trim().max(120).nullable().optional(),
+  })
+  .strict()
+export type MessageCallInviteMetaInput = z.infer<typeof MessageCallInviteMetaInput>
+
 export const StartMessageCallInput = z.object({
   mode: z.enum(['audio', 'video']),
+  inviteMeta: MessageCallInviteMetaInput.nullable().optional(),
 })
 export type StartMessageCallInput = z.infer<typeof StartMessageCallInput>
 

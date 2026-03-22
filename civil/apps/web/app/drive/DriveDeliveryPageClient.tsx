@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { getStoredToken } from '../_lib/tokenStorage'
+import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
 import DriveRouteNav from './DriveRouteNav'
 import { DriveDeliveryTable, DriveDriverAccessGate } from './DriveTables'
@@ -13,14 +15,15 @@ import type { DriveDeliveryItem, DriveFeedResponse } from './driveShared'
 import { useDriveViewerState } from './useDriveViewerState'
 
 export default function DriveDeliveryPageClient() {
-  const { isDriverActive, loading: viewerLoading, rideRequestCount, deliveryRequestCount } = useDriveViewerState()
+  const { isDriverActive, isDriverMode, loading: viewerLoading, rideRequestCount, deliveryRequestCount, exitDriverMode } = useDriveViewerState()
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<DriveDeliveryItem[]>([])
   const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (viewerLoading || !isDriverActive) {
+    if (viewerLoading || !isDriverMode) {
       if (!viewerLoading) setLoading(false)
       return
     }
@@ -74,7 +77,12 @@ export default function DriveDeliveryPageClient() {
     return () => {
       cancelled = true
     }
-  }, [isDriverActive, viewerLoading])
+  }, [isDriverMode, viewerLoading])
+
+  const handleExitDriverMode = () => {
+    exitDriverMode()
+    router.push('/drive')
+  }
 
   return (
     <DashboardShell
@@ -82,10 +90,13 @@ export default function DriveDeliveryPageClient() {
         <div className="space-y-5">
           <DriveModeRail
             isDriverActive={isDriverActive}
+            isDriverMode={isDriverMode}
             loading={viewerLoading}
             rideRequestCount={rideRequestCount}
             deliveryRequestCount={deliveryRequestCount}
+            onExitDriverMode={handleExitDriverMode}
           />
+          <DriveDriverEarningsRail enabled={isDriverActive} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
@@ -95,10 +106,10 @@ export default function DriveDeliveryPageClient() {
     >
       <DriveRouteNav />
 
-      {!viewerLoading && !isDriverActive ? (
+      {!viewerLoading && !isDriverMode ? (
         <DriveDriverAccessGate
           title="Delivery Requests Are Driver-Only"
-          description="Live delivery requests are part of driver mode. Activate Drive and Deliver for Civil from the right rail to browse nearby contracts."
+          description="Live delivery requests are part of driver mode. Enter Driver Mode from /drive to browse nearby contracts."
         />
       ) : (
         <DriveDeliveryTable
