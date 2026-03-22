@@ -17,7 +17,6 @@ import {
 } from 'react-icons/hi2'
 import { calculateDistanceKm, fetchDrivingRoute, type DrivingRoute, type DrivingRouteStep } from '../../_lib/addressSearch'
 import { useViewerStore } from '../../_lib/viewerStore'
-import { MapZoomControls } from './MapZoomControls'
 
 type MapPoint = {
   latitude: number
@@ -602,18 +601,12 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     }
   }, [])
 
-  const handleZoomIn = useCallback(() => {
-    mapRef.current?.zoomIn?.({ duration: 180 })
-  }, [])
-
-  const handleZoomOut = useCallback(() => {
-    mapRef.current?.zoomOut?.({ duration: 180 })
-  }, [])
-
   const navigationProgressPercent = useMemo(() => {
-    if (!navigationRoute || initialNavigationDistanceMeters === null) return null
-    const baselineDistance = Math.max(initialNavigationDistanceMeters, navigationRoute.distanceMeters)
-    if (baselineDistance <= 0) return null
+    if (!navigationRoute) return null
+
+    const baselineDistance = initialNavigationDistanceMeters ?? navigationRoute.distanceMeters
+    if (!Number.isFinite(baselineDistance) || baselineDistance <= 0) return null
+
     const progress = ((baselineDistance - navigationRoute.distanceMeters) / baselineDistance) * 100
     return Math.max(0, Math.min(100, Math.round(progress)))
   }, [initialNavigationDistanceMeters, navigationRoute])
@@ -1279,7 +1272,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       if (!marker) {
         const element = document.createElement('div')
         element.className = 'h-14 w-14 overflow-hidden rounded-full border-4 border-black bg-white shadow-[0_10px_28px_rgba(15,23,42,0.24)]'
-        element.style.zIndex = '40'
+        element.style.zIndex = fullscreenActive ? '2' : '40'
         renderLiveMarkerContents(element, {
           avatarUrl: resolvedOriginAvatarUrl,
           alt: resolvedOriginAvatarLabel,
@@ -1293,7 +1286,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       } else {
         const element = marker.getElement?.()
         if (element instanceof HTMLDivElement) {
-          element.style.zIndex = '40'
+          element.style.zIndex = fullscreenActive ? '2' : '40'
           renderLiveMarkerContents(element, {
             avatarUrl: resolvedOriginAvatarUrl,
             alt: resolvedOriginAvatarLabel,
@@ -1356,7 +1349,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       if (!marker) {
         const element = document.createElement('div')
         element.className = 'h-12 w-12 overflow-hidden rounded-full border-4 border-white bg-white shadow-[0_10px_24px_rgba(15,23,42,0.2)]'
-        element.style.zIndex = '30'
+        element.style.zIndex = fullscreenActive ? '1' : '30'
         renderLiveMarkerContents(element, {
           avatarUrl: avatarMarker.avatarUrl ?? null,
           alt: avatarMarker.label,
@@ -1372,7 +1365,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
 
       const element = marker.getElement?.()
       if (element instanceof HTMLDivElement) {
-        element.style.zIndex = '30'
+        element.style.zIndex = fullscreenActive ? '1' : '30'
         renderLiveMarkerContents(element, {
           avatarUrl: avatarMarker.avatarUrl ?? null,
           alt: avatarMarker.label,
@@ -1500,11 +1493,11 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           className={fullscreenActive ? 'h-full w-full overflow-hidden rounded-none bg-slate-100' : 'h-[420px] w-full overflow-hidden rounded-[28px] bg-slate-100 shadow-[0_20px_60px_rgba(15,23,42,0.08)]'}
         />
 
-        <div className="pointer-events-none absolute inset-0">
+        <div className="pointer-events-none absolute inset-0 z-[60]">
           <div
-            className="pointer-events-none absolute inset-x-4 flex flex-col gap-3"
+            className="pointer-events-none absolute inset-x-0 flex flex-col gap-2 md:inset-x-4 md:gap-3"
             style={{
-              top: fullscreenActive ? 'calc(var(--cc-native-safe-top-offset) + 1rem)' : '1rem',
+              top: fullscreenActive ? 'var(--cc-native-safe-top-offset)' : '1rem',
             }}
           >
             {navigationNotice ? (
@@ -1528,13 +1521,11 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
                   </div>
                   {nextTurnPreview && nextTurnUrgency ? (
                     <div className={`rounded-[20px] border-2 px-4 py-3 text-center ${nextTurnUrgency.panelClassName}`}>
-                      <p className={`text-sm font-semibold uppercase tracking-[0.18em] ${nextTurnUrgency.labelClassName}`}>Next turn</p>
-                      <div className="mt-2 flex flex-col items-center gap-1">
+                      <div className="flex flex-col items-center gap-1">
                         <NextTurnIcon className={`h-6 w-6 ${nextTurnUrgency.iconClassName}`} />
                         <p className={`text-base font-semibold ${nextTurnUrgency.textClassName}`}>{nextTurnPreview.label}</p>
                       </div>
-                      <div className={`my-3 border-t ${nextTurnUrgency.dividerClassName}`} />
-                      <p className={`text-lg font-semibold ${nextTurnUrgency.textClassName}`}>{formatRemainingDistance(nextTurnPreview.distanceMeters)}</p>
+                      <p className={`mt-3 text-lg font-semibold ${nextTurnUrgency.textClassName}`}>{formatRemainingDistance(nextTurnPreview.distanceMeters)}</p>
                     </div>
                   ) : null}
                 </div>
@@ -1543,15 +1534,12 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
 
             {fullscreenActive && fullscreenOverlay ? <div className="pointer-events-auto">{fullscreenOverlay}</div> : null}
           </div>
-
-          <MapZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} className="top-1/2 -translate-y-1/2" />
-
           {navigationRoute && activeOrigin ? (
             <div
-              className="pointer-events-none absolute inset-x-3 md:inset-x-4"
+              className="pointer-events-none absolute inset-x-0 md:inset-x-4"
               style={{
                 bottom: fullscreenActive
-                  ? 'calc(max(env(safe-area-inset-bottom), var(--cc-runtime-bottom-inset)) + 0.75rem)'
+                  ? 'max(env(safe-area-inset-bottom), var(--cc-runtime-bottom-inset))'
                   : '0.75rem',
               }}
             >
