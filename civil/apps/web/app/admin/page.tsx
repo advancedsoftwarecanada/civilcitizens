@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { FaUserTie } from 'react-icons/fa'
-import { HiOutlineCog8Tooth, HiOutlineCpuChip, HiOutlineFlag, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
+import { HiOutlineBanknotes, HiOutlineCog8Tooth, HiOutlineCpuChip, HiOutlineFlag, HiOutlineGlobeAlt, HiOutlinePresentationChartBar } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import AdminWideShell from './_components/AdminWideShell'
 import { useAdminAccess } from './_hooks/useAdminAccess'
@@ -57,6 +57,13 @@ const ACTIONS: AdminAction[] = [
     description: 'Manage industries/sub-industries and populate seed data.',
     href: '/admin/jobs',
     icon: FaUserTie,
+  },
+  {
+    key: 'wallet',
+    label: 'Wallet balance',
+    description: 'Inspect the Civil platform balance and current ride escrow holdings.',
+    href: '/admin/wallet',
+    icon: HiOutlineBanknotes,
   },
   {
     key: 'ai',
@@ -118,7 +125,7 @@ export default function AdminPage() {
         <section className="surface-card px-6 py-5 text-sm text-slate-500">
           <p className="font-semibold text-slate-700">Coming soon</p>
           <p className="mt-1">
-            We&apos;ll keep expanding the operator console with billing insights and launch tools as they ship.
+            We&apos;ll keep expanding the operator console with deeper billing insights and launch tools as they ship.
           </p>
         </section>
       </>
